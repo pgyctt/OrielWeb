@@ -98,3 +98,34 @@
 - **保留 `Microsoft.Web.WebView2` 包**（仍为 `ExcludeAssets="compile"`）：`WebView2Utilities.Initialize`
   需要其中分发的 `WebView2Loader.dll` 原生位；托管互操作程序集依旧不被引用，AOT 裁剪自动丢弃。
 - **回退点**：`git tag stage-b-done` 是手工实现被删除前的最后提交；`stage-e8-done` 为删除后状态。
+
+## 无边框窗口的边缘 resize（2026-09-28 修复）
+
+**问题**：`WithFrameless()` 的窗口拖边框无法改变尺寸。
+
+**根因有两层，缺一都不足以解释**：
+1. `WM_NCCALCSIZE` 返回 0 令客户区等于整个窗口，而 `WS_THICKFRAME` 提供的边缘热区**恰恰位于被消除掉的非客户区**，
+   `DefWindowProc` 因此不再产生 `HTLEFT`/`HTTOP` 之类的命中值（此前注释里"保留窗口样式即可保住热区"的说法是错的）。
+2. 更关键：WebView2 的 Chromium 子窗口铺满客户区，且对 `WM_NCHITTEST` 返回 `HTCLIENT`（**不是** `HTTRANSPARENT`），
+   系统据此**终止**向父窗口的上溯询问——父窗口的 `WindowProc` 连这条消息都收不到。
+
+**外部调研佐证**（`参考项目/AOTrino` 与 `Ryn-0.38.0`）：
+- **AOTrino** 与本项目同栈（C# + Native AOT + `WebView2Aot`），同样在窗口自己的 `WM_NCHITTEST` 里算命中值。
+  实测其 `HwndWebViewWindow`（HWND 宿主，与本项目同类）**完全无法 resize**——那段代码只在 `CompositionWebViewWindow`
+  下有效，因为 Composition 模式下 WebView 是**视觉而非子窗口**，输入由宿主 `TryForwardPointerInput` 手动转发。
+- **Ryn** 用 saucer 的 `DECORATION_PARTIAL`（只去标题栏、**保留边框**），因而系统的边缘 resize 天然可用，
+  自己完全不碰 Win32 消息。
+
+**采用方案**：`WM_NCCALCSIZE` 改为「客户区 = 窗口矩形让出四条边框」（即标准客户区，但**不减标题栏**）。
+边框仍属非客户区 → 系统的边缘 resize、光标形状、双击边框等全部原生恢复；标题栏不参与 → 窗口顶部仍由页面自绘。
+代价是四周保留一条系统宽度的细边框（`SM_C*SIZEFRAME + SM_C*PADDEDBORDER`，按 DPI 缩放）。
+
+**已尝试并放弃的路线**（代码已移除，勿重走）：
+- 子类化 WebView2 窗口链并转发 `WM_NCLBUTTONDOWN`：深层 `Chrome_WidgetWin_1` / `Chrome_RenderWidgetHostHWND`
+  **不在本进程**，`SetWindowSubclass` 对它们返回 `false`；只挂得上 `Chrome_WidgetWin_0`，
+  而 `WM_LBUTTONDOWN` 不冒泡、只投递给链路最深处，收不到。
+- 让子窗口对边缘返回 `HTTRANSPARENT` 期望上溯到父窗口：**实测父窗口收到 `WM_NCHITTEST` 的次数为 0**。
+  MSDN 所述"传给同线程的 underlying window"指的是 z-order 上被覆盖的窗口，不含父窗口。
+- 子窗口直接返回 `HTLEFT`：子窗口没有 `WS_THICKFRAME`，系统既不会替它启动模态循环，也不再投递客户区消息。
+
+**验证**：四条边各拖动 100px 均精确生效、正交方向不变；连续 3 次稳定；编译 0 警告 0 错误，单测 39/39，桥接 19/19。

@@ -92,6 +92,10 @@ dragRegion.addEventListener('mousedown', () => oriel.invoke('win.drag'));
 // macOS/Linux 使用流式拖动（dragStart/dragTo/dragEnd）
 ```
 
+边缘拖动调整大小由**系统原生**处理（Windows 上保留一条系统宽度的窗口边框，其属非客户区），
+无需在页面里实现任何热区。这也意味着窗口四周会有一条细边框——这是换取原生、精确 resize 的代价，
+详见 `docs/DECISIONS.md` 中关于 WebView2 子窗口阻断 `WM_NCHITTEST` 的记录。
+
 ## 构建
 
 ```bash
