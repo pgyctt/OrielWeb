@@ -28,6 +28,12 @@ internal static unsafe class LinuxSignalHandlers
     internal static void UnregisterWebview(nint webview) => WebviewStates.Remove(webview);
     internal static void UnregisterManager(nint manager) => ManagerStates.Remove(manager);
 
+    // ---- 仅供测试与诊断：注册表当前条目数（真机上多窗口反复开关时可观察其归零）----
+
+    internal static int RegisteredWindowCount => WindowStates.Count;
+    internal static int RegisteredWebviewCount => WebviewStates.Count;
+    internal static int RegisteredManagerCount => ManagerStates.Count;
+
     // ---- 主线程调度 ----
 
     internal static void PostToMainThread(Action action)

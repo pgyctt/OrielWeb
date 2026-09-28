@@ -1,0 +1,32 @@
+# OrielWeb 全仓库代码风格与文本规范。
+#
+# 该文件同时供 dotnet format（Roslyn）与编辑器使用；CI 以
+# `dotnet format --verify-no-changes` 作为门禁（见 .github/workflows/ci.yml）。
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{cs,csproj,props,targets}]
+indent_style = space
+indent_size = 4
+
+[*.{json,yml,yaml}]
+indent_style = space
+indent_size = 2
+
+[*.{js,mjs,html,css}]
+indent_style = space
+indent_size = 4
+
+[*.md]
+# 部分 Markdown 依赖行尾空格表达换行，不做裁剪
+trim_trailing_whitespace = false
+
+[*.cs]
+# 本项目风格：switch 的 case 后若使用块，花括号与 case 对齐而非再缩进一级。
+# 不设置此项时 Roslyn 默认会在 case 内再缩进，导致既有代码全部被改写。
+csharp_indent_case_contents_when_block = false

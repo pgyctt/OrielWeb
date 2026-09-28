@@ -53,12 +53,10 @@ internal sealed class WebMessageReceivedHandler : IIpcReplySink
         }
         catch (Exception ex)
         {
-            // 分发器内部已按命令捕获；此处兜底分发器之外的错误。
-            // 用 JsonSerializer 生成字符串字面量：手写转义漏掉 \t \b \f 与全部
-            // U+0000–U+001F 控制字符，异常消息含制表符时会产生非法 JSON，
-            // PostWebMessageAsJson 直接失败，前端连错误都收不到。
-            // Linux/macOS 版一直用的就是 JsonSerializer.Serialize，此处与之统一。
-            PostJson($"{{\"__oriel\":\"result\",\"id\":0,\"ok\":false,\"error\":{JsonSerializer.Serialize(ex.Message)}}}");
+            // 用 JsonText.EncodeString 生成合法字符串字面量：手写转义会漏掉 \t \b \f
+            // 与全部 U+0000–U+001F 控制字符，产出的非法 JSON 会让前端连错误都收不到。
+            // （JsonSerializer.Serialize 的反射重载在 AOT 下会触发 IL2026/IL3050。）
+            PostJson($"{{\"__oriel\":\"result\",\"id\":0,\"ok\":false,\"error\":{JsonText.EncodeString(ex.Message)}}}");
         }
     }
 

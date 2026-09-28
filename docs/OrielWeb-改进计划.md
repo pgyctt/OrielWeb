@@ -1,5 +1,8 @@
 # OrielWeb 改进计划
 
+> **执行状态（2026-09-28）**：阶段 A / B / C / D / F 已执行完毕；阶段 E 按本文要求须先跑决策门 E-0，尚未启动。
+> 提交序列与"执行中修正的文档出入"见文末 **第 10 节**。
+
 > 配套文档：[`OrielWeb-WebView2绑定迁移计划.md`](./OrielWeb-WebView2绑定迁移计划.md)（阶段 E 详细版）
 > 缺陷来源：本轮代码评审（含实测复现），索引见文末第 8 节
 > 路径约定：所有路径相对仓库根目录；行号基于本轮评审的代码快照，实施前请以 `git grep` 复核
@@ -808,3 +811,43 @@
 | 8 | `chore: packaging, ci, docs` | F-1 ~ F-5 | — |
 
 阶段 1–4 合计约 1 天，且完成后 macOS/Linux 首次真正可用——**建议优先做掉**，因为它把"跨平台"从宣称变成事实。
+
+---
+
+## 10. 执行记录（2026-09-28）
+
+本轮执行了阶段 **A / B / C / D / F**（E 未启动：按本文要求须先跑决策门 E-0）。
+执行前仓库**并不存在 `.git`**，故先建立基线，再按第 9 节的粒度提交（已获用户明确授权）。
+
+| 提交 | 对应任务 | 标签 |
+|------|---------|------|
+| `chore: baseline snapshot before improvement plan` | 基线快照 | `baseline` |
+| `test: bridge js unit tests` | A-1（先红：6 条失败） | |
+| `ci: add smoke run + slot verification` | A-2 / A-3（另把桥接测试纳入 CI） | `stage-a-done` |
+| `fix(linux,macos): sta check only on windows` | B-1 | |
+| `fix(bridge): resolve ready promise and event timing` | B-2 / B-3 | `stage-b-done` |
+| `fix: guard unmanaged callers, asset host, route index, state cleanup` | C-1 ~ C-5（含随附的 D-9） | `stage-c-done` |
+| `refactor: generator and ipc polish` | D-1 ~ D-11 | `stage-d-done` |
+| `chore: packaging, ci, docs` | F-1 ~ F-5 | `stage-f-done` |
+
+### 10.1 执行中修正的文档出入
+
+| 本文原文 | 代码实际情况 |
+|---------|------------|
+| D-9 位置写作 `src/OrielWeb/Generators/OrielCommandGenerator.cs` | 实际在独立生成器项目 `src/OrielWeb.Generators/OrielCommandGenerator.cs` |
+| D-9 描述为"非字母数字一律换成 `_` → `A.B` 与 `A_B` 归一为同一标识符" | 更严重：`StringBuilder.Replace` 的返回值被丢弃，**净化循环完全无效**，泛型/嵌套类型名会生成**非法 C# 标识符**；且 `MinimallyQualifiedFormat` 本身就让跨命名空间同简名碰撞。实现改为"完全限定名净化 + FNV-1a 稳定哈希" |
+| D-4 称"用户自定义 filter 依赖 API 容错" | 属实。但 `Marshal.StringToHGlobalUni` 会自动追加终止符，实际侥幸得到双 `\0`，风险低于原文描述。已显式补足，并容忍末尾多余的 `\|` |
+| D-5 称 `Win32WindowHost.cs:103-107` 的 lpParam"同上（未使用）" | **有误**：窗口侧经 `WM_NCCREATE → lpCreateParams → GWLP_USERDATA` **确实被使用**，`WindowProc` 依赖它取回宿主；只有 `WindowsPlatformBackend._selfHandle` 是真死代码。照原文删会破坏窗口创建 |
+| D-6 称三份 JS"唯一实质差异是 `platform` 字段与消息通道" | 实际 macOS/Linux 另有 `_evalScriptDone`——它是 `ExecuteScriptAsync` 的页面回环（见 `DECISIONS.md`），**不是死代码**；Windows 走 COM 完成回调所以不需要 |
+| C-1 只列出三处缺 try/catch | **遗漏 macOS 侧 6 处**：`WindowShouldClose` / `WindowWillClose` / `DidFinishNavigation` / `DidFailNavigation` / `DidFailProvisionalNavigation` / `Pump`，其中多处会调用用户事件处理器。已一并补齐 |
+
+### 10.2 执行中新发现的问题
+
+- 启用 `TreatWarningsAsErrors`（F-3）后暴露出 4 个既有缺陷：`OrielAppBuilder.AddCommands` 的可空转换
+  （CS8600/CS8603）、`ObjCRuntime.ToManagedString` 可能返回 null（CS8603）、`WS_POPUP` 常量转 `nint`
+  溢出（CS8778）、`AddWindow` 的 XML 注释 `paramref` 名不匹配（CS1734）。均已修复。
+- 全仓 7 处 `JsonSerializer.Serialize(string)` 会触发 IL2026/IL3050（AOT/裁剪不安全），已统一改为
+  `JsonText.EncodeString`（基于 `Utf8JsonWriter`，零反射）。
+- 仓库此前**无 `.editorconfig` / `.gitattributes`**，且存在 CRLF 与 LF 混用；两者已补齐并统一为 LF。
+- `dotnet format` 会把测试程序集里刻意的反射序列化诊断沿调用链传播，已在 `TestHarness` 上以
+  `UnconditionalSuppressMessage` 显式抑制并写明理由。

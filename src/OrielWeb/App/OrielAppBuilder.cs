@@ -46,11 +46,12 @@ public sealed class OrielAppBuilder
     public OrielAppBuilder AddCommands<T>(Func<T> factory)
     {
         ArgumentNullException.ThrowIfNull(factory);
-        TargetFactories[typeof(T)] = () => (object)factory();
+        // factory() 的 T 无约束，可空性未知；此处显式断言非 null（null 工厂返回会在解析目标时即暴露）
+        TargetFactories[typeof(T)] = () => factory()!;
         return this;
     }
 
-    /// <summary>添加窗口（链式）。需要订阅窗口事件时用带 <paramref name="onCreated"/> 的重载。</summary>
+    /// <summary>添加窗口（链式）。需要订阅窗口事件时用带 <c>onCreated</c> 参数的重载。</summary>
     public OrielAppBuilder AddWindow(Action<OrielWindowOptions>? configure = null)
     {
         AddWindowCore(configure, null);

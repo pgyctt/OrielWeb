@@ -1,0 +1,12 @@
+<Project>
+
+  <!-- 先继承仓库根的公共属性（MSBuild 只自动读取"最近"的一个 Directory.Build.props，故需显式 Import） -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <PropertyGroup>
+    <!-- src/ 下的库与生成器：警告即错误。
+         tests/ 与 samples/ 保持放宽——其中含刻意的诊断性/示例代码（如测试用反射序列化）。 -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>

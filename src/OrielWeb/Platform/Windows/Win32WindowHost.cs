@@ -583,7 +583,9 @@ internal sealed partial class Win32WindowHost : IWindowBackend
             nint style = Win32.GetWindowLongPtrW(_hwnd, Win32Constants.GWL_STYLE);
             _savedStyle = style;
             style &= ~(nint)(Win32Constants.WS_CAPTION | Win32Constants.WS_THICKFRAME);
-            style |= (nint)Win32Constants.WS_POPUP;
+            // WS_POPUP = 0x80000000：在 AnyCPU 下编译期 nint 被视为 32 位，常量转换会报 CS8778。
+            // 实际运行于 64 位进程，语义为置位高位，unchecked 是有意为之。
+            style |= unchecked((nint)Win32Constants.WS_POPUP);
             Win32.SetWindowLongPtrW(_hwnd, Win32Constants.GWL_STYLE, style);
 
             var monitor = Win32.MonitorFromWindow(_hwnd, Win32Constants.MONITOR_DEFAULTTONEAREST);

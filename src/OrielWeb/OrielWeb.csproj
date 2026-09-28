@@ -13,6 +13,10 @@
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <!-- Microsoft.Web.WebView2 包同时携带 WPF 程序集（Microsoft.Web.WebView2.Wpf.dll），其引用的
+         WindowsBase 与 .NET 10 自带版本号不一致，会刷出大量 MSB3277。该冲突已由 MSBuild 自动解析
+         （选择主版本），且本项目不使用 WPF/WinForms，故降级为消息。 -->
+    <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);MSB3277</MSBuildWarningsAsMessages>
   </PropertyGroup>
 
   <ItemGroup>

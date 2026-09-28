@@ -121,6 +121,6 @@ internal static unsafe partial class ObjCRuntime
     internal static string ToManagedString(nint nsString)
     {
         var utf8 = SendId(nsString, Sel("UTF8String"));
-        return utf8 == 0 ? string.Empty : Marshal.PtrToStringUTF8(utf8);
+        return utf8 == 0 ? string.Empty : Marshal.PtrToStringUTF8(utf8) ?? string.Empty;
     }
 }

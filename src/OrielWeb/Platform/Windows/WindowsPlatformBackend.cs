@@ -68,7 +68,7 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         }
     }
 
-    internal void OnWindowDestroyed() 
+    internal void OnWindowDestroyed()
     {
         if (--_aliveWindows <= 0)
         {

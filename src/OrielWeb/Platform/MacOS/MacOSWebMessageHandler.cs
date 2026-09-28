@@ -59,7 +59,7 @@ internal sealed class MacOSWebMessageHandler : IIpcReplySink
         }
         catch (Exception ex)
         {
-            PostJson($"{{\"__oriel\":\"result\",\"id\":0,\"ok\":false,\"error\":{JsonSerializer.Serialize(ex.Message)}}}");
+            PostJson($"{{\"__oriel\":\"result\",\"id\":0,\"ok\":false,\"error\":{JsonText.EncodeString(ex.Message)}}}");
         }
     }
 

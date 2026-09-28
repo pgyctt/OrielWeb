@@ -26,6 +26,10 @@ jobs:
       - name: Test
         run: dotnet test tests/OrielWeb.Tests -c Release --no-build
 
+      - name: Format check
+        # 格式/风格/分析器门禁（基准见 .editorconfig）；src/ 另已启用 TreatWarningsAsErrors
+        run: dotnet format OrielWeb.slnx --verify-no-changes --verbosity minimal
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:

@@ -6,8 +6,13 @@
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <!-- 本项目 TFM 为 netstandard2.0，不支持 AOT/裁剪/单文件分析器，但根 Directory.Build.props
+         的对应开关会继承进来并触发 NETSDK1210。分析器项目不需要这些分析，此处显式关闭。 -->
     <IsAotCompatible>false</IsAotCompatible>
     <IsTrimmable>false</IsTrimmable>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
     <IsRoslynComponent>true</IsRoslynComponent>
     <!-- NuGet 打包：分析器包 -->

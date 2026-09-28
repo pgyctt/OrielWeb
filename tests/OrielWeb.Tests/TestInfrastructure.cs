@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using OrielWeb.Ipc;
@@ -79,6 +80,12 @@ internal static class TestHarness
     public const string Prefix = "OrielWeb.Tests.";
 
     /// <summary>构造 { __oriel:'invoke', id, name, args } 消息并执行分发，返回回执 JSON 文档。</summary>
+    // 测试专用反射序列化（匿名对象作参数）。测试程序集不参与 Native AOT 发布，
+    // 因此在此抑制，而不是把 RequiresUnreferencedCode/RequiresDynamicCode 沿调用链传播给每个用例。
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage(
+        "Trimming", "IL2026", Justification = "测试专用反射序列化，测试程序集不参与 AOT 发布。")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage(
+        "AOT", "IL3050", Justification = "测试专用反射序列化，测试程序集不参与 AOT 发布。")]
     public static async Task<(JsonDocument Reply, TestSink Sink)> DispatchAsync(
         OrielCommandDispatcher dispatcher, string name, object? args, int id = 1)
     {

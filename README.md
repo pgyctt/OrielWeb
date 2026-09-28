@@ -109,9 +109,27 @@ dotnet publish samples/OrielDemo -c Release -r linux-x64
 
 | 平台 | Webview | 状态 |
 |------|---------|------|
-| Windows x64/arm64 | WebView2 (Evergreen) | ✅ 已验证 |
-| macOS x64/arm64 | WKWebView | ✅ 编译通过，待真机验证 |
-| Linux x64/arm64 | WebKitGTK 4.1 | ✅ 编译通过，待环境验证 |
+| Windows x64/arm64 | WebView2 (Evergreen) | ✅ 已运行验证（demo IPC 往返、单测、AOT 发布） |
+| Linux x64/arm64 | WebKitGTK 4.1 | ⚠️ 编译通过；CI 在 xvfb 下冒烟（进程存活）；尚未在真机完整验证 |
+| macOS x64/arm64 | WKWebView | ⚠️ 仅编译通过；尚未在真机运行过 |
+
+> Linux/macOS 此前会因 `Run()` 的 STA 前置检查直接抛异常（Unix 上 `ApartmentState` 恒为 `Unknown`），
+> 该阻断已排除；但两者的运行期行为仍需真机确认，故上表不做超出证据的声明。
+
+### 最低 WebView2 Runtime 版本
+
+- 使用**内嵌资源**（`UseEmbeddedAssets`）需要 `ICoreWebView2_3`，即 WebView2 Runtime **≥ 1.0.864.35**。
+- 运行时过旧时会抛出明确异常并附带当前已安装版本，而非静默白屏。
+- 环境变量 `ORIEL_WEBVIEW2_FOLDER` 可指定固定版本运行时目录（调试与离线镜像场景）。
+
+## 命令线程模型
+
+- **命令实例是共享的**：`AddCommands<T>()` 注册的类型只创建一次（惰性单例），所有 invoke 都作用于同一实例。
+  因此**命令方法必须线程安全**——并发 invoke 可能同时进入同一方法。
+- 命令执行发生在**后台线程**（不阻塞 UI 消息循环）；回执由分发器切回 UI 线程后投递。
+- 命令内需要操作 UI 时，请经 `OrielApp.PostToMainThread(...)` 切回主线程。
+- 反例：`samples/OrielDemo` 的 `TodoCommands` 直接读写 `List<T>` 与 `_nextId++`，并发下并不安全；
+  示例为保持简洁如此编写，实际项目请自行加锁或改用线程安全结构。
 
 ## 许可
 

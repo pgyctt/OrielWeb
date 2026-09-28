@@ -328,7 +328,7 @@ internal sealed class LinuxWindowHost : IWindowBackend
         _messageHandler.RegisterEval(id, completion);
 
         // 页内求值并把结果经消息处理器回传（避免 GAsyncReadyCallback）
-        var scriptJson = JsonSerializer.Serialize(script);
+        var scriptJson = JsonText.EncodeString(script);
         var js = "window.oriel._evalScriptDone(" + id + ", JSON.stringify((function(){try{return eval(" + scriptJson +
                  ")}catch(e){return 'E:'+String(e)}})()))";
         PostToMainThread(() =>
@@ -356,7 +356,7 @@ internal sealed class LinuxWindowHost : IWindowBackend
             var ok = root.GetProperty("ok").GetBoolean();
             string payload = ok
                 ? root.GetProperty("value").GetRawText()
-                : JsonSerializer.Serialize(root.GetProperty("error").GetString());
+                : JsonText.EncodeString(root.GetProperty("error").GetString());
             var js = $"window.oriel._onResult({id}, {(ok ? "true" : "false")}, {payload})";
             GtkNative.WebkitWebViewEvaluateJavaScript(
                 _webview, js, -1, 0, 0, 0, 0, 0);
