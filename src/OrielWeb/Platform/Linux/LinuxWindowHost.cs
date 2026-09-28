@@ -98,11 +98,11 @@ internal sealed class LinuxWindowHost : IWindowBackend
 
         var userScript = GtkNative.WebkitUserScriptNew(
             LinuxBridgeJs.Script,
-            0, // WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START
-            1, // WEBKIT_USER_SCRIPT_INJECT_MAIN_FRAME
+            1, // WEBKIT_USER_CONTENT_INJECT_TOP_FRAME（主帧）
+            0, // WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START（文档开始处注入，与 Windows/macOS 后端一致）
             0,
             0);
-        GtkNative.WebkitUserContentManagerAddUserScript(_userContentManager, userScript);
+        GtkNative.WebkitUserContentManagerAddScript(_userContentManager, userScript);
 
         // 信号连接（先注册状态，再连接信号）
         LinuxSignalHandlers.RegisterWindow(_gtkWindow, this);

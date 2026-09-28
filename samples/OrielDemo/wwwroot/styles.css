@@ -21,7 +21,12 @@ body {
         radial-gradient(1200px 600px at 80% -10%, rgba(79, 140, 255, 0.12), transparent),
         var(--bg);
     color: var(--text);
-    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    /* 跨平台字体栈：Windows 优先，其次 macOS，再次 Linux 的 Noto/Source Han CJK。
+       注意 Linux 无 "Segoe UI" / "Microsoft YaHei"，若不补 CJK 族，中文会落到
+       无 CJK 字形的默认字体而显示为方框（需系统预装 fonts-noto-cjk）。 */
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui,
+        "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Noto Sans SC",
+        "Source Han Sans SC", "WenQuanYi Micro Hei", sans-serif;
     overflow: hidden;
 }
 

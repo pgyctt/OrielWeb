@@ -292,3 +292,62 @@ shell 退回的是通用应用图标——**不是** exe 自带的图标。而 `
 **验证**：`GCLP_HICON`/`GCLP_HICONSM` 变为非零；任务栏按钮的放大截图由通用图标变为本应用图标。
 无图标文件（`kernel32.dll`、`version.dll`）上 `ExtractIconEx` 返回 0 且句柄为空，防御分支正确。
 编译 0 警告 0 错误，单测 47/47，桥接 28/28。
+
+## Linux 首次真机运行验证（2026-09-28，WSL2 + WSLg）
+
+**结论**：Linux 后端由"仅编译通过"推进到"真机跑通"——窗口创建、页面渲染（含中文）、一次完整 IPC 往返
+（页面右下角徽章由「IPC 连接中…」变为「IPC 已连接」）均已在 WSL2 + WSLg 确认，X11 与 Wayland 两条后端路径各跑通一次。
+
+### 缺陷 1（阻塞级）：进程存活，但窗口从未被创建
+
+`LinuxPlatformBackend.CreateWindow` 只 `new LinuxWindowHost(...)`，**全仓没有任何地方调用 `host.Create()`**。
+Windows 后端的建窗在静态工厂内完成，而 Linux/macOS 后端是实例方法：构造函数只装配宿主，真正的
+`gtk_window_new` → `show_all` → 首次导航都在 `Create()` 里——不被调用，则窗口从未存在。
+
+表现极具迷惑性：进程存活到观察窗结束、不崩不报错、CPU 占用 0、无 WebKit 子进程、屏幕上什么都没有。
+
+**修法**：`CreateWindow` 中在 `return host` 之前显式调用 `host.Create()`。
+
+**同构缺陷已核实并同步修复**：macOS 后端（`MacOSPlatformBackend.CreateWindow`）与 Linux 修复前完全同构——同样只
+`new MacOSWindowHost(...)` 就返回，而建窗逻辑在 `MacOSWindowHost.Create()`。已按同一处修复补上 `host.Create()`。
+macOS **无真机**，该修复仅靠代码一致性保证，**未经运行验证**（后续有 Mac 环境时优先复验此处）。
+
+附：全仓 `host.Create()` 的调用点只有 Linux 与 macOS 两个后端的 `CreateWindow`——Windows 后端的建窗在静态工厂内完成，
+不属此两段式形态，不要照搬。
+
+**教训**：新建宿主 ≠ 创建窗口。"构造函数只装配、`Create()` 才建窗"这类两段式初始化必须有唯一入口兜底，
+否则遗漏是静默的——进程照常活着，只是什么都没做。
+
+### 缺陷 2（环境依赖，非代码缺陷）：中文渲染为方框
+
+取证：`fc-list :lang=zh` 输出为空、`fc-match sans-serif` 回落 `DejaVu Sans`（无 CJK 字形，故汉字无字形可绘）；
+同时 demo 的字体栈 `"Segoe UI", "Microsoft YaHei", system-ui, sans-serif` 全是 Windows 专有字体名，Linux 上一个都不存在。
+
+**修法**：① 装字体——`sudo` 需密码，故改走免 root 路径：`apt-get download fonts-noto-cjk`（62 MB）+
+`dpkg-deb -x` 解包，把 TTC 拷到 `~/.local/share/fonts` 后 `fc-cache -f`；② demo 字体栈补上
+`"Noto Sans CJK SC"` / `"Noto Sans SC"` / `"Source Han Sans SC"` 等跨平台族。**库层对字体零干预**（字体选择属应用与系统职责）。
+
+### 已知限制（本轮仅记录，未修）：Wayland 下无边框窗口不可拖动
+
+无边框拖动靠 JS 流式坐标 → 宿主 `gtk_window_move`；而 Wayland 协议不允许客户端自行移动窗口，
+`gtk_window_move` 在 Wayland 下是空操作。**对照取证**：同一个 exe 强制 `GDK_BACKEND=x11` 后拖动正常
+→ 坐实为"后端差异"而非"拖动链路缺陷"。修法方向：Wayland 下改调 `gtk_window_begin_move_drag`
+（交合成器接管），X11 保留流式；本轮未实施。
+
+### 取证方法：`tools/verify-linux.sh` 已升级为双路径
+
+- 断言与后端无关的硬证据：**进程存活至观察窗结束** + **出现 `WebKitWebProcess`/`WebKitNetworkProcess`
+  子进程**（后者只在 webview 真的开始加载页面时才出现）。用运行前的进程基线做差集，避免把残留进程算作本次证据。
+- WSLg 下 GTK 默认走 Wayland，窗口注册在 Weston 合成器而非 XWayland，`xwininfo` 枚举不到；因此再跑一次
+  `GDK_BACKEND=x11`，用 `xwininfo -root -tree` 做窗口断言。两条路径观察同一份页面，人眼结论可互相印证。
+- 本次实测：两条路径均在第 2s 拉起 WebKit 子进程，进程存活至 45s 观察窗结束；X11 路径枚举到
+  `0x60000e "Oriel Demo": ("OrielDemo" "OrielDemo") 1024x720`；徽章人眼确认为「IPC 已连接」。
+  字体栈修复后重新发布，在**最终产物**上再跑一次（20s 窗）结论一致（两条路径均 PASS）。
+- 环境噪音（不影响功能，仅性能）：WSLg 无 GPU，MESA/ZINK 回落软件渲染，stderr 有
+  `libEGL warning: MESA-LOADER: failed to retrieve device information` / `MESA: error: ZINK: failed to choose pdev` 等警告。
+
+### 一处工具侧踩坑（非产品代码）
+
+`pkill -f "WebKitWebProcess|WebKitNetworkProcess"` 会**匹配到承载该命令的 bash 自身**（其命令行里含同样字符串），
+于是把执行环境一起杀掉、命令静默返回空输出（表现为"窗口没起来"）。查/杀进程一律用 `pgrep -x` / `pkill -x`
+精确进程名，不要用会自匹配的 `-f` 模式。

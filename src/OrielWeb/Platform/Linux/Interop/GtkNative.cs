@@ -163,11 +163,17 @@ internal static unsafe partial class GtkNative
     [LibraryImport(WebKit, EntryPoint = "webkit_user_content_manager_register_script_message_handler", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void WebkitUserContentManagerRegisterScriptMessageHandler(nint manager, string name);
 
+    // 原型（WebKitGTK 4.1）：webkit_user_script_new(const char* source,
+    //     WebKitUserContentInjectedFrames injected_frames,   // 0 = ALL_FRAMES，1 = TOP_FRAME
+    //     WebKitUserScriptInjectionTime injection_time,      // 0 = AT_DOCUMENT_START，1 = AT_DOCUMENT_END
+    //     const char* allow_list, const char* block_list)
+    // 注意两个枚举的顺序：frames 在前、time 在后（写反会把脚本注入到文档末尾）。
     [LibraryImport(WebKit, EntryPoint = "webkit_user_script_new", StringMarshalling = StringMarshalling.Utf8)]
-    internal static partial nint WebkitUserScriptNew(string source, int injectionTime, int style, nint allowList, nint blockList);
+    internal static partial nint WebkitUserScriptNew(string source, int injectedFrames, int injectionTime, nint allowList, nint blockList);
 
-    [LibraryImport(WebKit, EntryPoint = "webkit_user_content_manager_add_user_script")]
-    internal static partial void WebkitUserContentManagerAddUserScript(nint manager, nint userScript);
+    // 4.1 的函数名是 add_script；webkit_user_content_manager_add_user_script 是 WebKit1 的名字，4.1 里不存在。
+    [LibraryImport(WebKit, EntryPoint = "webkit_user_content_manager_add_script")]
+    internal static partial void WebkitUserContentManagerAddScript(nint manager, nint script);
 
     [LibraryImport(WebKit, EntryPoint = "webkit_web_view_new_with_user_content_manager")]
     internal static partial nint WebkitWebViewNewWithUserContentManager(nint manager);

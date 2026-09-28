@@ -153,7 +153,7 @@ dotnet publish samples/OrielDemo -c Release -r win-x64
 # macOS（需要 Mac）
 dotnet publish samples/OrielDemo -c Release -r osx-arm64
 
-# Linux（需要 libwebkit2gtk-4.1）
+# Linux（需要 libwebkit2gtk-4.1；中文界面另需 CJK 字体，见「Linux 环境依赖与已知限制」）
 dotnet publish samples/OrielDemo -c Release -r linux-x64
 ```
 
@@ -196,10 +196,24 @@ WebView2 的运行需要微软的 `WebView2Loader.dll`。官方只有两条路�
 | 平台 | Webview | 状态 |
 |------|---------|------|
 | Windows x64/arm64 | WebView2 (Evergreen) | ✅ 已运行验证（demo IPC 往返、单测、AOT 发布）；仅一套实现，无遗留开关 |
-| Linux x64/arm64 | WebKitGTK 4.1 | ⚠️ 编译通过；CI 在 xvfb 下冒烟（进程存活）；尚未在真机完整验证 |
-| macOS x64/arm64 | WKWebView | ⚠️ 仅编译通过；尚未在真机运行过 |
+| Linux x64 | WebKitGTK 4.1 | ✅ 已运行验证（WSL2 + WSLg 真机：窗口创建、页面渲染、IPC 往返均已确认；X11 与 Wayland 双后端各跑通一次） |
+| Linux arm64 | WebKitGTK 4.1 | ⚠️ 编译通过；CI 在 xvfb 下冒烟（进程存活）；未在真机运行 |
+| macOS x64/arm64 | WKWebView | ⚠️ 仅编译通过；尚未在真机运行过（与 Linux 同构的建窗调用缺陷已同步修复，**未真机验证**） |
 
-> 上表只写有证据的结论：Windows 侧有真机运行记录，Linux/macOS 目前只有编译与冒烟级别的验证。
+> 上表只写有证据的结论：Windows 与 Linux x64 有真机运行记录（Linux 的 IPC 往返由页面徽章人眼确认），
+> 其余平台目前只有编译与冒烟级别的验证。
+>
+> Linux x64 的验证过程见 `docs/DECISIONS.md`（含一处「进程存活但从未创建窗口」的后端缺陷及修复）。
+
+### Linux 环境依赖与已知限制
+
+- **中文字体必须另行安装**：WebKitGTK 经 fontconfig 取字体，发行版未预装 CJK 字体时中文会渲染成方框。
+  先装 `fonts-noto-cjk`（Debian/Ubuntu）再运行；页面侧的 `font-family` 也应带上 `"Noto Sans CJK SC"`
+  这类跨平台族，而不是只写 `"Segoe UI"` / `"Microsoft YaHei"` 这类 Windows 专有字体名。
+  库本身不碰字体（字体选择属应用与系统职责）。
+- **Wayland 下无边框窗口不可拖动**：无边框拖动依赖 `gtk_window_move`，而 Wayland 协议不允许客户端自行
+  移动窗口，该调用在 Wayland 下是空操作；强制 X11（`GDK_BACKEND=x11`）时拖动正常。改用
+  `gtk_window_begin_move_drag` 交合成器接管的修法**尚未实施**。
 
 ### WebView2 运行时与缺失引导
 
