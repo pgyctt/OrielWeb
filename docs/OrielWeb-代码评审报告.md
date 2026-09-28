@@ -403,7 +403,7 @@ P0-2 那条 TDZ bug，用 Node 跑 3 行代码就能抓到。加一组桥接 JS 
 
 客观上，这个项目有几处做得确实漂亮，不该被上面的问题掩盖：
 
-1. **纯 P/Invoke 不引 C++ 中间层**——对比 Ryn 依赖 saucer、IgniteView 在 Linux 上捆 QtWebEngine，OrielWeb 的"三平台零 C++ 组件"路线在 AOT 友好度和部署体积上有真实优势，且完全避开了 `ComWrappers` 在 .NET 10 上的三个坑（`DECISIONS.md:37-44` 的记录很珍贵）。
+1. **纯 P/Invoke 不引 C++ 中间层**——对比 Ryn 的 C++ 底座、IgniteView 在 Linux 上捆 QtWebEngine，OrielWeb 的"三平台零 C++ 组件"路线在 AOT 友好度和部署体积上有真实优势，且完全避开了 `ComWrappers` 在 .NET 10 上的三个坑（`DECISIONS.md:37-44` 的记录很珍贵）。
 
 2. **`DECISIONS.md` 的横向对比质量高**——对 Ryn / pywebview / IgniteView 三个参考项目分别明确了"抄什么、不抄什么"，并给出理由。这种先做技术选型再动手的做法，在个人项目里并不多见。
 

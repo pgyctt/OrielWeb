@@ -1,10 +1,10 @@
 # OrielWeb
 
-类 Tauri 的 C# 跨平台系统 webview 核心库。零 C++ 组件、零 GUI 框架依赖、Native AOT 友好、零反射 IPC。
+类 Tauri 的 C# 跨平台系统 webview 核心库。无 C++ 中间层、无 GUI 框架依赖、Native AOT 友好、零反射 IPC。
 
 ## 特性
 
-- **纯 C# 互操作**：macOS（WKWebView + ObjC runtime）与 Linux（GTK3 + WebKitGTK）为手写 P/Invoke；Windows 的 WebView2 COM 走 `WebView2Aot` 的 `[GeneratedComInterface]`/`[GeneratedComClass]` **源生成绑定**（无手写 vtable/IID/RefCount）。三者均无 saucer/C++ 中间层
+- **纯 C# 互操作**：macOS（WKWebView + ObjC runtime）与 Linux（GTK3 + WebKitGTK）为手写 P/Invoke；Windows 的 WebView2 COM 走 `WebView2Aot` 的 `[GeneratedComInterface]`/`[GeneratedComClass]` **源生成绑定**（无手写 vtable/IID/RefCount）。三平台均不需要 C++ 中间层
 - **Composition 宿主**（Windows）：WebView2 作为 DirectComposition 的一份视觉合成进窗口，而非子窗口——因此无边框窗口的边缘 resize 能走系统原生路径，且窗口内容可与其它视觉自由合成
 - **零反射 IPC**：`[OrielCommand]` + Roslyn 源生成器在编译期生成分发代码，`[ModuleInitializer]` 自动注册，运行期零反射
 - **Native AOT**：全局 `IsAotCompatible`/`IsTrimmable`，发布为原生单文件可执行文件（WebView2 的运行时加载器已内嵌，无需旁文件）
@@ -13,23 +13,37 @@
 
 ## 快速开始
 
+要求 **.NET 10 SDK**（本库只提供 `net10.0` 目标）。
+
+```bash
+dotnet add package OrielWeb
+dotnet add package OrielWeb.Generators
+```
+
+主包是库本身；`OrielWeb.Generators` 是 Roslyn 源生成器包（不含运行时程序集），负责在编译期生成
+IPC 路由，需与主包一起引用。
+
 ```xml
-<!-- OrielDemo.csproj -->
+<!-- 应用项目：其余用 dotnet new 的默认值即可 -->
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>WinExe</OutputType>
+    <OutputType>WinExe</OutputType>             <!-- 不显示控制台窗口 -->
     <TargetFramework>net10.0</TargetFramework>
-    <PublishAot>true</PublishAot>
+    <PublishAot>true</PublishAot>               <!-- 原生单文件发布 -->
+    <ApplicationIcon>app.ico</ApplicationIcon>  <!-- 任务栏图标，见「应用图标」 -->
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\src\OrielWeb\OrielWeb.csproj" />
-    <ProjectReference Include="..\..\src\OrielWeb.Generators\OrielWeb.Generators.csproj"
-                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
-  </ItemGroup>
-  <ItemGroup>
-    <EmbeddedResource Include="wwwroot\**\*" />
+    <EmbeddedResource Include="wwwroot\**\*" /> <!-- 前端资源内嵌 -->
   </ItemGroup>
 </Project>
+```
+
+在仓库内开发时（而不是引用 NuGet 包），把两个包引用换成项目引用：
+
+```xml
+<ProjectReference Include="..\..\src\OrielWeb\OrielWeb.csproj" />
+<ProjectReference Include="..\..\src\OrielWeb.Generators\OrielWeb.Generators.csproj"
+                  OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
 ```
 
 ```csharp
@@ -39,30 +53,40 @@ using OrielWeb.Ipc;
 
 internal static class Program
 {
-    [STAThread]
+    [STAThread]                                     // Windows 上要求 STA
     private static void Main(string[] args)
     {
         Oriel.CreateBuilder(args)
-            .UseEmbeddedAssets()                        // https://app.oriel/ ← wwwroot/**
-            .UseJsonContext(AppJsonContext.Default)     // STJ 源生成上下文（DTO）
-            .AddCommands<TodoCommands>()                // [OrielCommand] 命令类
-            .UseDebug()                                 // DevTools
+            .UseEmbeddedAssets()                    // https://app.oriel/ ← wwwroot/**
+            .UseJsonContext(AppJsonContext.Default) // STJ 源生成上下文（DTO）
+            .AddCommands<TodoCommands>()            // [OrielCommand] 命令类
+            .UseDebug()                             // 打开 DevTools
             .AddWindow(w => w.WithTitle("Demo")
                              .WithSize(1024, 720)
-                             .WithFrameless()           // 无边框
+                             .WithFrameless()       // 无边框
                              .Centered())
             .Run();
     }
 }
 
-// IPC 命令：页面 JS 调 window.oriel.invoke('todo.add', { text: '...' })
+public sealed record TodoItem(int Id, string Text, bool Done);
+
+// IPC 命令：页面 JS 调 window.oriel.invoke('todo.add', { text: '买牛奶' })
 public sealed partial class TodoCommands
 {
+    private readonly List<TodoItem> _items = [];
+    private int _nextId;
+
     [OrielCommand("todo.add")]
-    public TodoItem Add(string text) => new(DateTime.Now.GetHashCode(), text, false, "");
+    public TodoItem Add(string text)
+    {
+        var item = new TodoItem(_nextId++, text, Done: false);
+        _items.Add(item);
+        return item;
+    }
 }
 
-// STJ 源生成上下文（DTO 序列化的 AOT 安全入口）
+// STJ 源生成上下文：DTO 序列化的 AOT 安全入口（命令参数与返回值都经它）
 [JsonSerializable(typeof(TodoItem))]
 internal partial class AppJsonContext : JsonSerializerContext;
 ```
@@ -79,12 +103,26 @@ internal partial class AppJsonContext : JsonSerializerContext;
 ## 无边框窗口
 
 ```html
+<!-- 标题栏由页面自绘。图标用 10x10 的内联 SVG 而不是字体符号（─ □ ×）——字体符号的笔画粗细与
+     对齐会随字体度量漂移，和系统标题栏差别明显。线宽用 stroke-width: calc(1px / var(--dpr))
+     折算成 1 物理像素。 -->
 <div class="titlebar">
     <div class="drag-region">标题</div>
-    <button onclick="oriel.invoke('win.minimize')">─</button>
-    <button onclick="oriel.invoke('win.toggleMaximize')">□</button>
-    <button onclick="oriel.invoke('win.close')">×</button>
+    <button onclick="oriel.invoke('win.minimize')" aria-label="最小化">
+        <svg viewBox="0 0 10 10" width="10" height="10"><path d="M0 5.5 H10" /></svg>
+    </button>
+    <button onclick="oriel.invoke('win.toggleMaximize')" aria-label="最大化">
+        <svg viewBox="0 0 10 10" width="10" height="10"><rect x="0.5" y="0.5" width="9" height="9" /></svg>
+    </button>
+    <button onclick="oriel.invoke('win.close')" aria-label="关闭">
+        <svg viewBox="0 0 10 10" width="10" height="10"><path d="M0.5 0.5 L9.5 9.5 M9.5 0.5 L0.5 9.5" /></svg>
+    </button>
 </div>
+
+<!-- 最大化后的"还原"字形是两个方块：完整方块在左下，背面方块错位到右上、只画露出的上边与右边，
+     以及右下角到前方块右缘的那一小段：
+     <path d="M0.5 2.5 H7.5 V9.5 H0.5 Z" />  +  <path d="M2.5 0.5 H9.5 V7.5 H7.5" />
+     与最大化字形一起放进按钮，用 CSS 类切换显示（字形几何照系统字体的 E923 量得）。 -->
 ```
 
 ```js
@@ -161,11 +199,7 @@ WebView2 的运行需要微软的 `WebView2Loader.dll`。官方只有两条路�
 | Linux x64/arm64 | WebKitGTK 4.1 | ⚠️ 编译通过；CI 在 xvfb 下冒烟（进程存活）；尚未在真机完整验证 |
 | macOS x64/arm64 | WKWebView | ⚠️ 仅编译通过；尚未在真机运行过 |
 
-> Linux/macOS 此前会因 `Run()` 的 STA 前置检查直接抛异常（Unix 上 `ApartmentState` 恒为 `Unknown`），
-> 该阻断已排除；但两者的运行期行为仍需真机确认，故上表不做超出证据的声明。
->
-> Windows 的 WebView2 互操作曾以手工 vtable 实现（源于 .NET 10.0.401 运行时缺陷的旧结论），
-> 该结论已被实测推翻，手工层已整体删除；回退点见 git 标签 `stage-b-done`。
+> 上表只写有证据的结论：Windows 侧有真机运行记录，Linux/macOS 目前只有编译与冒烟级别的验证。
 
 ### WebView2 运行时与缺失引导
 
@@ -200,8 +234,7 @@ WebView2 的运行需要微软的 `WebView2Loader.dll`。官方只有两条路�
   - **库不自动安装**：提示方式、是否静默安装都属应用策略（企业环境常禁止联网安装）。对比 Tauri 的默认
     行为 `webviewInstallMode: downloadBootstrapper`——它在**安装器**层下载并运行微软 bootstrapper；
     本项目没有安装器（只有 NuGet 包 + 单文件 exe），因此只能在应用内引导。
-- **运行时过旧**（低于上表下限）不是上述流程：它会在此后的调用上失败并走通用错误提示，不再附带已安装版本号
-  （那条显式版本诊断随手工 vtable 层一并删除）。
+- **运行时过旧**（低于上表下限）走的是另一条路径：环境能创建，但缺少所需接口的调用会失败并给出通用错误提示。
 
 ## 命令线程模型
 
@@ -214,4 +247,7 @@ WebView2 的运行需要微软的 `WebView2Loader.dll`。官方只有两条路�
 
 ## 许可
 
-MIT
+[MIT](LICENSE) © OrielWeb Contributors。
+
+本库在编译期内嵌了微软分发的 `WebView2Loader.dll`（取自 `Microsoft.Web.WebView2` 包），
+其版权与许可声明见 [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt)。

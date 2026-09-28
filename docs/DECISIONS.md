@@ -10,7 +10,7 @@
 | 2 | 目标平台 | 桌面三平台，系统 webview 路线：Windows=WebView2、macOS=WKWebView、Linux=WebKitGTK+GTK | 不捆绑浏览器内核 |
 | 3 | 参考策略 | **Ryn**=架构蓝本（分层/源生成 IPC/自定义 scheme/AOT 属性）；**pywebview**=API 基本面与多引擎桥接经验；**IgniteView**=仅借鉴窗口特效、按 RID 加载原生库等细节 | IgniteView 的反射 IPC、本地 HTTP 托管、Linux QtWebEngine 路线**不采用** |
 | 4 | 里程碑 | 第一个里程碑 = **Windows Native AOT demo 跑通**（窗口+IPC+内嵌资源+AOT 发布）；macOS/Linux 随后 | |
-| 5 | 技术底座 | 仅 **net10.0**；**纯 C# P/Invoke**——无 C++ 组件（不用 saucer）、无 GUI 框架依赖；Windows = Win32 + WebView2 COM 互操作 | 与 Ryn 的 saucer C++ 路线有意区分 |
+| 5 | 技术底座 | 仅 **net10.0**；**纯 C# P/Invoke**——无 C++ 组件、无 GUI 框架依赖；Windows = Win32 + WebView2 COM 互操作 | 与同期的 C++ 底座路线有意区分 |
 | 6 | MVP 范围 | 最小核心（窗口、URL/内嵌资源、自定义 scheme/虚拟主机、双向 IPC、事件）+ **对齐 pywebview 基本面**（全屏/置顶/尺寸位置/无边框、loaded/closing 等事件、evaluate_js、文件与消息对话框、debug） | |
 | 7 | IPC 模型 | `[OrielCommand]` 特性 + **Roslyn 源生成器**编译期生成分发代码；System.Text.Json 源生成序列化；**运行期零反射** | AOT 硬性要求；Ryn 已验证此路线 |
 | 8 | API 形态 | **App 生命周期构建器风格**（`OrielApp.CreateBuilder(...)...Run()`），多窗口一等公民，窗口类内部可独立使用 | 对齐 Ryn / Tauri 体验 |
@@ -19,7 +19,7 @@
 
 ## 事实依据（三参考项目分析结论，2026-09-27）
 
-- **Ryn 0.38.0**（MIT，.NET 10）：与本项目定位几乎相同的现有实现——saucer C++ 底座 + ClangSharp 绑定 + 源生成 IPC（`[RynCommand]`，零反射）+ `ryn://` scheme + 能力安全模型，有专门 AOT CI。缺陷：Alpha、单人维护、与 saucer 强耦合、原生二进制需预编译分发。→ 作为架构蓝本，但底座换纯 C#。
+- **Ryn 0.38.0**（MIT，.NET 10）：与本项目定位几乎相同的现有实现——C++ 底座 + ClangSharp 绑定 + 源生成 IPC（`[RynCommand]`，零反射）+ `ryn://` scheme + 能力安全模型，有专门 AOT CI。缺陷：Alpha、单人维护、与该 C++ 底座强耦合、原生二进制需预编译分发。→ 作为架构蓝本，但底座换纯 C#。
 - **IgniteView 2.2.9**（MIT，.NET 9）：IPC 为运行时反射 + Newtonsoft，**Native AOT 下不可用**；内容靠本地 HTTP 端口；Linux 实际是 QtWebEngine（捆绑 Chromium）。→ 反例 + 窗口特效参考。
 - **pywebview 6.2.1**（BSD-3，Python）：最成熟的系统 webview 轻封装；按引擎适配桥接差异、就绪事件、HTTP 兜底的工程经验。→ API 基本面与桥接经验来源。
 
@@ -113,7 +113,7 @@
 - **AOTrino** 与本项目同栈（C# + Native AOT + `WebView2Aot`），同样在窗口自己的 `WM_NCHITTEST` 里算命中值。
   实测其 `HwndWebViewWindow`（HWND 宿主，与本项目同类）**完全无法 resize**——那段代码只在 `CompositionWebViewWindow`
   下有效，因为 Composition 模式下 WebView 是**视觉而非子窗口**，输入由宿主 `TryForwardPointerInput` 手动转发。
-- **Ryn** 用 saucer 的 `DECORATION_PARTIAL`（只去标题栏、**保留边框**），因而系统的边缘 resize 天然可用，
+- **Ryn** 在原生层只用 `DECORATION_PARTIAL`（只去标题栏、**保留边框**），因而系统的边缘 resize 天然可用，
   自己完全不碰 Win32 消息。
 
 **采用方案**：`WM_NCCALCSIZE` 改为「客户区 = 窗口矩形让出四条边框」（即标准客户区，但**不减标题栏**）。
