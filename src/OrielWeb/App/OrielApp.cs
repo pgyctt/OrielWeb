@@ -30,12 +30,7 @@ public sealed class OrielApp : IDisposable
     /// <summary>创建窗口、进入消息循环；阻塞直到所有窗口关闭。</summary>
     public void Run()
     {
-        if (Thread.CurrentThread.GetApartmentState() != ApartmentState.STA)
-        {
-            throw new InvalidOperationException(
-                "OrielWeb 要求主线程为 STA 线程：请在 Main 方法上标注 [STAThread]。" +
-                "（WebView2 的 COM 初始化与 UI 消息循环依赖 STA）");
-        }
+        EnsureApartment();
 
         _backend = PlatformBackendFactory.Create();
 
@@ -56,6 +51,26 @@ public sealed class OrielApp : IDisposable
         }
 
         _backend.RunMessageLoop();
+    }
+
+    /// <summary>
+    /// Windows 要求主线程为 STA（WebView2 的 COM 初始化与 UI 消息循环依赖它）。
+    /// Unix 平台的 <see cref="Thread.GetApartmentState"/> 恒返回 <see cref="ApartmentState.Unknown"/>，
+    /// <c>[STAThread]</c> 特性在 Linux/macOS 上也被忽略，因此在非 Windows 平台必须跳过该检查。
+    /// </summary>
+    internal static void EnsureApartment()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        if (Thread.CurrentThread.GetApartmentState() != ApartmentState.STA)
+        {
+            throw new InvalidOperationException(
+                "OrielWeb 在 Windows 上要求主线程为 STA 线程：请在 Main 方法上标注 [STAThread]。" +
+                "（WebView2 的 COM 初始化与 UI 消息循环依赖 STA）");
+        }
     }
 
     public void Dispose()
