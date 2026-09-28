@@ -86,6 +86,14 @@
       <!-- 只取本项目的生成器：@(Analyzer) 里还有 SDK 自带的分析器/生成器（ILLink、NetAnalyzers、
            LibraryImportGenerator 等），一并打包会把它们强加给消费者。 -->
       <_OrielGeneratorDll Include="@(Analyzer)" Condition="'%(Filename)' == 'OrielWeb.Generators'" />
+    </ItemGroup>
+
+    <!-- 过滤靠程序集名硬匹配：生成器一旦改名而这里没跟上，包会静默失去代码生成能力，
+         消费者要到运行期才发现 IPC 全部失效。这里显式报错，把问题拦在发布前。 -->
+    <Error Condition="'@(_OrielGeneratorDll)' == ''"
+           Text="PackSourceGeneratorDll：解析出的 @(Analyzer->Count()) 个分析器里没有 OrielWeb.Generators.dll —— 生成器项目是否改名了？请同步更新本目标的过滤条件。" />
+
+    <ItemGroup>
       <None Include="@(_OrielGeneratorDll->'%(Identity)')" Pack="True" PackagePath="analyzers/dotnet/cs" Visible="false" />
     </ItemGroup>
   </Target>
