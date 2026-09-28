@@ -9,8 +9,8 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>orielweb.png</PackageIcon>
-    <PackageProjectUrl>https://github.com/orielweb/OrielWeb</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/orielweb/OrielWeb</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/pgyctt/OrielWeb</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/pgyctt/OrielWeb</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <!-- CA1416：Windows 平台层会调用带 SupportedOSPlatform 标注的 API（如 WebView2Aot 生成的接口）。

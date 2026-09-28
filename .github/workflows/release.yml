@@ -1,7 +1,9 @@
 name: release
 
-# 发布 NuGet 包：推送 v* 标签（或手动触发）。
-# 前置：仓库 Secrets 里配置 NUGET_API_KEY（nuget.org 的 Push API Key）。
+# 发布：推送 v* 标签（或手动触发，需选一个 v* 标签的 ref）。
+# 产物：GitHub Release（NuGet 包 + demo 单文件 exe）+ nuget.org。
+# 前置：仓库 Secrets 里配置 NUGET_API_KEY（nuget.org 的 Push API Key）；
+#       未配置时工作流在最后一步失败，但 Release 资产已在上传完毕（推 NuGet 放在最后）。
 # 版本号唯一来源是根 Directory.Build.props 的 <Version>（当前 0.1.0）；
 # 标签必须与之一致（v0.1.0 对应 0.1.0），下面的校验步骤会拦截不一致的发布。
 
@@ -11,7 +13,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  # 上传 Release 资产需要写权限
+  contents: write
 
 jobs:
   publish:
@@ -29,10 +32,11 @@ jobs:
         run: dotnet test tests/OrielWeb.Tests -c Release
 
       - name: Pack
-        # 打包两个包：OrielWeb（库）、OrielWeb.Generators（分析器）。示例与测试项目已 IsPackable=false
+        # 只产 OrielWeb 一个包：生成器已并入主包的 analyzers/dotnet/cs
         run: dotnet pack OrielWeb.slnx -c Release -o dist/nuget
 
       - name: Check tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: |
           [xml]$props = Get-Content Directory.Build.props
@@ -42,6 +46,22 @@ jobs:
             throw "标签 v$tag 与包版本 $version 不一致：先改 Directory.Build.props 的 Version，再打对应标签"
           }
           Write-Output "版本一致：$version"
+
+      - name: Publish demo (win-x64, single file)
+        run: dotnet publish samples/OrielDemo -c Release -r win-x64 -p:DebugType=none -o dist/demo
+
+      - name: Zip demo
+        shell: pwsh
+        run: Compress-Archive -Path 'dist/demo/*' -DestinationPath 'dist/OrielWeb-demo-win-x64.zip' -Force
+
+      - name: Attach assets to the GitHub release
+        # 放在推 NuGet 之前：推送失败（如未配置 NUGET_API_KEY）不影响 Release 资产
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/nuget/*.nupkg
+            dist/nuget/*.snupkg
+            dist/OrielWeb-demo-win-x64.zip
 
       - name: Push to nuget.org
         # --skip-duplicate：重复推送同一版本不再报错（幂等）
