@@ -14,12 +14,17 @@ internal static class Win32Constants
     /// <summary>客户区大小计算（0x0083）。注意不要与 <c>WM_NCHITTEST</c>（0x0084）混淆：
     /// 后者的 lParam 是鼠标坐标而非指针，误按 RECT* 写入会直接 AccessViolation。</summary>
     public const uint WM_NCCALCSIZE = 0x0083;
-    public const uint WM_NCHITTEST = 0x0084;
     public const uint WM_NCLBUTTONDOWN = 0x00A1;
     public const uint WM_APP = 0x8000;
     public const uint WM_APP_DISPATCH = WM_APP + 1;
 
+    /// <summary>WM_NCLBUTTONDOWN 的命中值：令窗口进入标题栏拖动的模态循环（见 BeginDrag）。</summary>
     public static readonly nint HTCAPTION = 2;
+
+    /// <summary>系统窗口边框厚度（不含内边距）；需配合 GetSystemMetricsForDpi 使用。</summary>
+    public const int SM_CXSIZEFRAME = 32;
+    public const int SM_CYSIZEFRAME = 33;
+    public const int SM_CXPADDEDBORDER = 92;
 
     public const uint WS_OVERLAPPEDWINDOW = 0x00CF0000;
     public const uint WS_POPUP = 0x80000000;
@@ -93,6 +98,16 @@ internal struct RECT
     public int Top;
     public int Right;
     public int Bottom;
+}
+
+/// <summary>WM_NCCALCSIZE 的 lParam（wParam 非 0 时）。rgrc0 传入为窗口矩形，返回时须为客户区矩形。</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct NCCALCSIZE_PARAMS
+{
+    public RECT rgrc0;
+    public RECT rgrc1;
+    public RECT rgrc2;
+    public nint lppos;
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -316,6 +331,13 @@ internal static unsafe partial class Win32
     [LibraryImport("user32")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool IsZoomed(nint hwnd);
+
+    [LibraryImport("user32")]
+    internal static partial uint GetDpiForWindow(nint hwnd);
+
+    /// <summary>按指定 DPI 取系统度量（per-monitor DPI 感知下 <see cref="GetSystemMetrics"/> 不可靠）。</summary>
+    [LibraryImport("user32")]
+    internal static partial int GetSystemMetricsForDpi(int index, uint dpi);
 
     // ---- kernel32 ----
 

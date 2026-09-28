@@ -258,27 +258,31 @@ internal partial class Win32WindowHost : IWindowBackend
         {
             case Win32Constants.WM_NCCALCSIZE:
             {
-                // 无边框窗口：令客户区等于整个窗口，消除 WS_THICKFRAME 带来的非客户区边框。
-                // 该边框属非客户区、WebView2 不覆盖，会在窗口顶部露出一条约 7px 的未绘制条带。
-                // （去掉 WS_THICKFRAME 同样有效，但会一并失去系统的边缘调整大小热区，
-                // 故这里保留窗口样式，只修正客户区。）
+                // 无边框窗口的客户区修正。原实现返回 0（客户区 = 整个窗口）以求彻底无边框，
+                // 但 WS_THICKFRAME 的调整大小热区恰恰位于被消除掉的非客户区，且 WebView2 的
+                // 子窗口铺满客户区、对 WM_NCHITTEST 返回 HTCLIENT 阻断了向父窗口的上溯——
+                // 结果是窗口永远收不到 WM_NCHITTEST，边缘完全无法拖动改尺寸
+                // （AOTrino 的 HwndWebViewWindow 实测同样如此）。
+                //
+                // 现改为"客户区 = 窗口矩形让出四条边框"（即标准窗口的客户区，但不减标题栏）：
+                //   - 边框仍属非客户区 → 系统的边缘调整大小、光标形状、双击边框等全部原生可用；
+                //   - 标题栏不参与 → 窗口顶部仍由页面自绘标题栏。
+                // 代价是四周保留一条系统边框（宽度即 SM_C*FRAME + SM_C*PADDEDBORDER）。
                 if (wParam != 0)
                 {
-                    // lParam 为 NCCALCSIZE_PARAMS*，其首成员 rgrc[0] 已是窗口矩形；
-                    // 返回 0 即"客户区 = 该矩形"，无需改写。
+                    if (lParam != 0)
+                    {
+                        int borderX = BorderThickness(horizontal: true);
+                        int borderY = BorderThickness(horizontal: false);
+                        var parameters = (NCCALCSIZE_PARAMS*)lParam;
+                        parameters->rgrc0.Left += borderX;
+                        parameters->rgrc0.Top += borderY;
+                        parameters->rgrc0.Right -= borderX;
+                        parameters->rgrc0.Bottom -= borderY;
+                    }
                     return 0;
                 }
-
-                // lParam 为 RECT*（拟议客户区，屏幕坐标）：显式改写为窗口矩形。
-                // 窗口创建早期可能尚未取得有效矩形，此时保持拟议值不动。
-                if (lParam != 0
-                    && Win32.GetWindowRect(hwnd, out var windowRect)
-                    && windowRect.Right > windowRect.Left
-                    && windowRect.Bottom > windowRect.Top)
-                {
-                    *(RECT*)lParam = windowRect;
-                }
-                return 0;
+                break; // wParam == FALSE：交给 DefWindowProcW 处理 RECT* 形式
             }
 
             case Win32Constants.WM_SIZE:
@@ -329,7 +333,7 @@ internal partial class Win32WindowHost : IWindowBackend
         return Win32.DefWindowProcW(hwnd, message, wParam, lParam);
     }
 
-    /// <summary>窗口销毁时的清理：先释放 COM 资源，再触发 Closed 与窗口计数。</summary>
+    /// <summary>窗口销毁时的清理：先摘除子类并释放 COM 资源，再触发 Closed 与窗口计数。</summary>
     internal void OnWindowDestroyedCore()
     {
         _webViewEvents?.Dispose();
@@ -525,6 +529,24 @@ internal partial class Win32WindowHost : IWindowBackend
             right = client.Right,
             bottom = client.Bottom,
         };
+    }
+
+    // ------------------------------------------------------------------
+    /// <summary>系统窗口边框厚度（物理像素，随窗口所在显示器 DPI 缩放）。</summary>
+    private int BorderThickness(bool horizontal)
+    {
+        uint dpi = Win32.GetDpiForWindow(_hwnd);
+        if (dpi == 0)
+        {
+            dpi = 96;
+        }
+
+        // 必须用 GetSystemMetricsForDpi：GetSystemMetrics 在此进程的 per-monitor DPI 感知下
+        // 返回的是系统 DPI 的值，在副屏（不同缩放）上会明显偏小。
+        int frame = Win32.GetSystemMetricsForDpi(
+            horizontal ? Win32Constants.SM_CXSIZEFRAME : Win32Constants.SM_CYSIZEFRAME, dpi);
+        frame += Win32.GetSystemMetricsForDpi(Win32Constants.SM_CXPADDEDBORDER, dpi);
+        return frame > 0 ? frame : 8;
     }
 
     // ------------------------------------------------------------------
