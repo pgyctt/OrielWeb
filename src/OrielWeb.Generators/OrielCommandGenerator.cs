@@ -33,7 +33,18 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
     // 模型
     // ------------------------------------------------------------------
 
-    private sealed record CommandParameter(string Name, string TypeDisplay, bool IsOptional, bool IsJsonElementArgs);
+    /// <summary>
+    /// 命令参数。<paramref name="DirectRead"/> 非 null 时表示生成器可在编译期直出强类型读取
+    /// （形如 <c>element.GetInt32()</c>），运行期不再经过 <c>OrielJson</c> 的 typeof 分派。
+    /// </summary>
+    private sealed record CommandParameter(
+        string Name,
+        string TypeDisplay,
+        bool IsOptional,
+        bool IsJsonElementArgs,
+        string? DirectDisplay,
+        ImmutableArray<string> DirectKinds,
+        string? DirectRead);
 
     private sealed record CommandModel(
         string CommandName,
@@ -67,7 +78,8 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
                 bool isJsonElementArgs = display == "global::System.Text.Json.JsonElement";
                 // 可空性必须读符号注解：FullyQualifiedFormat 对引用类型的 '?' 不显示
                 bool isOptional = p.Type.NullableAnnotation == NullableAnnotation.Annotated;
-                return new CommandParameter(p.Name, display, isOptional, isJsonElementArgs);
+                var (directDisplay, directKinds, directRead) = ResolveDirectRead(p.Type, isJsonElementArgs);
+                return new CommandParameter(p.Name, display, isOptional, isJsonElementArgs, directDisplay, directKinds, directRead);
             })
             .ToImmutableArray();
 
@@ -102,6 +114,71 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
             needsAwait,
             hasResult,
             parameters);
+    }
+
+    /// <summary>
+    /// 判断参数能否走"直出强类型读取"。仅覆盖语义无歧义的基元类型；
+    /// char / Guid / DateTime / DateTimeOffset / DTO 等仍走泛型入口（见 OrielJson 的类型说明）。
+    /// </summary>
+    private static (string? Display, ImmutableArray<string> Kinds, string? Read) ResolveDirectRead(ITypeSymbol type, bool isJsonElementArgs)
+    {
+        if (isJsonElementArgs)
+        {
+            return (null, [], null); // JsonElement 参数直接透传整个 args，无需读取
+        }
+
+        // 可空值类型（Nullable<T>）拆出底层类型：读法一致，只是变量声明为可空
+        var underlying = type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable
+            ? nullable.TypeArguments[0]
+            : type;
+
+        const string kind = "global::System.Text.Json.JsonValueKind.";
+        return underlying.SpecialType switch
+        {
+            SpecialType.System_String => ("string", [$"{kind}String"], "{0}.GetString()!"),
+            SpecialType.System_Boolean => ("bool", [$"{kind}True", $"{kind}False"], "{0}.GetBoolean()"),
+            SpecialType.System_Int32 => ("int", [$"{kind}Number"], "{0}.GetInt32()"),
+            SpecialType.System_Int64 => ("long", [$"{kind}Number"], "{0}.GetInt64()"),
+            SpecialType.System_Double => ("double", [$"{kind}Number"], "{0}.GetDouble()"),
+            SpecialType.System_Single => ("float", [$"{kind}Number"], "(float){0}.GetDouble()"),
+            SpecialType.System_Decimal => ("decimal", [$"{kind}Number"], "{0}.GetDecimal()"),
+            SpecialType.System_Int16 => ("short", [$"{kind}Number"], "{0}.GetInt16()"),
+            SpecialType.System_UInt16 => ("ushort", [$"{kind}Number"], "{0}.GetUInt16()"),
+            SpecialType.System_UInt32 => ("uint", [$"{kind}Number"], "{0}.GetUInt32()"),
+            SpecialType.System_UInt64 => ("ulong", [$"{kind}Number"], "{0}.GetUInt64()"),
+            SpecialType.System_Byte => ("byte", [$"{kind}Number"], "{0}.GetByte()"),
+            SpecialType.System_SByte => ("sbyte", [$"{kind}Number"], "{0}.GetSByte()"),
+            _ => (null, [], null),
+        };
+    }
+
+    /// <summary>为单个参数生成直出读取代码（含存在性/null 校验与 kind 校验）。</summary>
+    private static void EmitDirectRead(StringBuilder source, CommandParameter parameter, string readTemplate)
+    {
+        string name = Escape(parameter.Name);
+        string element = $"__el_{parameter.Name}";
+        string kinds = string.Join(", ", parameter.DirectKinds);
+        // 生成器项目面向 netstandard2.0：不可用带 StringComparison 的 Replace 重载与 EndsWith(char)
+        string read = readTemplate.Replace("{0}", element);
+
+        if (parameter.IsOptional)
+        {
+            // 引用类型的 '?' 不体现在 TypeDisplay 上，按需补足以在 #nullable enable 下无警告
+            string declaredType = parameter.TypeDisplay.EndsWith("?", StringComparison.Ordinal)
+                ? parameter.TypeDisplay
+                : parameter.TypeDisplay + "?";
+            source.AppendLine($"                    {declaredType} __arg_{parameter.Name} = null;");
+            source.AppendLine($"                    if (global::OrielWeb.Ipc.OrielJson.TryGetArgElement(args, \"{name}\", out var {element}))");
+            source.AppendLine("                    {");
+            source.AppendLine($"                        global::OrielWeb.Ipc.OrielJson.RequireArgKind({element}, \"{name}\", \"{parameter.DirectDisplay}?\", {kinds});");
+            source.AppendLine($"                        __arg_{parameter.Name} = {read};");
+            source.AppendLine("                    }");
+            return;
+        }
+
+        source.AppendLine($"                    var {element} = global::OrielWeb.Ipc.OrielJson.RequireArgElement(args, \"{name}\");");
+        source.AppendLine($"                    global::OrielWeb.Ipc.OrielJson.RequireArgKind({element}, \"{name}\", \"{parameter.DirectDisplay}\", {kinds});");
+        source.AppendLine($"                    var __arg_{parameter.Name} = {read};");
     }
 
     /// <summary>
@@ -241,10 +318,15 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
                 if (parameter.IsJsonElementArgs)
                 {
                     source.AppendLine($"                    var __arg_{parameter.Name} = args;");
-                    continue;
                 }
-                if (parameter.IsOptional)
+                else if (parameter.DirectRead is { } directRead)
                 {
+                    // 编译期已知类型 → 直出强类型读取，运行期零 typeof 分派
+                    EmitDirectRead(source, parameter, directRead);
+                }
+                else if (parameter.IsOptional)
+                {
+                    // char / Guid / DateTime / DateTimeOffset / DTO 等仍走泛型入口（fallback）
                     source.AppendLine($"                    var __arg_{parameter.Name} = global::OrielWeb.Ipc.OrielJson.GetOptionalArg<{parameter.TypeDisplay}>(args, \"{Escape(parameter.Name)}\");");
                 }
                 else

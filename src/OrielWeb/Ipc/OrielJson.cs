@@ -41,8 +41,54 @@ public static class OrielJson
     }
 
     // ------------------------------------------------------------------
-    // 参数提取（源生成器生成代码调用）
+    // 参数提取
+    //
+    // 两条路径：
+    //   1) 直出路径：源生成器在编译期已知参数类型，直接生成
+    //      RequireArgElement / RequireArgKind + element.GetXxx() 调用，运行期无 typeof 分派。
+    //   2) 泛型路径（fallback）：char / Guid / DateTime / DateTimeOffset / DTO 等
+    //      仍走 GetRequiredArg<T> / GetOptionalArg<T>，其内部分派只发生在这条路径上。
     // ------------------------------------------------------------------
+
+    /// <summary>取出必需参数元素：属性缺失或为 null 时抛 <see cref="OrielIpcException"/>。</summary>
+    public static JsonElement RequireArgElement(JsonElement args, string name)
+    {
+        if (args.ValueKind != JsonValueKind.Object || !args.TryGetProperty(name, out var element))
+        {
+            throw new OrielIpcException($"命令缺少必需参数 '{name}'。");
+        }
+        if (element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            throw new OrielIpcException($"命令参数 '{name}' 不能为 null（声明为非可空）。");
+        }
+        return element;
+    }
+
+    /// <summary>取出可选参数元素；属性缺失或为 null 时返回 false（<paramref name="element"/> 为 default）。</summary>
+    public static bool TryGetArgElement(JsonElement args, string name, out JsonElement element)
+    {
+        if (args.ValueKind == JsonValueKind.Object
+            && args.TryGetProperty(name, out element)
+            && element.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
+        {
+            return true;
+        }
+        element = default;
+        return false;
+    }
+
+    /// <summary>校验元素 kind 属于允许集合，否则抛 <see cref="OrielIpcException"/>。</summary>
+    public static void RequireArgKind(JsonElement element, string name, string display, params JsonValueKind[] kinds)
+    {
+        foreach (var kind in kinds)
+        {
+            if (element.ValueKind == kind)
+            {
+                return;
+            }
+        }
+        throw BadArgKind(name, element, display);
+    }
 
     /// <summary>提取必需命名参数。属性缺失或为 null（对非可空类型）时抛出 <see cref="OrielIpcException"/>。</summary>
     public static T GetRequiredArg<T>(JsonElement args, string name)
@@ -171,7 +217,8 @@ public static class OrielJson
         }
         try
         {
-            return (T)JsonSerializer.Deserialize(element.GetRawText(), typeInfo)!;
+            // 直接对 JsonElement 反序列化：GetRawText() 会分配完整字符串副本再让 STJ 解析第二遍
+            return (T)element.Deserialize(typeInfo)!;
         }
         catch (JsonException ex)
         {

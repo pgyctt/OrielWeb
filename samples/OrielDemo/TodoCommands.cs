@@ -45,8 +45,15 @@ public sealed partial class TodoCommands
     public static SysInfo Info(int extra)
     {
         return new SysInfo(
-            Platform: OperatingSystem.IsWindows() ? "windows" : "unknown",
+            Platform: CurrentPlatformName(),
             Version: typeof(TodoCommands).Assembly.GetName().Version?.ToString(3) ?? "0.0.0",
             TodoCount: extra);
     }
+
+    /// <summary>当前平台名（与桥接 JS 的 window.oriel.platform 取值保持一致）。</summary>
+    private static string CurrentPlatformName() =>
+        OperatingSystem.IsWindows() ? "windows"
+        : OperatingSystem.IsMacOS() ? "macos"
+        : OperatingSystem.IsLinux() ? "linux"
+        : "unknown";
 }

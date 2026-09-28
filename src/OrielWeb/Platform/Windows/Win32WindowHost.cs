@@ -17,7 +17,8 @@ internal sealed partial class Win32WindowHost : IWindowBackend
     private const string WindowClassName = "OrielWeb_Window";
     private const string WebView2UserDataFolderName = "WebView2";
 
-    private static ushort s_windowClassRegistered;
+    private static int s_windowClassRegistered;
+    private static readonly object s_windowClassGate = new();
     private static readonly nint s_windowClassNamePtr = Marshal.StringToHGlobalUni(WindowClassName);
 
     private readonly WebviewWindow _window;
@@ -30,7 +31,6 @@ internal sealed partial class Win32WindowHost : IWindowBackend
 
     private GCHandle _selfHandle;
     private nint _hwnd;
-    private uint _creationThreadId;
 
     private WebView2Ptr? _webview;
     private WebView2ControllerPtr? _controller;
@@ -41,6 +41,7 @@ internal sealed partial class Win32WindowHost : IWindowBackend
     private bool _isFullscreen;
     private bool _isOnTop;
     private WINDOWPLACEMENT _savedPlacement;
+    private nint _savedStyle;
     private string _title;
 
     private event Action? Loaded;
@@ -158,24 +159,36 @@ internal sealed partial class Win32WindowHost : IWindowBackend
 
     private static unsafe void EnsureWindowClass()
     {
-        if (Interlocked.Exchange(ref s_windowClassRegistered, 1) == 1)
+        if (Volatile.Read(ref s_windowClassRegistered) == 1)
         {
             return;
         }
 
-        var windowClass = new WNDCLASSEXW
+        lock (s_windowClassGate)
         {
-            cbSize = (uint)sizeof(WNDCLASSEXW),
-            style = Win32Constants.CS_HREDRAW | Win32Constants.CS_VREDRAW | Win32Constants.CS_DBLCLKS,
-            lpfnWndProc = (nint)(delegate* unmanaged<nint, uint, nuint, nint, nint>)&WindowProc,
-            hInstance = Win32.GetModuleHandleW(null),
-            hCursor = Win32.LoadCursorW(0, Win32Constants.IDC_ARROW),
-            hbrBackground = 0, // WebView2 自绘客户端区，置空避免闪烁
-            lpszClassName = s_windowClassNamePtr,
-        };
-        if (Win32.RegisterClassExW(ref windowClass) == 0)
-        {
-            throw new InvalidOperationException($"注册窗口类失败（Win32 错误 {Marshal.GetLastWin32Error()}）。");
+            if (Volatile.Read(ref s_windowClassRegistered) == 1)
+            {
+                return;
+            }
+
+            var windowClass = new WNDCLASSEXW
+            {
+                cbSize = (uint)sizeof(WNDCLASSEXW),
+                style = Win32Constants.CS_HREDRAW | Win32Constants.CS_VREDRAW | Win32Constants.CS_DBLCLKS,
+                lpfnWndProc = (nint)(delegate* unmanaged<nint, uint, nuint, nint, nint>)&WindowProc,
+                hInstance = Win32.GetModuleHandleW(null),
+                hCursor = Win32.LoadCursorW(0, Win32Constants.IDC_ARROW),
+                hbrBackground = 0, // WebView2 自绘客户端区，置空避免闪烁
+                lpszClassName = s_windowClassNamePtr,
+            };
+            if (Win32.RegisterClassExW(ref windowClass) == 0)
+            {
+                throw new InvalidOperationException($"注册窗口类失败（Win32 错误 {Marshal.GetLastWin32Error()}）。");
+            }
+
+            // 注册成功后才置位：此前是先置位后注册，若注册失败抛异常，标志已是 1
+            // → 后续调用直接跳过 → 用未注册的类名去 CreateWindowExW，错误信息误导
+            Volatile.Write(ref s_windowClassRegistered, 1);
         }
     }
 
@@ -279,7 +292,6 @@ internal sealed partial class Win32WindowHost : IWindowBackend
 
     private void InitializeWebView2()
     {
-        _creationThreadId = Win32.GetCurrentThreadId();
         Directory.CreateDirectory(_userDataFolder);
 
         nint handlerPointer = WebView2NativeCallbacks.CreateEnvironmentHandler(this);
@@ -566,7 +578,10 @@ internal sealed partial class Win32WindowHost : IWindowBackend
             Win32.GetWindowPlacement(_hwnd, ref placement);
             _savedPlacement = placement;
 
+            // 保存原始样式：退出全屏时必须原样还原。此前退出时无条件
+            // style |= WS_OVERLAPPEDWINDOW，会把无边框（WS_POPUP）窗口全屏后变成带边框
             nint style = Win32.GetWindowLongPtrW(_hwnd, Win32Constants.GWL_STYLE);
+            _savedStyle = style;
             style &= ~(nint)(Win32Constants.WS_CAPTION | Win32Constants.WS_THICKFRAME);
             style |= (nint)Win32Constants.WS_POPUP;
             Win32.SetWindowLongPtrW(_hwnd, Win32Constants.GWL_STYLE, style);
@@ -583,10 +598,7 @@ internal sealed partial class Win32WindowHost : IWindowBackend
         }
         else
         {
-            nint style = Win32.GetWindowLongPtrW(_hwnd, Win32Constants.GWL_STYLE);
-            style &= ~(nint)Win32Constants.WS_POPUP;
-            style |= (nint)(Win32Constants.WS_OVERLAPPEDWINDOW & ~Win32Constants.WS_VISIBLE);
-            Win32.SetWindowLongPtrW(_hwnd, Win32Constants.GWL_STYLE, style);
+            Win32.SetWindowLongPtrW(_hwnd, Win32Constants.GWL_STYLE, _savedStyle);
 
             var placement = _savedPlacement;
             Win32.SetWindowPlacement(_hwnd, ref placement);
@@ -757,12 +769,15 @@ internal sealed partial class Win32WindowHost : IWindowBackend
 
     private static string ConvertFilter(string? filter)
     {
-        // "文本|*.txt|全部|*.*" → 双 null 分隔的 Win32 格式
+        // "文本|*.txt|全部|*.*" → Win32 要求以双 null 结尾的过滤器格式。
+        // 此前只补一个 '\0'，靠 StringToHGlobalUni 自动追加的终止符侥幸成立，
+        // 用户自定义 filter 实际依赖该 API 容错；此处显式补足双 null，
+        // 并容忍用户 filter 末尾多出的 '|'（否则会产生空条目）。
         if (string.IsNullOrEmpty(filter))
         {
-            return "所有文件\0*.*\0";
+            return "所有文件\0*.*\0\0";
         }
-        return filter.Replace('|', '\0') + "\0";
+        return filter.TrimEnd('|').Replace('|', '\0') + "\0\0";
     }
 
     void IWindowBackend.ShowMessageBox(string text, string? title, OrielMessageBoxIcon icon)

@@ -10,11 +10,11 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
 {
     private const string MessageWindowClassName = "OrielWeb_MsgWindow";
 
-    private static ushort s_messageClassRegistered;
+    private static int s_messageClassRegistered;
+    private static readonly object s_messageClassGate = new();
 
     private readonly uint _uiThreadId;
     private readonly nint _messageHwnd;
-    private readonly GCHandle _selfHandle;
     private int _aliveWindows;
 
     public WindowsPlatformBackend()
@@ -23,15 +23,15 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         EnsureMessageWindowClass();
 
         _uiThreadId = Win32.GetCurrentThreadId();
-        _selfHandle = GCHandle.Alloc(this);
+        // lpParam 传 0：MessageWindowProc 只处理 WM_APP_DISPATCH（要被执行的 Action 随消息的
+        // lParam 传递），从不读取创建参数或 GWLP_USERDATA，因此无需分配 GCHandle
         _messageHwnd = Win32.CreateWindowExW(
             0, RegisterClassNamePtr(MessageWindowClassName), 0, 0,
             0, 0, 0, 0,
             Win32Constants.HWND_MESSAGE, 0, Win32.GetModuleHandleW(null),
-            (void*)GCHandle.ToIntPtr(_selfHandle));
+            null);
         if (_messageHwnd == 0)
         {
-            _selfHandle.Free();
             throw new InvalidOperationException($"创建 OrielWeb 调度窗口失败（Win32 错误 {Marshal.GetLastWin32Error()}）。");
         }
     }
@@ -76,9 +76,9 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         }
     }
 
+    /// <summary>调度窗口随消息循环结束销毁，当前无进程级非托管资源需要释放。</summary>
     public void Dispose()
     {
-        _selfHandle.Free();
     }
 
     // ---- 消息窗口 ----
@@ -117,21 +117,32 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
 
     private static void EnsureMessageWindowClass()
     {
-        if (Interlocked.Exchange(ref s_messageClassRegistered, 1) == 1)
+        if (Volatile.Read(ref s_messageClassRegistered) == 1)
         {
             return;
         }
 
-        var windowClass = new WNDCLASSEXW
+        lock (s_messageClassGate)
         {
-            cbSize = (uint)sizeof(WNDCLASSEXW),
-            lpfnWndProc = (nint)(delegate* unmanaged<nint, uint, nuint, nint, nint>)&MessageWindowProc,
-            hInstance = Win32.GetModuleHandleW(null),
-            lpszClassName = RegisterClassNamePtr(MessageWindowClassName),
-        };
-        if (Win32.RegisterClassExW(ref windowClass) == 0)
-        {
-            throw new InvalidOperationException($"注册 OrielWeb 调度窗口类失败（Win32 错误 {Marshal.GetLastWin32Error()}）。");
+            if (Volatile.Read(ref s_messageClassRegistered) == 1)
+            {
+                return;
+            }
+
+            var windowClass = new WNDCLASSEXW
+            {
+                cbSize = (uint)sizeof(WNDCLASSEXW),
+                lpfnWndProc = (nint)(delegate* unmanaged<nint, uint, nuint, nint, nint>)&MessageWindowProc,
+                hInstance = Win32.GetModuleHandleW(null),
+                lpszClassName = RegisterClassNamePtr(MessageWindowClassName),
+            };
+            if (Win32.RegisterClassExW(ref windowClass) == 0)
+            {
+                throw new InvalidOperationException($"注册 OrielWeb 调度窗口类失败（Win32 错误 {Marshal.GetLastWin32Error()}）。");
+            }
+
+            // 注册成功后才置位（理由同 Win32WindowHost.EnsureWindowClass）
+            Volatile.Write(ref s_messageClassRegistered, 1);
         }
     }
 

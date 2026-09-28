@@ -20,7 +20,6 @@ public sealed class OrielAppBuilder
     internal string AssetHost { get; private set; } = "app.oriel";
     internal string? AssetResourcePrefix { get; private set; }
     internal string? UserDataFolder { get; private set; }
-    internal List<OrielWindowOptions> WindowOptionsList { get; } = [];
     internal Dictionary<Type, Func<object>> TargetFactories { get; } = [];
 
     /// <summary>启用内嵌前端资源：<paramref name="resourcePrefix"/> 为程序集内嵌资源名前缀（默认 "程序集名.wwwroot."），经 <paramref name="host"/> 虚拟主机提供。</summary>
@@ -71,7 +70,6 @@ public sealed class OrielAppBuilder
         configure?.Invoke(options);
         var window = new WebviewWindow();
         onCreated?.Invoke(window);
-        WindowOptionsList.Add(options);
         PendingWindows.Add((window, options));
     }
 
@@ -103,5 +101,13 @@ public sealed class OrielAppBuilder
 /// <summary>应用静态入口。</summary>
 public static class Oriel
 {
-    public static OrielAppBuilder CreateBuilder(string[]? args = null) => new();
+    /// <summary>
+    /// 创建构建器。<paramref name="args"/> 目前不参与配置（保留以对齐通用启动模板的签名），
+    /// 需要读取命令行参数的应用可自行解析后再调用对应配置方法。
+    /// </summary>
+    public static OrielAppBuilder CreateBuilder(string[]? args = null)
+    {
+        _ = args;
+        return new();
+    }
 }

@@ -53,13 +53,14 @@ internal sealed class WebMessageReceivedHandler : IIpcReplySink
         }
         catch (Exception ex)
         {
-            // 分发器内部已按命令捕获；此处兜底分发器之外的错误
-            PostJson($"{{\"__oriel\":\"result\",\"id\":0,\"ok\":false,\"error\":{Encode(ex.Message)}}}");
+            // 分发器内部已按命令捕获；此处兜底分发器之外的错误。
+            // 用 JsonSerializer 生成字符串字面量：手写转义漏掉 \t \b \f 与全部
+            // U+0000–U+001F 控制字符，异常消息含制表符时会产生非法 JSON，
+            // PostWebMessageAsJson 直接失败，前端连错误都收不到。
+            // Linux/macOS 版一直用的就是 JsonSerializer.Serialize，此处与之统一。
+            PostJson($"{{\"__oriel\":\"result\",\"id\":0,\"ok\":false,\"error\":{JsonSerializer.Serialize(ex.Message)}}}");
         }
     }
-
-    private static string Encode(string text)
-        => "\"" + text.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r") + "\"";
 
     // IIpcReplySink：回执必须切回 UI 线程（WebView2 COM 绑定 STA）
     public void PostJson(string json)

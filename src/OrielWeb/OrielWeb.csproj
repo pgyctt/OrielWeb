@@ -20,6 +20,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- 三平台共用桥接脚本模板（占位符在建窗口时替换后注入，资源名 OrielWeb.Bridge.oriel-bridge.js） -->
+    <EmbeddedResource Include="Bridge\oriel-bridge.js" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- 仅取 WebView2Loader.dll 原生位；托管互操作程序集不被引用，AOT 裁剪自动丢弃 -->
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" ExcludeAssets="compile" />
   </ItemGroup>
