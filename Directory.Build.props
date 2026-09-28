@@ -1,0 +1,21 @@
+<Project>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <Version>0.1.0</Version>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Authors>OrielWeb Contributors</Authors>
+    <!-- Native AOT / 裁剪全局约束：任何反射/动态行为在编译期即报错 -->
+    <IsAotCompatible Condition="'$(TargetFramework)' == 'net10.0'">true</IsAotCompatible>
+    <IsTrimmable Condition="'$(TargetFramework)' == 'net10.0'">true</IsTrimmable>
+    <EnableTrimAnalyzer Condition="'$(TargetFramework)' == 'net10.0'">true</EnableTrimAnalyzer>
+    <EnableAotAnalyzer Condition="'$(TargetFramework)' == 'net10.0'">true</EnableAotAnalyzer>
+    <EnableSingleFileAnalyzer Condition="'$(TargetFramework)' == 'net10.0'">true</EnableSingleFileAnalyzer>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build
+        run: dotnet build OrielWeb.slnx -c Release
+
+      - name: Test
+        run: dotnet test tests/OrielWeb.Tests -c Release --no-build
+
+  aot-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish AOT
+        run: dotnet publish samples/OrielDemo -c Release -r win-x64 -v minimal
+
+      - name: Check output
+        run: |
+          $exe = "samples/OrielDemo/bin/Release/net10.0/win-x64/publish/OrielDemo.exe"
+          if (-not (Test-Path $exe)) { throw "AOT output missing: $exe" }
+          $size = (Get-Item $exe).Length / 1MB
+          Write-Output "AOT exe size: $([math]::Round($size, 1)) MB"
+
+  compile-macos:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Compile for osx-arm64
+        run: dotnet build src/OrielWeb/OrielWeb.csproj -r osx-arm64 -c Release --no-self-contained
+
+      - name: Compile for osx-x64
+        run: dotnet build src/OrielWeb/OrielWeb.csproj -r osx-x64 -c Release --no-self-contained
+
+  compile-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Compile for linux-x64
+        run: dotnet build src/OrielWeb/OrielWeb.csproj -r linux-x64 -c Release --no-self-contained
+
+      - name: Publish AOT Linux
+        run: dotnet publish samples/OrielDemo -c Release -r linux-x64 -v minimal
+
+  aot-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish AOT macOS ARM64
+        run: dotnet publish samples/OrielDemo -c Release -r osx-arm64 -v minimal
+
+      - name: Publish AOT macOS x64
+        run: dotnet publish samples/OrielDemo -c Release -r osx-x64 -v minimal

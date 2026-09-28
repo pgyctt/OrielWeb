@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- WinExe：不显示命令行窗口 -->
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>OrielDemo</RootNamespace>
+    <!-- Native AOT 发布：dotnet publish -c Release -r win-x64 -->
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\OrielWeb\OrielWeb.csproj" />
+    <!-- 分析器不随 ProjectReference 传递：消费项目需直接引用生成器 -->
+    <ProjectReference Include="..\..\src\OrielWeb.Generators\OrielWeb.Generators.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 前端资源内嵌进程序集，启动时解压并由虚拟主机 https://app.oriel/ 提供 -->
+    <EmbeddedResource Include="wwwroot\**\*" />
+  </ItemGroup>
+
+</Project>

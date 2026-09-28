@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <Description>OrielWeb — 类 Tauri 的 C# 跨平台系统 webview 核心库。零 C++ 组件、零 GUI 框架依赖、Native AOT 友好、零反射 IPC。</Description>
+    <PackageTags>webview;tauri;desktop;cross-platform;nativeaot;aot;gtk;wkwebview</PackageTags>
+    <PackageId>OrielWeb</PackageId>
+    <Version>0.1.0</Version>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/orielweb/OrielWeb</RepositoryUrl>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="True" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 仅取 WebView2Loader.dll 原生位；托管互操作程序集不被引用，AOT 裁剪自动丢弃 -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" ExcludeAssets="compile" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 源生成器以分析器形态进入引用方编译 -->
+    <ProjectReference Include="..\OrielWeb.Generators\OrielWeb.Generators.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

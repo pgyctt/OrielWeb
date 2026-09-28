@@ -1,0 +1,57 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+## NuGet
+*.nupkg
+*.snupkg
+**/packages/*
+!**/packages/build/
+*.nuget.props
+*.nuget.targets
+
+## Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+arm64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+## Visual Studio
+.vs/
+*.rsuser
+*.sln.docstates
+
+## IDE
+.idea/
+*.swp
+*~
+
+## OS
+.DS_Store
+Thumbs.db
+
+## OrielWeb 参考/构建缓存（第三方参考副本，默认不入版本库；需要时用 git add -f 强制纳入）
+.reference/
+参考项目/
+
+## 测试结果
+[Tt]est[Rr]esult*/
+TestResult.xml
+
+## Native AOT 编译中间件
+*.exp
+*.lib
+*.pdb
+*.ilk
+*.obj

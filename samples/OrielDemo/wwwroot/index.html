@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Oriel Demo</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header class="titlebar">
+        <div class="drag-region" id="drag-region">
+            <span class="app-title">Oriel Demo</span>
+        </div>
+        <div class="win-controls">
+            <button id="btn-min" class="win-btn" title="最小化">&#x2500;</button>
+            <button id="btn-max" class="win-btn" title="最大化 / 还原">&#x25A1;</button>
+            <button id="btn-close" class="win-btn close" title="关闭">&#x00D7;</button>
+        </div>
+    </header>
+
+    <main class="app">
+        <div class="header">
+            <div>
+                <h1>Oriel Demo</h1>
+                <p class="subtitle">C# · 系统 WebView · Native AOT — 零反射 IPC · 无边框窗口</p>
+            </div>
+            <span id="ipc-badge" class="badge">IPC 连接中…</span>
+        </div>
+
+        <form id="add-form" class="add-form">
+            <input id="todo-input" type="text" placeholder="添加待办事项，回车确认…" autocomplete="off" autofocus>
+            <button type="submit">添加</button>
+        </form>
+
+        <ul id="todo-list" class="todo-list"></ul>
+
+        <footer class="footer">
+            <span id="count-label">共 0 项</span>
+            <span class="spacer"></span>
+            <button id="btn-dialog" class="ghost">打开文件</button>
+            <button id="btn-fullscreen" class="ghost">全屏</button>
+            <button id="btn-ontop" class="ghost">置顶</button>
+        </footer>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>
+
