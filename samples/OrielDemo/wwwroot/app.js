@@ -85,9 +85,21 @@ document.getElementById("btn-close").addEventListener("click", () => window.orie
 // 图标随最大化状态切换。用户经原生路径最大化（双击标题栏、拖到屏幕顶端、Win+↑）时
 // 页面无法自行察觉，依赖宿主推送的 maximized 事件。
 function setMaximizedIcon(maximized) {
-    maxBtn.textContent = maximized ? "\u2750" : "\u25A1"; // ❐ 还原 / □ 最大化
-    maxBtn.title = maximized ? "还原" : "最大化";
+    maxBtn.classList.toggle("is-maximized", !!maximized); // 由 CSS 切换 maximize/restore 字形
+    const label = maximized ? "还原" : "最大化";
+    maxBtn.title = label;
+    maxBtn.setAttribute("aria-label", label);
 }
+
+// 标题栏字形按"物理像素"绘制：Windows 的标题栏图标线宽恒为 1 物理像素，而 1 CSS 像素在
+// 125%/150% 缩放下会是 1.25/1.5 物理像素（线条变粗、发虚）。把设备像素比交给 CSS，
+// 由它把 stroke-width 折算回 1 物理像素。
+function updateDevicePixelRatio() {
+    document.documentElement.style.setProperty("--dpr", String(window.devicePixelRatio || 1));
+}
+
+updateDevicePixelRatio();
+window.addEventListener("resize", updateDevicePixelRatio);
 
 window.oriel.on("maximized", setMaximizedIcon);
 

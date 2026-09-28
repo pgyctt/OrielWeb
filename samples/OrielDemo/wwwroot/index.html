@@ -12,9 +12,30 @@
             <span class="app-title">Oriel Demo</span>
         </div>
         <div class="win-controls">
-            <button id="btn-min" class="win-btn" title="最小化">&#x2500;</button>
-            <button id="btn-max" class="win-btn" title="最大化 / 还原">&#x25A1;</button>
-            <button id="btn-close" class="win-btn close" title="关闭">&#x00D7;</button>
+            <!-- 字形按 Windows 标题栏按钮的几何绘制：10x10 字形、1 物理像素线宽、46x32 按钮。
+                 用 SVG 而非文字符号——之前的 ─ □ × 取自正文字体，笔画粗细与尺寸都与系统不符。 -->
+            <button id="btn-min" class="win-btn" title="最小化" aria-label="最小化">
+                <svg class="glyph" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+                    <path d="M0 5.5 H10" />
+                </svg>
+            </button>
+            <button id="btn-max" class="win-btn" title="最大化" aria-label="最大化">
+                <svg class="glyph glyph-maximize" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+                    <rect x="0.5" y="0.5" width="9" height="9" />
+                </svg>
+                <svg class="glyph glyph-restore" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+                    <!-- 几何照 Segoe MDL2 Assets 的 E923（还原）量得：方块 8x8、两者错位 2px、线宽 1px。
+                         完整方块在**左下**，背面方块错位到**右上**，且背面只画露出来的上边、右边，
+                         以及右下角到前方块右缘为止的那一小段——画成镜像（背左上前右下）就反了。 -->
+                    <path d="M0.5 2.5 H7.5 V9.5 H0.5 Z" />
+                    <path d="M2.5 0.5 H9.5 V7.5 H7.5" />
+                </svg>
+            </button>
+            <button id="btn-close" class="win-btn close" title="关闭" aria-label="关闭">
+                <svg class="glyph" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+                    <path d="M0.5 0.5 L9.5 9.5 M9.5 0.5 L0.5 9.5" />
+                </svg>
+            </button>
         </div>
     </header>
 
