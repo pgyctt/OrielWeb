@@ -32,7 +32,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- 仅取 WebView2Loader.dll 原生位；托管互操作程序集不被引用，AOT 裁剪自动丢弃 -->
+    <!-- 仅取 WebView2Loader.dll 原生位：WebView2Aot 的 WebView2Utilities.Initialize 会把它从入口程序集的
+         嵌入资源解压并加载（单文件 / AOT 发布友好）。托管互操作程序集不被引用，ExcludeAssets="compile"
+         可避免其附带的 WPF 依赖（Microsoft.Web.WebView2.Wpf.dll → WindowsBase）触发 MSB3277。 -->
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" ExcludeAssets="compile" />
     <PackageReference Include="WebView2Aot" Version="1.6.1" />
   </ItemGroup>

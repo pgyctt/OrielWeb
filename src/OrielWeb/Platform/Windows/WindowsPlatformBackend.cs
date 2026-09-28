@@ -36,25 +36,15 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         }
 
         // Win32 消息循环本身没有 SynchronizationContext：安装后，await 的续体会被 Post 回
-        // UI 线程队列，这是 WebView2 生成绑定（V2 后端）异步装配能正确工作的前提。
+        // UI 线程队列，这是 WebView2 生成绑定异步装配（Task 化）能正确工作的前提。
         Win32SynchronizationContext.Install(PostToMainThread);
     }
 
     // ---- IPlatformBackend ----
 
-    /// <summary>后端选择开关：设为 <c>legacy</c> 时使用手工 vtable 实现（V1）。</summary>
-    internal const string BackendSwitchVariable = "ORIEL_WIN_BACKEND";
-
     public IWindowBackend CreateWindow(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory)
     {
-        // E-4：两条实现并行存在，可用环境变量做同机 A/B 对比；出问题只需切回 legacy
-        bool useLegacy = string.Equals(
-            Environment.GetEnvironmentVariable(BackendSwitchVariable),
-            "legacy", StringComparison.OrdinalIgnoreCase);
-
-        Win32WindowHost host = useLegacy
-            ? Win32WindowHost.Create(window, options, app, assetDirectory, this)
-            : Win32WindowHostV2.Create(window, options, app, assetDirectory, this);
+        var host = Win32WindowHost.Create(window, options, app, assetDirectory, this);
 
         _aliveWindows++;
         return host;

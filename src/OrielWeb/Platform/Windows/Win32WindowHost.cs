@@ -1,10 +1,15 @@
 using System.Buffers;
+using System.Diagnostics;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 using System.Text;
 using System.Text.Json;
+using DirectN.Extensions.Com;
 using OrielWeb.Ipc;
 using OrielWeb.Platform.Windows.Interop;
+using WebView2;
+using WebView2.Utilities;
 
 namespace OrielWeb.Platform.Windows;
 
@@ -12,6 +17,12 @@ namespace OrielWeb.Platform.Windows;
 /// 单个窗口的 Win32 + WebView2 宿主：窗口创建、WndProc、WebView2 装配、
 /// 事件回抛、IPC 回执线程切换与对话框。
 /// </summary>
+/// <remarks>
+/// WebView2 互操作走 <c>WebView2Aot</c> 的源生成绑定：<c>[GeneratedComInterface]</c>（RCW）
+/// 与包内事件处理器提供的 <c>[GeneratedComClass]</c>（CCW）。
+/// 因此本文件不含任何手工 vtable、IID 表、RefCount 或 QueryInterface 代码；
+/// 版本化接口成员（如 <c>SetVirtualHostNameToFolderMapping</c>）在包装层直达。
+/// </remarks>
 internal partial class Win32WindowHost : IWindowBackend
 {
     private const string WindowClassName = "OrielWeb_Window";
@@ -21,9 +32,8 @@ internal partial class Win32WindowHost : IWindowBackend
     private static readonly object s_windowClassGate = new();
     private static readonly nint s_windowClassNamePtr = Marshal.StringToHGlobalUni(WindowClassName);
 
-    // 可见性为 internal：Win32WindowHostV2 继承本类并复用这些状态（同一程序集内可见）。
-    // 本类负责全部 Win32 侧逻辑（窗口/消息循环/样式/全屏/拖动/对话框），
-    // COM 互操作层由派生类替换。
+    private static int s_loaderInitialized;
+
     internal readonly WebviewWindow _window;
     internal readonly OrielWindowOptions _options;
     internal readonly OrielApp _app;
@@ -35,8 +45,11 @@ internal partial class Win32WindowHost : IWindowBackend
     private GCHandle _selfHandle;
     internal nint _hwnd;
 
-    private WebView2Ptr? _webview;
-    private WebView2ControllerPtr? _controller;
+    private IComObject<ICoreWebView2Environment>? _environment;
+    private IComObject<ICoreWebView2Controller>? _controller;
+    private IComObject<ICoreWebView2>? _webView;
+    private CoreWebView2Events? _webViewEvents;
+
     private volatile bool _loadedRaised;
 
     private int _minWidth;
@@ -81,22 +94,14 @@ internal partial class Win32WindowHost : IWindowBackend
     // 创建
     // ------------------------------------------------------------------
 
-    public static unsafe Win32WindowHost Create(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, WindowsPlatformBackend backend)
-        => CreateHost(window, options, app, assetDirectory, backend,
-            static (w, o, a, d, b) => new Win32WindowHost(w, o, a, d, b));
-
     /// <summary>
-    /// 窗口创建流程，供派生宿主（<see cref="Win32WindowHostV2"/>）复用：派生类沿用同一个窗口类与
-    /// WndProc（后者经 GWLP_USERDATA 取回宿主并按基类处理消息），因此无需自建窗口类。
+    /// 创建窗口：注册窗口类（幂等）→ CreateWindowExW（宿主经 lpParam 存入 GWLP_USERDATA，
+    /// WndProc 据此取回实例）→ 触发 PostCreate（装配 WebView2）。
     /// </summary>
-    protected static unsafe T CreateHost<T>(
-        WebviewWindow window, OrielWindowOptions options, OrielApp app,
-        string? assetDirectory, WindowsPlatformBackend backend,
-        Func<WebviewWindow, OrielWindowOptions, OrielApp, string?, WindowsPlatformBackend, T> factory)
-        where T : Win32WindowHost
+    public static unsafe Win32WindowHost Create(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, WindowsPlatformBackend backend)
     {
         EnsureWindowClass();
-        var host = factory(window, options, app, assetDirectory, backend);
+        var host = new Win32WindowHost(window, options, app, assetDirectory, backend);
         host._selfHandle = GCHandle.Alloc(host);
 
         uint style = ComputeStyle(options);
@@ -324,9 +329,29 @@ internal partial class Win32WindowHost : IWindowBackend
         return Win32.DefWindowProcW(hwnd, message, wParam, lParam);
     }
 
-    /// <summary>窗口销毁时的清理。派生宿主可覆盖以先释放自己的资源，再调用基类实现。</summary>
-    internal virtual void OnWindowDestroyedCore()
+    /// <summary>窗口销毁时的清理：先释放 COM 资源，再触发 Closed 与窗口计数。</summary>
+    internal void OnWindowDestroyedCore()
     {
+        _webViewEvents?.Dispose();
+        _webViewEvents = null;
+
+        var controller = Interlocked.Exchange(ref _controller, null);
+        if (controller is not null)
+        {
+            try
+            {
+                controller.Close(); // 先通知控制器关闭，再释放句柄
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[OrielWeb] 关闭 WebView2 控制器失败：{ex.Message}");
+            }
+            controller.Dispose();
+        }
+
+        Interlocked.Exchange(ref _webView, null)?.Dispose();
+        Interlocked.Exchange(ref _environment, null)?.Dispose();
+
         Closed?.Invoke();
         _selfHandle.Free();
         _backend.OnWindowDestroyed();
@@ -336,15 +361,131 @@ internal partial class Win32WindowHost : IWindowBackend
     // WebView2 装配（异步回调均在 UI 线程）
     // ------------------------------------------------------------------
 
-    internal virtual void InitializeWebView2()
+    internal void InitializeWebView2()
     {
-        Directory.CreateDirectory(_userDataFolder);
+        // 装配是异步的：立即返回，完成后继续（失败经 OnWebViewFailed 提示并销毁窗口）
+        _ = InitializeWebView2Async();
+    }
 
-        nint handlerPointer = WebView2NativeCallbacks.CreateEnvironmentHandler(this);
-        // 测试开关：指定固定版本运行时（如 153.0.4234.46）
-        var browserFolder = Environment.GetEnvironmentVariable("ORIEL_WEBVIEW2_FOLDER");
-        int hr = WebView2LoaderNative.CreateCoreWebView2EnvironmentWithOptions(browserFolder, _userDataFolder, 0, handlerPointer);
-        WebView2ComHelper.ThrowIfFailed(hr, "创建 WebView2 环境（加载 WebView2Loader.dll）");
+    private async Task InitializeWebView2Async()
+    {
+        try
+        {
+            EnsureLoaderInitialized();
+
+            string? browserFolder = Environment.GetEnvironmentVariable("ORIEL_WEBVIEW2_FOLDER");
+            _environment = await Functions.CreateCoreWebView2EnvironmentWithOptionsAsync(
+                browserFolder, _userDataFolder, null).ConfigureAwait(true)
+                ?? throw new InvalidOperationException("创建 WebView2 环境失败（返回 null）。");
+
+            _controller = await _environment.CreateCoreWebView2ControllerAsync(_hwnd).ConfigureAwait(true)
+                ?? throw new InvalidOperationException("创建 WebView2 控制器失败（返回 null）。");
+
+            _webView = _controller.CoreWebView2
+                ?? throw new InvalidOperationException("获取 CoreWebView2 失败（返回 null）。");
+
+            // 内嵌资产 → 虚拟主机（同源 https，免 CORS）；版本化接口成员在包装层直达，
+            // 不需要 QueryInterface，也就没有"运行时过旧导致静默降级"的盲区
+            if (_assetDirectory is not null)
+            {
+                _webView.SetVirtualHostNameToFolderMapping(
+                    _assetHost,
+                    _assetDirectory,
+                    COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND.COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS);
+            }
+
+            if (_webView.Settings is { } settings)
+            {
+                using (settings)
+                {
+                    settings.AreDevToolsEnabled = _options.Debug;
+                }
+            }
+
+            _webViewEvents = new CoreWebView2Events(_webView);
+            _webViewEvents.WebMessageReceived += OnWebMessageReceived;
+            _webViewEvents.NavigationCompleted += OnNavigationCompleted;
+            _webViewEvents.DocumentTitleChanged += OnDocumentTitleChanged;
+
+            await _webView.AddScriptToExecuteOnDocumentCreatedAsync(OrielBridgeJs.Script).ConfigureAwait(true);
+
+            _controller.IsVisible = true;
+            UpdateBounds();
+
+            string url = _options.Url ?? $"https://{_assetHost}/index.html";
+            _webView.Navigate(url);
+        }
+        catch (Exception ex)
+        {
+            OnWebViewFailed($"初始化 WebView2 失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>一次性把 WebView2Loader.dll 从入口程序集的嵌入资源解压并加载（单文件发布友好）。</summary>
+    private static void EnsureLoaderInitialized()
+    {
+        if (Interlocked.Exchange(ref s_loaderInitialized, 1) == 1)
+        {
+            return;
+        }
+
+        WebView2Utilities.Initialize(Assembly.GetEntryAssembly());
+    }
+
+    private void OnWebMessageReceived(object? sender, ICoreWebView2WebMessageReceivedEventArgs args)
+    {
+        string? json = args.WebMessageAsJson;
+        if (string.IsNullOrEmpty(json))
+        {
+            return;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            if (root.ValueKind == JsonValueKind.Object
+                && root.TryGetProperty("__oriel", out var kind)
+                && kind.ValueKind == JsonValueKind.String
+                && kind.GetString() == "invoke")
+            {
+                _ = DispatchInvokeAsync(root.Clone());
+            }
+        }
+        catch (JsonException)
+        {
+            // 非 OrielWeb 消息（页面自定义 postMessage），忽略
+        }
+    }
+
+    private async Task DispatchInvokeAsync(JsonElement message)
+    {
+        try
+        {
+            await App.Dispatcher.HandleInvokeAsync(message, new UiThreadReplySink(this)).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            // 分发器内部已按命令捕获；此处兜底分发器之外的错误
+            PostMessageOnUi($"{{\"__oriel\":\"result\",\"id\":0,\"ok\":false,\"error\":{JsonText.EncodeString(ex.Message)}}}");
+        }
+    }
+
+    private void OnNavigationCompleted(object? sender, ICoreWebView2NavigationCompletedEventArgs args)
+    {
+        if (args.IsSuccess)
+        {
+            RaiseLoadedIfFirst();
+        }
+    }
+
+    private void OnDocumentTitleChanged(object? sender, EventArgs args)
+    {
+        string? title = _webView?.DocumentTitle;
+        if (!string.IsNullOrEmpty(title))
+        {
+            RaiseTitleChanged(title);
+        }
     }
 
     internal void OnWebViewFailed(string message)
@@ -369,130 +510,21 @@ internal partial class Win32WindowHost : IWindowBackend
         TitleChanged?.Invoke(title);
     }
 
-    internal unsafe int OnEnvironmentCreated(int errorCode, void* environment)
-    {
-        if (errorCode < 0 || environment is null)
-        {
-            OnWebViewFailed($"创建 WebView2 环境失败（HRESULT 0x{errorCode:X8}）。");
-            return 0;
-        }
-        // 回调参数只在调用期间有效：AddRef 后长期持有（不再 Release，随进程生命周期存活），
-        // 否则 WebView2 在回调返回后 Release，环境析构、浏览器进程树随之关闭
-        WebView2Native.AddRefComObject(environment);
-        var env = new WebView2EnvironmentPtr(environment);
-        nint controllerHandler = WebView2NativeCallbacks.CreateControllerHandler(this);
-        return env.CreateCoreWebView2Controller(_hwnd, controllerHandler);
-    }
-
-    /// <summary>控制器创建完成回调（由手工 CCW thunk 调用，UI 线程）。</summary>
-    internal unsafe int OnControllerCreated(int errorCode, void* controller)
-    {
-        if (errorCode < 0 || controller is null)
-        {
-            OnWebViewFailed($"创建 WebView2 控制器失败（HRESULT 0x{errorCode:X8}）。");
-            return 0;
-        }
-        // 同上：回调参数需要 AddRef 才能存过回调生命周期
-        WebView2Native.AddRefComObject(controller);
-        OnControllerCreatedCore(new WebView2ControllerPtr(controller));
-        return 0;
-    }
-
-    private void OnControllerCreatedCore(WebView2ControllerPtr controller)
-    {
-        _controller = controller;
-        controller.get_CoreWebView2(out var webview);
-        _webview = webview;
-
-        // 设置：DevTools 按调试开关
-        var settings = webview.GetSettings();
-        settings.put_AreDevToolsEnabled(_options.Debug ? 1 : 0);
-
-        // 内嵌资产 → 虚拟主机（同源 https，免 CORS）
-        if (_assetDirectory is not null)
-        {
-            unsafe
-            {
-                if (WebView2Native.TryQueryInterface(webview.Self, WebView2Iids.ICoreWebView2_3, out var webview3Ptr))
-                {
-                    var webview3 = new WebView2_3Ptr(webview3Ptr);
-                    const int HOST_RESOURCE_ACCESS_KIND_DENY_CORS = 2;
-                    WebView2ComHelper.ThrowIfFailed(
-                        webview3.SetVirtualHostNameToFolderMapping(_assetHost, _assetDirectory, HOST_RESOURCE_ACCESS_KIND_DENY_CORS),
-                        "映射虚拟主机");
-                }
-                else
-                {
-                    // ICoreWebView2_3 需要 WebView2 Runtime ≥ 1.0.864.35。企业固定版本、Windows Server、
-                    // 离线镜像可能更旧。此前此处静默跳过 → 虚拟主机不映射 → Navigate 失败 → 白屏且零提示。
-                    // 该路径绕过 ThrowIfFailed（QI 返回 bool，没有 HRESULT 可检查），必须显式报错。
-                    string version;
-                    try
-                    {
-                        nint versionPtr = 0;
-                        var browserFolder = Environment.GetEnvironmentVariable("ORIEL_WEBVIEW2_FOLDER");
-                        if (WebView2LoaderNative.GetAvailableCoreWebView2BrowserVersionString(browserFolder, out versionPtr) >= 0
-                            && versionPtr != 0
-                            && Marshal.PtrToStringUni(versionPtr) is { Length: > 0 } installed)
-                        {
-                            version = installed;
-                        }
-                        else
-                        {
-                            version = "(未知)";
-                        }
-                        if (versionPtr != 0)
-                        {
-                            Marshal.FreeCoTaskMem(versionPtr);
-                        }
-                    }
-                    catch
-                    {
-                        version = "(未知)"; // 诊断信息获取失败不影响报错本身
-                    }
-
-                    throw new InvalidOperationException(
-                        "当前 WebView2 运行时过旧，不支持 ICoreWebView2_3（虚拟主机映射），内嵌资源无法加载。" +
-                        $"已安装运行时版本：{version}。请将 WebView2 Runtime 升级至 1.0.864.35 或更高版本。");
-                }
-            }
-        }
-
-        // JS 桥 + 事件（回调对象为手工 CCW）
-        WebView2ComHelper.ThrowIfFailed(
-            webview.AddScriptToExecuteOnDocumentCreated(OrielBridgeJs.Script, WebView2NativeCallbacks.CreateAddScriptHandler()),
-            "注入 JS 桥");
-        WebView2ComHelper.ThrowIfFailed(
-            webview.add_WebMessageReceived(WebView2NativeCallbacks.CreateWebMessageHandler(new WebMessageReceivedHandler(this)), out _),
-            "注册 WebMessage 事件");
-        WebView2ComHelper.ThrowIfFailed(
-            webview.add_NavigationCompleted(WebView2NativeCallbacks.CreateNavigationCompletedHandler(this), out _),
-            "注册 NavigationCompleted 事件");
-        WebView2ComHelper.ThrowIfFailed(
-            webview.add_DocumentTitleChanged(WebView2NativeCallbacks.CreateDocumentTitleHandler(this), out _),
-            "注册 DocumentTitleChanged 事件");
-
-        // 导航
-        string url = _options.Url ?? $"https://{_assetHost}/index.html";
-        WebView2ComHelper.ThrowIfFailed(webview.Navigate(url), "加载首页");
-
-        WebView2ComHelper.ThrowIfFailed(controller.put_IsVisible(1), "显示 WebView2");
-        UpdateBounds();
-    }
-
-    internal virtual void UpdateBounds()
+    internal void UpdateBounds()
     {
         var controller = _controller;
-        if (controller is null)
+        if (controller is null || !Win32.GetClientRect(_hwnd, out var client))
         {
             return;
         }
-        if (!Win32.GetClientRect(_hwnd, out var client))
+
+        controller.Bounds = new DirectN.RECT
         {
-            return;
-        }
-        var bounds = new WebView2Rect { Left = 0, Top = 0, Right = client.Right, Bottom = client.Bottom };
-        controller.Value.put_Bounds(bounds);
+            left = 0,
+            top = 0,
+            right = client.Right,
+            bottom = client.Bottom,
+        };
     }
 
     // ------------------------------------------------------------------
@@ -505,18 +537,18 @@ internal partial class Win32WindowHost : IWindowBackend
 
     internal bool IsOnUiThread() => _backend.IsOnUiThread();
 
-    internal virtual void PostWebMessageOnUi(string json)
+    internal void PostWebMessageOnUi(string json) => PostMessageOnUi(json);
+
+    private void PostMessageOnUi(string json)
     {
         try
         {
-            if (_webview is { } webview)
-            {
-                webview.PostWebMessageAsJson(json);
-            }
+            _webView?.PostWebMessageAsJson(json);
         }
-        catch
+        catch (Exception ex)
         {
             // 窗口销毁后的迟到回执，忽略
+            Debug.WriteLine($"[OrielWeb] 投递回执失败（窗口可能已销毁）：{ex.Message}");
         }
     }
 
@@ -713,50 +745,15 @@ internal partial class Win32WindowHost : IWindowBackend
         Win32.SetWindowPos(_hwnd, 0, x, y, 0, 0, Win32Constants.SWP_NOSIZE | Win32Constants.SWP_NOZORDER | Win32Constants.SWP_NOACTIVATE);
     }
 
-    public virtual Task<string> ExecuteScriptAsync(string script)
+    public async Task<string> ExecuteScriptAsync(string script)
     {
-        var completion = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _backend.PostToMainThread(() =>
-        {
-            if (_webview is not { } webview)
-            {
-                completion.TrySetException(new InvalidOperationException("WebView2 尚未就绪。"));
-                return;
-            }
-            try
-            {
-                nint handler = WebView2NativeCallbacks.CreateExecuteScriptHandler(completion);
-                int hr = webview.ExecuteScript(script, handler);
-                if (hr < 0)
-                {
-                    completion.TrySetException(new InvalidOperationException($"ExecuteScript 失败（HRESULT 0x{hr:X8}）。"));
-                }
-            }
-            catch (Exception ex)
-            {
-                completion.TrySetException(ex);
-            }
-        });
-        return completion.Task;
+        var webView = _webView
+            ?? throw new InvalidOperationException("WebView2 尚未就绪。");
+
+        return await webView.ExecuteScriptAsync(script).ConfigureAwait(true) ?? "null";
     }
 
-    public virtual void PostMessageAsJson(string json)
-    {
-        _backend.PostToMainThread(() =>
-        {
-            try
-            {
-                if (_webview is { } webview)
-                {
-                    webview.PostWebMessageAsJson(json);
-                }
-            }
-            catch
-            {
-                // 窗口销毁后忽略
-            }
-        });
-    }
+    public void PostMessageAsJson(string json) => _backend.PostToMainThread(() => PostMessageOnUi(json));
 
     // ------------------------------------------------------------------
     // 对话框
@@ -830,4 +827,20 @@ internal partial class Win32WindowHost : IWindowBackend
 
     void IWindowBackend.ShowMessageBox(string text, string? title, OrielMessageBoxIcon icon)
         => MessageBoxResult(text, title, icon);
+
+    /// <summary>IPC 回执通道：必须切回 UI 线程（WebView2 的 COM 绑定在 STA）。</summary>
+    private sealed class UiThreadReplySink(Win32WindowHost host) : IIpcReplySink
+    {
+        public void PostJson(string json)
+        {
+            if (host.IsOnUiThread())
+            {
+                host.PostWebMessageOnUi(json);
+            }
+            else
+            {
+                host._backend.PostToMainThread(() => host.PostWebMessageOnUi(json));
+            }
+        }
+    }
 }

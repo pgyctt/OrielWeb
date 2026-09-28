@@ -50,11 +50,6 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Verify WebView2 vtable slots
-        # 手工 vtable 槽位常量编译器无法校验，数错一格即 AV。
-        # 版本号须跟随 src/OrielWeb/OrielWeb.csproj 的 PackageReference。
-        run: python verify-webview2-slots.py --repo . --version 1.0.2903.40
-
       - name: Publish AOT
         run: dotnet publish samples/OrielDemo -c Release -r win-x64 -v minimal
 
