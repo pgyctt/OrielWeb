@@ -45,6 +45,9 @@ Thumbs.db
 .reference/
 参考项目/
 
+## 本地交付物（由 git archive 生成，见改进计划 F-1）
+OrielWeb-src.zip
+
 ## 测试结果
 [Tt]est[Rr]esult*/
 TestResult.xml
