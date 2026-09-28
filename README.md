@@ -128,9 +128,9 @@ WebView2 的运行需要微软的 `WebView2Loader.dll`。官方只有两条路�
 
 | 命令 | 产物 |
 |---|---|
-| `dotnet publish -c Release -r win-x64` | `OrielDemo.exe` 4.63 MB + `OrielDemo.pdb` 21 MB + `OrielWeb.pdb` + `OrielWeb.xml` |
+| `dotnet publish -c Release -r win-x64` | `OrielDemo.exe` 4.81 MB + `OrielDemo.pdb` 21 MB + `OrielWeb.pdb` + `OrielWeb.xml` |
 | 再加 `-p:DebugType=none` | `OrielDemo.exe` + `OrielWeb.xml` |
-| 再加 `-p:AllowedReferenceRelatedFileExtensions=.pdb\;.pri` | 仅 `OrielDemo.exe`（4.63 MB） |
+| 再加 `-p:AllowedReferenceRelatedFileExtensions=.pdb\;.pri` | 仅 `OrielDemo.exe`（4.81 MB） |
 
 - 那 21 MB 的 PDB 由原生链接步骤产出，与托管的 `DebugType` 无关；`-p:DebugType=none` **只在全新构建**
   下去掉它（增量发布会复用旧的链接结果）。
@@ -138,6 +138,20 @@ WebView2 的运行需要微软的 `WebView2Loader.dll`。官方只有两条路�
 - 另有一条可选路线：用 Native AOT 的 `DirectPInvoke` 把 `WebView2LoaderStatic.lib`（包内自带）静态链入，
   可免去 `%TEMP%` 解压。实测可链接成功，但属**应用级**配置（库无法替消费方设置），且需跳过
   `WebView2Utilities.Initialize`，故本库未采用。
+
+#### 应用图标
+
+任务栏与 Alt-Tab 的按钮图标取自**窗口图标**：窗口完全没有图标时，Windows 退回的是**通用应用图标**，
+而不是 exe 自带的那个（实测确认）。因此本库在建窗口类时会主动把 exe 的图标取来设到窗口上
+（`ExtractIconEx`，走 shell 自身的解析，不依赖图标资源 ID）。
+
+应用侧只需在 csproj 里声明图标即可：
+
+```xml
+<ApplicationIcon>app.ico</ApplicationIcon>
+```
+
+不声明则窗口不带图标，任务栏显示系统通用图标。
 
 ## 平台支持
 
@@ -153,11 +167,41 @@ WebView2 的运行需要微软的 `WebView2Loader.dll`。官方只有两条路�
 > Windows 的 WebView2 互操作曾以手工 vtable 实现（源于 .NET 10.0.401 运行时缺陷的旧结论），
 > 该结论已被实测推翻，手工层已整体删除；回退点见 git 标签 `stage-b-done`。
 
-### 最低 WebView2 Runtime 版本
+### WebView2 运行时与缺失引导
 
 - 使用**内嵌资源**（`UseEmbeddedAssets`）需要 `ICoreWebView2_3`，即 WebView2 Runtime **≥ 1.0.864.35**。
-- 运行时过旧时会抛出明确异常并附带当前已安装版本，而非静默白屏。
 - 环境变量 `ORIEL_WEBVIEW2_FOLDER` 可指定固定版本运行时目录（调试与离线镜像场景）。
+- **运行时不存在**时会先向 loader 询问可用版本，取不到即进入引导流程，不会静默白屏。用
+  `OnWebView2RuntimeMissing` 接管提示（回调在窗口已可用之后触发，可用窗口门面 API）：
+
+  ```csharp
+  using System.Diagnostics;   // Process.Start
+
+  Oriel.CreateBuilder(args)
+      .OnWebView2RuntimeMissing(e =>
+      {
+          e.Window.ShowMessage(
+              $"缺少 Microsoft Edge WebView2 运行时，界面无法显示。安装地址：\n{e.DownloadUrl}",
+              "缺少 WebView2 运行时", OrielMessageBoxIcon.Warning);
+          Process.Start(new ProcessStartInfo
+          {
+              FileName = OrielWebView2RuntimeMissingEventArgs.DownloadUrl,
+              UseShellExecute = true,
+          });
+      })
+      .AddWindow(...)
+      .Run();
+  ```
+
+  - 不注册时，库弹一个说明「缺什么、去哪装」的错误框，并区分两种情形：系统未装 Evergreen 运行时、
+    或 `ORIEL_WEBVIEW2_FOLDER` 指向的固定版本目录无效。
+  - 回调返回后库销毁窗口——没有 WebView2 的窗口没有内容可按，销毁即让应用退出，与"装完再启动"一致；
+    要自行保留窗口则置 `e.KeepWindowOpen = true`。
+  - **库不自动安装**：提示方式、是否静默安装都属应用策略（企业环境常禁止联网安装）。对比 Tauri 的默认
+    行为 `webviewInstallMode: downloadBootstrapper`——它在**安装器**层下载并运行微软 bootstrapper；
+    本项目没有安装器（只有 NuGet 包 + 单文件 exe），因此只能在应用内引导。
+- **运行时过旧**（低于上表下限）不是上述流程：它会在此后的调用上失败并走通用错误提示，不再附带已安装版本号
+  （那条显式版本诊断随手工 vtable 层一并删除）。
 
 ## 命令线程模型
 

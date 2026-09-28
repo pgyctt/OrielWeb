@@ -409,6 +409,16 @@ internal static unsafe partial class Win32
     [LibraryImport("user32")]
     internal static partial int GetSystemMetricsForDpi(int index, uint dpi);
 
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool DestroyIcon(nint icon);
+
+    // ---- shell32 ----
+
+    /// <summary>提取可执行文件中的图标，按当前显示设置给出大/小两个尺寸；返回提取到的图标个数。</summary>
+    [LibraryImport("shell32", EntryPoint = "ExtractIconExW", StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial uint ExtractIconExW(string file, int iconIndex, out nint largeIcon, out nint smallIcon, uint iconCount);
+
     // ---- kernel32 ----
 
     [LibraryImport("kernel32", EntryPoint = "GetModuleHandleW", StringMarshalling = StringMarshalling.Utf16)]

@@ -260,25 +260,63 @@ internal partial class Win32WindowHost : IWindowBackend
                 return;
             }
 
+            // 任务栏 / Alt-Tab 的按钮图标取自**窗口图标**。窗口完全没有图标时，shell 退回的是
+            // 通用应用图标——不是 exe 自带的图标（实测确认过），所以这里必须显式把 exe 图标设到
+            // 窗口类上，否则即使 csproj 配了 ApplicationIcon，运行期任务栏仍是通用图标。
+            (nint hIcon, nint hIconSm) = LoadExecutableIcons();
+
             var windowClass = new WNDCLASSEXW
             {
                 cbSize = (uint)sizeof(WNDCLASSEXW),
                 style = Win32Constants.CS_HREDRAW | Win32Constants.CS_VREDRAW | Win32Constants.CS_DBLCLKS,
                 lpfnWndProc = (nint)(delegate* unmanaged<nint, uint, nuint, nint, nint>)&WindowProc,
                 hInstance = Win32.GetModuleHandleW(null),
+                hIcon = hIcon,
                 hCursor = Win32.LoadCursorW(0, Win32Constants.IDC_ARROW),
                 hbrBackground = 0, // WebView2 自绘客户端区，置空避免闪烁
                 lpszClassName = s_windowClassNamePtr,
+                hIconSm = hIconSm,
             };
             if (Win32.RegisterClassExW(ref windowClass) == 0)
             {
-                throw new InvalidOperationException($"注册窗口类失败（Win32 错误 {Marshal.GetLastWin32Error()}）。");
+                int error = Marshal.GetLastWin32Error(); // 先取错误码，DestroyIcon 会覆盖它
+                _ = Win32.DestroyIcon(hIcon);
+                _ = Win32.DestroyIcon(hIconSm);
+                throw new InvalidOperationException($"注册窗口类失败（Win32 错误 {error}）。");
             }
 
             // 注册成功后才置位：此前是先置位后注册，若注册失败抛异常，标志已是 1
             // → 后续调用直接跳过 → 用未注册的类名去 CreateWindowExW，错误信息误导
             Volatile.Write(ref s_windowClassRegistered, 1);
         }
+    }
+
+    /// <summary>提取本进程可执行文件的图标（大/小两个尺寸），供窗口类使用。</summary>
+    /// <remarks>
+    /// 用 <c>ExtractIconEx</c> 而不是 <c>LoadIcon(module, IDI_APPLICATION)</c>：前者走 shell 自身的
+    /// 图标解析、与资源管理器显示的一致，因此不依赖图标资源 ID（.NET SDK 用 32512，原生 .rc 可以是别的）。
+    /// 应用未提供图标时返回 (0, 0)，窗口即不带图标。
+    /// 取到的句柄归窗口类持有到进程结束——窗口类从不注销，故不再单独释放。
+    /// </remarks>
+    private static (nint Large, nint Small) LoadExecutableIcons()
+    {
+        string? path = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(path))
+        {
+            return (0, 0);
+        }
+
+        uint extracted = Win32.ExtractIconExW(path, 0, out nint large, out nint small, 1);
+        if (extracted == 0)
+        {
+            // 无图标或提取失败：此时句柄仍可能被回填，必须释放，避免泄漏。
+            // （DestroyIcon(0) 是无害的，返回 false 并置一个无关的错误码。）
+            _ = Win32.DestroyIcon(large);
+            _ = Win32.DestroyIcon(small);
+            return (0, 0);
+        }
+
+        return (large, small);
     }
 
     // ------------------------------------------------------------------

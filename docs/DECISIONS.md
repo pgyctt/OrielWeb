@@ -230,3 +230,65 @@ PDB 由原生链接步骤产出，与托管 `DebugType` 无关，故 `-p:DebugTy
 （无 `#32770` 失败对话框）、loader 由内嵌资源解压到 `%TEMP%\{guid}\`（162.1 KB）、截图显示页面完整渲染
 且 IPC 绿标正常。编译 0 警告 0 错误，单测 39/39，桥接 28/28。
 （早前的"单 exe 可运行"是误判：失败对话框本身也让进程存活，改以窗口类名判定后才排除。）
+
+### WebView2 运行时缺失：先检测再引导（库不自行安装）
+
+**问题**：运行时缺失时用户看到的是系统级文案，无从判断该装什么、去哪装。实测（把
+`ORIEL_WEBVIEW2_FOLDER` 指向不存在的目录，复现同一条错误路径）：
+
+```
+[#32770 title='OrielWeb']
+    child[Static] = 初始化 WebView2 失败：Unable to find the specified file.
+```
+
+根因：`CreateCoreWebView2EnvironmentWithOptions` 找不到运行时时只回一个"找不到文件"的 HRESULT，
+`WebView2Aot` 的 Task 包装再用 `Marshal.GetExceptionForHR` 把它转成托管异常。
+
+**做法**：装配前先用 loader 探测可用运行时版本
+（`WebView2Utilities.GetAvailableCoreWebView2BrowserVersionString`，它内部吞掉 HRESULT、取不到时返回空，
+正是官方建议的"先探测再创建"顺序），取不到则进入 `OnWebView2RuntimeMissing`：
+
+- 应用注册了 `OrielAppBuilder.OnWebView2RuntimeMissing` → 交给它，库不弹窗；
+- 未注册、或回调自身抛异常 → 弹库的默认提示，文案区分"系统未装 Evergreen 运行时"与
+  "`ORIEL_WEBVIEW2_FOLDER` 指向的固定版本目录无效"；
+- 除非回调置 `KeepWindowOpen = true`，窗口随后被销毁（没有 WebView2 的窗口没有内容可按）。
+
+**为什么不自动装**：提示方式与是否静默安装属应用策略（企业环境常禁止联网安装）。Tauri 的默认
+`webviewInstallMode: downloadBootstrapper` 是在**安装器**层下载并运行微软 bootstrapper；本项目没有安装器
+（只有 NuGet 包 + 单文件 exe），因此只能在应用内引导。新增公开面：`OrielWebView2RuntimeMissingEventArgs`
+（含 `Window` / `BrowserExecutableFolder` / `KeepWindowOpen` 与 `DownloadUrl` 常量）与一个 builder 方法。
+
+**踩到的坑（值得记下）**：首版把处置放在装配失败的同一时刻**同步**执行，结果回调里
+`e.Window.ShowMessage(...)` 抛"窗口后端尚未初始化"，被兜底逻辑吞掉、退回默认提示——真机验证时唯一的线索
+就是"弹出来的是库的默认文案而非 demo 的"。原因是 `OrielApp.Run()` 要等 `CreateWindow` 返回后才
+`window.Attach(backend)`，而装配正发生在 `CreateWindow` 内部。改为 `_backend.PostToMainThread(...)`
+延到消息循环启动后处理，回调用窗口门面即可正常工作。
+
+**验证**：缺失路径 + 注册回调 → 弹出 demo 引导框（标题「缺少 WebView2 运行时」，含下载地址）；
+缺失路径 + 不注册 → 弹出库默认提示（标题「OrielWeb」，说明指定目录无效）；正常路径 → 主窗口照常渲染、
+IPC 正常、loader 仍由内嵌资源解压。编译 0 警告 0 错误，单测 47/47（新增 8 个契约用例），桥接 28/28。
+
+**已知未覆盖**：真正的"系统未装 Evergreen 运行时"这一文案分支只能在未安装运行时的机器上验证，本次用
+无效固定版本目录复现的是同一条错误路径。另外"运行时过旧"不会进入本流程——它在后续调用上失败并走通用
+错误提示，README 中"附带已安装版本号"的旧声明已一并更正。
+
+### 运行期任务栏图标：必须显式设到窗口类上
+
+**现象**：demo 的 csproj 已配 `ApplicationIcon`、exe 也确实带图标（从发布产物反提取得到），但运行时
+任务栏按钮显示的是**通用应用图标**。
+
+**根因**（与直觉相反，实测确认）：任务栏 / Alt-Tab 的按钮图标取自**窗口图标**。窗口完全没有图标时，
+shell 退回的是通用应用图标——**不是** exe 自带的图标。而 `Win32WindowHost` 注册窗口类时
+`hIcon`/`hIconSm` 都是 0，所以 csproj 里配的图标只在资源管理器里生效，运行期看不到。
+（定位过程：`WM_GETICON` 三个尺寸与 `GCLP_HICON`/`GCLP_HICONSM` 全为 0；任务栏按钮的放大截图显示的
+是通用图标。注意 `WM_GETICON` 只能跨进程读回句柄值，HICON 在别的进程里无意义，判断要以类图标与
+屏幕截图为准。）
+
+**修法**：`EnsureWindowClass` 里用 `ExtractIconEx(Environment.ProcessPath, 0, …)` 取本进程 exe 的
+大/小图标，设到窗口类上；注册失败时 `DestroyIcon` 释放，无图标（返回 0）时保持 0。用 `ExtractIconEx`
+而非 `LoadIcon(hInstance, 32512)` 是为了不依赖图标资源 ID——.NET SDK 用 32512，原生 `.rc` 可以是别的，
+而 `ExtractIconEx` 走的是 shell 自身的解析逻辑。
+
+**验证**：`GCLP_HICON`/`GCLP_HICONSM` 变为非零；任务栏按钮的放大截图由通用图标变为本应用图标。
+无图标文件（`kernel32.dll`、`version.dll`）上 `ExtractIconEx` 返回 0 且句柄为空，防御分支正确。
+编译 0 警告 0 错误，单测 47/47，桥接 28/28。
