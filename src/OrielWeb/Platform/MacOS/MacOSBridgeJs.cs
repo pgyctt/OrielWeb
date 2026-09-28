@@ -18,10 +18,16 @@ internal static class MacOSBridgeJs
 
             const post = (obj) => window.webkit.messageHandlers.oriel.postMessage(JSON.stringify(obj));
 
+            // 先建 Promise、再建对象：Promise 构造器会同步执行 executor，
+            // 若在对象字面量内引用 oriel，会落进暂时性死区（ReferenceError）
+            // → ready 变成 rejected Promise 且 _resolveReady 永不赋值。
+            let resolveReady;
+            const ready = new Promise((resolve) => { resolveReady = resolve; });
+
             const oriel = {
                 platform: 'macos',
                 version: '0.1.0',
-                ready: new Promise((resolve) => { oriel._resolveReady = resolve; }),
+                ready: ready,
                 invoke(name, args) {
                     return new Promise((resolve, reject) => {
                         if (typeof name !== 'string' || !name) {
@@ -40,14 +46,25 @@ internal static class MacOSBridgeJs
                     if (ok) entry.resolve(payload);
                     else entry.reject(new Error(payload || ('oriel 命令失败 (id=' + id + ')')));
                 },
+                // 宿主 ExecuteScriptAsync 的页面回环（见 DECISIONS.md：不使用 ObjC block 回调）
                 _evalScriptDone(id, json) {
                     post({ __oriel: 'evalResult', id: id, json: json });
                 }
             };
 
             window.oriel = oriel;
-            document.dispatchEvent(new Event('orielready'));
-            oriel._resolveReady();
+
+            // 本脚本在 document 创建时注入（WKUserScriptInjectionTimeAtDocumentStart），
+            // 此刻页面自身脚本尚未执行，立即派发 orielready 必然无人监听。
+            // 改到 DOMContentLoaded——它晚于所有同步 / defer / type=module 脚本。
+            const announceReady = () => document.dispatchEvent(new Event('orielready'));
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', announceReady, { once: true });
+            } else {
+                queueMicrotask(announceReady);
+            }
+
+            resolveReady();
         })();
         """;
 }

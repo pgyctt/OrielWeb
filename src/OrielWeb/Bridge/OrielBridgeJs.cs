@@ -11,10 +11,16 @@ internal static class OrielBridgeJs
             const pending = new Map();
             let seq = 0;
 
+            // 先建 Promise、再建对象：Promise 构造器会同步执行 executor，
+            // 若在对象字面量内引用 oriel，会落进暂时性死区（ReferenceError）
+            // → ready 变成 rejected Promise 且 _resolveReady 永不赋值。
+            let resolveReady;
+            const ready = new Promise((resolve) => { resolveReady = resolve; });
+
             const oriel = {
                 platform: 'windows',
                 version: '0.1.0',
-                ready: new Promise((resolve) => { oriel._resolveReady = resolve; }),
+                ready: ready,
                 invoke(name, args) {
                     return new Promise((resolve, reject) => {
                         if (typeof name !== 'string' || !name) {
@@ -45,8 +51,17 @@ internal static class OrielBridgeJs
                 }
             });
 
-            document.dispatchEvent(new Event('orielready'));
-            oriel._resolveReady();
+            // 本脚本在 document 创建时注入（AddScriptToExecuteOnDocumentCreated），
+            // 此刻页面自身脚本尚未执行，立即派发 orielready 必然无人监听。
+            // 改到 DOMContentLoaded——它晚于所有同步 / defer / type=module 脚本。
+            const announceReady = () => document.dispatchEvent(new Event('orielready'));
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', announceReady, { once: true });
+            } else {
+                queueMicrotask(announceReady);
+            }
+
+            resolveReady();
         })();
         """;
 }
