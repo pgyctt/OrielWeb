@@ -93,6 +93,21 @@ public sealed class OrielAppBuilder
         return this;
     }
 
+    internal Action<OrielWebView2RuntimeMissingEventArgs>? WebView2RuntimeMissingHandler { get; private set; }
+
+    /// <summary>
+    /// 注册「WebView2 运行时不可用」的处理回调（仅 Windows 会触发）。
+    /// 注册后库不再弹默认错误框，提示与引导方式完全由回调决定；未注册时库弹一个说明
+    /// 「缺什么、去哪里装」的错误框。运行时不存在的判定发生在窗口装配期，见
+    /// <see cref="OrielWebView2RuntimeMissingEventArgs"/>。
+    /// </summary>
+    public OrielAppBuilder OnWebView2RuntimeMissing(Action<OrielWebView2RuntimeMissingEventArgs> handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        WebView2RuntimeMissingHandler = handler;
+        return this;
+    }
+
     public OrielApp Build() => new(this);
 
     /// <summary>构建并阻塞运行，直到所有窗口关闭。</summary>

@@ -505,6 +505,20 @@ internal partial class Win32WindowHost : IWindowBackend
             EnsureLoaderInitialized();
 
             string? browserFolder = Environment.GetEnvironmentVariable("ORIEL_WEBVIEW2_FOLDER");
+
+            // 先问 loader 能否找到运行时。这一步不能省：运行时缺失时
+            // CreateCoreWebView2EnvironmentWithOptions 只会回一个"找不到文件"的 HRESULT，
+            // 用户看到的是系统级文案，无从判断该装什么、去哪装。
+            if (string.IsNullOrWhiteSpace(
+                    WebView2Utilities.GetAvailableCoreWebView2BrowserVersionString(browserFolder)))
+            {
+                // 必须延到消息循环启动后再处理：装配发生在 CreateWindow 内部，而
+                // OrielApp.Run() 要等它返回才调用 window.Attach(backend)——此刻窗口门面
+                // （ShowMessage/Close 等）还没有后端可用。延后处理保证回调拿到可用窗口。
+                _backend.PostToMainThread(() => OnWebView2RuntimeMissing(browserFolder));
+                return;
+            }
+
             _environment = await Functions.CreateCoreWebView2EnvironmentWithOptionsAsync(
                 browserFolder, _userDataFolder, null).ConfigureAwait(true)
                 ?? throw new InvalidOperationException("创建 WebView2 环境失败（返回 null）。");
@@ -650,6 +664,58 @@ internal partial class Win32WindowHost : IWindowBackend
         MessageBoxResult(message, "OrielWeb", OrielMessageBoxIcon.Error);
         Win32.DestroyWindow(_hwnd);
     }
+
+    /// <summary>
+    /// WebView2 运行时不可用时的处置：优先交给应用注册的回调，未注册（或回调抛异常）则弹库的默认提示。
+    /// </summary>
+    /// <remarks>
+    /// 库自身不引导安装：弹什么、要不要静默装、能不能自动装都是应用策略（企业环境可能禁止联网安装）。
+    /// 库只负责把"缺运行时"这个事实准确暴露出来，并给出默认的、可照做的提示。
+    /// </remarks>
+    private void OnWebView2RuntimeMissing(string? browserFolder)
+    {
+        var handler = _app.WebView2RuntimeMissingHandler;
+        bool handled = false;
+        bool keepWindowOpen = false;
+
+        if (handler is not null)
+        {
+            var args = new OrielWebView2RuntimeMissingEventArgs(_window, browserFolder);
+            try
+            {
+                handler(args);
+                handled = true;
+                keepWindowOpen = args.KeepWindowOpen;
+            }
+            catch (Exception ex)
+            {
+                // 回调自身的异常不该夺走用户的知情权：回落到默认提示
+                Debug.WriteLine($"[OrielWeb] OnWebView2RuntimeMissing 回调抛出异常，改用默认提示：{ex}");
+            }
+        }
+
+        if (!handled)
+        {
+            MessageBoxResult(RuntimeMissingMessage(browserFolder), "OrielWeb", OrielMessageBoxIcon.Error);
+        }
+
+        // 没有 WebView2 的窗口没有内容可按；销毁它即让应用退出，与"装完再启动"的流程一致。
+        if (!keepWindowOpen)
+        {
+            Win32.DestroyWindow(_hwnd);
+        }
+    }
+
+    /// <summary>默认提示：区分"系统未装 Evergreen 运行时"与"指定的固定版本目录无效"两种情形。</summary>
+    private static string RuntimeMissingMessage(string? browserFolder) =>
+        browserFolder is null
+            ? "未检测到 Microsoft Edge WebView2 运行时，界面无法显示。\r\n\r\n" +
+              "请安装 WebView2 运行时后重新启动本应用：\r\n" +
+              OrielWebView2RuntimeMissingEventArgs.DownloadUrl
+            : "未在指定目录找到 WebView2 运行时，界面无法显示。\r\n\r\n" +
+              $"目录：{browserFolder}\r\n\r\n" +
+              "请确认环境变量 ORIEL_WEBVIEW2_FOLDER 指向有效的固定版本运行时目录；" +
+              "如需改用系统 Evergreen 运行时，请清除该变量。";
 
     internal void RaiseLoadedIfFirst()
     {

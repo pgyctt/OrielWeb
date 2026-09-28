@@ -20,6 +20,10 @@ public sealed class OrielApp : IDisposable
     /// <summary>内嵌资源使用的虚拟主机名（取自构建器 <c>UseEmbeddedAssets</c> 的 host 参数）。</summary>
     internal string AssetHost => _builder.AssetHost;
 
+    /// <summary>「WebView2 运行时不可用」的处理回调（可能为 null，表示用库的默认提示）。</summary>
+    internal Action<OrielWebView2RuntimeMissingEventArgs>? WebView2RuntimeMissingHandler
+        => _builder.WebView2RuntimeMissingHandler;
+
     public IReadOnlyList<WebviewWindow> Windows => _windows;
     private readonly List<WebviewWindow> _windows = [];
 

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json.Serialization;
 using OrielWeb;
 using OrielDemo;
@@ -18,6 +19,7 @@ internal static class Program
             .AddCommands<TodoCommands>()
             .AddCommands<WindowCommands>()
             .UseDebug()
+            .OnWebView2RuntimeMissing(HandleWebView2RuntimeMissing)
             .AddWindow(w => w
                 .WithTitle("Oriel Demo — Todo")
                 .WithSize(1024, 720)
@@ -25,6 +27,27 @@ internal static class Program
                 .WithFrameless()
                 .Centered(), win => Window = win)
             .Run();
+    }
+
+    /// <summary>
+    /// WebView2 运行时缺失时的引导：讲清缺什么、打开官方下载页，随后应用退出（装完再启动）。
+    /// 不注册此回调时，库只弹一个含下载地址的错误框。
+    /// </summary>
+    private static void HandleWebView2RuntimeMissing(OrielWebView2RuntimeMissingEventArgs e)
+    {
+        e.Window.ShowMessage(
+            "未检测到 Microsoft Edge WebView2 运行时。本应用的界面完全由网页渲染，缺少它无法显示。\r\n\r\n" +
+            "点「确定」后将打开微软的下载页面；安装完成后请重新启动本应用。\r\n\r\n" +
+            OrielWebView2RuntimeMissingEventArgs.DownloadUrl,
+            "缺少 WebView2 运行时",
+            OrielMessageBoxIcon.Warning);
+
+        // 用户已确认：打开下载页。本窗口随后由库销毁，进程随之退出。
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = OrielWebView2RuntimeMissingEventArgs.DownloadUrl,
+            UseShellExecute = true,
+        });
     }
 }
 
