@@ -3,6 +3,22 @@
 > 本文件是 [`OrielWeb-改进计划.md`](./OrielWeb-改进计划.md) 阶段 E 的详细展开。
 > **前置阅读**：改进计划第 1 节（阶段总览）与第 8 节（缺陷索引）。
 > **重要**：本计划的 E-0 是**决策门**。在 E-0 得出结论前，不要开始 E-2 之后的任何工作。
+>
+> **执行状态（2026-09-28）：本计划已执行完毕，且结论与原文预期不同。**
+> - **E-0 结论**：`WebView2Aot` 官方样例在本机 AOT 发布成功、零 IL 警告、单文件 3.90 MB、运行时正常弹窗并加载页面
+>   —— 原文 §3 存疑的三个运行时缺陷**均未复现**，且其 CCW 全程使用 `[GeneratedComClass]` 而未显式注册 marshaller。
+>   "手工 vtable 是唯一可行路线"的前提不成立。
+> - **路线选定：A**。**B 经实测否决**，但否决理由与原文 §3 的预判不同：不是"生成器配置需要试错"，
+>   而是 **`Win32InteropBuilder` 单一 winmd 输入导致产物不可用** —— 只喂 WebView2 winmd 时
+>   `Windows.Win32.Foundation` / `System.Com` 的基础类型解析失败，**1016 处类型退化为 `object`**。
+>   上游之所以可用，是因其自带约 1800 行生成器定制，且**便利层建立在 `DirectNAot` 之上**；
+>   要做到"零第三方依赖"须重写该层（约 500–800 行），收益不抵成本。
+> - **E-4~E-7 已真机验证**（demo IPC 往返正常）；**E-8 已删除全部手工层**（净删除约 1190 行）：
+>   `Interop/WebView2Com.cs`、`Win32NativeCallbacks.cs`、`Win32WebView2Ipc.cs`、`Win32WindowHostV2.cs`、
+>   `verify-webview2-slots.py` 与 A-3 CI 门禁、`ORIEL_WIN_BACKEND` 开关。
+> - 原文 §8 "保留 legacy 至少一个发布周期"的建议**未被采纳**：回退由 git 承担，`stage-b-done` 即删除前状态。
+> - **下文凡涉及 `Win32WindowHostV2` / `ORIEL_WIN_BACKEND` / `verify-webview2-slots.py` / `Win32NativeCallbacks.cs`
+>   的描述均为历史设计记录，不代表当前代码。**
 
 ---
 

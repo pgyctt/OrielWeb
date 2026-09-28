@@ -41,7 +41,7 @@
   - **原生 → 托管**（回调）：`Win32NativeCallbacks.cs` 手工构建 vtable（IUnknown + Invoke）+ `[UnmanagedCallersOnly]` thunk + 手动引用计数（GCHandle 保活托管状态）。
   - **托管 → 原生**：`WebView2Com.cs` 指针包装结构按槽位直接调用（槽位序从官方 `WebView2.h` 提取核对；注意 Controller 在 remove_LostFocus 之后还有 AcceleratorKeyPressed×2、ParentWindow×2 四个方法，ICoreWebView2 共 58 个方法，_3.SetVirtualHostNameToFolderMapping 位于槽 71）。
   - 实现 [GeneratedComInterface] 的类若嵌套或使用主构造函数，CCW 生成会静默失败——已不再使用该机制。
-- COM 互操作用 **`[GeneratedComInterface]`/`[GeneratedComClass]`** 的方案已废弃（见上）；保留的经验：此类接口/类必须 partial，LibraryImport 的 bool 返回值需显式 `[MarshalAs(UnmanagedType.Bool)]`。
+- COM 互操作用 **`[GeneratedComInterface]`/`[GeneratedComClass]`** 的方案曾据此废弃；**该结论已于 2026-09-28 被推翻并撤销**（见文末"E 阶段执行结果"）。保留的通用经验：此类接口/类必须 partial，LibraryImport 的 bool 返回值需显式 `[MarshalAs(UnmanagedType.Bool)]`。
 - 内容托管 MVP 用 **WebView2 虚拟主机映射**（`SetVirtualHostNameToFolderMapping`，槽 71）+ 内嵌资源启动时解压到用户目录；内存直供的自定义 scheme 为后续优化。外部 dev server URL（Vite 等）直接 `Navigate` 支持。
 - 命令参数/返回值：基元类型由生成器逐字段提取/写入（`Utf8JsonReader/Writer`）；DTO 类型经构建器注册 `JsonSerializerContext`（`.UseJsonContext(...)`），规避"生成器无法链式生成 STJ 上下文"的限制。
 - WebView2Loader.dll 经 `Microsoft.Web.WebView2` 包仅取其原生位（托管程序集不引用，AOT 裁剪自动丢弃）。
@@ -79,5 +79,22 @@
   即 `[GeneratedComInterface]` 路线的 CCW 方向在 .NET 10 AOT 下无须显式注册 marshaller 即可工作。
   因此上文三个症状应归因于当初的**用法/配置问题**而非运行时缺陷，
   "手工 vtable + 手工 CCW 是唯一可行路线"的前提不再成立。
-  后续按迁移计划 §4 选定路线（A / B）推进；迁移期间 legacy 路径保留，
-  可用环境变量 `ORIEL_WIN_BACKEND=legacy` 一键回退。
+
+## 2026-09-28 E 阶段执行结果（WebView2 绑定迁移已落地）
+
+- **路线选定：A（使用 `WebView2Aot` 现成包），B 经实测否决。** 否决 B 的原因不是工作量，而是**产物不可用**：
+  `Win32InteropBuilder` 是单一 winmd 输入，只喂 WebView2 winmd 时 `Windows.Win32.Foundation` /
+  `System.Com` 的基础类型无法解析，生成物出现 **1016 处类型退化为 `object`**（形如 `object Navigate(object uri)`、
+  `ref object token`），不可调用。上游之所以可用，是因为 `WebView2Aot` 自带约 1800 行生成器定制
+  （`Builder.cs` 142 行 + `WrapperGenerator.cs` 1095 行 + `Patches.json` 193 行），且**其便利层建立在 `DirectNAot` 之上**
+  （`WrapperGenerator` 产出 `IComObject` 风格 API）。因此"自主绑定且零第三方依赖"必须重写该便利层
+  （约 500–800 行），收益不抵成本。已开发出的公共基础设施（winmd 生成、生成器 vendoring、自建生成入口）
+  已清理，未入库。
+- **手工 vtable 层已整体删除**（迁移计划 E-8）：`Interop/WebView2Com.cs`（手写槽位 + IID 表 + loader 入口）、
+  `Win32NativeCallbacks.cs`（手写 CCW thunk）、`Win32WebView2Ipc.cs`（已内联为 `UiThreadReplySink`）、
+  `Win32WindowHostV2.cs`（其实现已内联进共享基类 `Win32WindowHost`），以及只为派生类存在的泛型
+  `CreateHost<T>` 工厂。净删除约 1190 行。`ORIEL_WIN_BACKEND` 开关与 A-3 槽位门禁
+  （`verify-webview2-slots.py` 及 CI 步骤）随之删除——手工槽位常量已不存在，这些防护失去对象。
+- **保留 `Microsoft.Web.WebView2` 包**（仍为 `ExcludeAssets="compile"`）：`WebView2Utilities.Initialize`
+  需要其中分发的 `WebView2Loader.dll` 原生位；托管互操作程序集依旧不被引用，AOT 裁剪自动丢弃。
+- **回退点**：`git tag stage-b-done` 是手工实现被删除前的最后提交；`stage-e8-done` 为删除后状态。

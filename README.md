@@ -4,7 +4,7 @@
 
 ## 特性
 
-- **纯 C# P/Invoke**：Windows（WebView2 COM）、macOS（WKWebView + ObjC runtime）、Linux（GTK3 + WebKitGTK）——全部手写互操作，无 saucer/C++ 中间层
+- **纯 C# 互操作**：macOS（WKWebView + ObjC runtime）与 Linux（GTK3 + WebKitGTK）为手写 P/Invoke；Windows 的 WebView2 COM 走 `WebView2Aot` 的 `[GeneratedComInterface]`/`[GeneratedComClass]` **源生成绑定**（无手写 vtable/IID/RefCount）。三者均无 saucer/C++ 中间层
 - **零反射 IPC**：`[OrielCommand]` + Roslyn 源生成器在编译期生成分发代码，`[ModuleInitializer]` 自动注册，运行期零反射
 - **Native AOT**：全局 `IsAotCompatible`/`IsTrimmable`，发布为原生单文件可执行文件
 - **无边框窗口**：自绘标题栏 + 流式/原生拖动 + 最大化/全屏/置顶切换
@@ -109,12 +109,15 @@ dotnet publish samples/OrielDemo -c Release -r linux-x64
 
 | 平台 | Webview | 状态 |
 |------|---------|------|
-| Windows x64/arm64 | WebView2 (Evergreen) | ✅ 已运行验证（demo IPC 往返、单测、AOT 发布） |
+| Windows x64/arm64 | WebView2 (Evergreen) | ✅ 已运行验证（demo IPC 往返、单测、AOT 发布）；仅一套实现，无遗留开关 |
 | Linux x64/arm64 | WebKitGTK 4.1 | ⚠️ 编译通过；CI 在 xvfb 下冒烟（进程存活）；尚未在真机完整验证 |
 | macOS x64/arm64 | WKWebView | ⚠️ 仅编译通过；尚未在真机运行过 |
 
 > Linux/macOS 此前会因 `Run()` 的 STA 前置检查直接抛异常（Unix 上 `ApartmentState` 恒为 `Unknown`），
 > 该阻断已排除；但两者的运行期行为仍需真机确认，故上表不做超出证据的声明。
+>
+> Windows 的 WebView2 互操作曾以手工 vtable 实现（源于 .NET 10.0.401 运行时缺陷的旧结论），
+> 该结论已被实测推翻，手工层已整体删除；回退点见 git 标签 `stage-b-done`。
 
 ### 最低 WebView2 Runtime 版本
 
