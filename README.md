@@ -88,9 +88,15 @@ internal partial class AppJsonContext : JsonSerializerContext;
 ```
 
 ```js
-// 拖动：mousedown 时调用
-dragRegion.addEventListener('mousedown', () => oriel.invoke('win.drag'));
-// macOS/Linux 使用流式拖动（dragStart/dragTo/dragEnd）
+// 拖动：Windows 上要等指针移动超过阈值再发起——立即发起会进入原生模态循环并吞掉第二次点击，
+// 双击序列就凑不满、dblclick 不触发。macOS/Linux 用流式拖动（dragStart/dragTo/dragEnd），可立即开始。
+dragRegion.addEventListener('mousedown', (e) => { /* 记录起点 */ });
+
+// 双击标题栏：最大化 / 还原
+dragRegion.addEventListener('dblclick', () => oriel.invoke('win.toggleMaximize'));
+
+// 同步最大化/还原图标（用户在原生路径下最大化时也会推送）
+oriel.on('maximized', (maximized) => { /* 切换图标 */ });
 ```
 
 窗口**完全无边框**，边缘拖动调整大小由系统原生处理，无需在页面里实现任何热区。
