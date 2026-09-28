@@ -1,11 +1,14 @@
-# Generates samples/OrielDemo/app.ico: a rounded-square mark in the demo palette with a white
-# "webview window" glyph. Each size is drawn natively (not downscaled) so 16/24/32 stay legible,
-# and the .ico stores every size as a PNG payload (supported since Windows Vista).
+# Single source for the project mark: a rounded-square in the app palette with a white "webview
+# window" glyph. Produces both artefacts from the same drawing code:
+#   * samples/OrielDemo/app.ico - the demo's exe icon (16..256, each size drawn natively rather than
+#     downscaled, so 16/24/32 stay legible; every size stored as a PNG payload, Vista+).
+#   * orielweb.png             - the 128x128 NuGet package icon (referenced by <PackageIcon>).
+# Re-run after touching the drawing code; both files are committed.
 # ASCII-only.
 
 param(
-    [string]$OutFile = (Join-Path $PSScriptRoot 'app.ico'),
-    [string]$PreviewPng = "$env:TEMP\oriel-icon-preview.png"
+    [string]$IcoOut = (Join-Path (Split-Path $PSScriptRoot -Parent) 'samples\OrielDemo\app.ico'),
+    [string]$PackagePngOut = (Join-Path (Split-Path $PSScriptRoot -Parent) 'orielweb.png')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -75,12 +78,12 @@ foreach ($s in $sizes) {
     $ms = New-Object System.IO.MemoryStream
     $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
     $pngs += , @{ Size = $s; Bytes = $ms.ToArray() }
-    if ($s -eq 256) { $bmp.Save($PreviewPng, [System.Drawing.Imaging.ImageFormat]::Png) }
+    if ($s -eq 128) { $bmp.Save($PackagePngOut, [System.Drawing.Imaging.ImageFormat]::Png) }
     $ms.Dispose(); $bmp.Dispose()
 }
 
 # --- assemble the .ico container (PNG payloads, Vista+) ---
-$fs = [System.IO.File]::Create($OutFile)
+$fs = [System.IO.File]::Create($IcoOut)
 $bw = New-Object System.IO.BinaryWriter($fs)
 
 $bw.Write([uint16]0)                 # reserved
@@ -104,7 +107,7 @@ foreach ($p in $pngs) { $bw.Write($p.Bytes) }
 
 $bw.Dispose(); $fs.Dispose()
 
-Write-Output ("wrote " + $OutFile)
-Get-Item $OutFile | Select-Object @{ n = 'KB'; e = { [math]::Round($_.Length / 1KB, 1) } } | Format-Table -AutoSize | Out-String -Width 40
+Write-Output ("wrote " + $IcoOut)
+Get-Item $IcoOut | Select-Object @{ n = 'KB'; e = { [math]::Round($_.Length / 1KB, 1) } } | Format-Table -AutoSize | Out-String -Width 40
 Write-Output ("sizes: " + (($pngs | ForEach-Object { $_.Size }) -join ', '))
-Write-Output ("preview png: " + $PreviewPng)
+Write-Output ("package icon png: " + $PackagePngOut)

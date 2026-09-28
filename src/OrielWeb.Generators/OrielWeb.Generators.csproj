@@ -17,10 +17,12 @@
     <IsRoslynComponent>true</IsRoslynComponent>
     <!-- NuGet 打包：分析器包 -->
     <PackageId>OrielWeb.Generators</PackageId>
-    <Version>0.1.0</Version>
+    <!-- 版本号统一取自根 Directory.Build.props（0.1.0），此处不再重复声明 -->
     <Description>OrielWeb 源生成器：编译期生成零反射 IPC 路由（[OrielCommand] 自动注册）。</Description>
     <PackageTags>webview;source-generator;codegen;ipc;aot</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/orielweb/OrielWeb</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <NoWarn>$(NoWarn);NU5128</NoWarn>
   </PropertyGroup>

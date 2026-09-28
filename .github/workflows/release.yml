@@ -1,0 +1,48 @@
+name: release
+
+# 发布 NuGet 包：推送 v* 标签（或手动触发）。
+# 前置：仓库 Secrets 里配置 NUGET_API_KEY（nuget.org 的 Push API Key）。
+# 版本号唯一来源是根 Directory.Build.props 的 <Version>（当前 0.1.0）；
+# 标签必须与之一致（v0.1.0 对应 0.1.0），下面的校验步骤会拦截不一致的发布。
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Test
+        # 发布前再跑一遍（tag 推送不会触发 ci.yml 的 push 触发器）
+        run: dotnet test tests/OrielWeb.Tests -c Release
+
+      - name: Pack
+        # 打包两个包：OrielWeb（库）、OrielWeb.Generators（分析器）。示例与测试项目已 IsPackable=false
+        run: dotnet pack OrielWeb.slnx -c Release -o dist/nuget
+
+      - name: Check tag matches package version
+        shell: pwsh
+        run: |
+          [xml]$props = Get-Content Directory.Build.props
+          $version = @($props.Project.PropertyGroup.Version)[0].Trim()
+          $tag = "${{ github.ref_name }}".TrimStart('v', 'V')
+          if ($tag -ne $version) {
+            throw "标签 v$tag 与包版本 $version 不一致：先改 Directory.Build.props 的 Version，再打对应标签"
+          }
+          Write-Output "版本一致：$version"
+
+      - name: Push to nuget.org
+        # --skip-duplicate：重复推送同一版本不再报错（幂等）
+        run: dotnet nuget push "dist/nuget/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key "${{ secrets.NUGET_API_KEY }}" --skip-duplicate

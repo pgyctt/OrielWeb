@@ -7,6 +7,8 @@
     <!-- Native AOT 发布：dotnet publish -c Release -r win-x64 -->
     <PublishAot>true</PublishAot>
     <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- 示例应用不是 NuGet 包：dotnet pack OrielWeb.slnx 时不要为它产包 -->
+    <IsPackable>false</IsPackable>
     <!-- 应用图标：资源管理器、任务栏、Alt-Tab 都取自它。窗口类未设置 hIcon（见 Win32WindowHost），
          因此窗口图标也回落到这里的 exe 图标。 -->
     <ApplicationIcon>app.ico</ApplicationIcon>
