@@ -11,6 +11,14 @@ using OrielWeb.Platform.Windows.Interop;
 using WebView2;
 using WebView2.Utilities;
 
+// DirectN 全名空间导入会与本地的 Win32 结构（如 WINDOWPLACEMENT、RECT）冲突，故只取需要的类型。
+using DCompDevice = DirectN.IDCompositionDevice;
+using DCompFunctions = DirectN.Functions;
+using DCompHWND = DirectN.HWND;
+using DCompPoint = DirectN.POINT;
+using DCompTarget = DirectN.IDCompositionTarget;
+using DCompVisual = DirectN.IDCompositionVisual;
+
 namespace OrielWeb.Platform.Windows;
 
 /// <summary>
@@ -46,10 +54,21 @@ internal partial class Win32WindowHost : IWindowBackend
     internal nint _hwnd;
 
     private IComObject<ICoreWebView2Environment>? _environment;
-    private IComObject<ICoreWebView2Controller>? _controller;
+    private IComObject<ICoreWebView2CompositionController>? _compositionController;
+
+    /// <summary>同一组合控制器的 <c>ICoreWebView2Controller</c> 视图（bounds / visible / focus 用）。</summary>
+    private ICoreWebView2Controller? _controller;
     private IComObject<ICoreWebView2>? _webView;
     private CoreWebView2Events? _webViewEvents;
+    private CoreWebView2CompositionControllerEvents? _compositionEvents;
 
+    // DirectComposition 合成树。窗口用 WS_EX_NOREDIRECTIONBITMAP 创建，没有系统绘制的表面，
+    // 内容完全由这棵树提供；WebView2 作为其中一个视觉（RootVisualTarget），因此它不再是子窗口。
+    private DCompDevice? _dcompDevice;
+    private DCompTarget? _dcompTarget;
+    private DCompVisual? _dcompVisual;
+
+    private bool _trackingMouseLeave;
     private volatile bool _loadedRaised;
 
     private int _minWidth;
@@ -110,7 +129,10 @@ internal partial class Win32WindowHost : IWindowBackend
 
         nint windowNamePtr = Marshal.StringToHGlobalUni(options.Title);
         var hwnd = Win32.CreateWindowExW(
-            0,
+            // 无重定向表面：窗口内容完全由 DirectComposition 提供，WebView2 作为视觉合成进来。
+            // 这是 Composition 宿主的前提，也让 WebView2 不再是子窗口——边缘的 WM_NCHITTEST
+            // 因此能到达本窗口，系统原生的边缘调整大小随之可用。
+            Win32Constants.WS_EX_NOREDIRECTIONBITMAP,
             s_windowClassNamePtr,
             windowNamePtr,
             style,
@@ -127,8 +149,48 @@ internal partial class Win32WindowHost : IWindowBackend
         }
         host._hwnd = hwnd;
 
+        host.SetupComposition();
         host.PostCreate();
         return host;
+    }
+
+    /// <summary>
+    /// 建立 DirectComposition 合成树：设备 → 窗口目标 → 根视觉。WebView2 稍后作为视觉挂到根视觉上
+    /// （见 <see cref="InitializeWebView2Async"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 直接用 dcomp.h 的 COM 接口，而不是 WinRT 的 Windows.UI.Composition：后者需要
+    /// net10.0-windows TFM，而本库面向跨平台的 net10.0。DirectNAot 正是 Win32 COM 的 AOT 绑定。
+    /// </remarks>
+    private unsafe void SetupComposition()
+    {
+        int hr = DCompFunctions.DCompositionCreateDevice(null, typeof(DCompDevice).GUID, out nint devicePtr);
+        if (hr < 0 || devicePtr == 0)
+        {
+            throw new InvalidOperationException($"创建 DirectComposition 设备失败（HRESULT 0x{hr:X8}）。");
+        }
+
+        _dcompDevice = ComInterfaceMarshaller<DCompDevice>.ConvertToManaged((void*)devicePtr)
+            ?? throw new InvalidOperationException("DirectComposition 设备接口转换失败。");
+
+        hr = _dcompDevice.CreateTargetForHwnd(new DCompHWND(_hwnd), topmost: true, out var target);
+        if (hr < 0)
+        {
+            throw new InvalidOperationException($"创建 DirectComposition 窗口目标失败（HRESULT 0x{hr:X8}）。");
+        }
+        _dcompTarget = target;
+
+        hr = _dcompDevice.CreateVisual(out var visual);
+        if (hr < 0)
+        {
+            throw new InvalidOperationException($"创建 DirectComposition 视觉失败（HRESULT 0x{hr:X8}）。");
+        }
+        _dcompVisual = visual;
+
+        if (_dcompTarget.SetRoot(_dcompVisual) < 0 || _dcompDevice.Commit() < 0)
+        {
+            throw new InvalidOperationException("提交 DirectComposition 合成树失败。");
+        }
     }
 
     private static uint ComputeStyle(OrielWindowOptions options)
@@ -258,32 +320,68 @@ internal partial class Win32WindowHost : IWindowBackend
         {
             case Win32Constants.WM_NCCALCSIZE:
             {
-                // 无边框窗口的客户区修正。原实现返回 0（客户区 = 整个窗口）以求彻底无边框，
-                // 但 WS_THICKFRAME 的调整大小热区恰恰位于被消除掉的非客户区，且 WebView2 的
-                // 子窗口铺满客户区、对 WM_NCHITTEST 返回 HTCLIENT 阻断了向父窗口的上溯——
-                // 结果是窗口永远收不到 WM_NCHITTEST，边缘完全无法拖动改尺寸
-                // （AOTrino 的 HwndWebViewWindow 实测同样如此）。
-                //
-                // 现改为"客户区 = 窗口矩形让出四条边框"（即标准窗口的客户区，但不减标题栏）：
-                //   - 边框仍属非客户区 → 系统的边缘调整大小、光标形状、双击边框等全部原生可用；
-                //   - 标题栏不参与 → 窗口顶部仍由页面自绘标题栏。
-                // 代价是四周保留一条系统边框（宽度即 SM_C*FRAME + SM_C*PADDEDBORDER）。
+                // 无边框窗口：客户区等于整个窗口，四周不留任何系统边框。
+                // 之所以不再需要"让出边框换热区"（见 docs/DECISIONS.md 的历史记录）：窗口是
+                // WS_EX_NOREDIRECTIONBITMAP + DirectComposition 宿主，WebView2 是合成树里的视觉
+                // 而非子窗口，因此这条消息与 WM_NCHITTEST 都能真正到达本窗口，边缘命中由下面的
+                // WM_NCHITTEST 分支显式给出。
                 if (wParam != 0)
                 {
-                    if (lParam != 0)
-                    {
-                        int borderX = BorderThickness(horizontal: true);
-                        int borderY = BorderThickness(horizontal: false);
-                        var parameters = (NCCALCSIZE_PARAMS*)lParam;
-                        parameters->rgrc0.Left += borderX;
-                        parameters->rgrc0.Top += borderY;
-                        parameters->rgrc0.Right -= borderX;
-                        parameters->rgrc0.Bottom -= borderY;
-                    }
+                    // lParam 为 NCCALCSIZE_PARAMS*，其首成员已是窗口矩形；返回 0 即"客户区 = 该矩形"。
                     return 0;
                 }
-                break; // wParam == FALSE：交给 DefWindowProcW 处理 RECT* 形式
+
+                // lParam 为 RECT*（拟议客户区，屏幕坐标）：显式改写为窗口矩形。
+                if (lParam != 0
+                    && Win32.GetWindowRect(hwnd, out var windowRect)
+                    && windowRect.Right > windowRect.Left
+                    && windowRect.Bottom > windowRect.Top)
+                {
+                    *(RECT*)lParam = windowRect;
+                }
+                return 0;
             }
+
+            case Win32Constants.WM_NCHITTEST:
+            {
+                // 组合宿主下 WebView 不再是子窗口，系统终于会把这条消息送到本窗口。
+                // 客户区已铺满整个窗口，边缘的调整大小语义必须在此显式补回。
+                if (_options.Frameless && _options.Resizable)
+                {
+                    nint hit = HitTestResizeBorder(lParam);
+                    if (hit != 0)
+                    {
+                        return hit;
+                    }
+                }
+                break; // 其余情况交给 DefWindowProcW
+            }
+
+            case Win32Constants.WM_MOUSEMOVE:
+            case Win32Constants.WM_LBUTTONDOWN:
+            case Win32Constants.WM_LBUTTONUP:
+            case Win32Constants.WM_RBUTTONDOWN:
+            case Win32Constants.WM_RBUTTONUP:
+            case Win32Constants.WM_MBUTTONDOWN:
+            case Win32Constants.WM_MBUTTONUP:
+            case Win32Constants.WM_MOUSEWHEEL:
+            case Win32Constants.WM_MOUSEHWHEEL:
+                ForwardMouseMessage(hwnd, message, wParam, lParam);
+                break;
+
+            case Win32Constants.WM_MOUSELEAVE:
+                _trackingMouseLeave = false;
+                return 0;
+
+            // 键盘不需要转发：组合托管的 WebView 自己处理键盘输入，宿主只需在获得焦点时
+            // 把焦点交给它（见下）。这与 AOTrino 的 Composition 宿主一致——它也只转发鼠标/指针。
+            case Win32Constants.WM_SETFOCUS:
+                _controller?.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON.COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+                return 0;
+
+            case Win32Constants.WM_KILLFOCUS:
+                _controller?.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON.COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+                break;
 
             case Win32Constants.WM_SIZE:
                 UpdateBounds();
@@ -333,32 +431,51 @@ internal partial class Win32WindowHost : IWindowBackend
         return Win32.DefWindowProcW(hwnd, message, wParam, lParam);
     }
 
-    /// <summary>窗口销毁时的清理：先摘除子类并释放 COM 资源，再触发 Closed 与窗口计数。</summary>
+    /// <summary>窗口销毁时的清理：先关控制器、释放合成树，再触发 Closed 与窗口计数。</summary>
     internal void OnWindowDestroyedCore()
     {
+        _compositionEvents?.Dispose();
+        _compositionEvents = null;
+
         _webViewEvents?.Dispose();
         _webViewEvents = null;
 
-        var controller = Interlocked.Exchange(ref _controller, null);
+        var controller = _controller;
+        _controller = null;
         if (controller is not null)
         {
             try
             {
-                controller.Close(); // 先通知控制器关闭，再释放句柄
+                controller.Close(); // 先通知控制器关闭，再释放其余资源
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[OrielWeb] 关闭 WebView2 控制器失败：{ex.Message}");
             }
-            controller.Dispose();
         }
 
+        Interlocked.Exchange(ref _compositionController, null)?.Dispose();
         Interlocked.Exchange(ref _webView, null)?.Dispose();
         Interlocked.Exchange(ref _environment, null)?.Dispose();
+
+        // DirectComposition 的对象本是窗口的合成树，HWND 销毁后即失去作用，
+        // 随进程/窗口生命周期自然回收（本项目一个进程通常只活一个窗口）。
+        _dcompVisual = null;
+        _dcompTarget = null;
+        _dcompDevice = null;
 
         Closed?.Invoke();
         _selfHandle.Free();
         _backend.OnWindowDestroyed();
+    }
+
+    /// <summary>组合宿主不接收系统的光标设置，需把 WebView 当前光标自行应用到窗口。</summary>
+    private void OnCursorChanged(object? sender, object args)
+    {
+        if (sender is ICoreWebView2CompositionController controller && controller.Cursor is { } cursor)
+        {
+            _ = Win32.SetCursor(cursor);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -382,8 +499,23 @@ internal partial class Win32WindowHost : IWindowBackend
                 browserFolder, _userDataFolder, null).ConfigureAwait(true)
                 ?? throw new InvalidOperationException("创建 WebView2 环境失败（返回 null）。");
 
-            _controller = await _environment.CreateCoreWebView2ControllerAsync(_hwnd).ConfigureAwait(true)
-                ?? throw new InvalidOperationException("创建 WebView2 控制器失败（返回 null）。");
+            _compositionController = await _environment.CreateCoreWebView2CompositionControllerAsync(_hwnd).ConfigureAwait(true)
+                ?? throw new InvalidOperationException("创建 WebView2 组合控制器失败（返回 null）。");
+
+            // 把 WebView 作为视觉挂进我们建立的 DirectComposition 树。此后它不再是子窗口，
+            // 因此窗口能收到 WM_NCHITTEST —— 这是边缘调整大小得以走系统原生路径的关键。
+            _compositionController.RootVisualTarget = _dcompVisual
+                ?? throw new InvalidOperationException("DirectComposition 根视觉尚未建立。");
+
+            // 挂上视觉后必须再提交一次，DComp 才会把它纳入当前的合成帧
+            _dcompDevice?.Commit();
+
+            // 组合控制器同时实现 ICoreWebView2Controller（bounds / visible / focus 等）
+            _controller = _compositionController.Object as ICoreWebView2Controller
+                ?? throw new InvalidOperationException("组合控制器未实现 ICoreWebView2Controller。");
+
+            _compositionEvents = new CoreWebView2CompositionControllerEvents(_compositionController);
+            _compositionEvents.CursorChanged += OnCursorChanged;
 
             _webView = _controller.CoreWebView2
                 ?? throw new InvalidOperationException("获取 CoreWebView2 失败（返回 null）。");
@@ -532,6 +664,131 @@ internal partial class Win32WindowHost : IWindowBackend
     }
 
     // ------------------------------------------------------------------
+    /// <summary>
+    /// 把屏幕坐标转换为窗口边缘的调整大小命中值；不在边缘时返回 0（交由默认处理）。
+    /// 四角优先于四边（系统的判定顺序亦然）。
+    /// </summary>
+    private nint HitTestResizeBorder(nint lParam)
+    {
+        // 最大化 / 全屏时不允许拖动边缘改尺寸
+        if (_isFullscreen || Win32.IsZoomed(_hwnd))
+        {
+            return 0;
+        }
+
+        // WM_NCHITTEST 的 lParam：低 16 位为 x、高 16 位为 y 的**有符号**屏幕坐标
+        // （多显示器下可为负，故必须按 short 解释）
+        long packed = lParam.ToInt64();
+        int screenX = (short)(packed & 0xFFFF);
+        int screenY = (short)((packed >> 16) & 0xFFFF);
+
+        if (!Win32.GetWindowRect(_hwnd, out var window))
+        {
+            return 0;
+        }
+
+        int border = BorderThickness(horizontal: true);
+        bool left = screenX < window.Left + border;
+        bool right = screenX >= window.Right - border;
+        bool top = screenY < window.Top + border;
+        bool bottom = screenY >= window.Bottom - border;
+
+        if (top && left) return Win32Constants.HTTOPLEFT;
+        if (top && right) return Win32Constants.HTTOPRIGHT;
+        if (bottom && left) return Win32Constants.HTBOTTOMLEFT;
+        if (bottom && right) return Win32Constants.HTBOTTOMRIGHT;
+        if (left) return Win32Constants.HTLEFT;
+        if (right) return Win32Constants.HTRIGHT;
+        if (top) return Win32Constants.HTTOP;
+        if (bottom) return Win32Constants.HTBOTTOM;
+        return 0;
+    }
+
+    /// <summary>
+    /// 把窗口收到的鼠标消息注入组合托管的 WebView。组合模式下 WebView 收不到系统输入
+    /// （它不是窗口），全部输入必须由宿主经 <c>SendMouseInput</c> 转发。
+    /// </summary>
+    private void ForwardMouseMessage(nint hwnd, uint message, nuint wParam, nint lParam)
+    {
+        var controller = _compositionController?.Object;
+        if (controller is null)
+        {
+            return;
+        }
+
+        if (message == Win32Constants.WM_MOUSEMOVE)
+        {
+            EnsureMouseLeaveTracking();
+        }
+
+        long packed = lParam.ToInt64();
+        var point = new DCompPoint((short)(packed & 0xFFFF), (short)((packed >> 16) & 0xFFFF));
+        if (point.x is < -32000 or > 32000 || point.y is < -32000 or > 32000)
+        {
+            return; // 窗口最小化等场景下的哨兵坐标
+        }
+
+        // 滚轮消息的坐标是屏幕坐标，其余是客户区坐标。ScreenToClient 需要 DirectN 的 POINT，
+        // 而它非 blittable（无法用于源生成 P/Invoke），故用客户区原点自行换算。
+        if (message is Win32Constants.WM_MOUSEWHEEL or Win32Constants.WM_MOUSEHWHEEL)
+        {
+            var origin = new POINT(0, 0);
+            if (!Win32.ClientToScreen(hwnd, ref origin))
+            {
+                return;
+            }
+            point = new DCompPoint(point.x - origin.X, point.y - origin.Y);
+        }
+
+        var kind = message switch
+        {
+            Win32Constants.WM_MOUSEMOVE => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_MOVE,
+            Win32Constants.WM_LBUTTONDOWN => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_DOWN,
+            Win32Constants.WM_LBUTTONUP => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_UP,
+            Win32Constants.WM_RBUTTONDOWN => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_DOWN,
+            Win32Constants.WM_RBUTTONUP => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_UP,
+            Win32Constants.WM_MBUTTONDOWN => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_DOWN,
+            Win32Constants.WM_MBUTTONUP => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_UP,
+            Win32Constants.WM_MOUSEWHEEL => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_WHEEL,
+            _ => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_HORIZONTAL_WHEEL,
+        };
+
+        // 滚轮的滚动量在 wParam 高 16 位（有符号），其余消息按按键状态折算虚拟键
+        uint data = message is Win32Constants.WM_MOUSEWHEEL or Win32Constants.WM_MOUSEHWHEEL
+            ? (uint)(short)((long)wParam >> 16)
+            : 0;
+
+        var keys = COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS.COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_NONE;
+        long state = (long)wParam;
+        if ((state & Win32Constants.MK_LBUTTON) != 0) keys |= COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS.COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_LEFT_BUTTON;
+        if ((state & Win32Constants.MK_RBUTTON) != 0) keys |= COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS.COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_RIGHT_BUTTON;
+        if ((state & Win32Constants.MK_MBUTTON) != 0) keys |= COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS.COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_MIDDLE_BUTTON;
+        if ((state & Win32Constants.MK_SHIFT) != 0) keys |= COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS.COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_SHIFT;
+        if ((state & Win32Constants.MK_CONTROL) != 0) keys |= COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS.COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_CONTROL;
+
+        controller.SendMouseInput(kind, keys, data, point);
+    }
+
+    /// <summary>令光标离开窗口时补发一次 <c>WM_MOUSELEAVE</c>（Windows 默认不持续发送）。</summary>
+    private void EnsureMouseLeaveTracking()
+    {
+        if (_trackingMouseLeave)
+        {
+            return;
+        }
+
+        var track = new TRACKMOUSEEVENT
+        {
+            cbSize = (uint)Marshal.SizeOf<TRACKMOUSEEVENT>(),
+            dwFlags = 0x00000002, // TME_LEAVE
+            hwndTrack = _hwnd,
+        };
+        if (Win32.TrackMouseEvent(ref track))
+        {
+            _trackingMouseLeave = true;
+        }
+    }
+
     /// <summary>系统窗口边框厚度（物理像素，随窗口所在显示器 DPI 缩放）。</summary>
     private int BorderThickness(bool horizontal)
     {

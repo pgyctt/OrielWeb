@@ -14,7 +14,18 @@ internal static class Win32Constants
     /// <summary>客户区大小计算（0x0083）。注意不要与 <c>WM_NCHITTEST</c>（0x0084）混淆：
     /// 后者的 lParam 是鼠标坐标而非指针，误按 RECT* 写入会直接 AccessViolation。</summary>
     public const uint WM_NCCALCSIZE = 0x0083;
+    public const uint WM_NCHITTEST = 0x0084;
     public const uint WM_NCLBUTTONDOWN = 0x00A1;
+
+    // WM_NCHITTEST 的调整大小命中值
+    public static readonly nint HTLEFT = 10;
+    public static readonly nint HTRIGHT = 11;
+    public static readonly nint HTTOP = 12;
+    public static readonly nint HTTOPLEFT = 13;
+    public static readonly nint HTTOPRIGHT = 14;
+    public static readonly nint HTBOTTOM = 15;
+    public static readonly nint HTBOTTOMLEFT = 16;
+    public static readonly nint HTBOTTOMRIGHT = 17;
     public const uint WM_APP = 0x8000;
     public const uint WM_APP_DISPATCH = WM_APP + 1;
 
@@ -34,6 +45,36 @@ internal static class Win32Constants
     public const uint WS_THICKFRAME = 0x00040000;
     public const uint WS_CAPTION = 0x00C00000;
     public const uint WS_SYSMENU = 0x00080000;
+
+    /// <summary>窗口无重定向表面：内容必须由 DirectComposition 提供（Composition 宿主要求）。</summary>
+    public const uint WS_EX_NOREDIRECTIONBITMAP = 0x00200000;
+
+    public const uint WM_MOUSEMOVE = 0x0200;
+    public const uint WM_LBUTTONDOWN = 0x0201;
+    public const uint WM_LBUTTONUP = 0x0202;
+    public const uint WM_RBUTTONDOWN = 0x0204;
+    public const uint WM_RBUTTONUP = 0x0205;
+    public const uint WM_MBUTTONDOWN = 0x0207;
+    public const uint WM_MBUTTONUP = 0x0208;
+    public const uint WM_MOUSEWHEEL = 0x020A;
+    public const uint WM_MOUSEHWHEEL = 0x020E;
+    public const uint WM_MOUSELEAVE = 0x02A3;
+    public const uint WM_SETCURSOR = 0x0020;
+    public const uint WM_KEYDOWN = 0x0100;
+    public const uint WM_KEYUP = 0x0101;
+    public const uint WM_CHAR = 0x0102;
+    public const uint WM_SYSKEYDOWN = 0x0104;
+    public const uint WM_SYSKEYUP = 0x0105;
+    public const uint WM_SETFOCUS = 0x0007;
+    public const uint WM_KILLFOCUS = 0x0008;
+
+    public const int MK_LBUTTON = 0x0001;
+    public const int MK_RBUTTON = 0x0002;
+    public const int MK_SHIFT = 0x0004;
+    public const int MK_CONTROL = 0x0008;
+    public const int MK_MBUTTON = 0x0010;
+    public const int MK_XBUTTON1 = 0x0020;
+    public const int MK_XBUTTON2 = 0x0040;
 
     public const int SW_HIDE = 0;
     public const int SW_SHOW = 5;
@@ -98,6 +139,16 @@ internal struct RECT
     public int Top;
     public int Right;
     public int Bottom;
+}
+
+/// <summary>WM_NCCALCSIZE 的 lParam（wParam 非 0 时）。rgrc0 传入为窗口矩形，返回时须为客户区矩形。</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct TRACKMOUSEEVENT
+{
+    public uint cbSize;
+    public uint dwFlags;
+    public nint hwndTrack;
+    public uint dwHoverTime;
 }
 
 /// <summary>WM_NCCALCSIZE 的 lParam（wParam 非 0 时）。rgrc0 传入为窗口矩形，返回时须为客户区矩形。</summary>
@@ -268,6 +319,22 @@ internal static unsafe partial class Win32
     [LibraryImport("user32")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool GetClientRect(nint hwnd, out RECT rect);
+
+    [LibraryImport("user32")]
+    internal static partial nint SetCapture(nint hwnd);
+
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool ClientToScreen(nint hwnd, ref POINT point);
+
+    [LibraryImport("user32", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool TrackMouseEvent(ref TRACKMOUSEEVENT track);
+
+    [LibraryImport("user32")]
+    internal static partial nint SetCursor(nint cursor);
+
+
 
     [LibraryImport("user32")]
     [return: MarshalAs(UnmanagedType.Bool)]
