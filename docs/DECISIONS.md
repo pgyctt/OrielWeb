@@ -129,3 +129,29 @@
 - 子窗口直接返回 `HTLEFT`：子窗口没有 `WS_THICKFRAME`，系统既不会替它启动模态循环，也不再投递客户区消息。
 
 **验证**：四条边各拖动 100px 均精确生效、正交方向不变；连续 3 次稳定；编译 0 警告 0 错误，单测 39/39，桥接 19/19。
+
+### 后续：改用 Composition 宿主（同日晚，最终方案）
+
+上述"保留边框"方案虽然 functionally 正确，但用户反馈**窗口四周出现一圈可见边框（白边）**，
+与"无边框窗口"的定位冲突。最终改为 **Composition 宿主**，彻底消除边框：
+
+- **窗口**：以 `WS_EX_NOREDIRECTIONBITMAP` 创建，内容完全由 DirectComposition 提供。
+- **合成树**：直接用 **dcomp.h 的 COM 接口**（`DCompositionCreateDevice` +
+  `IDCompositionDevice` / `IDCompositionTarget` / `IDCompositionVisual`），**不用** WinRT 的
+  `Windows.UI.Composition` —— 后者需要 `net10.0-windows` TFM 与 CsWinRT 投影，而本库面向跨平台的
+  `net10.0`；`DirectNAot` 正是 Win32 COM 的 AOT 绑定，恰好覆盖 `dcomp.h`。
+- **WebView**：改用 `ICoreWebView2CompositionController`，经 `RootVisualTarget` 作为视觉接入合成树。
+  **它从此不再是子窗口**——这正是关键：此前 `Chrome_*` 子窗口铺满客户区并对 `WM_NCHITTEST` 返回
+  `HTCLIENT`，阻断了向父窗口的上溯。现在 `WM_NCCALCSIZE` 恢复返回 0（客户区铺满、无任何边框），
+  边缘命中由窗口自己的 `WM_NCHITTEST` 显式给出。
+- **输入**：组合托管的 WebView 收不到系统输入，因此由宿主转发鼠标
+  （`WM_MOUSEMOVE` / `LBUTTON*` / `RBUTTON*` / `MBUTTON*` / `MOUSEWHEEL` / `MOUSEHWHEEL` →
+  `SendMouseInput`，含按键状态位、滚轮量与 `TME_LEAVE` 跟踪）并同步光标
+  （`CursorChanged` → `SetCursor`）。**键盘不需要转发**，WebView2 自行处理——与 AOTrino 的
+  Composition 宿主一致（它也只转发鼠标/指针）。
+- **一个易错点**：挂上 `RootVisualTarget` 之后必须**再 `Commit` 一次**，否则合成树不生效，
+  表现为"窗口完全透明"（能截到桌面而不是窗口内容）。
+
+**验证**：四边各拖 100px 精确生效且正交方向不变；点击页面"全屏"按钮触发 IPC 往返使窗口变为
+1920x1080（证明鼠标链路 `WM_LBUTTONDOWN → SendMouseInput → 页面 → IPC → 宿主` 完整）；
+截图确认完全无边框；进程不再有 `Chrome_*` 子窗口；编译 0 警告 0 错误，单测 39/39，桥接 19/19。

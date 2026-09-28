@@ -5,6 +5,7 @@
 ## 特性
 
 - **纯 C# 互操作**：macOS（WKWebView + ObjC runtime）与 Linux（GTK3 + WebKitGTK）为手写 P/Invoke；Windows 的 WebView2 COM 走 `WebView2Aot` 的 `[GeneratedComInterface]`/`[GeneratedComClass]` **源生成绑定**（无手写 vtable/IID/RefCount）。三者均无 saucer/C++ 中间层
+- **Composition 宿主**（Windows）：WebView2 作为 DirectComposition 的一份视觉合成进窗口，而非子窗口——因此无边框窗口的边缘 resize 能走系统原生路径，且窗口内容可与其它视觉自由合成
 - **零反射 IPC**：`[OrielCommand]` + Roslyn 源生成器在编译期生成分发代码，`[ModuleInitializer]` 自动注册，运行期零反射
 - **Native AOT**：全局 `IsAotCompatible`/`IsTrimmable`，发布为原生单文件可执行文件
 - **无边框窗口**：自绘标题栏 + 流式/原生拖动 + 最大化/全屏/置顶切换
@@ -92,9 +93,12 @@ dragRegion.addEventListener('mousedown', () => oriel.invoke('win.drag'));
 // macOS/Linux 使用流式拖动（dragStart/dragTo/dragEnd）
 ```
 
-边缘拖动调整大小由**系统原生**处理（Windows 上保留一条系统宽度的窗口边框，其属非客户区），
-无需在页面里实现任何热区。这也意味着窗口四周会有一条细边框——这是换取原生、精确 resize 的代价，
-详见 `docs/DECISIONS.md` 中关于 WebView2 子窗口阻断 `WM_NCHITTEST` 的记录。
+窗口**完全无边框**，边缘拖动调整大小由系统原生处理，无需在页面里实现任何热区。
+Windows 上这一点由 **Composition 宿主**保证：窗口以 `WS_EX_NOREDIRECTIONBITMAP` 创建，WebView2 通过
+`ICoreWebView2CompositionController` 作为 DirectComposition 的一份视觉接入，**不再是子窗口**，
+因此窗口能收到 `WM_NCHITTEST` 并显式给出边缘命中值（子窗口会以 `HTCLIENT` 阻断该消息向上的传递）。
+代价是组合托管的 WebView 收不到系统输入，鼠标消息由宿主转发（键盘不需要）。
+详见 `docs/DECISIONS.md` 中的设计记录。
 
 ## 构建
 
