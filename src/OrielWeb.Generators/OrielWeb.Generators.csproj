@@ -15,22 +15,10 @@
     <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
     <IsRoslynComponent>true</IsRoslynComponent>
-    <!-- NuGet 打包：分析器包 -->
-    <PackageId>OrielWeb.Generators</PackageId>
-    <!-- 版本号统一取自根 Directory.Build.props（0.1.0），此处不再重复声明 -->
-    <Description>OrielWeb 源生成器：编译期生成零反射 IPC 路由（[OrielCommand] 自动注册）。</Description>
-    <PackageTags>webview;source-generator;codegen;ipc;aot</PackageTags>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/orielweb/OrielWeb</RepositoryUrl>
-    <RepositoryType>git</RepositoryType>
-    <IncludeBuildOutput>false</IncludeBuildOutput>
-    <NoWarn>$(NoWarn);NU5128</NoWarn>
+    <!-- 不再单独发 NuGet 包：生成器 DLL 由 OrielWeb 主包打包到 analyzers/dotnet/cs
+         （见 src/OrielWeb/OrielWeb.csproj），消费者只需引用 OrielWeb 一个包。 -->
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
-
-  <!-- 分析器 DLL 打包到 analyzers/dotnet/cs -->
-  <ItemGroup>
-    <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="True" PackagePath="analyzers/dotnet/cs" Visible="false" />
-  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" PrivateAssets="all" />

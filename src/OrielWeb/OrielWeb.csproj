@@ -77,4 +77,17 @@
     <ProjectReference Include="..\OrielWeb.Generators\OrielWeb.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
+  <!-- 生成器 DLL 随主包一起发布（analyzers/dotnet/cs），消费者只需 add 一个包：
+       NuGet 会自动运行被引用包里的分析器，不需要单独的 OrielWeb.Generators 包。
+       不能写成静态 <None Include="@(Analyzer)"> —— @(Analyzer) 由 ResolveProjectReferences 在
+       目标执行期填充，项目求值期是空列表；必须等引用解析完再注入打包项。 -->
+  <Target Name="PackSourceGeneratorDll" BeforeTargets="_GetPackageFiles;GenerateNuspec">
+    <ItemGroup>
+      <!-- 只取本项目的生成器：@(Analyzer) 里还有 SDK 自带的分析器/生成器（ILLink、NetAnalyzers、
+           LibraryImportGenerator 等），一并打包会把它们强加给消费者。 -->
+      <_OrielGeneratorDll Include="@(Analyzer)" Condition="'%(Filename)' == 'OrielWeb.Generators'" />
+      <None Include="@(_OrielGeneratorDll->'%(Identity)')" Pack="True" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    </ItemGroup>
+  </Target>
+
 </Project>

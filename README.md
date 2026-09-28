@@ -17,11 +17,10 @@
 
 ```bash
 dotnet add package OrielWeb
-dotnet add package OrielWeb.Generators
 ```
 
-主包是库本身；`OrielWeb.Generators` 是 Roslyn 源生成器包（不含运行时程序集），负责在编译期生成
-IPC 路由，需与主包一起引用。
+IPC 路由由随包分发的 Roslyn 源生成器在编译期生成——生成器 DLL 打在包的 `analyzers/dotnet/cs`，
+NuGet 会自动运行它，因此不需要额外的包。
 
 ```xml
 <!-- 应用项目：其余用 dotnet new 的默认值即可 -->
@@ -38,7 +37,8 @@ IPC 路由，需与主包一起引用。
 </Project>
 ```
 
-在仓库内开发时（而不是引用 NuGet 包），把两个包引用换成项目引用：
+在仓库内开发时（而不是引用 NuGet 包），把包引用换成项目引用。注意分析器不会随
+`ProjectReference` 传递，生成器需要像下面这样显式引用：
 
 ```xml
 <ProjectReference Include="..\..\src\OrielWeb\OrielWeb.csproj" />
