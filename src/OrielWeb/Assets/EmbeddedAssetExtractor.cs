@@ -32,7 +32,7 @@ internal static class EmbeddedAssetExtractor
             // 资源名 → 相对路径：最后一个 '.' 之前是目录路径（'.'→分隔符），
             // 之后是扩展名，与文件名主干重新拼接。
             // 例：OrielDemo.wwwroot.app.js → app.js；…wwwroot.index.html → index.html
-            // （文件名主干中再含 '.' 的资源不受支持，见 PLAN.md 已知限制）
+            // （文件名主干中再含 '.' 的资源不受支持）
             var relative = MapResourceToPath(name[prefix.Length..]);
             var target = Path.Combine(root, relative);
             var targetDir = Path.GetDirectoryName(target);

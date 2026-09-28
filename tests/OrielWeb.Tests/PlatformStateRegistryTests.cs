@@ -8,7 +8,7 @@ namespace OrielWeb.Tests;
 /// 真实触发点在 GTK 的 destroy 信号回调里（需要 GTK 运行时），CI 环境无法复现，
 /// 因此这里只验证注册/注销这一对纯托管操作，确保注销路径确实会移除条目、
 /// 且对不存在的键是幂等的。
-/// 真机验收仍须在 Linux 上多窗口反复开关并观察注册表计数与内存（见改进计划 C-4 的验证段）。
+/// 真机验收仍须在 Linux 上多窗口反复开关并观察注册表计数与内存。
 /// </summary>
 [Collection("IpcSerial")]
 public sealed class PlatformStateRegistryTests

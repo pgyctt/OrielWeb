@@ -371,7 +371,7 @@ internal sealed class MacOSWindowHost : IWindowBackend
 
     public void MoveTo(int x, int y)
     {
-        // x/y 按 cocoa 左下角坐标处理（跨平台语义差异见 PLAN.md）
+        // x/y 按 cocoa 左下角坐标处理（与 Windows/Linux 的左上角原点语义相反）
         _cocoaX = x;
         _cocoaY = y;
         ObjCRuntime.SendVoidDouble2(_nsWindow, ObjCRuntime.Sel("setFrameOrigin:"), _cocoaX, _cocoaY);
