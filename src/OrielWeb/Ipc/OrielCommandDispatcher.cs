@@ -23,10 +23,15 @@ internal sealed class OrielCommandDispatcher
 {
     private readonly Dictionary<Type, Func<object>> _factories;
     private readonly ConcurrentDictionary<Type, object> _targets = [];
+    private readonly Dictionary<string, (IOrielCommandRouter Router, int Index)> _routes;
 
     public OrielCommandDispatcher(Dictionary<Type, Func<object>> factories)
     {
         _factories = factories;
+        // 一次性构建「命令名 → (路由, 索引)」索引。此前是每条消息遍历全部 router：
+        // O(router 数) + 每次加锁 + 一次数组分配（Snapshot 里的 [.. s_routers]），
+        // README 声称的 O(1) 分发实际只成立于单个 router 内部。
+        _routes = OrielCommandRegistry.BuildIndex();
     }
 
     public async ValueTask HandleInvokeAsync(JsonElement message, IIpcReplySink sink)
@@ -51,28 +56,22 @@ internal sealed class OrielCommandDispatcher
 
         JsonElement args = message.TryGetProperty("args", out var argsElement) ? argsElement : default;
 
-        foreach (var router in OrielCommandRegistry.Snapshot())
+        if (!_routes.TryGetValue(name, out var route))
         {
-            var index = router.Route(name);
-            if (index < 0)
-            {
-                continue;
-            }
-
-            try
-            {
-                object? target = router.RequiresTarget ? ResolveTarget(router.TargetType!) : null;
-                var result = await router.InvokeAsync(index, target, args).ConfigureAwait(false);
-                ReplyOk(sink, id, result);
-            }
-            catch (Exception ex)
-            {
-                ReplyError(sink, id, ex.Message);
-            }
+            ReplyError(sink, id, $"未知命令 '{name}'。请确认方法已标注 [OrielCommand] 且所在程序集被应用引用。");
             return;
         }
 
-        ReplyError(sink, id, $"未知命令 '{name}'。请确认方法已标注 [OrielCommand] 且所在程序集被应用引用。");
+        try
+        {
+            object? target = route.Router.RequiresTarget ? ResolveTarget(route.Router.TargetType!) : null;
+            var result = await route.Router.InvokeAsync(route.Index, target, args).ConfigureAwait(false);
+            ReplyOk(sink, id, result);
+        }
+        catch (Exception ex)
+        {
+            ReplyError(sink, id, ex.Message);
+        }
     }
 
     private object ResolveTarget(Type targetType)

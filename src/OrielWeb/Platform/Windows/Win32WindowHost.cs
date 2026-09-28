@@ -55,7 +55,9 @@ internal sealed partial class Win32WindowHost : IWindowBackend
         _app = app;
         _backend = backend;
         _assetDirectory = assetDirectory;
-        _assetHost = "app.oriel"; // 与构建器默认一致；M1 用固定虚拟主机
+        // 取自构建器 UseEmbeddedAssets(host)：此前硬编码 "app.oriel" 会使用户自定义 host 失效
+        // （虚拟主机映射到自定义 host，导航却指向 app.oriel → 白屏/404）
+        _assetHost = app.AssetHost;
         _userDataFolder = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "OrielWeb", WebView2UserDataFolderName);
@@ -184,25 +186,37 @@ internal sealed partial class Win32WindowHost : IWindowBackend
     [UnmanagedCallersOnly]
     private static unsafe nint WindowProc(nint hwnd, uint message, nuint wParam, nint lParam)
     {
-        nint userData = Win32.GetWindowLongPtrW(hwnd, Win32Constants.GWLP_USERDATA);
-
-        if (message == Win32Constants.WM_NCCREATE && userData == 0)
+        try
         {
-            var createStruct = (CREATESTRUCTW*)lParam;
-            if (createStruct->lpCreateParams != 0)
+            nint userData = Win32.GetWindowLongPtrW(hwnd, Win32Constants.GWLP_USERDATA);
+
+            if (message == Win32Constants.WM_NCCREATE && userData == 0)
             {
-                Win32.SetWindowLongPtrW(hwnd, Win32Constants.GWLP_USERDATA, createStruct->lpCreateParams);
-                userData = createStruct->lpCreateParams;
+                var createStruct = (CREATESTRUCTW*)lParam;
+                if (createStruct->lpCreateParams != 0)
+                {
+                    Win32.SetWindowLongPtrW(hwnd, Win32Constants.GWLP_USERDATA, createStruct->lpCreateParams);
+                    userData = createStruct->lpCreateParams;
+                }
             }
-        }
 
-        if (userData == 0)
+            if (userData == 0)
+            {
+                return Win32.DefWindowProcW(hwnd, message, wParam, lParam);
+            }
+
+            var host = (Win32WindowHost)GCHandle.FromIntPtr(userData).Target!;
+            return host.HandleMessage(hwnd, message, wParam, lParam);
+        }
+        catch (Exception ex)
         {
+            // 用户事件处理器（Closing/Loaded/Closed 等）的异常绝不能穿越原生边界
+            // （外泄 = 进程 fail-fast，不可捕获）。
+            // 降级为默认处理：若异常来自 WM_CLOSE 的 Closing 回调，窗口会按默认语义销毁
+            // ——即"取消关闭"的意图失效，这是"异常时无法确定用户意图"的合理降级。
+            System.Diagnostics.Debug.WriteLine($"[OrielWeb] WindowProc 处理消息 0x{message:X} 时抛出异常：{ex}");
             return Win32.DefWindowProcW(hwnd, message, wParam, lParam);
         }
-
-        var host = (Win32WindowHost)GCHandle.FromIntPtr(userData).Target!;
-        return host.HandleMessage(hwnd, message, wParam, lParam);
     }
 
     private unsafe nint HandleMessage(nint hwnd, uint message, nuint wParam, nint lParam)
@@ -348,6 +362,40 @@ internal sealed partial class Win32WindowHost : IWindowBackend
                     WebView2ComHelper.ThrowIfFailed(
                         webview3.SetVirtualHostNameToFolderMapping(_assetHost, _assetDirectory, HOST_RESOURCE_ACCESS_KIND_DENY_CORS),
                         "映射虚拟主机");
+                }
+                else
+                {
+                    // ICoreWebView2_3 需要 WebView2 Runtime ≥ 1.0.864.35。企业固定版本、Windows Server、
+                    // 离线镜像可能更旧。此前此处静默跳过 → 虚拟主机不映射 → Navigate 失败 → 白屏且零提示。
+                    // 该路径绕过 ThrowIfFailed（QI 返回 bool，没有 HRESULT 可检查），必须显式报错。
+                    string version;
+                    try
+                    {
+                        nint versionPtr = 0;
+                        var browserFolder = Environment.GetEnvironmentVariable("ORIEL_WEBVIEW2_FOLDER");
+                        if (WebView2LoaderNative.GetAvailableCoreWebView2BrowserVersionString(browserFolder, out versionPtr) >= 0
+                            && versionPtr != 0
+                            && Marshal.PtrToStringUni(versionPtr) is { Length: > 0 } installed)
+                        {
+                            version = installed;
+                        }
+                        else
+                        {
+                            version = "(未知)";
+                        }
+                        if (versionPtr != 0)
+                        {
+                            Marshal.FreeCoTaskMem(versionPtr);
+                        }
+                    }
+                    catch
+                    {
+                        version = "(未知)"; // 诊断信息获取失败不影响报错本身
+                    }
+
+                    throw new InvalidOperationException(
+                        "当前 WebView2 运行时过旧，不支持 ICoreWebView2_3（虚拟主机映射），内嵌资源无法加载。" +
+                        $"已安装运行时版本：{version}。请将 WebView2 Runtime 升级至 1.0.864.35 或更高版本。");
                 }
             }
         }

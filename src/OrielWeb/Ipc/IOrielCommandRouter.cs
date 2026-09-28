@@ -8,6 +8,9 @@ namespace OrielWeb.Ipc;
 /// </summary>
 public interface IOrielCommandRouter
 {
+    /// <summary>本路由注册的全部命令名（用于构建全局索引与同名冲突检测）。</summary>
+    IReadOnlyList<string> CommandNames { get; }
+
     /// <summary>命令所在类型；全部命令为静态时返回 null。</summary>
     Type? TargetType { get; }
 

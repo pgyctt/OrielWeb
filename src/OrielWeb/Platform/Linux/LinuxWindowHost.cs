@@ -159,6 +159,15 @@ internal sealed class LinuxWindowHost : IWindowBackend
 
     internal void OnWindowDestroyed()
     {
+        // 先清理状态注册表与指针，再触发 Closed——避免用户在回调里发起 IPC 时
+        // 走到已销毁的宿主，也避免 GTK 释放 webview 后同地址被新窗口复用造成
+        // 陈旧映射（ABA）。注册表持有托管 host 的强引用，不清理则对象树永不释放。
+        // 时机由 GTK 的 destroy 信号回调（OnDestroyTrampoline）保证，正是真实销毁点。
+        LinuxSignalHandlers.UnregisterWebview(_webview);
+        LinuxSignalHandlers.UnregisterManager(_userContentManager);
+        _webview = 0;
+        _userContentManager = 0;
+
         Closed?.Invoke();
         _backend.OnWindowDestroyed();
     }

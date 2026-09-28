@@ -10,6 +10,9 @@ namespace OrielWeb.Platform.MacOS;
 // 与 Windows 侧的手工 CCW 同一思想：不依赖 ComWrappers/官方互操作生成器，
 // IMP 直接指向托管静态方法；状态经静态注册表（实例指针 → 托管对象）查找。
 // 实例在创建时 objc_retain，随进程生命周期存活。
+//
+// 约定：所有 [UnmanagedCallersOnly] trampoline 必须全身 try/catch——托管异常
+// 穿越 ObjC 运行时边界会导致进程 fail-fast 且不可捕获（见 docs/DECISIONS.md）。
 // ============================================================================
 
 internal static unsafe class MacOSObjCClasses
@@ -23,6 +26,8 @@ internal static unsafe class MacOSObjCClasses
     private static nint s_pumpHelperClass;
 
     // ---- 状态注册表（实例指针 → 托管状态；实例被 retain，指针稳定）----
+    // 仅在 AppKit/WebKit 主线程访问，不跨线程；窗口关闭时经 Remove* 清理，
+    // 否则条目只增不减 → 整棵对象树永不释放，且指针复用会造成陈旧映射（ABA）。
 
     private static readonly Dictionary<nint, MacOSWindowHost> WindowDelegateStates = [];
     private static readonly Dictionary<nint, MacOSWindowHost> NavigationDelegateStates = [];
@@ -99,9 +104,18 @@ internal static unsafe class MacOSObjCClasses
     [UnmanagedCallersOnly]
     private static nint WindowShouldClose(nint self, nint sel, nint sender)
     {
-        if (WindowDelegateStates.TryGetValue(self, out var host))
+        try
         {
-            return host.OnWindowShouldClose() ? 1 : 0;
+            if (WindowDelegateStates.TryGetValue(self, out var host))
+            {
+                return host.OnWindowShouldClose() ? 1 : 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            // 用户 Closing 处理器异常不得穿越 ObjC 边界。
+            // 降级为"允许关闭"——与状态缺失时的默认语义一致。
+            System.Diagnostics.Debug.WriteLine($"[OrielWeb] windowShouldClose: 抛出异常：{ex}");
         }
         return 1;
     }
@@ -109,9 +123,17 @@ internal static unsafe class MacOSObjCClasses
     [UnmanagedCallersOnly]
     private static nint WindowWillClose(nint self, nint sel, nint notification)
     {
-        if (WindowDelegateStates.TryGetValue(self, out var host))
+        try
         {
-            host.OnWindowWillClose();
+            if (WindowDelegateStates.TryGetValue(self, out var host))
+            {
+                host.OnWindowWillClose();
+            }
+        }
+        catch (Exception ex)
+        {
+            // 用户 Closed 处理器异常不得穿越 ObjC 边界
+            System.Diagnostics.Debug.WriteLine($"[OrielWeb] windowWillClose: 抛出异常：{ex}");
         }
         return 0;
     }
@@ -162,9 +184,17 @@ internal static unsafe class MacOSObjCClasses
     [UnmanagedCallersOnly]
     private static nint DidFinishNavigation(nint self, nint sel, nint webview, nint navigation)
     {
-        if (NavigationDelegateStates.TryGetValue(self, out var host))
+        try
         {
-            host.OnNavigationCompleted(success: true);
+            if (NavigationDelegateStates.TryGetValue(self, out var host))
+            {
+                host.OnNavigationCompleted(success: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            // 导航完成会触发用户 Loaded 处理器，异常不得穿越 ObjC 边界
+            System.Diagnostics.Debug.WriteLine($"[OrielWeb] didFinishNavigation: 抛出异常：{ex}");
         }
         return 0;
     }
@@ -172,9 +202,16 @@ internal static unsafe class MacOSObjCClasses
     [UnmanagedCallersOnly]
     private static nint DidFailNavigation(nint self, nint sel, nint webview, nint navigation, nint error)
     {
-        if (NavigationDelegateStates.TryGetValue(self, out var host))
+        try
         {
-            host.OnNavigationCompleted(success: false);
+            if (NavigationDelegateStates.TryGetValue(self, out var host))
+            {
+                host.OnNavigationCompleted(success: false);
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[OrielWeb] didFailNavigation: 抛出异常：{ex}");
         }
         return 0;
     }
@@ -182,9 +219,16 @@ internal static unsafe class MacOSObjCClasses
     [UnmanagedCallersOnly]
     private static nint DidFailProvisionalNavigation(nint self, nint sel, nint webview, nint navigation, nint error)
     {
-        if (NavigationDelegateStates.TryGetValue(self, out var host))
+        try
         {
-            host.OnNavigationCompleted(success: false);
+            if (NavigationDelegateStates.TryGetValue(self, out var host))
+            {
+                host.OnNavigationCompleted(success: false);
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[OrielWeb] didFailProvisionalNavigation: 抛出异常：{ex}");
         }
         return 0;
     }
@@ -206,10 +250,27 @@ internal static unsafe class MacOSObjCClasses
     {
         while (MainThreadQueue.TryDequeue(out var action))
         {
-            action();
+            try
+            {
+                action();
+            }
+            catch (Exception ex)
+            {
+                // 动作来自 public 的 OrielApp.PostToMainThread，异常不得穿越 ObjC 边界；
+                // 单条失败不影响后续排空
+                System.Diagnostics.Debug.WriteLine($"[OrielWeb] 主线程队列动作抛出异常：{ex}");
+            }
         }
         return 0;
     }
+
+    // ------------------------------------------------------------------
+    // 状态清理（窗口关闭时调用；避免注册表只增不减导致泄漏与 ABA 指针复用风险）
+    // ------------------------------------------------------------------
+
+    internal static void RemoveWindowDelegate(nint instance) => WindowDelegateStates.Remove(instance);
+    internal static void RemoveNavigationDelegate(nint instance) => NavigationDelegateStates.Remove(instance);
+    internal static void RemoveScriptHandler(nint instance) => ScriptHandlerStates.Remove(instance);
 
     // ------------------------------------------------------------------
     // 工厂

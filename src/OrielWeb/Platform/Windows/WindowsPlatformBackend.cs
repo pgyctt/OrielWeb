@@ -88,10 +88,28 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
     {
         if (message == Win32Constants.WM_APP_DISPATCH)
         {
+            // 先取回并释放 GCHandle，避免 Action 抛异常时句柄泄漏
             var handle = GCHandle.FromIntPtr(lParam);
-            var action = (Action)handle.Target!;
-            handle.Free();
-            action();
+            Action? action;
+            try
+            {
+                action = (Action)handle.Target!;
+            }
+            finally
+            {
+                handle.Free();
+            }
+
+            try
+            {
+                action?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                // PostToMainThread 是 public API，用户 Action 的异常绝不能穿越原生边界
+                // （外泄 = 进程 fail-fast，不可捕获）
+                System.Diagnostics.Debug.WriteLine($"[OrielWeb] PostToMainThread 回调抛出异常：{ex}");
+            }
             return 0;
         }
         return Win32.DefWindowProcW(hwnd, message, wParam, lParam);

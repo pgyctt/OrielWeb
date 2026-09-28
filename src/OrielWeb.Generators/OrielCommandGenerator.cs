@@ -104,17 +104,39 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
             parameters);
     }
 
+    /// <summary>
+    /// 把类型名转成可用作 C# 标识符的稳定字符串。
+    /// </summary>
     private static string MakeSafeIdentifier(INamedTypeSymbol type)
     {
-        var text = new StringBuilder(type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat));
-        foreach (var c in text.ToString())
+        // 用完全限定名而非 MinimallyQualifiedFormat：后者会因命名空间不同而碰撞，
+        // 且泛型/嵌套类型名会带 '<' '>' '.' '+' 等非法标识符字符。
+        var fullyQualified = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var builder = new StringBuilder(fullyQualified.Length + 9);
+        foreach (var c in fullyQualified)
         {
-            if (!char.IsLetterOrDigit(c) && c != '_')
-            {
-                text.Replace(c, '_');
-            }
+            builder.Append(char.IsLetterOrDigit(c) ? c : '_');
         }
-        return text.ToString();
+
+        // 追加确定性短哈希：'Ns.A.B' 与 'Ns.A_B' 净化后同名，若不区分会被下面的
+        // GroupBy 并入同一路由，而 TypeDisplay 取自 commands.First() → 命令指向错误类型。
+        builder.Append('_');
+        builder.Append(StableHash(fullyQualified));
+        return builder.ToString();
+    }
+
+    /// <summary>FNV-1a 32 位：确定性且跨进程稳定（string.GetHashCode() 不满足后者）。</summary>
+    private static string StableHash(string text)
+    {
+        const uint offsetBasis = 2166136261;
+        const uint prime = 16777619;
+        uint hash = offsetBasis;
+        foreach (var c in text)
+        {
+            hash ^= c;
+            hash *= prime;
+        }
+        return hash.ToString("x8", System.Globalization.CultureInfo.InvariantCulture);
     }
 
     // ------------------------------------------------------------------
@@ -174,6 +196,16 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
         source.AppendLine("    {");
         source.AppendLine($"        public global::System.Type? TargetType => {(requiresTarget ? $"typeof({model.TypeDisplay})" : "null")};");
         source.AppendLine($"        public bool RequiresTarget => {requiresTarget.ToString().ToLowerInvariant()};");
+        source.AppendLine();
+        // 静态命令名表：供 OrielCommandRegistry 建立全局索引与同名冲突检测
+        source.AppendLine("        private static readonly global::System.String[] s_names =");
+        source.AppendLine("        [");
+        foreach (var command in commands)
+        {
+            source.AppendLine($"            \"{Escape(command.CommandName)}\",");
+        }
+        source.AppendLine("        ];");
+        source.AppendLine("        public global::System.Collections.Generic.IReadOnlyList<global::System.String> CommandNames => s_names;");
         source.AppendLine();
 
         source.AppendLine("        public int Route(global::System.String name)");

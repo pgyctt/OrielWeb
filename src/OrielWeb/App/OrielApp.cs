@@ -17,6 +17,9 @@ public sealed class OrielApp : IDisposable
 
     internal OrielCommandDispatcher Dispatcher { get; }
 
+    /// <summary>内嵌资源使用的虚拟主机名（取自构建器 <c>UseEmbeddedAssets</c> 的 host 参数）。</summary>
+    internal string AssetHost => _builder.AssetHost;
+
     public IReadOnlyList<WebviewWindow> Windows => _windows;
     private readonly List<WebviewWindow> _windows = [];
 

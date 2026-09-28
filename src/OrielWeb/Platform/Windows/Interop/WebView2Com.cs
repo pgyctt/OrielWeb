@@ -321,6 +321,12 @@ internal static unsafe partial class WebView2LoaderNative
         string userDataFolder,
         nint environmentOptions,
         nint environmentCreatedHandler);
+
+    /// <summary>查询已安装的 WebView2 运行时版本。成功后 <paramref name="versionInfo"/> 需 CoTaskMemFree 释放。</summary>
+    [LibraryImport(LibraryName, EntryPoint = "GetAvailableCoreWebView2BrowserVersionString", StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int GetAvailableCoreWebView2BrowserVersionString(
+        string? browserExecutableFolder,
+        out nint versionInfo);
 }
 
 /// <summary>HRESULT 检查。</summary>

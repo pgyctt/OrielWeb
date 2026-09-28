@@ -37,6 +37,7 @@ internal sealed class MacOSWindowHost : IWindowBackend
     private nint _nsWindowDelegate;
     private nint _webview;
     private nint _navigationDelegate;
+    private nint _scriptHandler;
     private volatile bool _loadedRaised;
 
     // 无边框/窗口几何跟踪（点；cocoa 坐标原点在左下）
@@ -130,11 +131,11 @@ internal sealed class MacOSWindowHost : IWindowBackend
             ObjCRuntime.SendId(clsWKWebViewConfiguration, ObjCRuntime.Sel("alloc")), ObjCRuntime.Sel("init"));
         var userContentController = ObjCRuntime.SendId(config, ObjCRuntime.Sel("userContentController"));
 
-        var scriptHandler = MacOSObjCClasses.CreateScriptHandler(_messageHandler);
+        _scriptHandler = MacOSObjCClasses.CreateScriptHandler(_messageHandler);
         ObjCRuntime.SendVoidObjObj(
             userContentController,
             ObjCRuntime.Sel("addScriptMessageHandler:name:"),
-            scriptHandler,
+            _scriptHandler,
             ObjCRuntime.MakeNSString("oriel"));
 
         // 桥接脚本（document 创建时注入）
@@ -249,6 +250,16 @@ internal sealed class MacOSWindowHost : IWindowBackend
 
     internal void OnWindowWillClose()
     {
+        // 先清理状态注册表与委托指针，再触发 Closed——避免用户在回调里发起 IPC 时
+        // 走到已销毁的宿主，也避免实例指针被复用时把事件路由到旧宿主（ABA）。
+        // 注册表持有的是托管 host 的强引用，不清理则整棵对象树永不释放。
+        MacOSObjCClasses.RemoveWindowDelegate(_nsWindowDelegate);
+        MacOSObjCClasses.RemoveNavigationDelegate(_navigationDelegate);
+        MacOSObjCClasses.RemoveScriptHandler(_scriptHandler);
+        _nsWindowDelegate = 0;
+        _navigationDelegate = 0;
+        _scriptHandler = 0;
+
         Closed?.Invoke();
         _backend.OnWindowDestroyed();
     }
