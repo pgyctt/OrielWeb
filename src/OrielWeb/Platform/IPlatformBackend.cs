@@ -9,6 +9,11 @@ internal interface IWindowBackend
     event Action<OrielCloseRequestEventArgs>? Closing;
     event Action? Closed;
     event Action<string>? TitleChanged;
+    /// <summary>窗口最大化状态变化（用户拖边框最大化、双击标题栏等原生路径也会触发）。</summary>
+    event Action<bool>? MaximizedChanged;
+
+    /// <summary>当前是否处于最大化状态。</summary>
+    bool IsMaximized { get; }
 
     void Show();
     void Hide();
@@ -38,8 +43,8 @@ internal interface IWindowBackend
     void DragTo(double dx, double dy);
     /// <summary>流式拖动结束。</summary>
     void EndDrag();
-    /// <summary>最大化/还原切换。</summary>
-    void ToggleMaximize();
+    /// <summary>最大化/还原切换，返回切换后是否最大化。</summary>
+    bool ToggleMaximize();
     /// <summary>全屏切换，返回切换后是否全屏。</summary>
     bool ToggleFullscreen();
     /// <summary>置顶切换，返回切换后是否置顶。</summary>

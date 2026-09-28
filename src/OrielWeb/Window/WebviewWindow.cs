@@ -25,6 +25,8 @@ public sealed class WebviewWindow
     public event Action? Closed;
     /// <summary>页面标题变化。</summary>
     public event Action<string>? TitleChanged;
+    /// <summary>窗口最大化状态变化（用户在原生路径下最大化/还原时也会触发）。</summary>
+    public event Action<bool>? MaximizedChanged;
 
     internal IWindowBackend Backend => _backend ?? throw new InvalidOperationException(
         "窗口后端尚未初始化：请在 OrielAppBuilder.Run() 之后使用窗口能力。");
@@ -39,6 +41,7 @@ public sealed class WebviewWindow
         backend.Closing += args => Closing?.Invoke(args);
         backend.Closed += () => Closed?.Invoke();
         backend.TitleChanged += title => TitleChanged?.Invoke(title);
+        backend.MaximizedChanged += maximized => MaximizedChanged?.Invoke(maximized);
     }
 
     // ---- 显示状态 ----
@@ -75,8 +78,11 @@ public sealed class WebviewWindow
     /// <summary>流式拖动结束。</summary>
     public void EndDrag() => Backend.EndDrag();
 
-    /// <summary>最大化 / 还原切换。</summary>
-    public void ToggleMaximize() => Backend.ToggleMaximize();
+    /// <summary>当前是否最大化。</summary>
+    public bool IsMaximized => Backend.IsMaximized;
+
+    /// <summary>最大化 / 还原切换，返回切换后是否最大化。</summary>
+    public bool ToggleMaximize() => Backend.ToggleMaximize();
     /// <summary>全屏切换，返回切换后是否全屏。</summary>
     public bool ToggleFullscreen() => Backend.ToggleFullscreen();
     /// <summary>窗口置顶切换，返回切换后是否置顶。</summary>

@@ -83,6 +83,11 @@ internal partial class Win32WindowHost : IWindowBackend
     private event Action<OrielCloseRequestEventArgs>? Closing;
     private event Action? Closed;
     private event Action<string>? TitleChanged;
+    private event Action<bool>? MaximizedChanged;
+
+    // 上一次已知的最大化状态，用于在 WM_SIZE 里识别变化（用户在原生路径下最大化/还原时，
+    // 页面无从得知，必须由宿主推送）
+    private bool _wasMaximized;
 
     protected Win32WindowHost(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, WindowsPlatformBackend backend)
     {
@@ -108,6 +113,9 @@ internal partial class Win32WindowHost : IWindowBackend
     event Action<OrielCloseRequestEventArgs>? IWindowBackend.Closing { add => Closing += value; remove => Closing -= value; }
     event Action? IWindowBackend.Closed { add => Closed += value; remove => Closed -= value; }
     event Action<string>? IWindowBackend.TitleChanged { add => TitleChanged += value; remove => TitleChanged -= value; }
+    event Action<bool>? IWindowBackend.MaximizedChanged { add => MaximizedChanged += value; remove => MaximizedChanged -= value; }
+
+    public bool IsMaximized => Win32.IsZoomed(_hwnd);
 
     // ------------------------------------------------------------------
     // 创建
@@ -360,10 +368,13 @@ internal partial class Win32WindowHost : IWindowBackend
             case Win32Constants.WM_MOUSEMOVE:
             case Win32Constants.WM_LBUTTONDOWN:
             case Win32Constants.WM_LBUTTONUP:
+            case Win32Constants.WM_LBUTTONDBLCLK:
             case Win32Constants.WM_RBUTTONDOWN:
             case Win32Constants.WM_RBUTTONUP:
+            case Win32Constants.WM_RBUTTONDBLCLK:
             case Win32Constants.WM_MBUTTONDOWN:
             case Win32Constants.WM_MBUTTONUP:
+            case Win32Constants.WM_MBUTTONDBLCLK:
             case Win32Constants.WM_MOUSEWHEEL:
             case Win32Constants.WM_MOUSEHWHEEL:
                 ForwardMouseMessage(hwnd, message, wParam, lParam);
@@ -609,6 +620,10 @@ internal partial class Win32WindowHost : IWindowBackend
 
     private void OnNavigationCompleted(object? sender, ICoreWebView2NavigationCompletedEventArgs args)
     {
+        // 新文档不知道当前最大化状态，重置记忆以便下面推一次初始值
+        _wasMaximized = !Win32.IsZoomed(_hwnd);
+        SyncMaximizedState();
+
         if (args.IsSuccess)
         {
             RaiseLoadedIfFirst();
@@ -646,8 +661,32 @@ internal partial class Win32WindowHost : IWindowBackend
         TitleChanged?.Invoke(title);
     }
 
+    /// <summary>
+    /// 检测最大化状态变化并推送给页面。用户经原生路径最大化/还原（拖边框到屏幕顶端、
+    /// 双击标题栏、Win+↑）时，页面无从得知，标题栏的"最大化/还原"图标必须靠这条通知同步。
+    /// </summary>
+    private void SyncMaximizedState()
+    {
+        bool isMaximized = Win32.IsZoomed(_hwnd);
+        if (isMaximized == _wasMaximized)
+        {
+            return;
+        }
+
+        _wasMaximized = isMaximized;
+        MaximizedChanged?.Invoke(isMaximized);
+
+        if (_webView is not null)
+        {
+            PostMessageOnUi(
+                $"{{\"__oriel\":\"event\",\"name\":\"maximized\",\"value\":{(isMaximized ? "true" : "false")}}}");
+        }
+    }
+
     internal void UpdateBounds()
     {
+        SyncMaximizedState();
+
         var controller = _controller;
         if (controller is null || !Win32.GetClientRect(_hwnd, out var client))
         {
@@ -743,11 +782,11 @@ internal partial class Win32WindowHost : IWindowBackend
         var kind = message switch
         {
             Win32Constants.WM_MOUSEMOVE => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_MOVE,
-            Win32Constants.WM_LBUTTONDOWN => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_DOWN,
+            Win32Constants.WM_LBUTTONDOWN or Win32Constants.WM_LBUTTONDBLCLK => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_DOWN,
             Win32Constants.WM_LBUTTONUP => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_UP,
-            Win32Constants.WM_RBUTTONDOWN => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_DOWN,
+            Win32Constants.WM_RBUTTONDOWN or Win32Constants.WM_RBUTTONDBLCLK => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_DOWN,
             Win32Constants.WM_RBUTTONUP => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_UP,
-            Win32Constants.WM_MBUTTONDOWN => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_DOWN,
+            Win32Constants.WM_MBUTTONDOWN or Win32Constants.WM_MBUTTONDBLCLK => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_DOWN,
             Win32Constants.WM_MBUTTONUP => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_UP,
             Win32Constants.WM_MOUSEWHEEL => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_WHEEL,
             _ => COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_HORIZONTAL_WHEEL,
@@ -887,7 +926,7 @@ internal partial class Win32WindowHost : IWindowBackend
     {
     }
 
-    public void ToggleMaximize()
+    public bool ToggleMaximize()
     {
         if (Win32.IsZoomed(_hwnd))
         {
@@ -897,6 +936,7 @@ internal partial class Win32WindowHost : IWindowBackend
         {
             Maximize();
         }
+        return Win32.IsZoomed(_hwnd);
     }
 
     public bool ToggleFullscreen()

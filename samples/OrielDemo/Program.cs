@@ -34,8 +34,9 @@ public sealed partial class WindowCommands
     [OrielCommand("win.minimize")]
     public static void Minimize() => Program.Window?.Minimize();
 
+    /// <summary>最大化/还原切换，返回切换后是否最大化（页面据此更新按钮图标）。</summary>
     [OrielCommand("win.toggleMaximize")]
-    public static void ToggleMaximize() => Program.Window?.ToggleMaximize();
+    public static bool ToggleMaximize() => Program.Window?.ToggleMaximize() ?? false;
 
     [OrielCommand("win.close")]
     public static void Close() => Program.Window?.Close();

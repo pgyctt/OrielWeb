@@ -10,15 +10,27 @@ const inputEl = document.getElementById("todo-input");
 
 const isWindows = window.oriel.platform === "windows";
 const dragRegion = document.getElementById("drag-region");
+const maxBtn = document.getElementById("btn-max");
 let dragOrigin = null;
+
+// Windows 的拖动必须"先动起来才发起"。
+// win.drag 走的是程序发起的 WM_NCLBUTTONDOWN + HTCAPTION，它会进入原生模态循环并阻塞消息处理：
+//   * 若在 mousedown 时立刻发起，第二次点击会被该循环吞掉，浏览器永远得不到 dblclick，
+//     标题栏双击最大化随之失效；
+//   * 改为等指针移动超过阈值再发起，则"原地双击"根本不会进入拖动，双击语义得以保留，
+//     而真正的拖动只是晚了几像素才接管——模态循环以当前光标为基点，窗口不会跳。
+const DRAG_THRESHOLD_PX = 3;
+let armedDrag = null;
 
 dragRegion.addEventListener("mousedown", async (e) => {
     if (e.button !== 0) return;
+
     if (isWindows) {
-        // Windows：原生模态拖动（调用后阻塞到松开鼠标）
-        await window.oriel.invoke("win.drag");
+        armedDrag = { x: e.screenX, y: e.screenY };
+        document.addEventListener("mousemove", onTitlebarMove);
+        document.addEventListener("mouseup", onTitlebarUp);
     } else {
-        // macOS/Linux：流式拖动（指针起点 + 窗口几何，随后 dragTo 增量）
+        // macOS/Linux：宿主不阻塞消息循环，可以立即开始流式拖动
         dragOrigin = { x: e.screenX, y: e.screenY };
         await window.oriel.invoke("win.dragStart", {
             px: e.screenX, py: e.screenY,
@@ -30,6 +42,26 @@ dragRegion.addEventListener("mousedown", async (e) => {
         document.addEventListener("mouseup", onDragEnd);
     }
 });
+
+function disarmTitlebar() {
+    armedDrag = null;
+    document.removeEventListener("mousemove", onTitlebarMove);
+    document.removeEventListener("mouseup", onTitlebarUp);
+}
+
+function onTitlebarMove(e) {
+    if (!armedDrag) return;
+    if (Math.abs(e.screenX - armedDrag.x) <= DRAG_THRESHOLD_PX &&
+        Math.abs(e.screenY - armedDrag.y) <= DRAG_THRESHOLD_PX) {
+        return;
+    }
+    disarmTitlebar();
+    window.oriel.invoke("win.drag"); // 原生模态拖动，阻塞到松开鼠标
+}
+
+function onTitlebarUp() {
+    disarmTitlebar();
+}
 
 function onDragMove(e) {
     if (!dragOrigin) return;
@@ -47,8 +79,17 @@ function onDragEnd() {
 dragRegion.addEventListener("dblclick", () => window.oriel.invoke("win.toggleMaximize"));
 
 document.getElementById("btn-min").addEventListener("click", () => window.oriel.invoke("win.minimize"));
-document.getElementById("btn-max").addEventListener("click", () => window.oriel.invoke("win.toggleMaximize"));
+maxBtn.addEventListener("click", async () => setMaximizedIcon(await window.oriel.invoke("win.toggleMaximize")));
 document.getElementById("btn-close").addEventListener("click", () => window.oriel.invoke("win.close"));
+
+// 图标随最大化状态切换。用户经原生路径最大化（双击标题栏、拖到屏幕顶端、Win+↑）时
+// 页面无法自行察觉，依赖宿主推送的 maximized 事件。
+function setMaximizedIcon(maximized) {
+    maxBtn.textContent = maximized ? "\u2750" : "\u25A1"; // ❐ 还原 / □ 最大化
+    maxBtn.title = maximized ? "还原" : "最大化";
+}
+
+window.oriel.on("maximized", setMaximizedIcon);
 
 let onTop = false;
 document.getElementById("btn-ontop").addEventListener("click", async () => {

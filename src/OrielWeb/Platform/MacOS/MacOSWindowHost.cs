@@ -57,6 +57,7 @@ internal sealed class MacOSWindowHost : IWindowBackend
     private event Action<OrielCloseRequestEventArgs>? Closing;
     private event Action? Closed;
     private event Action<string>? TitleChanged;
+    private event Action<bool>? MaximizedChanged;
 
     internal MacOSWindowHost(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, MacOSPlatformBackend backend)
     {
@@ -81,6 +82,9 @@ internal sealed class MacOSWindowHost : IWindowBackend
     event Action<OrielCloseRequestEventArgs>? IWindowBackend.Closing { add => Closing += value; remove => Closing -= value; }
     event Action? IWindowBackend.Closed { add => Closed += value; remove => Closed -= value; }
     event Action<string>? IWindowBackend.TitleChanged { add => TitleChanged += value; remove => TitleChanged -= value; }
+    event Action<bool>? IWindowBackend.MaximizedChanged { add => MaximizedChanged += value; remove => MaximizedChanged -= value; }
+
+    public bool IsMaximized => ObjCRuntime.SendBoolRet(_nsWindow, ObjCRuntime.Sel("isZoomed"));
 
     // ------------------------------------------------------------------
     // 创建
@@ -310,7 +314,13 @@ internal sealed class MacOSWindowHost : IWindowBackend
         }
     }
 
-    public void ToggleMaximize() => Maximize(); // NSWindow zoom: 本身就是切换语义
+    public bool ToggleMaximize()
+    {
+        Maximize(); // NSWindow zoom: 本身就是切换语义
+        bool isMaximized = IsMaximized;
+        MaximizedChanged?.Invoke(isMaximized);
+        return isMaximized;
+    }
 
     public void SetFullscreen(bool enabled)
     {

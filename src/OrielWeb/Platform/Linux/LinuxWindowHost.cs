@@ -44,6 +44,7 @@ internal sealed class LinuxWindowHost : IWindowBackend
     private event Action<OrielCloseRequestEventArgs>? Closing;
     private event Action? Closed;
     private event Action<string>? TitleChanged;
+    private event Action<bool>? MaximizedChanged;
 
     internal LinuxWindowHost(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, LinuxPlatformBackend backend)
     {
@@ -68,6 +69,9 @@ internal sealed class LinuxWindowHost : IWindowBackend
     event Action<OrielCloseRequestEventArgs>? IWindowBackend.Closing { add => Closing += value; remove => Closing -= value; }
     event Action? IWindowBackend.Closed { add => Closed += value; remove => Closed -= value; }
     event Action<string>? IWindowBackend.TitleChanged { add => TitleChanged += value; remove => TitleChanged -= value; }
+    event Action<bool>? IWindowBackend.MaximizedChanged { add => MaximizedChanged += value; remove => MaximizedChanged -= value; }
+
+    public bool IsMaximized => GtkNative.GtkWindowIsMaximized(_gtkWindow);
 
     // ------------------------------------------------------------------
     // 创建
@@ -221,7 +225,7 @@ internal sealed class LinuxWindowHost : IWindowBackend
         }
     }
 
-    public void ToggleMaximize()
+    public bool ToggleMaximize()
     {
         if (GtkNative.GtkWindowIsMaximized(_gtkWindow))
         {
@@ -231,6 +235,10 @@ internal sealed class LinuxWindowHost : IWindowBackend
         {
             GtkNative.GtkWindowMaximize(_gtkWindow);
         }
+
+        bool isMaximized = IsMaximized;
+        MaximizedChanged?.Invoke(isMaximized);
+        return isMaximized;
     }
 
     public void SetFullscreen(bool enabled)

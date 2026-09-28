@@ -20,6 +20,7 @@
     window.__orielBridgeInstalled = true;
 
     const pending = new Map();
+    const listeners = new Map();
     let seq = 0;
 
     const post = (obj) => __ORIEL_POST__;
@@ -65,6 +66,31 @@
             if (ok) entry.resolve(payload);
             else entry.reject(new Error(payload || ('oriel 命令失败 (id=' + id + ')')));
         },
+        // 宿主 → 页面的事件通道。用于页面无法自行察觉的窗口状态变化，
+        // 典型例子：用户在原生路径下最大化/还原（双击标题栏、拖边框到屏幕顶端、Win+↑）时
+        // 刷新标题栏的"最大化/还原"图标。
+        // 返回取消订阅函数。
+        on(name, handler) {
+            if (typeof name !== 'string' || !name || typeof handler !== 'function') {
+                throw new Error('oriel.on: 需要 (name: string, handler: function)');
+            }
+            let set = listeners.get(name);
+            if (!set) {
+                set = new Set();
+                listeners.set(name, set);
+            }
+            set.add(handler);
+            return () => { set.delete(handler); };
+        },
+        _onEvent(name, value) {
+            const set = listeners.get(name);
+            if (!set) return;
+            // 复制一份再遍历：处理器内部退订不会影响本次派发
+            for (const handler of Array.from(set)) {
+                try { handler(value); }
+                catch (err) { console.error('oriel.on("' + name + '") 处理器抛出', err); }
+            }
+        },
         // 宿主 ExecuteScriptAsync 的页面回环（见 DECISIONS.md：不使用 ObjC block /
         // GAsyncReadyCallback，改由页面回传完成 TCS）
         _evalScriptDone(id, json) {
@@ -79,8 +105,11 @@
     if (window.chrome && window.chrome.webview && window.chrome.webview.addEventListener) {
         window.chrome.webview.addEventListener('message', (e) => {
             const d = e.data;
-            if (d && d.__oriel === 'result') {
+            if (!d) return;
+            if (d.__oriel === 'result') {
                 oriel._onResult(d.id, d.ok === true, d.ok === true ? d.value : d.error);
+            } else if (d.__oriel === 'event') {
+                oriel._onEvent(d.name, d.value);
             }
         });
     }

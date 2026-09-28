@@ -119,6 +119,20 @@ function deliverResult(env, id, ok, payload) {
     env.window.oriel._onResult(id, ok, payload);
 }
 
+/**
+ * 投递宿主推送的窗口事件（如 maximized）。通道同回执：chrome.webview 走 message 事件，
+ * webkit 由宿主 EvaluateScript 调 _onEvent。
+ */
+function deliverEvent(env, name, value) {
+    if (env.messageListeners.length > 0) {
+        for (const listener of env.messageListeners) {
+            listener({ data: { __oriel: 'event', name, value } });
+        }
+        return;
+    }
+    env.window.oriel._onEvent(name, value);
+}
+
 test('模板：占位符齐备', () => {
     assert.ok(template.includes('__ORIEL_PLATFORM__'), '模板缺少 __ORIEL_PLATFORM__');
     assert.ok(template.includes('__ORIEL_POST__'), '模板缺少 __ORIEL_POST__');
@@ -169,5 +183,34 @@ for (const bridge of bridges) {
         env.window.oriel.timeout = 10; // 缩短等待，验证 D-7 的超时清理路径
         const promise = env.window.oriel.invoke('never', {});
         await assert.rejects(promise, /超时/);
+    });
+
+    test(`${label} 事件：oriel.on 收到宿主推送，退订后不再触发`, () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const seen = [];
+        const off = env.window.oriel.on('maximized', (v) => seen.push(v));
+
+        deliverEvent(env, 'maximized', true);
+        assert.deepEqual(seen, [true], '未收到事件');
+
+        off();
+        deliverEvent(env, 'maximized', false);
+        assert.deepEqual(seen, [true], '退订后仍被调用');
+    });
+
+    test(`${label} 事件：单个处理器抛异常不影响其余处理器`, () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const seen = [];
+        env.window.oriel.on('x', () => { throw new Error('boom'); });
+        env.window.oriel.on('x', () => seen.push(1));
+
+        deliverEvent(env, 'x', null);
+        assert.deepEqual(seen, [1], '一个处理器抛异常后其余处理器被跳过');
+    });
+
+    test(`${label} 事件：oriel.on 参数校验立即抛出`, () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        assert.throws(() => env.window.oriel.on('', () => { }), /name/);
+        assert.throws(() => env.window.oriel.on('x', null), /handler/);
     });
 }
