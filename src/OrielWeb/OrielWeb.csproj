@@ -16,10 +16,6 @@
     <NoWarn>$(NoWarn);CS1591;CA1416</NoWarn>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
-    <!-- Microsoft.Web.WebView2 包同时携带 WPF 程序集（Microsoft.Web.WebView2.Wpf.dll），其引用的
-         WindowsBase 与 .NET 10 自带版本号不一致，会刷出大量 MSB3277。该冲突已由 MSBuild 自动解析
-         （选择主版本），且本项目不使用 WPF/WinForms，故降级为消息。 -->
-    <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);MSB3277</MSBuildWarningsAsMessages>
   </PropertyGroup>
 
   <ItemGroup>
@@ -32,11 +28,41 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- 仅取 WebView2Loader.dll 原生位：WebView2Aot 的 WebView2Utilities.Initialize 会把它从入口程序集的
-         嵌入资源解压并加载（单文件 / AOT 发布友好）。托管互操作程序集不被引用，ExcludeAssets="compile"
-         可避免其附带的 WPF 依赖（Microsoft.Web.WebView2.Wpf.dll → WindowsBase）触发 MSB3277。 -->
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" ExcludeAssets="compile" />
+    <!-- 本包只有一个用途：提供要内嵌的 WebView2Loader.dll（三个架构），其资产一概不要。
+         它的 build/ 与 buildTransitive/ 目标会把 loader 复制进输出与发布目录、并牵入
+         WPF/WinForms 托管程序集（后者引用与 .NET 10 版本不一致的 WindowsBase，刷出 MSB3277）；
+         runtimes\win-*\native\WebView2Loader.dll 还会被 NuGet 的运行时资产解析另复制一份。
+         这些都拦不住（WebView2NeverCopyLoaderDllToOutputDirectory 只作用于 Common.targets 的
+         Content 项，管不到运行时资产），而 loader 已由下方内嵌，故整体排除 ExcludeAssets="all"。
+         GeneratePathProperty 生成 $(PkgMicrosoft_Web_WebView2)，供内嵌时定位包内文件——
+         该属性来自还原图，与资产排除无关。
+         PrivateAssets="all" 同样必要：该包还带 buildTransitive/ 目标，会作用到**引用本库的项目**，
+         在它们的输出/发布目录里再复制一份 loader。本库对外不暴露该包的任何类型（WebView2 互操作
+         全部来自 WebView2Aot 的源生成绑定），因此它不该进入消费方的编译图。 -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40"
+                      ExcludeAssets="all"
+                      PrivateAssets="all"
+                      GeneratePathProperty="true" />
     <PackageReference Include="WebView2Aot" Version="1.6.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- WebView2 运行时加载器：官方只提供「随 exe 放一份 loader DLL」或「内嵌为 .NET 资源」两条路，
+         这里选后者，于是消费方无需任何发布配置即可得到单文件产物（否则会看到
+         "Cannot load WebView2Loader.dll. Make sure it's present in the current's process path."）。
+         资源名必须满足 WebView2Utilities 的匹配规则：含目标架构串、且以 WebView2Loader.dll 结尾；
+         LogicalName 显式指定，避免因源文件位于 NuGet 缓存（项目目录之外）而得到不可预测的资源名。
+
+         三个架构都嵌：库本身是 AnyCPU 构建，且 RID 不会随 ProjectReference 传到被引用的库，
+         所以库里无法在编译期知道自己会被哪个架构的应用消费 —— 运行期由
+         WebView2Utilities 按进程架构挑选对应资源。代价是单架构 AOT 产物会多带另外两份
+         （约 273 KB），换来的是「任何架构的应用引用本库后直接单文件发布」。 -->
+    <EmbeddedResource Include="$(PkgMicrosoft_Web_WebView2)\runtimes\win-x64\native\WebView2Loader.dll"
+                      LogicalName="OrielWeb.runtimes.win-x64.native.WebView2Loader.dll" />
+    <EmbeddedResource Include="$(PkgMicrosoft_Web_WebView2)\runtimes\win-arm64\native\WebView2Loader.dll"
+                      LogicalName="OrielWeb.runtimes.win-arm64.native.WebView2Loader.dll" />
+    <EmbeddedResource Include="$(PkgMicrosoft_Web_WebView2)\runtimes\win-x86\native\WebView2Loader.dll"
+                      LogicalName="OrielWeb.runtimes.win-x86.native.WebView2Loader.dll" />
   </ItemGroup>
 
   <ItemGroup>

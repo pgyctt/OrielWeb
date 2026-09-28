@@ -1,6 +1,5 @@
 using System.Buffers;
 using System.Diagnostics;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 using System.Text;
@@ -568,7 +567,14 @@ internal partial class Win32WindowHost : IWindowBackend
         }
     }
 
-    /// <summary>一次性把 WebView2Loader.dll 从入口程序集的嵌入资源解压并加载（单文件发布友好）。</summary>
+    /// <summary>
+    /// 一次性把 WebView2Loader.dll 从本库的嵌入资源解压并加载（单文件发布友好）。
+    /// </summary>
+    /// <remarks>
+    /// 传的是本库（而非入口程序集）的程序集：loader 由本库内嵌（见 OrielWeb.csproj），
+    /// 消费方因此不必在自己的项目里做任何发布配置。若传入口程序集，只有恰好也内嵌了
+    /// loader 的应用才能加载，与本库的自包含目标相悖。
+    /// </remarks>
     private static void EnsureLoaderInitialized()
     {
         if (Interlocked.Exchange(ref s_loaderInitialized, 1) == 1)
@@ -576,7 +582,7 @@ internal partial class Win32WindowHost : IWindowBackend
             return;
         }
 
-        WebView2Utilities.Initialize(Assembly.GetEntryAssembly());
+        WebView2Utilities.Initialize(typeof(Win32WindowHost).Assembly);
     }
 
     private void OnWebMessageReceived(object? sender, ICoreWebView2WebMessageReceivedEventArgs args)

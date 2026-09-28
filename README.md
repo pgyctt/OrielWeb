@@ -7,7 +7,7 @@
 - **纯 C# 互操作**：macOS（WKWebView + ObjC runtime）与 Linux（GTK3 + WebKitGTK）为手写 P/Invoke；Windows 的 WebView2 COM 走 `WebView2Aot` 的 `[GeneratedComInterface]`/`[GeneratedComClass]` **源生成绑定**（无手写 vtable/IID/RefCount）。三者均无 saucer/C++ 中间层
 - **Composition 宿主**（Windows）：WebView2 作为 DirectComposition 的一份视觉合成进窗口，而非子窗口——因此无边框窗口的边缘 resize 能走系统原生路径，且窗口内容可与其它视觉自由合成
 - **零反射 IPC**：`[OrielCommand]` + Roslyn 源生成器在编译期生成分发代码，`[ModuleInitializer]` 自动注册，运行期零反射
-- **Native AOT**：全局 `IsAotCompatible`/`IsTrimmable`，发布为原生单文件可执行文件
+- **Native AOT**：全局 `IsAotCompatible`/`IsTrimmable`，发布为原生单文件可执行文件（WebView2 的运行时加载器已内嵌，无需旁文件）
 - **无边框窗口**：自绘标题栏 + 流式/原生拖动 + 最大化/全屏/置顶切换
 - **系统 webview**：Windows 用 WebView2、macOS 用 WKWebView、Linux 用 WebKitGTK——不捆绑浏览器内核
 
@@ -118,6 +118,26 @@ dotnet publish samples/OrielDemo -c Release -r osx-arm64
 # Linux（需要 libwebkit2gtk-4.1）
 dotnet publish samples/OrielDemo -c Release -r linux-x64
 ```
+
+### Windows 发布产物
+
+WebView2 的运行需要微软的 `WebView2Loader.dll`。官方只有两条路：随 exe 放一份 loader，或把它内嵌为
+程序集资源。OrielWeb 取后者——三个架构（x64/arm64/x86）的 loader 已在编译期内嵌进 `OrielWeb.dll`，
+首次运行时按进程架构解压到 `%TEMP%` 再加载。因此**引用本库的项目不需要任何发布配置**，
+`dotnet publish -c Release -r win-x64` 直接得到单文件：
+
+| 命令 | 产物 |
+|---|---|
+| `dotnet publish -c Release -r win-x64` | `OrielDemo.exe` 4.63 MB + `OrielDemo.pdb` 21 MB + `OrielWeb.pdb` + `OrielWeb.xml` |
+| 再加 `-p:DebugType=none` | `OrielDemo.exe` + `OrielWeb.xml` |
+| 再加 `-p:AllowedReferenceRelatedFileExtensions=.pdb\;.pri` | 仅 `OrielDemo.exe`（4.63 MB） |
+
+- 那 21 MB 的 PDB 由原生链接步骤产出，与托管的 `DebugType` 无关；`-p:DebugType=none` **只在全新构建**
+  下去掉它（增量发布会复用旧的链接结果）。
+- 内嵌 loader 的代价：单架构产物会一并带上另外两个架构的 loader（约 273 KB）。
+- 另有一条可选路线：用 Native AOT 的 `DirectPInvoke` 把 `WebView2LoaderStatic.lib`（包内自带）静态链入，
+  可免去 `%TEMP%` 解压。实测可链接成功，但属**应用级**配置（库无法替消费方设置），且需跳过
+  `WebView2Utilities.Initialize`，故本库未采用。
 
 ## 平台支持
 

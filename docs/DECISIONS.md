@@ -184,3 +184,49 @@
 
 **验证**：双击标题栏 1024x720 → 1920x1040；图标 `□` → `❐`；标题栏拖动仍移动窗口 (135,135) 且尺寸不变；
 最大化按钮双向切换；四边 resize 精确 100px；桥接测试 28/28（新增 9 个事件用例），单测 39/39。
+
+### WebView2 运行时加载器：内嵌进库（发布产物由此变为单文件）
+
+**问题**：AOT 发布产物不是单文件。`OrielDemo.exe` 旁少一份 `WebView2Loader.dll` 就会在启动时弹
+`初始化 WebView2 失败：Cannot load WebView2Loader.dll. Make sure it's present in the current's process path.`
+
+**根因**：`WebView2Aot` 的绑定是 `[LibraryImport("WebView2Loader")]`，运行期依赖微软的 loader。
+`WebView2Utilities.Initialize` 只查两个位置：exe 同目录、exe 同目录下 `runtimes\win-{arch}\native\`，
+或**传入程序集的嵌入资源**。本库此前两边都没做，只能靠随包复制的那份文件。
+
+**决定：三个架构的 loader 全部内嵌进 `OrielWeb.dll`**，`Initialize` 改传本库程序集
+（`typeof(Win32WindowHost).Assembly`）而非入口程序集。上游样例是在**应用**里内嵌 loader；放进库里则
+反过来成立——所有引用本库的项目都自动拿到单文件产物，各自不必再复制那段 csproj。资源名需含架构串
+且以 `WebView2Loader.dll` 结尾，故显式指定 `LogicalName`（源文件在 NuGet 缓存中，默认命名不可预测）。
+
+**代价**：库是 AnyCPU 构建，且 RID 不随 `ProjectReference` 传播，库里无法预知消费方的架构，故三个都留；
+单架构产物会多带另外两份（约 273 KB）。
+
+**顺带清掉的发布噪音**：`Microsoft.Web.WebView2` 的包引用改为 `ExcludeAssets="all"` +
+`PrivateAssets="all"`（该包在本库只作 loader 文件来源，靠 `GeneratePathProperty` 定位）。此前它带来
+4 份 loader（顶层 + 三个 runtimes 子目录）、约 780 KB 的 WPF/WinForms XML 文档，并牵入与 .NET 10 版本
+不一致的 WindowsBase（MSB3277）；排除后三者一并消失，两个 csproj 里的 MSB3277 抑制也失去对象而删除。
+**注意**：官方开关 `WebView2NeverCopyLoaderDllToOutputDirectory` 拦不住运行时资产解析复制的那份 loader，
+而其 `buildTransitive/` 目标还会作用到消费方，所以必须用 Exclude/PrivateAssets。
+
+**另一条路线（实测可链接成功，未采用）**：Native AOT 的 `DirectPInvoke` 静态链接。生成的绑定模块名是
+`WebView2Loader`（无 `.dll`），正合该机制；包内自带 `WebView2LoaderStatic.lib`，配
+`<DirectPInvoke Include="WebView2Loader" />` + `<NativeLibrary Include="…WebView2LoaderStatic.lib" />`
++ `version.lib` 后链接通过（无 LNK2019，静态库净增约 15 KB），可免去 `%TEMP%` 解压。未采用的原因：这是
+**应用级**配置，库无法替消费方设置；且需跳过 `WebView2Utilities.Initialize`，否则仍会解压内嵌那份。
+
+**发布产物（win-x64，全新构建）**：
+
+| 命令 | 产物 |
+|---|---|
+| `dotnet publish -c Release -r win-x64` | `OrielDemo.exe` 4.63 MB + `OrielDemo.pdb` 20.7 MB + `OrielWeb.pdb` + `OrielWeb.xml` |
+| `… -p:DebugType=none` | `OrielDemo.exe` + `OrielWeb.xml` |
+| `… -p:AllowedReferenceRelatedFileExtensions=.pdb\;.pri` | 仅 `OrielDemo.exe`（4.63 MB） |
+
+PDB 由原生链接步骤产出，与托管 `DebugType` 无关，故 `-p:DebugType=none` 只在全新构建下去掉它
+（增量发布会复用旧链接结果——这一点最初误判过一次）。库内嵌三架构 loader 使 exe 比内嵌前大约 413 KB。
+
+**验证**：把**仅 exe** 复制到隔离目录、从中立工作目录启动 —— 进程存活、只出现 `OrielWeb_Window`
+（无 `#32770` 失败对话框）、loader 由内嵌资源解压到 `%TEMP%\{guid}\`（162.1 KB）、截图显示页面完整渲染
+且 IPC 绿标正常。编译 0 警告 0 错误，单测 39/39，桥接 28/28。
+（早前的"单 exe 可运行"是误判：失败对话框本身也让进程存活，改以窗口类名判定后才排除。）
