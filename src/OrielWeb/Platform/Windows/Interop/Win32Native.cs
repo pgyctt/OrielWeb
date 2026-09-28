@@ -11,6 +11,10 @@ internal static class Win32Constants
     public const uint WM_CLOSE = 0x0010;
     public const uint WM_GETMINMAXINFO = 0x0024;
     public const uint WM_NCCREATE = 0x0081;
+    /// <summary>客户区大小计算（0x0083）。注意不要与 <c>WM_NCHITTEST</c>（0x0084）混淆：
+    /// 后者的 lParam 是鼠标坐标而非指针，误按 RECT* 写入会直接 AccessViolation。</summary>
+    public const uint WM_NCCALCSIZE = 0x0083;
+    public const uint WM_NCHITTEST = 0x0084;
     public const uint WM_NCLBUTTONDOWN = 0x00A1;
     public const uint WM_APP = 0x8000;
     public const uint WM_APP_DISPATCH = WM_APP + 1;

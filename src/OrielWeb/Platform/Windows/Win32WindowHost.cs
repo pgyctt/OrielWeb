@@ -236,6 +236,31 @@ internal sealed partial class Win32WindowHost : IWindowBackend
     {
         switch (message)
         {
+            case Win32Constants.WM_NCCALCSIZE:
+            {
+                // 无边框窗口：令客户区等于整个窗口，消除 WS_THICKFRAME 带来的非客户区边框。
+                // 该边框属非客户区、WebView2 不覆盖，会在窗口顶部露出一条约 7px 的未绘制条带。
+                // （去掉 WS_THICKFRAME 同样有效，但会一并失去系统的边缘调整大小热区，
+                // 故这里保留窗口样式，只修正客户区。）
+                if (wParam != 0)
+                {
+                    // lParam 为 NCCALCSIZE_PARAMS*，其首成员 rgrc[0] 已是窗口矩形；
+                    // 返回 0 即"客户区 = 该矩形"，无需改写。
+                    return 0;
+                }
+
+                // lParam 为 RECT*（拟议客户区，屏幕坐标）：显式改写为窗口矩形。
+                // 窗口创建早期可能尚未取得有效矩形，此时保持拟议值不动。
+                if (lParam != 0
+                    && Win32.GetWindowRect(hwnd, out var windowRect)
+                    && windowRect.Right > windowRect.Left
+                    && windowRect.Bottom > windowRect.Top)
+                {
+                    *(RECT*)lParam = windowRect;
+                }
+                return 0;
+            }
+
             case Win32Constants.WM_SIZE:
                 UpdateBounds();
                 return 0;
