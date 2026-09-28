@@ -12,25 +12,28 @@ namespace OrielWeb.Platform.Windows;
 /// 单个窗口的 Win32 + WebView2 宿主：窗口创建、WndProc、WebView2 装配、
 /// 事件回抛、IPC 回执线程切换与对话框。
 /// </summary>
-internal sealed partial class Win32WindowHost : IWindowBackend
+internal partial class Win32WindowHost : IWindowBackend
 {
     private const string WindowClassName = "OrielWeb_Window";
-    private const string WebView2UserDataFolderName = "WebView2";
+    internal const string WebView2UserDataFolderName = "WebView2";
 
     private static int s_windowClassRegistered;
     private static readonly object s_windowClassGate = new();
     private static readonly nint s_windowClassNamePtr = Marshal.StringToHGlobalUni(WindowClassName);
 
-    private readonly WebviewWindow _window;
-    private readonly OrielWindowOptions _options;
-    private readonly OrielApp _app;
-    private readonly WindowsPlatformBackend _backend;
-    private readonly string? _assetDirectory;
-    private readonly string _assetHost;
-    private readonly string _userDataFolder;
+    // 可见性为 internal：Win32WindowHostV2 继承本类并复用这些状态（同一程序集内可见）。
+    // 本类负责全部 Win32 侧逻辑（窗口/消息循环/样式/全屏/拖动/对话框），
+    // COM 互操作层由派生类替换。
+    internal readonly WebviewWindow _window;
+    internal readonly OrielWindowOptions _options;
+    internal readonly OrielApp _app;
+    internal readonly WindowsPlatformBackend _backend;
+    internal readonly string? _assetDirectory;
+    internal readonly string _assetHost;
+    internal readonly string _userDataFolder;
 
     private GCHandle _selfHandle;
-    private nint _hwnd;
+    internal nint _hwnd;
 
     private WebView2Ptr? _webview;
     private WebView2ControllerPtr? _controller;
@@ -49,7 +52,7 @@ internal sealed partial class Win32WindowHost : IWindowBackend
     private event Action? Closed;
     private event Action<string>? TitleChanged;
 
-    private Win32WindowHost(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, WindowsPlatformBackend backend)
+    protected Win32WindowHost(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, WindowsPlatformBackend backend)
     {
         _window = window;
         _options = options;
@@ -79,9 +82,21 @@ internal sealed partial class Win32WindowHost : IWindowBackend
     // ------------------------------------------------------------------
 
     public static unsafe Win32WindowHost Create(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, WindowsPlatformBackend backend)
+        => CreateHost(window, options, app, assetDirectory, backend,
+            static (w, o, a, d, b) => new Win32WindowHost(w, o, a, d, b));
+
+    /// <summary>
+    /// 窗口创建流程，供派生宿主（<see cref="Win32WindowHostV2"/>）复用：派生类沿用同一个窗口类与
+    /// WndProc（后者经 GWLP_USERDATA 取回宿主并按基类处理消息），因此无需自建窗口类。
+    /// </summary>
+    protected static unsafe T CreateHost<T>(
+        WebviewWindow window, OrielWindowOptions options, OrielApp app,
+        string? assetDirectory, WindowsPlatformBackend backend,
+        Func<WebviewWindow, OrielWindowOptions, OrielApp, string?, WindowsPlatformBackend, T> factory)
+        where T : Win32WindowHost
     {
         EnsureWindowClass();
-        var host = new Win32WindowHost(window, options, app, assetDirectory, backend);
+        var host = factory(window, options, app, assetDirectory, backend);
         host._selfHandle = GCHandle.Alloc(host);
 
         uint style = ComputeStyle(options);
@@ -302,20 +317,26 @@ internal sealed partial class Win32WindowHost : IWindowBackend
                 return 0;
 
             case Win32Constants.WM_DESTROY:
-                Closed?.Invoke();
-                _selfHandle.Free();
-                _backend.OnWindowDestroyed();
+                OnWindowDestroyedCore();
                 return 0;
         }
 
         return Win32.DefWindowProcW(hwnd, message, wParam, lParam);
     }
 
+    /// <summary>窗口销毁时的清理。派生宿主可覆盖以先释放自己的资源，再调用基类实现。</summary>
+    internal virtual void OnWindowDestroyedCore()
+    {
+        Closed?.Invoke();
+        _selfHandle.Free();
+        _backend.OnWindowDestroyed();
+    }
+
     // ------------------------------------------------------------------
     // WebView2 装配（异步回调均在 UI 线程）
     // ------------------------------------------------------------------
 
-    private void InitializeWebView2()
+    internal virtual void InitializeWebView2()
     {
         Directory.CreateDirectory(_userDataFolder);
 
@@ -459,7 +480,7 @@ internal sealed partial class Win32WindowHost : IWindowBackend
         UpdateBounds();
     }
 
-    private unsafe void UpdateBounds()
+    internal virtual void UpdateBounds()
     {
         var controller = _controller;
         if (controller is null)
@@ -484,7 +505,7 @@ internal sealed partial class Win32WindowHost : IWindowBackend
 
     internal bool IsOnUiThread() => _backend.IsOnUiThread();
 
-    internal void PostWebMessageOnUi(string json)
+    internal virtual void PostWebMessageOnUi(string json)
     {
         try
         {
@@ -692,7 +713,7 @@ internal sealed partial class Win32WindowHost : IWindowBackend
         Win32.SetWindowPos(_hwnd, 0, x, y, 0, 0, Win32Constants.SWP_NOSIZE | Win32Constants.SWP_NOZORDER | Win32Constants.SWP_NOACTIVATE);
     }
 
-    public Task<string> ExecuteScriptAsync(string script)
+    public virtual Task<string> ExecuteScriptAsync(string script)
     {
         var completion = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         _backend.PostToMainThread(() =>
@@ -719,7 +740,7 @@ internal sealed partial class Win32WindowHost : IWindowBackend
         return completion.Task;
     }
 
-    public void PostMessageAsJson(string json)
+    public virtual void PostMessageAsJson(string json)
     {
         _backend.PostToMainThread(() =>
         {

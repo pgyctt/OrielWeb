@@ -10,7 +10,10 @@
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/orielweb/OrielWeb</RepositoryUrl>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!-- CA1416：Windows 平台层会调用带 SupportedOSPlatform 标注的 API（如 WebView2Aot 生成的接口）。
+         本库通过 PlatformBackendFactory 做运行时平台分派，静态分析器无法追踪该守卫；
+         逐类型标注会在跨平台入口处产生大规模传播，故在此统一抑制。 -->
+    <NoWarn>$(NoWarn);CS1591;CA1416</NoWarn>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <!-- Microsoft.Web.WebView2 包同时携带 WPF 程序集（Microsoft.Web.WebView2.Wpf.dll），其引用的
@@ -31,12 +34,12 @@
   <ItemGroup>
     <!-- 仅取 WebView2Loader.dll 原生位；托管互操作程序集不被引用，AOT 裁剪自动丢弃 -->
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" ExcludeAssets="compile" />
+    <PackageReference Include="WebView2Aot" Version="1.6.1" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- 源生成器以分析器形态进入引用方编译 -->
-    <ProjectReference Include="..\OrielWeb.Generators\OrielWeb.Generators.csproj"
-                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\OrielWeb.Generators\OrielWeb.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

@@ -68,3 +68,16 @@
 - **回执与页内脚本的字符串编码统一走 `JsonText.EncodeString`**：手写 `Replace` 转义会漏掉
   `\t \b \f` 与全部 U+0000–U+001F 控制字符；而 `JsonSerializer.Serialize` 的反射重载在 AOT/裁剪下
   会触发 IL2026/IL3050（`src/` 已启用 `TreatWarningsAsErrors`，必须消除）。
+- **E-0 决策门推翻上文"不使用 ComWrappers"的立论依据（2026-09-28）**：
+  按 `docs/OrielWeb-WebView2绑定迁移计划.md` §3，在本机 Windows（.NET SDK 10.0.401）实测
+  `smourier/WebView2Aot` 官方样例并做 Native AOT 发布，结果为——
+  **AOT 发布成功、零 IL2xxx/IL3xxx 警告、单文件 3.90 MB（含内嵌 WebView2Loader）、
+  运行时正常弹窗并加载页面**（窗口标题 `Hello X64 AOT - WebView2 V153.0.4234.48`，
+  说明环境创建、控制器创建、页面加载与回调回传全部走通），上文三个症状**均未复现**。
+  更关键的是其 CCW 实现：**回调类全部标注 `[GeneratedComClass]`，且全仓不存在任何
+  `ComWrappers.RegisterForMarshalling` / `StrategyBasedComWrappers` 的使用**——
+  即 `[GeneratedComInterface]` 路线的 CCW 方向在 .NET 10 AOT 下无须显式注册 marshaller 即可工作。
+  因此上文三个症状应归因于当初的**用法/配置问题**而非运行时缺陷，
+  "手工 vtable + 手工 CCW 是唯一可行路线"的前提不再成立。
+  后续按迁移计划 §4 选定路线（A / B）推进；迁移期间 legacy 路径保留，
+  可用环境变量 `ORIEL_WIN_BACKEND=legacy` 一键回退。
