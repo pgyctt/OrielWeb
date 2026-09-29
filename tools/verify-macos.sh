@@ -145,6 +145,7 @@ echo
 APP_PID=$!
 
 ALIVE=1
+EXIT_CODE=""
 WEBKIT_SEEN=0
 WEBKIT_AT=""
 WINDOW_LINE=""
@@ -153,7 +154,15 @@ WINDOW_AT=""
 for ((second = 1; second <= OBSERVE_SECONDS; second++)); do
     if ! kill -0 "$APP_PID" 2>/dev/null; then
         ALIVE=0
-        echo "[${second}s] 进程已退出（提前退出）"
+        # 退出码是区分"被信号杀死（原生崩溃）"与"正常退出（逻辑性退出）"的关键证据：
+        # bash 对信号死亡的子进程返回 128+signo，故 >128 即为信号。
+        wait "$APP_PID" 2>/dev/null
+        EXIT_CODE=$?
+        EXIT_HINT=""
+        if (( EXIT_CODE > 128 )); then
+            EXIT_HINT="，即被信号 $((EXIT_CODE - 128)) 终止"
+        fi
+        echo "[${second}s] 进程已退出（退出码 ${EXIT_CODE}${EXIT_HINT}）"
         break
     fi
 
@@ -203,6 +212,39 @@ else
     sed 's/^/    /' "$OUT/screencapture.log"
 fi
 
+section "崩溃报告与系统日志（进程异常退出时才有内容）"
+CRASH_DIR="$HOME/Library/Logs/DiagnosticReports"
+if [[ -d "$CRASH_DIR" ]]; then
+    CRASH_FOUND=0
+    while IFS= read -r crash; do
+        [[ -n "$crash" ]] || continue
+        CRASH_FOUND=1
+        cp "$crash" "$OUT/" 2>/dev/null || true
+        echo "  已收集：$(basename "$crash")"
+        # .ips 是 JSON：摘要出异常类型/信号/终止原因，直接进 CI 日志，省去下载 artifact
+        # .ips 的 payload 是单行紧凑 JSON：先截断再打印，否则整行会把 CI 日志打爆
+        grep -m4 -E '"(exception|termination|signal|faultingThread)"' "$crash" 2>/dev/null | cut -c1-400 | sed 's/^/    /' || true
+    done < <(find "$CRASH_DIR" -maxdepth 1 -name '*OrielDemo*' -type f 2>/dev/null)
+    (( CRASH_FOUND == 0 )) && echo "  没有与 OrielDemo 相关的崩溃报告"
+else
+    echo "  没有崩溃报告目录 $CRASH_DIR"
+fi
+
+if command -v log >/dev/null 2>&1; then
+    ( log show --last 2m --style compact --predicate 'process == "OrielDemo"' >"$OUT/system-log.txt" 2>&1 ) &
+    LOG_QUERY_PID=$!
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        kill -0 "$LOG_QUERY_PID" 2>/dev/null || break
+        sleep 1
+    done
+    if kill -0 "$LOG_QUERY_PID" 2>/dev/null; then
+        kill "$LOG_QUERY_PID" 2>/dev/null || true
+        echo "  统一日志查询超时（结果已部分写入 system-log.txt）"
+    else
+        echo "  统一日志已写入 system-log.txt（$(wc -l <"$OUT/system-log.txt" 2>/dev/null | tr -d ' ') 行）"
+    fi
+fi
+
 section "清理"
 if kill -0 "$APP_PID" 2>/dev/null; then
     kill "$APP_PID" 2>/dev/null || true
@@ -221,6 +263,9 @@ wait "$APP_PID" 2>/dev/null || true
 
 section "结果汇总"
 echo "进程存活至观察窗结束 : $([[ $ALIVE -eq 1 ]] && echo 是 || echo 否)"
+if [[ -n "$EXIT_CODE" ]]; then
+    echo "进程退出码           : ${EXIT_CODE}"
+fi
 if (( WEBKIT_SEEN == 1 )); then
     echo "WebContent 子进程    : 是（第 ${WEBKIT_AT}s 起）"
 else
