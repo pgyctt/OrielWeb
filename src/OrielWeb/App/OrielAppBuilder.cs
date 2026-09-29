@@ -108,6 +108,23 @@ public sealed class OrielAppBuilder
         return this;
     }
 
+    internal string? SingleInstanceId { get; private set; }
+    internal Action<WebviewWindow?>? SingleInstanceActivateHandler { get; private set; }
+
+    /// <summary>
+    /// 启用单实例：第二个实例启动时会通知首实例，随后**立即以退出码 0 退出**（不建窗、不进消息循环）。
+    /// 首实例收到通知后默认把窗口前置并激活，并调用 <paramref name="onActivate"/>（可选）。
+    /// </summary>
+    /// <param name="id">实例标识（任意字符串；内部会哈希成管道名，不会当路径用）。</param>
+    /// <param name="onActivate">首实例收到"又有一个实例启动了"时的回调；不提供则只做默认的前置激活。</param>
+    public OrielAppBuilder SingleInstance(string id, Action<WebviewWindow?>? onActivate = null)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(id);
+        SingleInstanceId = id;
+        SingleInstanceActivateHandler = onActivate;
+        return this;
+    }
+
     public OrielApp Build() => new(this);
 
     /// <summary>构建并阻塞运行，直到所有窗口关闭。</summary>

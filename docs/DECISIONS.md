@@ -474,6 +474,52 @@ location.href = new URL('oriel-selftest-nonexistent-page.html', location.href).h
 **教训**：跨引擎的行为断言若依赖某个"大家都应该这样"的细节，往往只在一个平台上成立。把不确定的部分
 做成"多方案 + 打印过程"，比继续猜机制收敛得更快（这一处前后烧了 4 轮 CI，每轮约 4 分钟）。
 
+## 阶段 C-1/C-2/C-3：剪贴板、系统主题、单实例（2026-09-29 实现并验证）
+
+三项都落地，并有机器断言：`--clipboard-selftest`、`--theme-selftest`、单实例的双进程断言
+（三平台 CI 都跑）。实现过程中有三处值得记下。
+
+### 单实例：判定不能用"命名管道能否创建成功"
+
+第一版用 `NamedPipeServerStream` 的创建失败来判定"已有实例"。Windows 上通过；**Linux 上两个进程
+都以为自己 是首实例**——两边各自等对方，15 秒后双双打印"没有收到通知"。
+
+原因：Unix 上 .NET 会**先删掉已存在的 socket 文件再绑定**，第二个实例于是也能"成功"创建。
+
+改成**独占文件锁**（`FileShare.None`）判定：三平台语义一致（占用者存活期间第二次打开必然失败），
+进程退出（含崩溃）由操作系统释放句柄，不留需要手工清理的陈旧状态。命名管道只留给首实例做
+"接收通知"——那时它只有一个所有者，不会冲突。
+
+### `onCreated` 阶段既拿不到应用、也拿不到后端
+
+主题自检需要 `OrielApp`，而挂载点在 `AddWindow(configure, onCreated)` 的 `onCreated` 里。但
+`onCreated` 是在 `CreateWindow` **内部**被调用的，而 `window.Attach(backend)` 要等它返回。于是：
+
+- 用 `app` 变量：`app = builder.Build()` 的赋值尚未完成 → 实测读到 null；
+- 用 `window.App`：窗口门面还没有后端，直接抛异常（fail-fast，进程静默退出、无任何输出）。
+
+其它自检没踩到，是因为它们只做**事件订阅**——事件订阅不需要后端。
+最终解法：**推迟到 `Loaded`**（那时后端已就位），并新增 `WebviewWindow.App`（经窗口反查应用，
+本身也是常用能力）。
+
+**教训**：`onCreated` 是"窗口对象已存在但门面尚未接好"的中间态；在这个回调里能做的只有订阅事件。
+
+### Linux 剪贴板：写 HTML 时忘了声明文本 target
+
+`gtk_clipboard_set_with_data` 的 target 列表里最初只放了 `text/html`，于是只认文本的应用（以及
+我们自己的 `ClipboardText`）读不到回退内容——Windows/macOS 都写了回退，只有 Linux 漏了。
+`CLIPBOARD-SELFTEST` 第一次跑就抓到了它（`FAIL：写 HTML 时应同时给出纯文本回退，实际读到 ""`）。
+
+另一个坑：`GTK_THEME=Adwaita:dark` **不会**反映到 `gtk-theme-name` 或
+`gtk-application-prefer-dark-theme` 属性上（实测两者都还是浅色的值），所以深色判定必须单独读这个
+环境变量——它同时也是 CI 里"造两种值"的入口。
+
+### 主题自检为什么要跑两次
+
+`--theme-selftest` 断言"宿主读到的主题"与"页面回显的主题"一致，这只证明**读得到 + 通道通**。
+"深浅判得对"是另一回事，所以 Linux 上用 `GTK_THEME` 造值跑两次，并断言两次结论**不同**——
+同一进程内改不了系统主题，只能这样造。
+
 ### Linux 失败路径的两个实现要点
 
 1. **`load-failed` 之后必然还会来一次 `load-changed(FINISHED)`**（WebKitGTK 文档明确：错误页也要"加载完成"）。

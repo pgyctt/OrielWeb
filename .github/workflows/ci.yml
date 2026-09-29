@@ -180,6 +180,28 @@ jobs:
             exit 1
           fi
 
+          # 单实例：这一项没法单进程自证，起两个进程——第二个应立即成功退出并通知首实例，
+          # 第一个应收到激活请求（首实例自己也带 15 秒看门狗，不会挂住）。
+          pkill -x OrielDemo 2>/dev/null || true
+          xvfb-run -a "$demo" --single-instance-selftest > "$RUNNER_TEMP/si-primary.log" 2>&1 &
+          si_primary=$!
+          sleep 5
+          si_start=$(date +%s)
+          xvfb-run -a "$demo" --single-instance-selftest > "$RUNNER_TEMP/si-secondary.log" 2>&1
+          si_secondary_code=$?
+          si_elapsed=$(( $(date +%s) - si_start ))
+          wait "$si_primary"
+          si_primary_code=$?
+          echo "----- 单实例：第二实例 exit=$si_secondary_code（${si_elapsed}s）首实例 exit=$si_primary_code -----"
+          sed 's/^/  /' "$RUNNER_TEMP/si-primary.log"
+          sed 's/^/  /' "$RUNNER_TEMP/si-secondary.log"
+          [ "$si_secondary_code" -eq 0 ] || { echo "::error::第二个实例退出码非 0（$si_secondary_code）"; exit 1; }
+          [ "$si_elapsed" -lt 10 ] || { echo "::error::第二个实例没有立即退出（${si_elapsed}s）"; exit 1; }
+          grep -q 'SINGLE-INSTANCE-SECONDARY' "$RUNNER_TEMP/si-secondary.log" \
+            || { echo "::error::第二个实例没有通知首实例"; exit 1; }
+          grep -q 'SINGLE-INSTANCE: PASS' "$RUNNER_TEMP/si-primary.log" \
+            || { echo "::error::首实例没有收到激活请求"; exit 1; }
+
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -245,6 +267,26 @@ jobs:
               throw "$mode-selftest 未通过（结论行：$(if ($verdict) { $verdict } else { '无' })）"
             }
           }
+
+          # 单实例：起两个进程。第二个应"立即且成功地退出"并通知首实例，第一个应收到激活请求。
+          Stop-Process -Name OrielDemo -Force -ErrorAction SilentlyContinue
+          $primary = Start-Process -FilePath $demo -ArgumentList "--single-instance-selftest" -PassThru `
+                     -RedirectStandardOutput "$env:RUNNER_TEMP\si-primary.log" `
+                     -RedirectStandardError "$env:RUNNER_TEMP\si-primary.err"
+          Start-Sleep -Seconds 5
+          $sw = [System.Diagnostics.Stopwatch]::StartNew()
+          $secondary = Start-Process -FilePath $demo -ArgumentList "--single-instance-selftest" -Wait -PassThru `
+                       -RedirectStandardOutput "$env:RUNNER_TEMP\si-secondary.log" `
+                       -RedirectStandardError "$env:RUNNER_TEMP\si-secondary.err"
+          $sw.Stop()
+          $primary.WaitForExit(20000) | Out-Null
+          Write-Output "----- 单实例：第二实例 exit=$($secondary.ExitCode)（$([int]$sw.Elapsed.TotalSeconds)s）首实例 exit=$($primary.ExitCode) -----"
+          if (Test-Path "$env:RUNNER_TEMP\si-primary.log") { Get-Content "$env:RUNNER_TEMP\si-primary.log" -Encoding UTF8 | Write-Output }
+          if (Test-Path "$env:RUNNER_TEMP\si-secondary.log") { Get-Content "$env:RUNNER_TEMP\si-secondary.log" -Encoding UTF8 | Write-Output }
+          if ($secondary.ExitCode -ne 0) { throw "第二个实例退出码非 0：$($secondary.ExitCode)" }
+          if ($sw.Elapsed.TotalSeconds -ge 10) { throw "第二个实例没有立即退出" }
+          $primaryLog = Get-Content "$env:RUNNER_TEMP\si-primary.log" -Encoding UTF8 -Raw
+          if ($primaryLog -notmatch 'SINGLE-INSTANCE: PASS') { throw "首实例没有收到激活请求" }
 
   smoke-macos:
     runs-on: macos-latest

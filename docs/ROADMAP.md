@@ -55,6 +55,24 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
   `respondsToSelector:` 探测失败而跳过设置，此时依赖 Safari 的默认行为）；Linux 看
   `LinuxWindowHost.Create` 里 `webkit_settings_set_enable_developer_extras` 是否被调用。
 
+#### 剪贴板的跨进程互操作（未验证）
+- 状态：自检只验证了**同进程内**写→读回。与其它应用互相粘贴（真实剪贴板互操作）**未验证**。
+- 环境：任意桌面环境。
+- 步骤：1) 用 `--clipboard-selftest` 跑一次（它会写剪贴板）；2) 在别的应用里粘贴，确认拿到文本/富文本；
+  3) 反过来在别的应用里复制带格式的内容，再用 `window.ClipboardHtml` 读。
+- 预期：文本能互相粘贴；HTML 粘贴到富文本编辑器（Word / LibreOffice）应保留粗体等格式。
+- 若不符：先看 `Win32Clipboard.BuildCfHtml` 的偏移是否正确（CF_HTML 的偏移按**字节**计），
+  Linux 侧看 target 列表是否包含对方请求的类型。
+
+#### 主题切换的实时性（未验证）
+- 状态：`--theme-selftest` 验证了"读得到 + 判得对"，但**没验证**"在系统设置里切换后事件是否立刻到达"。
+- 环境：任意桌面环境（Linux 需要桌面环境而不是 xvfb；macOS / Windows 均可）。
+- 步骤：1) 启动 demo（不带自检参数）；2) 在系统设置里切换深色/浅色；3) 观察页面是否跟随
+  （`app.js` 会把主题写到 `<html data-theme>`）。
+- 预期：切换后一秒内页面主题跟随；宿主侧 `ThemeChanged` 触发一次。
+- 若不符：Windows 看是否有 `WM_SETTINGCHANGE` + `"ImmersiveColorSet"`；Linux 看 GtkSettings 的
+  `notify::` 信号是否被触发；macOS 看通知是否到达（`orielThemeChanged:`）。
+
 #### 窗口图标（Windows / macOS）
 - 状态：**Linux 已验证**（上面的 `_NET_WM_ICON` 对照实验）；Windows 与 macOS **只做了编译验证**。
 - 环境：Windows 桌面 / macOS 桌面。
@@ -85,13 +103,13 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 
 功能面照 Tauri，验证账按本仓库的约定记（见下）。
 
-| 项 | 可机器判定？ |
-|---|---|
-| 剪贴板（文本 / HTML 读写） | ✅ CI 可测 |
-| 单实例（第二实例激活首实例并退出） | ✅ 可测：起两个进程断言行为 |
-| 系统主题检测（dark/light + 变更事件） | ✅ 可测：在 CI 里用系统设置造两种值 |
-| 拖放（文件拖入 → 路径列表 + 事件） | ⚠️ 部分：逻辑可注入事件测，真实拖拽需真机 |
-| 托盘 / 应用菜单 / 上下文菜单 / 全局快捷键 / 通知 / deep link / 开机自启 | ❌ 无头环境不可测 |
+| 项 | 状态 | 做法要点 | 验证结果 |
+|---|---|---|---|
+| 剪贴板（文本 / HTML 读写） | ✅ 完成 | Windows `CF_UNICODETEXT` + `HTML Format`（CF_HTML，偏移按字节）；macOS `NSPasteboard`；Linux `gtk_clipboard_*`（HTML 走自定义 target）。三平台写 HTML 时都带**纯文本回退** | `--clipboard-selftest` 三平台 CI 通过；**跨进程互操作**只在同进程内验证过，见待真机清单 |
+| 单实例（第二实例激活首实例并退出） | ✅ 完成 | `SingleInstance(id, onActivate)`：**独占文件锁**判定 + 命名管道通知；第二个实例通知后立即以退出码 0 退出 | 三平台 CI 的双进程断言通过（第二个 0 秒退出并通知、第一个收到激活） |
+| 系统主题检测（dark/light + 变更事件） | ✅ 完成 | `OrielApp.Theme` + `ThemeChanged` + 页面 `theme.changed`（每次导航后补推）。检测：注册表 + `WM_SETTINGCHANGE` / GtkSettings + `notify::` / `NSUserDefaults` + 系统通知 | `--theme-selftest` 三平台通过；Linux 另跑两次（`GTK_THEME` 造值）断言深浅结论**不同**；**切换实时性**见待真机清单 |
+| 拖放（文件拖入 → 路径列表 + 事件） | ⏳ 未开始 | — | 逻辑可注入事件测，真实拖拽需真机 |
+| 托盘 / 应用菜单 / 上下文菜单 / 全局快捷键 / 通知 / deep link / 开机自启 | ❌ 无头环境不可测 | — | 只做实现并在 README 标注「未验证（无真机环境）」 |
 
 ### C 的验证账规则（必守）
 

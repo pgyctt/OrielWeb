@@ -1,3 +1,4 @@
+using System.IO.Pipes;
 using System.Text.Json;
 using OrielWeb.Ipc;
 
@@ -64,8 +65,29 @@ public sealed class OrielApp : IDisposable
     {
         EnsureApartment();
 
+        // 单实例判定必须在建窗之前：否则第二个实例会先闪出一个窗口再退出。
+        if (_builder.SingleInstanceId is { } instanceId)
+        {
+            if (!SingleInstanceGuard.TryAcquire(instanceId, out FileStream? lockFile))
+            {
+                // 已有实例在跑：通知它，然后直接返回（不进消息循环）——Main 随之结束，退出码保持 0。
+                SingleInstanceGuard.NotifyPrimary(instanceId);
+                Console.WriteLine("SINGLE-INSTANCE-SECONDARY: 已有实例，已通知并退出");
+                Console.Out.Flush();
+                return;
+            }
+
+            _singleInstanceLock = lockFile;
+            _singleInstanceServer = SingleInstanceGuard.CreateListener(instanceId);
+        }
+
         _backend = PlatformBackendFactory.Create();
         _backend.ThemeChanged += OnThemeChanged;
+
+        if (_singleInstanceServer is not null)
+        {
+            StartSingleInstanceListener();
+        }
 
         string? assetDirectory = _builder.UseAssets
             ? EmbeddedAssetExtractor.Extract(_builder.AssetResourcePrefix)
@@ -116,8 +138,48 @@ public sealed class OrielApp : IDisposable
         }
     }
 
+    // ---- 单实例 ----
+
+    private NamedPipeServerStream? _singleInstanceServer;
+    private FileStream? _singleInstanceLock;
+
+    /// <summary>
+    /// 首实例侧：后台等后续实例的连接，收到后在 UI 线程激活窗口。
+    /// </summary>
+    private void StartSingleInstanceListener()
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await SingleInstanceGuard
+                    .ListenAsync(_singleInstanceServer!, _ => PostToMainThread(ActivateAllWindows))
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // 监听结束（例如首实例正在退出）不算错误，记一笔即可
+                System.Diagnostics.Debug.WriteLine($"[OrielWeb] 单实例监听结束：{ex.Message}");
+            }
+        });
+    }
+
+    /// <summary>把窗口前置并激活，随后交给应用的回调（若有）。</summary>
+    private void ActivateAllWindows()
+    {
+        foreach (WebviewWindow window in _windows)
+        {
+            window.Show();
+            window.Focus();
+        }
+
+        _builder.SingleInstanceActivateHandler?.Invoke(_windows.Count > 0 ? _windows[0] : null);
+    }
+
     public void Dispose()
     {
+        _singleInstanceServer?.Dispose();
+        _singleInstanceLock?.Dispose();
         _backend?.Dispose();
     }
 }

@@ -35,6 +35,8 @@ internal static class Program
         var clipboardSelfTest = args.Contains("--clipboard-selftest");
         // --theme-selftest：主题读取与 theme.changed 事件通道（页面回显确认；深浅两条路径由 CI 造值）
         var themeSelfTest = args.Contains("--theme-selftest");
+        // --single-instance-selftest：单实例自检（双进程协作，脚本起两个实例）
+        var singleInstanceSelfTest = args.Contains("--single-instance-selftest");
 
         // 主题自检需要 OrielApp（主题是应用级的），所以这里显式 Build 再 Run；
         // app 变量先声明、后赋值，闭包在 onCreated 里读它（onCreated 发生在 Run 内部，那时已赋值）。
@@ -91,14 +93,29 @@ internal static class Program
                 }
             });
 
+        if (singleInstanceSelfTest)
+        {
+            // 单实例必须配在 Run() 之前：判定发生在建窗之前（否则第二个实例会先闪个窗口）
+            builder.SingleInstance(
+                SingleInstanceSelfTest.InstanceId,
+                SingleInstanceSelfTest.OnActivatedBySecondInstance);
+        }
+
         app = builder.Build();
+
+        if (singleInstanceSelfTest)
+        {
+            SingleInstanceSelfTest.StartWatchdog();
+        }
+
         app.Run();
 
         // 自检的结论已在运行期打印，这里只把成败映射到进程退出码（CI 的冒烟脚本据此判定）。
         if ((navSelfTest && NavSelfTest.Failed)
             || (ipcSelfTest && IpcSelfTest.Failed)
             || (clipboardSelfTest && ClipboardSelfTest.Failed)
-            || (themeSelfTest && ThemeSelfTest.Failed))
+            || (themeSelfTest && ThemeSelfTest.Failed)
+            || (singleInstanceSelfTest && SingleInstanceSelfTest.Failed))
         {
             Environment.ExitCode = 1;
         }

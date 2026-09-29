@@ -12,6 +12,8 @@
 - **导航与双向通信**：前进/后退/刷新 + 导航事件（开始/完成/失败，带错误信息）、页面 console 转发、
   `EmitEvent(name, payload)` 推事件、`oriel.postMessage` 收消息——三条通道都能在无头环境里机器断言
   （见 `--nav-selftest` / `--ipc-selftest`）
+- **平台集成**：剪贴板（文本 + HTML）、系统主题（深/浅 + 变更事件）、单实例——同样都有无头自检
+  （见 `--clipboard-selftest` / `--theme-selftest` / 单实例的双进程断言）
 - **系统 webview**：Windows 用 WebView2、macOS 用 WKWebView、Linux 用 WebKitGTK——不捆绑浏览器内核
 
 ## 快速开始
@@ -212,6 +214,61 @@ window.PostToUiThread(() => window.SetTitle("页面已就绪"));   // 必须回 
 OrielDemo --nav-selftest    # 跳转 → 后退 → 前进 → 刷新 → 加载失败（含错误信息）
 OrielDemo --ipc-selftest    # console 转发、postMessage、EmitEvent 闭环（推送 → 页面回显 → 收回）
 ```
+
+## 剪贴板、系统主题与单实例
+
+**剪贴板**（文本与 HTML；写 HTML 时**同时**写一份纯文本回退，只认文本的应用也能粘贴）：
+
+```csharp
+string? text = window.ClipboardText;
+window.SetClipboardText("你好");
+
+string? html = window.ClipboardHtml;
+window.SetClipboardHtml("<b>你好</b>", "你好");   // 第二个参数是纯文本回退
+```
+
+平台差异：Windows 用 `CF_UNICODETEXT` + `HTML Format` 自定义格式（CF_HTML，头里是按**字节**计的偏移）；
+macOS 用 `NSPasteboard`（`public.utf8-plain-text` / `public.html`）；Linux 用 `gtk_clipboard_*`
+（HTML 走 `text/html` 自定义 target，文本走 `UTF8_STRING`）。
+
+**系统主题**：`OrielApp.Theme` + `ThemeChanged`；同一变化也会以 `theme.changed` 推给每个页面
+（payload 为 `"light"` / `"dark"`），并且**每次导航成功后补推一次**——新文档不必等用户切换就知道当前主题。
+
+```csharp
+OrielTheme theme = app.Theme;
+app.ThemeChanged += t => Console.WriteLine($"主题切换为 {t}");
+
+// 页面侧
+oriel.on('theme.changed', (theme) => document.documentElement.dataset.theme = theme);
+```
+
+检测方式：Windows 读 `HKCU\…\Themes\Personalize\AppsUseLightTheme` 并监听 `WM_SETTINGCHANGE`；
+Linux 看 `gtk-application-prefer-dark-theme`、主题名与 `GTK_THEME`，并连 `notify::` 信号；
+macOS 看 `NSUserDefaults` 的 `AppleInterfaceStyle` 并订阅系统通知。
+
+**单实例**：第二个实例会通知首实例，随后**立即以退出码 0 退出**（不建窗、不进消息循环）；
+首实例默认把窗口前置并激活，也可用回调做别的事（例如把第二实例的命令行参数用起来）。
+
+```csharp
+Oriel.CreateBuilder(args)
+    .AddWindow(/* … */)
+    .SingleInstance("com.example.myapp", window => window?.Focus())
+    .Run();
+```
+
+判定用**独占文件锁**，通知用命名管道（Unix 上即 Unix domain socket）。
+⚠️ 不要用"同名命名管道能否创建成功"来判定——Unix 上 .NET 会先删掉已存在的 socket 再绑定，
+第二个实例也会"成功"，于是两个进程都以为自己是首实例（实测踩到过）。
+
+### 这三项的验证账
+
+| 能力 | 机器断言（三平台 CI 都跑） | 尚未验证 |
+|---|---|---|
+| 剪贴板 | `--clipboard-selftest`：文本与 HTML 各自写→读回、两种类型互不干扰 | **跨进程互操作**（与其它应用互相粘贴）——只验证了同进程写读 |
+| 主题 | `--theme-selftest`：宿主读到的值与页面回显一致；Linux 上跑两次（用 `GTK_THEME` 造值）并断言深浅结论**不同** | **切换的实时性**（在系统设置里切换后事件是否立刻到达）需要真实桌面 |
+| 单实例 | 双进程：第二个立即成功退出并通知首实例、第一个收到激活请求 | — |
+
+> 与路线图的约定一致：这里只写有证据的结论；未验证项同样列在 `docs/ROADMAP.md` 的待真机清单里。
 
 ## 构建
 

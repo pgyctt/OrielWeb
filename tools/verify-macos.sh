@@ -215,6 +215,31 @@ for mode in nav ipc clipboard theme; do
 done
 
 # ---------------------------------------------------------------------------
+section "单实例：双进程（机器断言）"
+# 单实例没法单进程自证：起两个进程，第二个应"立即且成功地退出"并通知首实例，
+# 第一个应收到激活请求（首实例自带 15 秒看门狗，不会挂住）。
+"$APP_EXE" --single-instance-selftest >"$OUT/si-primary.log" 2>&1 &
+si_primary_pid=$!
+sleep 5
+si_start=$(date +%s)
+"$APP_EXE" --single-instance-selftest >"$OUT/si-secondary.log" 2>&1
+si_secondary_code=$?
+si_elapsed=$(( $(date +%s) - si_start ))
+wait "$si_primary_pid" 2>/dev/null
+si_primary_code=$?
+echo "  [single-instance] 第二实例 退出码=${si_secondary_code}（${si_elapsed}s） 首实例 退出码=${si_primary_code}"
+sed 's/^/    /' "$OUT/si-primary.log" || true
+sed 's/^/    /' "$OUT/si-secondary.log" || true
+if ! grep -q 'SINGLE-INSTANCE: PASS' "$OUT/si-primary.log"; then
+    SELFTEST_FAILED=1
+    echo "    （首实例没有收到激活请求）"
+fi
+if ! grep -q 'SINGLE-INSTANCE-SECONDARY' "$OUT/si-secondary.log"; then
+    SELFTEST_FAILED=1
+    echo "    （第二个实例没有通知首实例）"
+fi
+
+# ---------------------------------------------------------------------------
 section "运行取证（观察窗 ${OBSERVE_SECONDS}s）"
 echo "启动：${APP_EXE}"
 echo "请观察截图产物，确认页面右下角徽章为「IPC 已连接」（本脚本无法机器判定这一项）"
