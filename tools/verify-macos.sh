@@ -200,11 +200,17 @@ for mode in nav ipc; do
 
     selftest_verdict="$(grep -E '^(NAV|IPC)-SELFTEST: ' "$selftest_log" | tail -1 || true)"
     echo "  [$mode] 退出码=${selftest_code} 结论=${selftest_verdict:-无}"
-    # 明细也回显到 CI 日志：artifact 里有完整文件，但日志能直接看，失败时尤其有用
+    # 明细总是回显到 CI 日志：artifact 里有完整文件，但日志能直接看
     sed 's/^/    /' "$selftest_log" || true
-    if (( selftest_code != 0 )); then
+
+    # 判定以日志里的结论行为准，而不是退出码。原因：macOS 上应用退出走 AppKit 的 terminate
+    # （applicationShouldTerminateAfterLastWindowClosed → terminate:），它不会把 Main 里设置的
+    # Environment.ExitCode 带出来——实测 nav 自检打印 FAIL 却返回 0，会让整个 job **假绿**。
+    if [[ "$selftest_verdict" == *PASS* ]]; then
+        :
+    else
         SELFTEST_FAILED=1
-        grep -E '^  - ' "$selftest_log" | sed 's/^/    /' || true
+        echo "    （未读到 PASS 结论行，按失败处理）"
     fi
 done
 

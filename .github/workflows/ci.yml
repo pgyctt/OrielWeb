@@ -139,8 +139,20 @@ jobs:
         # 但导航与 IPC 都不经过 WM，所以在这条路径上有效。产物路径与 verify-linux.sh 的发布位置一致。
         run: |
           demo=samples/OrielDemo/bin/Release/net10.0/linux-x64/publish/OrielDemo
-          xvfb-run -a "$demo" --nav-selftest
-          xvfb-run -a "$demo" --ipc-selftest
+          for mode in nav ipc; do
+            log="$RUNNER_TEMP/selftest-$mode.log"
+            xvfb-run -a "$demo" "--$mode-selftest" > "$log" 2>&1
+            code=$?
+            verdict="$(grep -E '^(NAV|IPC)-SELFTEST: ' "$log" | tail -1 || true)"
+            echo "----- $mode-selftest（退出码 $code）$verdict -----"
+            sed 's/^/  /' "$log"
+            # 判定以日志里的结论行为准（与 macOS 一致）：应用的退出方式各平台不同，
+            # 退出码未必可靠地表达自检结果——macOS 上就出现过"结论 FAIL 但退出码 0"。
+            if [[ "$verdict" != *PASS* ]]; then
+              echo "::error::$mode-selftest 未通过（结论行：${verdict:-无}）"
+              exit 1
+            fi
+          done
 
       - name: Upload evidence
         if: always()
@@ -195,7 +207,15 @@ jobs:
             Write-Output "----- $mode-selftest（退出码 $($p.ExitCode)）-----"
             if (Test-Path $out) { Get-Content $out -Encoding UTF8 | Write-Output }
             if (Test-Path $err) { Get-Content $err -Encoding UTF8 | Write-Output }
-            if ($p.ExitCode -ne 0) { throw "$mode-selftest 失败（退出码 $($p.ExitCode)）" }
+            # 判定以日志里的结论行为准（与 Linux / macOS 一致），退出码只作为附加信息。
+            $verdict = ""
+            if (Test-Path $out) {
+              $last = Select-String -Path $out -Pattern '^(NAV|IPC)-SELFTEST: ' | Select-Object -Last 1
+              if ($last) { $verdict = $last.Line }
+            }
+            if ($verdict -notmatch 'PASS') {
+              throw "$mode-selftest 未通过（结论行：$(if ($verdict) { $verdict } else { '无' })）"
+            }
           }
 
   smoke-macos:
