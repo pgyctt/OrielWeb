@@ -97,21 +97,10 @@ jobs:
       - name: Publish AOT Linux
         run: dotnet publish samples/OrielDemo -c Release -r linux-x64 -v minimal
 
-  aot-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup .NET 10
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-
-      - name: Publish AOT macOS ARM64
-        run: dotnet publish samples/OrielDemo -c Release -r osx-arm64 -v minimal
-
-      - name: Publish AOT macOS x64
-        run: dotnet publish samples/OrielDemo -c Release -r osx-x64 -v minimal
+  # 原先另有一个 aot-macos job（发布 demo 的 osx-arm64 + osx-x64）。它与 smoke-macos 重复了
+  # 一次完整的 osx-arm64 AOT 发布（各自 restore → ilc → link），故合并进 smoke-macos：
+  # arm64 由 tools/verify-macos.sh 发布——同一份产物既发布又用于运行验证；x64 作为"非本机架构
+  # 的发布能力"验证，留在该 job 末尾单独跑。
 
   smoke-linux:
     runs-on: ubuntu-latest
@@ -190,6 +179,11 @@ jobs:
         # 中文与 IPC 徽章（这三项没有宿主侧可观测信号）。
         # 判读标准与实现细节见 tools/verify-macos.sh 头部注释。
         run: bash tools/verify-macos.sh --out "$RUNNER_TEMP/macos-verify-out"
+
+      - name: Publish AOT macOS x64
+        # 非本机架构的 AOT 发布能力（arm64 那条已由 verify-macos.sh 覆盖，不再重复）。
+        # 刻意放在运行验证之后：验证失败时优先暴露真正的问题，不必先等这一步跑完。
+        run: dotnet publish samples/OrielDemo -c Release -r osx-x64 -v minimal
 
       - name: Upload evidence
         if: always()
