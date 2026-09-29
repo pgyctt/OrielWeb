@@ -400,3 +400,75 @@ macOS **无真机**，该修复仅靠代码一致性保证，**未经运行验�
 WSLg 显示服务的偶发波动（与本次改动无因果关系：那次连"存活"都没到，而改动只涉及状态信号）。
 
 **遗留**：macOS 的 `windowDidResize:` 是新增的原生回调，待有 Mac 环境时确认它不干扰拖拽/缩放路径。
+
+## macOS 首次真机运行验证（2026-09-29，GitHub 托管 macOS runner）
+
+**背景**：没有 Mac 硬件。在普通 PC 上虚拟化 macOS 违反 Apple 许可（只授权在 Apple 硬件上运行），故不走
+那条路，改用 GitHub Actions 的托管 macOS runner。但**"托管 runner 能否运行本机 AppKit 窗口应用"没有官方
+明文**——"能跑 iOS 模拟器上的 XCUITest"不能作为证据，模拟器有自己的渲染路径。所以先探，再验证。
+
+### 第 0 步：先探清 runner 能力（`tools/probe-macos.sh`）
+
+用最小 AppKit/WKWebView 探针直接问，而不是靠猜：
+
+| 组 | 探针结果 | 结论 |
+|---|---|---|
+| A 会话 | `managername=Aqua`、`/dev/console` 属主=`runner`、`autoLoginUser=runner`、WindowServer 与 Dock 在跑 | 有图形登录会话 |
+| B 建窗 | `NSScreen.screens.count=1`（1024×768）、`isVisible=true`、`windowNumber=28` | 确实能建出窗口 |
+| C 截图 | `screencapture` 成功，1024×768 真实像素 | 能截到像素（屏幕录制授权已具备） |
+| D WebKit | `didFinish` + `document.title=oriel-probe`，且出现 `com.apple.WebKit.WebContent`/`Networking` | WKWebView 在该环境可用 |
+| E 字体 | 无 `PingFang.ttc`（macOS 26 挪了位置），但有 `STHeiti Light.ttc`/`Hiragino Sans GB.ttc` | 中文不会缺字形 |
+
+该探针 workflow 保留为**手动触发的环境诊断**（换 runner 镜像或系统版本时重新确认）。
+
+### 真机上依次暴露的四个缺陷
+
+只有编译验证时，这四条一条都看不出来。
+
+**① `CreateWindow` 从不调用 `host.Create()`**（与 Linux 同源）
+进程不崩、不报错，但窗口从未被创建。Linux 那轮已修，macOS 侧一并补上。
+
+**② 纯 P/Invoke 不链接任何框架，也从不 `dlopen`**
+macOS 后端只 `[LibraryImport]` 到 `libobjc`，产物是无 bundle 的裸可执行文件，因此
+`objc_getClass("NSApplication"/"NSWindow"/"WKWebView")` 全部返回 nil。而 **ObjC 向 nil 发消息是静默
+no-op**：所有建窗调用什么都不做，`NSApplication.run` 也立即返回。现象是"**进程以 0 退出、无窗口、无
+WebKit 子进程、无任何输出**"——最难查的一类失败。
+**修法**：后端初始化最先 `dlopen` Foundation/AppKit/WebKit（`ObjCRuntime.LoadFrameworks`，失败时带
+`dlerror` 文本抛异常），并把窗口/webview 的类查找改为 `GetClassOrThrow`，让"类不存在"变成一条明确异常。
+
+**③ 裸可执行文件缺少 bundle 身份**
+AppKit 先给出线索：`Cannot index window tabs due to missing main bundle identifier`。
+`WKWebView` 是多进程架构，宿主需要有效的 bundle 身份才能与 `WebContent`/`Networking` 的 XPC 服务通信。
+**修法（属打包层，不是库配置）**：在产物旁构造最小 `.app`（`Info.plist` 含
+`CFBundleIdentifier`/`CFBundleExecutable`）并从 bundle 内启动。
+
+**④ 把 `char*` 当 `NSString*` 传给 WebKit**
+`WKUserScript initWithSource:` 与 `+[NSURL URLWithString:]` 都期望 `NSString*`，但调用走了
+`StringMarshalling.Utf8` 的重载：托管字符串被 marshal 成 UTF-8 字节指针，WebKit 一问对象类型就
+**在 CoreFoundation 的 `__CF_IS_OBJC` 里 `__builtin_trap`（`EXC_BREAKPOINT`，退出码 133）**。
+**修法**：先用 `MakeNSString` 造出真对象、走收 `id` 的重载；删掉诱导误用的 `char*` 重载，并在
+`SendIdUtf8` 上注明"只用于确实要 `const char*` 的 selector（如 `stringWithUTF8String:`）"。
+
+### 取证手法（`tools/verify-macos.sh`，CI job `smoke-macos`）
+
+- **机器断言**：进程存活至观察窗结束 + 出现 `com.apple.WebKit.WebContent` 子进程 + `CGWindowList`
+  （内联 Swift 小程序）枚举到标题含 `Oriel Demo` 的窗口。
+- **人眼证据**：截图作 artifact 上传——页面渲染、中文与 IPC 徽章没有宿主侧可观测信号。
+- **退出码是第一分叉**：`wait` 返回 0 = 逻辑性退出（当时对应"全部 no-op"），>128 = 被信号杀死
+  （133 = SIGTRAP，对应缺陷 ④）。
+- **崩溃报告**：`~/Library/Logs/DiagnosticReports/*OrielDemo*`（先 `sleep 3` 再找，ReportCrash 是异步写）。
+- **os_log**：托管运行时的 FailFast 在 macOS 上经 `os_log` 上报而不写 stderr，所以 `run.log` 会是空的；
+  脚本把命中关键词的行直接打进 CI 日志，省去下载 artifact。
+- **lldb 复跑抓栈（本次的突破口）**：`lldb -b -o run -o "thread backtrace" -o quit -- <exe>`。进程由
+  lldb 自己启动（不是 attach），且产物是 ad-hoc 签名、未启用 hardened runtime，故不需要
+  `get-task-allow`。AOT 二进制没有符号，但栈帧的镜像名足够定位——本次直接指向
+  ``CoreFoundation`__CF_IS_OBJC``，把"读日志猜"变成"看栈定位"。
+- **结论**：CI run #10（`3b4efbe`）**success**；截图确认页面渲染正常、中文正常、徽章为「IPC 已连接」。
+
+### 工具侧教训
+
+- **变量紧贴全角字符**：`发布 AOT（$RID）` 在 CI 的 macOS bash 3.2 + 非 UTF-8 locale 下会把全角括号吞进
+  变量名，配合 `set -u` 直接 `unbound variable`；本地 bash 5.x + UTF-8 复现不出来。**脚本里变量一律写
+  `${VAR}`**（`verify-linux.sh` 也潜伏过 4 处，已一并修掉）。
+- **Apple Silicon 上任何可执行文件都至少要 ad-hoc 签名**，否则内核直接 `Killed: 9`；dotnet 的 AOT 产物
+  通常已带，但脚本仍做一次幂等补签，避免把签名问题误读成代码缺陷。

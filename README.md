@@ -150,7 +150,7 @@ Windows 上这一点由 **Composition 宿主**保证：窗口以 `WS_EX_NOREDIRE
 # Windows
 dotnet publish samples/OrielDemo -c Release -r win-x64
 
-# macOS（需要 Mac）
+# macOS（需要 Mac；产物必须打包成 .app 才能运行 WKWebView，见「macOS 运行要求」）
 dotnet publish samples/OrielDemo -c Release -r osx-arm64
 
 # Linux（需要 libwebkit2gtk-4.1；中文界面另需 CJK 字体，见「Linux 环境依赖与已知限制」）
@@ -198,12 +198,15 @@ WebView2 的运行需要微软的 `WebView2Loader.dll`。官方只有两条路�
 | Windows x64/arm64 | WebView2 (Evergreen) | ✅ 已运行验证（demo IPC 往返、单测、AOT 发布）；仅一套实现，无遗留开关 |
 | Linux x64 | WebKitGTK 4.1 | ✅ 已运行验证（WSL2 + WSLg 真机：窗口创建、页面渲染、IPC 往返均已确认；X11 与 Wayland 双后端各跑通一次） |
 | Linux arm64 | WebKitGTK 4.1 | ⚠️ 编译通过；CI 在 xvfb 下冒烟（进程存活）；未在真机运行 |
-| macOS x64/arm64 | WKWebView | ⚠️ 仅编译通过；尚未在真机运行过（与 Linux 同构的建窗调用缺陷已同步修复，**未真机验证**） |
+| macOS arm64 | WKWebView | ✅ 已运行验证（GitHub 托管 macOS runner / macOS 26：窗口创建、页面渲染、中文、IPC 往返均已确认） |
+| macOS x64 | WKWebView | ⚠️ 编译通过（CI `compile-macos`）；未在真机运行 |
 
-> 上表只写有证据的结论：Windows 与 Linux x64 有真机运行记录（Linux 的 IPC 往返由页面徽章人眼确认），
-> 其余平台目前只有编译与冒烟级别的验证。
+> 上表只写有证据的结论：Windows / Linux x64 / macOS arm64 均有实际运行验证记录——Windows 与 Linux 为本地
+> 真机，macOS 为 GitHub 托管的 macOS runner；三者的 IPC 往返都由页面徽章人眼确认。其余平台目前只有编译与
+> 冒烟级别的验证。
 >
-> Linux x64 的验证过程见 `docs/DECISIONS.md`（含一处「进程存活但从未创建窗口」的后端缺陷及修复）。
+> Linux x64 与 macOS 的验证过程见 `docs/DECISIONS.md`——其中记录了真机上依次暴露的后端缺陷及修法，
+> 这些缺陷在只有编译验证时完全看不出来。
 
 ### Linux 环境依赖与已知限制
 
@@ -214,6 +217,21 @@ WebView2 的运行需要微软的 `WebView2Loader.dll`。官方只有两条路�
 - **Wayland 下无边框窗口不可拖动**：无边框拖动依赖 `gtk_window_move`，而 Wayland 协议不允许客户端自行
   移动窗口，该调用在 Wayland 下是空操作；强制 X11（`GDK_BACKEND=x11`）时拖动正常。改用
   `gtk_window_begin_move_drag` 交合成器接管的修法**尚未实施**。
+
+### macOS 运行要求
+
+- **必须打包成 `.app` bundle 才能运行 WKWebView**：`WKWebView` 在 macOS 上是多进程架构，宿主进程需要
+  有效的 bundle 身份（`Info.plist` 的 `CFBundleIdentifier`）才能与 `WebContent` / `Networking` 这些 XPC
+  服务通信；裸可执行文件会走到 WebKit 的内部断言（`SIGTRAP`，退出码 133）。`tools/verify-macos.sh`
+  会在产物旁构造一个最小 `OrielDemo.app` 并从中启动——这是把 demo 跑起来所需的**打包步骤**，不是库的配置项。
+- **后端初始化时会 `dlopen` Foundation/AppKit/WebKit**：本库在 macOS 上是纯 P/Invoke、只链接 `libobjc`，
+  不链接任何框架。缺这一步时 `objc_getClass("NSWindow")` 之类返回 nil，而 ObjC 向 nil 发消息是静默
+  no-op——表现为"进程不崩、不报错、直接退出，但从来没有窗口"。库已内置（`ObjCRuntime.LoadFrameworks`），
+  消费方无需处理。
+- **CI 上如何验证**：`smoke-macos` job 运行 `tools/verify-macos.sh`，断言进程存活、出现 `WebContent`
+  子进程、以及 `CGWindowList` 能枚举到标题含 `Oriel Demo` 的窗口，并把截图作为 artifact 上传
+  （页面渲染、中文与 IPC 徽章只能人眼判定）。托管 runner 具备图形登录会话这一点，由
+  `tools/probe-macos.sh` 实测确认（手动触发的环境诊断，换 runner 镜像时可用它重新确认）。
 
 ### WebView2 运行时与缺失引导
 
