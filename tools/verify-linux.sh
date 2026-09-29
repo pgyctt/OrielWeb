@@ -69,7 +69,7 @@ done
 
 case "$BACKEND" in
     auto|wayland|x11) ;;
-    *) echo "未知 --backend：$BACKEND（可选 auto / wayland / x11）" >&2; exit 2 ;;
+    *) echo "未知 --backend：${BACKEND}（可选 auto / wayland / x11）" >&2; exit 2 ;;
 esac
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -143,7 +143,7 @@ if [[ ! -f "$DEMO_PROJECT" ]]; then
 fi
 
 if [[ "$DO_PUBLISH" -eq 1 ]]; then
-    section "AOT 发布（$RID）"
+    section "AOT 发布（${RID}）"
     echo "命令：$DOTNET_BIN publish samples/OrielDemo -c Release -r $RID"
     # /mnt 下的 Windows 工作区跨文件系统，首次发布可能较慢
     "$DOTNET_BIN" publish "$DEMO_PROJECT" -c Release -r "$RID" -v minimal
@@ -191,7 +191,7 @@ run_case() {
         echo "启动：GDK_BACKEND=x11 $DEMO_EXE"
         GDK_BACKEND=x11 "$DEMO_EXE" >"$log" 2>&1 &
     else
-        echo "启动：$DEMO_EXE（后端交给 GDK 自行选择，WSLg 下即 Wayland）"
+        echo "启动：${DEMO_EXE}（后端交给 GDK 自行选择，WSLg 下即 Wayland）"
         "$DEMO_EXE" >"$log" 2>&1 &
     fi
     pid=$!
@@ -210,7 +210,7 @@ run_case() {
             if [[ -n "$wp" ]]; then
                 webkit=1
                 webkit_note="第 ${second}s 拉起 pid $(echo "$wp" | tr ' ' ',' | sed 's/,$//')"
-                echo "  [${second}s] WebKit 子进程出现（$webkit_note）"
+                echo "  [${second}s] WebKit 子进程出现（${webkit_note}）"
             fi
         fi
 

@@ -20,6 +20,10 @@
 #   bash tools/verify-macos.sh --out DIR        # 产物目录（默认 <仓库根>/macos-verify-out）
 #
 # 退出码：0 = 三项机器断言全部成立；非 0 = 有断言不成立（细节见输出与产物目录）。
+#
+# 写作约定（CI 上真实踩到过）：脚本里的变量一律写成 ${VAR} 形式。紧贴中文/全角字符的 $VAR
+# 在非 UTF-8 locale 下（GitHub runner 就是）会被 bash 连同多字节字符一起当作变量名，
+# 配合 set -u 直接 unbound variable 退出——本地 UTF-8 环境跑不出来，只在 CI 上炸。
 
 set -uo pipefail
 
@@ -66,7 +70,7 @@ echo "产物      : $DEMO_EXE"
 echo "产物目录  : $OUT"
 
 if (( DO_PUBLISH )); then
-    section "发布 AOT（$RID）"
+    section "发布 AOT（${RID}）"
     if ! ( cd "$REPO_ROOT" && dotnet publish samples/OrielDemo/OrielDemo.csproj -c Release -r "$RID" -v minimal ); then
         echo "发布失败" >&2
         exit 1
@@ -74,7 +78,7 @@ if (( DO_PUBLISH )); then
 fi
 
 if [[ ! -x "$DEMO_EXE" ]]; then
-    echo "找不到可执行产物：$DEMO_EXE（先不加 --no-publish 跑一次）" >&2
+    echo "找不到可执行产物：${DEMO_EXE}（先不加 --no-publish 跑一次）" >&2
     exit 1
 fi
 

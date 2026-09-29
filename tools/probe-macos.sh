@@ -111,7 +111,7 @@ if screencapture -x "$OUT/shot.png" 2>"$OUT/screencapture.log"; then
     sips -g pixelWidth -g pixelHeight "$OUT/shot.png" 2>&1 | sed 's/^/  /'
 else
     code=$?
-    echo "screencapture 失败（退出码 $code）："
+    echo "screencapture 失败（退出码 ${code}）："
     sed 's/^/  /' "$OUT/screencapture.log"
 fi
 
