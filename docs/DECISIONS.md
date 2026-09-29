@@ -181,6 +181,10 @@
 - 桥接 JS 新增 **`oriel.on(name, handler)`** 事件通道（返回退订函数；单个处理器抛异常不影响其余），
   三平台共用同一份模板。
 - macOS/Linux 同步实现 `IsMaximized` 与返回值（Linux 缺事件字段一度导致编译失败，已补）。
+  - **2026-09-29 更正**：这一条只做到了 C# 侧——**"宿主 → 页面"的事件通道当时只有 Windows 真正接上**
+    （`__oriel:"event"` 的接收分支仅在 Windows 的 `chrome.webview` 路径）。macOS/Linux 的页面插件在
+    `window.oriel.on("maximized", …)` 上等于**死订阅**，且 Linux 的返回值因 GTK 异步语义是旧值，
+    导致"图标与窗口状态恰好相反"。详见文末「Linux 最大化图标与窗口状态相反」。
 
 **验证**：双击标题栏 1024x720 → 1920x1040；图标 `□` → `❐`；标题栏拖动仍移动窗口 (135,135) 且尺寸不变；
 最大化按钮双向切换；四边 resize 精确 100px；桥接测试 28/28（新增 9 个事件用例），单测 39/39。
@@ -351,3 +355,48 @@ macOS **无真机**，该修复仅靠代码一致性保证，**未经运行验�
 `pkill -f "WebKitWebProcess|WebKitNetworkProcess"` 会**匹配到承载该命令的 bash 自身**（其命令行里含同样字符串），
 于是把执行环境一起杀掉、命令静默返回空输出（表现为"窗口没起来"）。查/杀进程一律用 `pgrep -x` / `pkill -x`
 精确进程名，不要用会自匹配的 `-f` 模式。
+
+## Linux 最大化图标与窗口状态相反（2026-09-29 修复）
+
+**现象**：Linux 上点「最大化」，窗口确实最大化了，但标题栏按钮显示的是「还原」图标（反之亦然）——
+图标与实际状态恰好差一格。窗口行为本身完全正常。
+
+**根因（三件事叠加，缺一不成病）**：
+
+1. **把异步语义当同步读**：`LinuxWindowHost.ToggleMaximize` 在调用 `gtk_window_maximize` /
+   `gtk_window_unmaximize` **之后立刻**读 `gtk_window_is_maximized` 作为返回值。而 GTK 的这两个调用只是
+   向窗口管理器**发请求**，状态要等 WM 确认（`window-state-event`）才更新——此处读到的必然是**切换前的旧值**。
+   页面正是用这个返回值驱动图标（`app.js` 的 `win.toggleMaximize` 分支），于是图标必然相反。
+   Windows（`IsZoomed`）与 macOS（`zoom:`）都是同步生效，故只有 Linux 出现此现象。
+2. **没有任何状态变化信号**：Linux 后端从未连接 `window-state-event`（也未接 `notify::window-state`），
+   用户经原生路径（WM 快捷键、拖边框到屏幕边缘）最大化时宿主完全不知情。
+3. **事件从未送到页面**：`MaximizedChanged` 只走到 C# 事件（`WebviewWindow.MaximizedChanged`），
+   Linux/macOS 都没有把它编码成页内调用；桥接脚本里 `__oriel:"event"` 的接收分支只存在于 Windows 的
+   `chrome.webview` 路径。因此 `app.js` 的 `oriel.on("maximized", …)` 在 Linux 上是**死订阅**——
+   一旦 (1) 给出反值，没有任何通道能纠正。Windows 之所以看不出问题，是因为它靠 `WM_SIZE` 推的那次事件兜底。
+
+**修法（Linux）**：
+
+- 连接 GTK 的 `window-state-event`。回调**刻意不解析 `GdkEventWindowState` 结构**（其布局细节随 GDK 版本有异，
+  且我们只需要"状态可能变了"这个可靠信号），权威状态一律用 `gtk_window_is_maximized` 读；回调返回
+  `FALSE` 不吞事件。读到的值与上次上报值比对，变化才上报（去重）。
+- `ToggleMaximize` 的返回值改为**意图值**（`!当前状态`），不再"切换后立刻读"。真实状态由上述信号确认后上报；
+  万一 WM 拒绝请求，那次上报会把页面纠正回真实值。
+- 新增页面事件推送 `window.oriel._onEvent("maximized", true|false)`（`evaluateJavaScript`），与回执通道分开
+  （回执那条 `PostWebMessageOnUi` 只认 `{"id","ok"}` 形态，不能复用）。
+- 每次加载完成**强制补推一次**当前状态（与 Windows 的 `OnNavigationCompleted` 对齐），修正初始图标——
+  否则以 `Maximized=true` 启动的窗口初始图标必然是错的。页面未就绪（桥接脚本尚未注入）时的事件直接丢弃：
+  不会漏状态，因为加载完成必补推。`app.js` 是普通同步脚本（`<script src="app.js">`），其 `oriel.on(...)`
+  注册一定早于 load 完成，故此补推必被收到。
+
+**macOS 同步对齐**（无真机，仅编译与代码一致性保证）：新增 `windowDidResize:` 委托回调（覆盖系统菜单 Zoom
+等不经过 `win.toggleMaximize` 的原生路径）、统一走 `SyncMaximizedState`、导航完成后强制补推。
+`zoom:` 本身同步生效，故 `ToggleMaximize` 的返回值语义不变（仍是读回的真实值）。
+
+**验证（Linux，WSL2 + WSLg，人眼）**：点最大化 → 图标变「还原」；再点 → 变回「最大化」；双击标题栏
+（**丢弃返回值、只靠事件**的那条路径）图标同样同步。编译 0 警告 0 错误，单测 47/47，`tools/verify-linux.sh`
+双路径 PASS（两条路径均存活至观察窗结束 + 第 2s 拉起 WebKit 子进程 + X11 路径窗口断言成立）。
+复跑期间有一次两条路径均报"进程提前退出"、case 日志为空，未能复现；随后两次复跑均 PASS，暂归因为
+WSLg 显示服务的偶发波动（与本次改动无因果关系：那次连"存活"都没到，而改动只涉及状态信号）。
+
+**遗留**：macOS 的 `windowDidResize:` 是新增的原生回调，待有 Mac 环境时确认它不干扰拖拽/缩放路径。

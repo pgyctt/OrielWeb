@@ -53,6 +53,12 @@ internal sealed class MacOSWindowHost : IWindowBackend
     private string _title;
     private int _evalSeq;
 
+    // 上一次已上报（托管事件 + 页面）的最大化状态。NSWindow 的 zoom 是同步生效的，
+    // 这个记忆值用于去重：windowDidResize / ToggleMaximize / 导航完成都可能触发同步。
+    private bool _wasMaximized;
+    // 页面是否已加载完成（桥接脚本就绪）。就绪前不推事件；加载完成时会强制补推一次当前状态。
+    private bool _pageReady;
+
     private event Action? Loaded;
     private event Action<OrielCloseRequestEventArgs>? Closing;
     private event Action? Closed;
@@ -270,6 +276,14 @@ internal sealed class MacOSWindowHost : IWindowBackend
 
     internal void OnNavigationCompleted(bool success)
     {
+        if (success)
+        {
+            // 新文档不知道当前最大化状态，且下面的 Loaded 只触发首次——所以补推放在早退之前，
+            // 每次导航完成都无条件补推一次当前值（与 Windows 的 OnNavigationCompleted 对齐）。
+            _pageReady = true;
+            SyncMaximizedState(force: true);
+        }
+
         if (success && !_loadedRaised)
         {
             _loadedRaised = true;
@@ -317,9 +331,54 @@ internal sealed class MacOSWindowHost : IWindowBackend
     public bool ToggleMaximize()
     {
         Maximize(); // NSWindow zoom: 本身就是切换语义
+        // zoom: 是同步生效的，这里读到的就是切换后的真实值（与 Linux 的 GTK 异步语义不同）。
+        // 统一走 SyncMaximizedState：既更新托管事件，也把事件推给页面。
+        return SyncMaximizedState(force: true);
+    }
+
+    /// <summary>
+    /// 读取当前最大化状态（NSWindow isZoomed），与上次上报值比对，变化时（或 <paramref name="force"/> 时）
+    /// 上报给托管事件与页面。调用时机：ToggleMaximize（zoom: 同步生效）、windowDidResize（原生 Zoom 路径）、
+    /// 每次导航完成。
+    /// </summary>
+    internal bool SyncMaximizedState(bool force = false)
+    {
         bool isMaximized = IsMaximized;
+        if (!force && isMaximized == _wasMaximized)
+        {
+            return isMaximized;
+        }
+
+        _wasMaximized = isMaximized;
         MaximizedChanged?.Invoke(isMaximized);
+        PushEventOnUi("maximized", isMaximized ? "true" : "false");
         return isMaximized;
+    }
+
+    /// <summary>
+    /// 向页面推送一个 oriel 事件（页面侧 window.oriel.on(name, handler) 接收）。
+    /// 与 PostWebMessageOnUi 的回执通道分开——那条只认 {"id","ok"} 回执形态。
+    /// 页面未就绪（桥接脚本尚未注入）时直接丢弃：加载完成会强制补推当前状态，不会丢状态。
+    /// </summary>
+    private void PushEventOnUi(string name, string jsonValue)
+    {
+        if (_webview == 0 || !_pageReady)
+        {
+            return;
+        }
+        try
+        {
+            var js = "window.oriel._onEvent(" + JsonText.EncodeString(name) + ", " + jsonValue + ")";
+            ObjCRuntime.SendVoidObjNint(
+                _webview,
+                ObjCRuntime.Sel("evaluateJavaScript:completionHandler:"),
+                ObjCRuntime.MakeNSString(js),
+                0);
+        }
+        catch
+        {
+            // 窗口销毁后的迟到事件，忽略
+        }
     }
 
     public void SetFullscreen(bool enabled)

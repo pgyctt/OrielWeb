@@ -50,6 +50,8 @@ internal static unsafe class LinuxSignalHandlers
             (delegate* unmanaged<nint, nint, nint, int>)&OnDeleteEventTrampoline, 0, 0, 0);
         GtkNative.GSignalConnectData(gtkWindow, "destroy",
             (delegate* unmanaged<nint, nint, void>)&OnDestroyTrampoline, 0, 0, 0);
+        GtkNative.GSignalConnectData(gtkWindow, "window-state-event",
+            (delegate* unmanaged<nint, nint, nint, int>)&OnWindowStateEventTrampoline, 0, 0, 0);
         GtkNative.GSignalConnectData(webview, "load-changed",
             (delegate* unmanaged<nint, int, nint, void>)&OnLoadChangedTrampoline, 0, 0, 0);
         GtkNative.GSignalConnectData(webview, "notify::title",
@@ -93,6 +95,26 @@ internal static unsafe class LinuxSignalHandlers
         {
             // 异常不外泄
         }
+    }
+
+    // GTK3 的 "window-state-event"（GdkEventWindowState）。这里刻意不解析事件结构——布局细节随 GDK
+    // 版本有异，且我们只需要"状态可能变了"这个可靠信号，权威状态一律用 gtk_window_is_maximized 读。
+    // 返回 0（FALSE）= 不吞事件，GTK 自身与其它 handler 继续处理。
+    [UnmanagedCallersOnly]
+    internal static int OnWindowStateEventTrampoline(nint widget, nint gdkEvent, nint data)
+    {
+        try
+        {
+            if (WindowStates.TryGetValue(widget, out var host))
+            {
+                host.SyncMaximizedState();
+            }
+        }
+        catch
+        {
+            // 异常不外泄
+        }
+        return 0;
     }
 
     [UnmanagedCallersOnly]

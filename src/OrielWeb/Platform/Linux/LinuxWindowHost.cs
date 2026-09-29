@@ -36,6 +36,13 @@ internal sealed class LinuxWindowHost : IWindowBackend
     private string _title;
     private int _evalSeq;
 
+    // 上一次已上报（托管事件 + 页面）的最大化状态。GTK 的最大化经窗口管理器异步生效：
+    // 调用 gtk_window_maximize 后立刻读 is_maximized 拿到的仍是旧值，因此状态只能由
+    // window-state-event 信号确认后再上报——见 SyncMaximizedState。
+    private bool _wasMaximized;
+    // 页面是否已加载完成（桥接脚本就绪）。就绪前不推事件；加载完成时会强制补推一次当前状态。
+    private bool _pageReady;
+
     // 流式拖动状态（GTK 设备像素坐标）
     private (int X, int Y)? _dragPointerStart;
     private (int X, int Y)? _dragWindowOrigin;
@@ -178,6 +185,11 @@ internal sealed class LinuxWindowHost : IWindowBackend
 
     internal void OnLoadFinished()
     {
+        // 新文档不知道当前最大化状态，且下面的 Loaded 只触发首次——所以补推放在早退之前，
+        // 每次加载完成都无条件补推一次当前值（与 Windows 的 OnNavigationCompleted 对齐）。
+        _pageReady = true;
+        SyncMaximizedState(force: true);
+
         if (_loadedRaised)
         {
             return;
@@ -227,18 +239,61 @@ internal sealed class LinuxWindowHost : IWindowBackend
 
     public bool ToggleMaximize()
     {
-        if (GtkNative.GtkWindowIsMaximized(_gtkWindow))
-        {
-            GtkNative.GtkWindowUnmaximize(_gtkWindow);
-        }
-        else
+        bool willBeMaximized = !GtkNative.GtkWindowIsMaximized(_gtkWindow);
+        if (willBeMaximized)
         {
             GtkNative.GtkWindowMaximize(_gtkWindow);
         }
+        else
+        {
+            GtkNative.GtkWindowUnmaximize(_gtkWindow);
+        }
 
-        bool isMaximized = IsMaximized;
+        // 返回的是"意图值"，不是读回的真实状态：maximize/unmaximize 只是向窗口管理器发请求，
+        // 此处立刻读 gtk_window_is_maximized 拿到的仍是切换前的旧值（这正是"图标反了"的根因，
+        // 页面用返回值驱动图标，于是显示成相反状态）。真实状态由 window-state-event 确认后经
+        // SyncMaximizedState 上报；万一 WM 拒绝请求，那次上报会把页面纠正回真实值。
+        return willBeMaximized;
+    }
+
+    /// <summary>
+    /// 读取当前最大化状态，与上次上报值比对，变化时（或 <paramref name="force"/> 时）上报给托管事件与页面。
+    /// 调用时机：GTK 的 window-state-event（WM 确认状态变化后）、每次页面加载完成。
+    /// </summary>
+    internal bool SyncMaximizedState(bool force = false)
+    {
+        bool isMaximized = GtkNative.GtkWindowIsMaximized(_gtkWindow);
+        if (!force && isMaximized == _wasMaximized)
+        {
+            return isMaximized;
+        }
+
+        _wasMaximized = isMaximized;
         MaximizedChanged?.Invoke(isMaximized);
+        PushEventOnUi("maximized", isMaximized ? "true" : "false");
         return isMaximized;
+    }
+
+    /// <summary>
+    /// 向页面推送一个 oriel 事件（页面侧 window.oriel.on(name, handler) 接收）。
+    /// 与 PostWebMessageOnUi 的回执通道分开——那条只认 {"id","ok"} 回执形态。
+    /// 页面未就绪（桥接脚本尚未注入）时直接丢弃：加载完成会强制补推当前状态，不会丢状态。
+    /// </summary>
+    private void PushEventOnUi(string name, string jsonValue)
+    {
+        if (_webview == 0 || !_pageReady)
+        {
+            return;
+        }
+        try
+        {
+            var js = "window.oriel._onEvent(" + JsonText.EncodeString(name) + ", " + jsonValue + ")";
+            GtkNative.WebkitWebViewEvaluateJavaScript(_webview, js, -1, 0, 0, 0, 0, 0);
+        }
+        catch
+        {
+            // 窗口销毁后的迟到事件，忽略
+        }
     }
 
     public void SetFullscreen(bool enabled)

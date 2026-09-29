@@ -97,6 +97,9 @@ internal static unsafe class MacOSObjCClasses
         var cls = ObjCRuntime.objc_allocateClassPair(ObjCRuntime.GetClass("NSObject"), "OrielWindowDelegate", 0);
         AddMethod(cls, "windowShouldClose:", &WindowShouldClose, "c@:@");
         AddMethod(cls, "windowWillClose:", &WindowWillClose, "v@:@");
+        // 原生路径的最大化/还原（系统菜单 Zoom、脚本等）不经过 win.toggleMaximize，
+        // 只能靠 resize 回调发现——isZoomed 的真实变化由宿主比对后上报（见 SyncMaximizedState）。
+        AddMethod(cls, "windowDidResize:", &WindowDidResize, "v@:@");
         ObjCRuntime.objc_registerClassPair(cls);
         return cls;
     }
@@ -134,6 +137,24 @@ internal static unsafe class MacOSObjCClasses
         {
             // 用户 Closed 处理器异常不得穿越 ObjC 边界
             System.Diagnostics.Debug.WriteLine($"[OrielWeb] windowWillClose: 抛出异常：{ex}");
+        }
+        return 0;
+    }
+
+    [UnmanagedCallersOnly]
+    private static nint WindowDidResize(nint self, nint sel, nint notification)
+    {
+        try
+        {
+            if (WindowDelegateStates.TryGetValue(self, out var host))
+            {
+                host.SyncMaximizedState();
+            }
+        }
+        catch (Exception ex)
+        {
+            // 异常不得穿越 ObjC 边界；状态同步失败不影响窗口本身
+            System.Diagnostics.Debug.WriteLine($"[OrielWeb] windowDidResize: 抛出异常：{ex}");
         }
         return 0;
     }
