@@ -102,11 +102,15 @@ internal static unsafe partial class ObjCRuntime
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial nint SendIdDouble4NuintNuintBool(nint self, nint sel, double a, double b, double c, double d, nuint style, nuint backing, [MarshalAs(UnmanagedType.Bool)] bool defer);
 
+    // 仅用于参数类型是 const char*（UTF-8 C 字符串）的 selector，例如
+    // +[NSString stringWithUTF8String:]。若 selector 期望的是 NSString*，必须先 MakeNSString
+    // 造对象再走 SendIdObj 系列——把 char* 当 NSString* 传，WebKit 一问对象类型就会在
+    // CoreFoundation 的 __CF_IS_OBJC 里 __builtin_trap（真机 CI 上实测到的崩溃点）。
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial nint SendIdUtf8(nint self, nint sel, string utf8);
 
-    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend", StringMarshalling = StringMarshalling.Utf8)]
-    internal static partial nint SendIdUtf8NintBool(nint self, nint sel, string utf8, nint arg, [MarshalAs(UnmanagedType.Bool)] bool flag);
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendIdObjNintBool(nint self, nint sel, nint obj, nint arg, [MarshalAs(UnmanagedType.Bool)] bool flag);
 
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial void SendVoidObjNint(nint self, nint sel, nint obj, nint arg);

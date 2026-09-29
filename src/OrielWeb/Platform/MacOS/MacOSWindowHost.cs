@@ -150,10 +150,12 @@ internal sealed class MacOSWindowHost : IWindowBackend
             ObjCRuntime.MakeNSString("oriel"));
 
         // 桥接脚本（document 创建时注入）
-        var userScript = ObjCRuntime.SendIdUtf8NintBool(
+        // initWithSource: 要的是 NSString*（不是 const char*）：直接传 C# 字符串会被
+        // marshal 成 char*，WebKit 内部校验对象类型时 __CF_IS_OBJC 直接 trap。
+        var userScript = ObjCRuntime.SendIdObjNintBool(
             ObjCRuntime.SendId(clsWKUserScript, ObjCRuntime.Sel("alloc")),
             ObjCRuntime.Sel("initWithSource:injectionTime:forMainFrameOnly:"),
-            MacOSBridgeJs.Script,
+            ObjCRuntime.MakeNSString(MacOSBridgeJs.Script),
             0, // WKUserScriptInjectionTimeAtDocumentStart
             true);
         ObjCRuntime.SendVoidObj(userContentController, ObjCRuntime.Sel("addUserScript:"), userScript);
@@ -215,7 +217,11 @@ internal sealed class MacOSWindowHost : IWindowBackend
     {
         if (_options.Url is { Length: > 0 } externalUrl)
         {
-            var url = ObjCRuntime.SendIdUtf8(ObjCRuntime.GetClass("NSURL"), ObjCRuntime.Sel("URLWithString:"), externalUrl);
+            // URLWithString: 同样要 NSString*，不是 char*
+            var url = ObjCRuntime.SendIdObj(
+                ObjCRuntime.GetClass("NSURL"),
+                ObjCRuntime.Sel("URLWithString:"),
+                ObjCRuntime.MakeNSString(externalUrl));
             var request = ObjCRuntime.SendIdObj(ObjCRuntime.GetClass("NSURLRequest"), ObjCRuntime.Sel("requestWithURL:"), url);
             ObjCRuntime.SendVoidObj(_webview, ObjCRuntime.Sel("loadRequest:"), request);
             return;
