@@ -13,6 +13,10 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        // --hidden：以隐藏窗口启动。既用于验证三平台的 Hidden 语义（窗口不上屏，但页面照常
+        // 加载、IPC 照常往返），也是"先隐藏预热、准备好再显示"这类用法的示例。
+        var hidden = args.Contains("--hidden");
+
         Oriel.CreateBuilder(args)
             .UseEmbeddedAssets()
             .UseJsonContext(AppJsonContext.Default)
@@ -20,7 +24,7 @@ internal static class Program
             .AddCommands<WindowCommands>()
             .UseDebug()
             .OnWebView2RuntimeMissing(HandleWebView2RuntimeMissing)
-            .AddWindow(w => w
+            .AddWindow(w => (hidden ? w.WithHidden() : w)
                 .WithTitle("Oriel Demo — Todo")
                 .WithSize(1024, 720)
                 .WithMinSize(640, 480)

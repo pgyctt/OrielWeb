@@ -278,6 +278,12 @@ WebView2 的运行需要微软的 `WebView2Loader.dll`。官方只有两条路�
 - 反例：`samples/OrielDemo` 的 `TodoCommands` 直接读写 `List<T>` 与 `_nextId++`，并发下并不安全；
   示例为保持简洁如此编写，实际项目请自行加锁或改用线程安全结构。
 
+## 路线图
+
+后续要补的能力（**三平台一致性缺口 → 内容/IPC 深度 → 平台集成外壳**）、每一项的验证方式，
+以及无头环境验证不了的那部分"待真机验证清单"，见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+已经落地的取舍与实测结论见 [docs/DECISIONS.md](docs/DECISIONS.md)。
+
 ## 许可
 
 [MIT](LICENSE) © OrielWeb Contributors。

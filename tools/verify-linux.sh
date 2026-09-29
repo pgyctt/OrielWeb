@@ -35,6 +35,8 @@
 #   ./tools/verify-linux.sh --backend x11    # 只跑强制 X11 那条路径
 #   ./tools/verify-linux.sh --backend wayland # 只跑默认后端那条路径
 #   ./tools/verify-linux.sh --out DIR        # 产物目录（截图，默认 <仓库根>/linux-verify-out）
+#   ./tools/verify-linux.sh --app-arg --hidden   # 透传参数给 demo（可重复）；demo 的 --hidden 演示隐藏启动，
+#                                                # 此时窗口仍在 X 树里但 Map State 应为 IsUnMapped
 #
 # 系统依赖（需要 sudo，本脚本只检测并提示，不自动安装）：
 #   sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev x11-utils clang zlib1g-dev
@@ -56,6 +58,7 @@ DO_PUBLISH=1
 BACKEND="auto"   # auto | wayland | x11
 WINDOW_TITLE_PATTERN="Oriel Demo"
 OUT=""
+APP_ARGS=()
 
 usage() {
     # 打印开头的注释块：从第 2 行到 set -euo pipefail 之前，去掉注释符
@@ -68,6 +71,7 @@ while [[ $# -gt 0 ]]; do
         --rid)       RID="$2"; shift 2 ;;
         --backend)   BACKEND="$2"; shift 2 ;;
         --out)       OUT="$2"; shift 2 ;;
+        --app-arg)   APP_ARGS+=("$2"); shift 2 ;;
         --no-publish) DO_PUBLISH=0; shift ;;
         -h|--help)   usage; exit 0 ;;
         *)           echo "未知参数：$1" >&2; usage >&2; exit 2 ;;
@@ -205,7 +209,7 @@ capture_shot() {
 }
 
 CASE_LABEL=(); CASE_BACKEND=(); CASE_ALIVE=(); CASE_WEBKIT=(); CASE_WEBKIT_NOTE=()
-CASE_WINDOW=(); CASE_WINDOW_AT=(); CASE_EVIDENCE=(); CASE_LOG=(); CASE_SHOTS=()
+CASE_WINDOW=(); CASE_WINDOW_AT=(); CASE_EVIDENCE=(); CASE_LOG=(); CASE_SHOTS=(); CASE_MAP=()
 
 run_case() {
     local label="$1" backend="$2"
@@ -214,11 +218,11 @@ run_case() {
 
     echo "--- $label ---"
     if [[ "$backend" == "x11" ]]; then
-        echo "启动：GDK_BACKEND=x11 $DEMO_EXE"
-        GDK_BACKEND=x11 "$DEMO_EXE" >"$log" 2>&1 &
+        echo "启动：GDK_BACKEND=x11 $DEMO_EXE ${APP_ARGS[*]:-}"
+        GDK_BACKEND=x11 "$DEMO_EXE" ${APP_ARGS[@]+"${APP_ARGS[@]}"} >"$log" 2>&1 &
     else
-        echo "启动：${DEMO_EXE}（后端交给 GDK 自行选择，WSLg 下即 Wayland）"
-        "$DEMO_EXE" >"$log" 2>&1 &
+        echo "启动：${DEMO_EXE} ${APP_ARGS[*]:-}（后端交给 GDK 自行选择，WSLg 下即 Wayland）"
+        "$DEMO_EXE" ${APP_ARGS[@]+"${APP_ARGS[@]}"} >"$log" 2>&1 &
     fi
     pid=$!
 
@@ -275,9 +279,13 @@ run_case() {
     # 截图取证：窗口图（聚焦页面）+ 整屏图（对照窗口位置与尺寸）。
     # 放在收尾复检之后、杀进程之前——此刻页面已渲染完、徽章也已更新。
     local shots=""
+    local map_state=""
     if [[ $seen -eq 1 && -n "$evidence" ]]; then
         local window_id
         window_id="$(echo "$evidence" | head -1 | awk '{print $1}')"
+        # 窗口映射状态：隐藏启动（--app-arg --hidden）时应为 IsUnMapped，正常启动为 IsViewable。
+        # 只记录不判定——期望值取决于调用方传了什么参数。
+        map_state="$(xwininfo -id "$window_id" 2>/dev/null | grep -i 'Map State' | sed 's/^ *//' || true)"
         # 末尾的 || true 是必需的：本脚本开着 set -e，而截图只是补充证据，
         # 失败（或缺 ImageMagick）绝不能把整个验证流程带崩。
         capture_shot "$window_id" "$OUT/shot-${backend}-window.png" \
@@ -305,6 +313,7 @@ run_case() {
     CASE_WINDOW+=("$seen");       CASE_WINDOW_AT+=("$first_at")
     CASE_EVIDENCE+=("$evidence"); CASE_LOG+=("$log")
     CASE_SHOTS+=("$shots")
+    CASE_MAP+=("$map_state")
     echo
 }
 
@@ -357,6 +366,9 @@ for i in "${!CASE_LABEL[@]}"; do
     if [[ -n "${CASE_EVIDENCE[$i]}" ]]; then
         echo "  xwininfo -root -tree 片段："
         echo "${CASE_EVIDENCE[$i]}" | sed 's/^/    /'
+    fi
+    if [[ -n "${CASE_MAP[$i]}" ]]; then
+        echo "  窗口映射状态：${CASE_MAP[$i]}"
     fi
     if [[ -n "${CASE_SHOTS[$i]}" ]]; then
         echo "  截图（人眼判定用）："

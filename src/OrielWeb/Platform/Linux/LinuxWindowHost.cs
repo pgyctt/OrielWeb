@@ -124,7 +124,16 @@ internal sealed class LinuxWindowHost : IWindowBackend
             GtkNative.GtkWindowSetPosition(_gtkWindow, GtkWinPosCenter);
         }
 
+        // 隐藏启动：先 show_all 把窗口与 webview 都 realize 出来（GTK 的 realize 是从顶层向下
+        // 传播的，不 show 的话 webview 不会被 realize，页面可能推迟到窗口可见才开始加载），
+        // 再立刻 hide 顶层窗口——与 Windows 的 SW_HIDE（窗口存在但不可见）、macOS 的不
+        // orderFront 语义一致。代价是 X11 下理论上有 map→unmap 的一帧，换来的是"隐藏状态下
+        // 页面照常加载、IPC 照常往返"。
         GtkNative.GtkWidgetShowAll(_gtkWindow);
+        if (_options.Hidden)
+        {
+            GtkNative.GtkWidgetHide(_gtkWindow);
+        }
 
         if (_options.OnTop)
         {
