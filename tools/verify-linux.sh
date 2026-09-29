@@ -2,10 +2,12 @@
 #
 # verify-linux.sh —— 验证 OrielWeb 的 Linux 后端能否「真的跑起来」。
 #
-# 与 CI 的分工：.github/workflows/ci.yml 的 smoke-linux 在 xvfb 下只断言「进程存活到
-# timeout（退出码 124）」，无法证明窗口真的创建、内嵌资源真的加载、IPC 真的往返。
-# 本脚本在真实显示环境（WSL2 + WSLg、物理机桌面，或 xvfb-run 包裹均可）下运行
-# AOT 发布产物，并用 xwininfo 断言窗口存在，把原始输出留档。
+# 运行环境：WSL2 + WSLg、物理机桌面，或 xvfb-run 包裹的无头环境。CI 的 smoke-linux 就是
+# 后者——xvfb + 强制 X11 + 本脚本 + 截图取证，断言进程存活、WebKit 子进程、窗口存在，
+# 并把截图作为 artifact 上传供人眼确认。
+#
+# 分工说明（历史）：smoke-linux 一度只断言「进程存活到 timeout（退出码 124）」，那既不能证明
+# 窗口真的创建、也不能证明内嵌资源加载与 IPC 往返。现已改为直接跑本脚本。
 #
 # 取证边界（重要）：
 #   - 机器可判定：
@@ -14,10 +16,11 @@
 #          webview 真的开始加载页面时才出现，是「窗口已创建且 webview 在工作」的宿主侧
 #          硬证据，且与后端是 Wayland 还是 X11 无关；
 #       3) 强制 GDK_BACKEND=x11 时，是否存在标题含 "Oriel Demo" 的 X 窗口。
-#   - 只能人眼判定：页面右下角徽章是否从「IPC 连接中…」变为「IPC 已连接」。该徽章由
-#     wwwroot/app.js 在启动时自动发起一次 todo.list 往返后改写；本仓库没有把页面
-#     console 转发到宿主 stdout，demo 也没有任何 stdout 探针或退出码语义，因此 IPC
-#     往返成功与否**没有**宿主侧可观测信号，必须由人看着窗口确认。
+#   - 只能人眼判定：页面渲染与中文是否正常，以及页面右下角徽章是否从「IPC 连接中…」变为
+#     「IPC 已连接」。该徽章由 wwwroot/app.js 在启动时自动发起一次 todo.list 往返后改写；
+#     本仓库没有把页面 console 转发到宿主 stdout，demo 也没有任何 stdout 探针或退出码语义，
+#     因此 IPC 往返成功与否**没有**宿主侧可观测信号。脚本因此在窗口出现后截两张图：
+#     窗口图（聚焦页面）与整屏图（对照窗口位置与尺寸），供人眼确认。
 #
 # 为什么要跑两条路径：WSLg 下 GTK 默认走 Wayland，窗口注册在 Weston 合成器而非
 # XWayland，xwininfo 枚举不到——「窗口是否存在」无法用 X 工具机器判定。因此默认后端那次
@@ -31,12 +34,14 @@
 #   ./tools/verify-linux.sh --no-publish     # 跳过发布，直接跑已有产物
 #   ./tools/verify-linux.sh --backend x11    # 只跑强制 X11 那条路径
 #   ./tools/verify-linux.sh --backend wayland # 只跑默认后端那条路径
+#   ./tools/verify-linux.sh --out DIR        # 产物目录（截图，默认 <仓库根>/linux-verify-out）
 #
 # 系统依赖（需要 sudo，本脚本只检测并提示，不自动安装）：
 #   sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev x11-utils clang zlib1g-dev
 #     libwebkit2gtk-4.1-dev  运行期与编译期的 WebKitGTK 4.1
 #     libgtk-3-dev           GTK3 头文件与库（构建 System.Globalization 无关，属互操作需要）
 #     x11-utils              xwininfo，用于枚举 X 窗口做客观取证
+#     imagemagick            可选：import 截图（缺失时只跳过截图，不影响机器判定）
 #     clang / zlib1g-dev     Native AOT 的原生工具链前置
 #
 # .NET 10 SDK：本库只提供 net10.0 目标，Ubuntu 官方 apt 源没有该版本，用官方脚本装到用户目录：
@@ -50,6 +55,7 @@ OBSERVE_SECONDS=30
 DO_PUBLISH=1
 BACKEND="auto"   # auto | wayland | x11
 WINDOW_TITLE_PATTERN="Oriel Demo"
+OUT=""
 
 usage() {
     # 打印开头的注释块：从第 2 行到 set -euo pipefail 之前，去掉注释符
@@ -61,6 +67,7 @@ while [[ $# -gt 0 ]]; do
         --seconds)   OBSERVE_SECONDS="$2"; shift 2 ;;
         --rid)       RID="$2"; shift 2 ;;
         --backend)   BACKEND="$2"; shift 2 ;;
+        --out)       OUT="$2"; shift 2 ;;
         --no-publish) DO_PUBLISH=0; shift ;;
         -h|--help)   usage; exit 0 ;;
         *)           echo "未知参数：$1" >&2; usage >&2; exit 2 ;;
@@ -73,6 +80,8 @@ case "$BACKEND" in
 esac
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OUT="${OUT:-$REPO_ROOT/linux-verify-out}"
+mkdir -p "$OUT"
 DEMO_PROJECT="$REPO_ROOT/samples/OrielDemo/OrielDemo.csproj"
 PUBLISH_DIR="$REPO_ROOT/samples/OrielDemo/bin/Release/net10.0/$RID/publish"
 DEMO_EXE="$PUBLISH_DIR/OrielDemo"
@@ -178,8 +187,25 @@ new_webkit_pids() {
     printf '%s' "$out"
 }
 
+# 截图取证（ImageMagick 的 import）：按窗口 id 抓窗口，或抓整个 root 作对照。
+# 只有 X11 路径有窗口可抓（Wayland 的窗口在 Weston 里，不在 X 树中）。
+# import 缺失或失败只提示不失败——截图是给人眼看的补充证据，不参与机器判定。
+capture_shot() {
+    local target="$1" path="$2"
+    if ! command -v import >/dev/null 2>&1; then
+        echo "  （未装 ImageMagick 的 import，跳过截图；apt install imagemagick）"
+        return 1
+    fi
+    if import -window "$target" "$path" 2>/dev/null; then
+        echo "  已截图：$path"
+        return 0
+    fi
+    echo "  截图失败（target=${target}）"
+    return 1
+}
+
 CASE_LABEL=(); CASE_BACKEND=(); CASE_ALIVE=(); CASE_WEBKIT=(); CASE_WEBKIT_NOTE=()
-CASE_WINDOW=(); CASE_WINDOW_AT=(); CASE_EVIDENCE=(); CASE_LOG=()
+CASE_WINDOW=(); CASE_WINDOW_AT=(); CASE_EVIDENCE=(); CASE_LOG=(); CASE_SHOTS=()
 
 run_case() {
     local label="$1" backend="$2"
@@ -246,6 +272,20 @@ run_case() {
         fi
     fi
 
+    # 截图取证：窗口图（聚焦页面）+ 整屏图（对照窗口位置与尺寸）。
+    # 放在收尾复检之后、杀进程之前——此刻页面已渲染完、徽章也已更新。
+    local shots=""
+    if [[ $seen -eq 1 && -n "$evidence" ]]; then
+        local window_id
+        window_id="$(echo "$evidence" | head -1 | awk '{print $1}')"
+        # 末尾的 || true 是必需的：本脚本开着 set -e，而截图只是补充证据，
+        # 失败（或缺 ImageMagick）绝不能把整个验证流程带崩。
+        capture_shot "$window_id" "$OUT/shot-${backend}-window.png" \
+            && shots="$shots$OUT/shot-${backend}-window.png " || true
+        capture_shot root "$OUT/shot-${backend}-root.png" \
+            && shots="$shots$OUT/shot-${backend}-root.png " || true
+    fi
+
     if kill -0 "$pid" 2>/dev/null; then
         kill "$pid" 2>/dev/null || true
         for _ in 1 2 3 4 5; do
@@ -264,6 +304,7 @@ run_case() {
     CASE_WEBKIT_NOTE+=("$webkit_note")
     CASE_WINDOW+=("$seen");       CASE_WINDOW_AT+=("$first_at")
     CASE_EVIDENCE+=("$evidence"); CASE_LOG+=("$log")
+    CASE_SHOTS+=("$shots")
     echo
 }
 
@@ -316,6 +357,12 @@ for i in "${!CASE_LABEL[@]}"; do
     if [[ -n "${CASE_EVIDENCE[$i]}" ]]; then
         echo "  xwininfo -root -tree 片段："
         echo "${CASE_EVIDENCE[$i]}" | sed 's/^/    /'
+    fi
+    if [[ -n "${CASE_SHOTS[$i]}" ]]; then
+        echo "  截图（人眼判定用）："
+        for shot in ${CASE_SHOTS[$i]}; do
+            echo "    $shot"
+        done
     fi
     if [[ -s "${CASE_LOG[$i]}" ]]; then
         echo "  进程输出（前 40 行）："

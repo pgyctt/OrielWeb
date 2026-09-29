@@ -111,30 +111,34 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev xvfb
+          # x11-utils 提供 xwininfo（窗口断言）、imagemagick 提供 import（截图）；
+          # zlib1g-dev/clang 是 Native AOT 的前置（runner 通常已带，显式列出以免依赖镜像）
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev xvfb x11-utils imagemagick zlib1g-dev clang
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
 
-      - name: Build demo
-        run: dotnet build samples/OrielDemo -c Release -r linux-x64
+      - name: Smoke run with evidence
+        # 真取证（tools/verify-linux.sh）：AOT 发布产物 → 断言进程存活 + WebKit 子进程 +
+        # X 窗口存在 → 截窗口图与整屏图上传 artifact 供人眼确认。取代了原先"timeout 后
+        # 只看退出码是否为 124"的弱断言——那种断言只能证明进程没崩，证明不了窗口真的创建、
+        # 内嵌资源真的加载、IPC 真的往返。
+        # CI 只有 X11（xvfb 里没有 Wayland），故固定 --backend x11；另外 xvfb 下没有窗口
+        # 管理器，所以最大化/拖动这类依赖 WM 的行为不在覆盖范围内。
+        # xvfb 下仍会出现两条历史噪音——AT-SPI 找不到 org.a11y.Bus、libEGL 报 no DRI3——
+        # 它们不影响判定，最终以脚本末尾的机器结论为准。
+        run: xvfb-run -a bash tools/verify-linux.sh --backend x11 --out "$RUNNER_TEMP/linux-verify-out"
 
-      - name: Smoke run
-        # 进程存活到超时（退出码 124）= 窗口创建成功且消息循环在跑。
-        # timeout 的判定方式对"启动即崩溃"（非 124）与"卡死"（124）都能区分。
-        # 注意：B-1（STA 检查）修复前本步骤必然失败——进程会因 Unix 上
-        # ApartmentState 恒为 Unknown 直接抛异常退出，这是该缺陷的回归证据。
-        # 另两条输出是虚拟显示环境的预期噪音，不影响判定：dbind 的
-        # "org.a11y.Bus was not provided"（xvfb 里没有无障碍总线服务）、libEGL 的
-        # "DRI3 error: Could not get DRI3 device"（虚拟 X server 无 GPU，回落软件渲染）。
-        run: |
-          set +e
-          timeout 20s xvfb-run -a dotnet run --project samples/OrielDemo -c Release -r linux-x64 --no-build
-          code=$?
-          echo "exit=$code"
-          test $code -eq 124
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-smoke-evidence
+          path: ${{ runner.temp }}/linux-verify-out
+          if-no-files-found: warn
+          retention-days: 14
 
   smoke-windows:
     runs-on: windows-latest
