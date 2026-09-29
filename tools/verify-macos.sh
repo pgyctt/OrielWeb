@@ -90,6 +90,45 @@ else
     echo "  没有 codesign，跳过"
 fi
 
+section "构造最小 .app bundle"
+# 为什么必须放进 bundle：WKWebView 在 macOS 上是多进程架构，宿主进程要凭 main bundle 的身份
+# （Info.plist 的 CFBundleIdentifier）才能与 WebContent/Networking 这些 XPC 服务通信。
+# 裸可执行文件没有 bundle identifier 时，AppKit 会打出
+# "Cannot index window tabs due to missing main bundle identifier"，而 WebKit 随后在内部断言
+# 处 __builtin_trap() → SIGTRAP（退出码 133），且不产生崩溃报告。真机上就是这么炸的。
+APP_BUNDLE="$OUT/OrielDemo.app"
+rm -rf "$APP_BUNDLE"
+mkdir -p "$APP_BUNDLE/Contents/MacOS"
+cp "$DEMO_EXE" "$APP_BUNDLE/Contents/MacOS/OrielDemo"
+cat > "$APP_BUNDLE/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>OrielDemo</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.orielweb.demo</string>
+    <key>CFBundleName</key>
+    <string>OrielDemo</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+</dict>
+</plist>
+PLIST
+# bundle 内二进制的签名要与 bundle 一致，整体重新 ad-hoc 签一次
+codesign --force --deep --sign - "$APP_BUNDLE" 2>&1 | sed 's/^/  /'
+APP_EXE="$APP_BUNDLE/Contents/MacOS/OrielDemo"
+echo "  bundle：$APP_BUNDLE"
+
 section "准备窗口枚举器"
 cat > "$OUT/window-list.swift" <<'SWIFT'
 import CoreGraphics
@@ -137,11 +176,11 @@ fi
 
 # ---------------------------------------------------------------------------
 section "运行取证（观察窗 ${OBSERVE_SECONDS}s）"
-echo "启动：$DEMO_EXE"
+echo "启动：${APP_EXE}"
 echo "请观察截图产物，确认页面右下角徽章为「IPC 已连接」（本脚本无法机器判定这一项）"
 echo
 
-"$DEMO_EXE" >"$RUN_LOG" 2>&1 &
+"$APP_EXE" >"$RUN_LOG" 2>&1 &
 APP_PID=$!
 
 ALIVE=1
