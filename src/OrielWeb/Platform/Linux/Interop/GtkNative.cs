@@ -178,6 +178,20 @@ internal static unsafe partial class GtkNative
     [LibraryImport(WebKit, EntryPoint = "webkit_web_view_new_with_user_content_manager")]
     internal static partial nint WebkitWebViewNewWithUserContentManager(nint manager);
 
+    // ---- DevTools（对应 Windows 的 ICoreWebView2Settings.AreDevToolsEnabled）----
+
+    [LibraryImport(WebKit, EntryPoint = "webkit_settings_new")]
+    internal static partial nint WebkitSettingsNew();
+
+    [LibraryImport(WebKit, EntryPoint = "webkit_settings_set_enable_developer_extras")]
+    internal static partial void WebkitSettingsSetEnableDeveloperExtras(nint settings, [MarshalAs(UnmanagedType.Bool)] bool enabled);
+
+    [LibraryImport(WebKit, EntryPoint = "webkit_web_view_set_settings")]
+    internal static partial void WebkitWebViewSetSettings(nint webview, nint settings);
+
+    [LibraryImport(GOject, EntryPoint = "g_object_unref")]
+    internal static partial void GObjectUnref(nint obj);
+
     [LibraryImport(WebKit, EntryPoint = "webkit_web_view_load_uri", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void WebkitWebViewLoadUri(nint webview, string uri);
 

@@ -40,6 +40,26 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 而 macOS 的 `applicationIconImage` / Linux 的 `gtk_window_set_icon_from_file` 都要求**显式给图像或文件路径**，
 没有"从 exe 取"的概念。
 
+### 待真机验证清单（阶段 A）
+
+#### Linux 隐藏启动
+- 状态：**已在 WSL 验证**（`--app-arg --hidden` → `Map State: IsUnMapped`，同时 `WebKitWebProcess` 照常出现），
+  不再是待验证项。
+
+#### DevTools 开关（macOS / Linux）
+- 状态：**已实现未验证**（无头环境看不到 Inspector 面板；机器侧只能证明"不崩、页面照常加载"）。
+- 环境：有图形会话的 macOS（Safari 的「开发」菜单）或带桌面的 Linux（WebKitGTK 右键菜单）。
+- 步骤：1) 以 `Debug = true` 启动（`samples/OrielDemo` 默认 `.UseDebug()`）；
+  2) macOS：Safari → 开发 → 选中该进程的 webview；Linux：在页面内右键 → 「检查元素」。
+- 预期：能打开 Web Inspector；把 `Debug` 置 false 后同一入口不再出现。
+- 若不符：macOS 先确认系统 ≥ 13.3（`isInspectable` 是 13.3+ 的公开 API，更早的系统上代码会因
+  `respondsToSelector:` 探测失败而跳过设置，此时依赖 Safari 的默认行为）；Linux 看
+  `LinuxWindowHost.Create` 里 `webkit_settings_set_enable_developer_extras` 是否被调用。
+
+#### macOS 隐藏启动
+- 状态：**已实现未验证**（Linux 侧已在 WSL 验证；macOS 的 `Hidden` 走"不 orderFront"分支，
+  需要通过 `CGWindowList` 断言窗口不在 on-screen 列表里才算验证）。
+
 ## 阶段 B —— 内容与 IPC 深度
 
 应用价值最直接的一批，全部能在 bridge 单测与三平台 smoke 里断言。

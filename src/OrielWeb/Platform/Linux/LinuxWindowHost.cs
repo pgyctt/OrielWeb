@@ -103,6 +103,14 @@ internal sealed class LinuxWindowHost : IWindowBackend
         GtkNative.WebkitUserContentManagerRegisterScriptMessageHandler(_userContentManager, "oriel");
         _webview = GtkNative.WebkitWebViewNewWithUserContentManager(_userContentManager);
 
+        // DevTools：与 Windows 的 AreDevToolsEnabled 语义一致——只"允许"检查，不自动打开面板
+        // （打开 enable_developer_extras 后，WebKitGTK 的右键菜单会出现「检查元素」）。
+        // settings 交给 webview 后由它持有引用，所以本地这一份引用即刻释放。
+        var webkitSettings = GtkNative.WebkitSettingsNew();
+        GtkNative.WebkitSettingsSetEnableDeveloperExtras(webkitSettings, _options.Debug);
+        GtkNative.WebkitWebViewSetSettings(_webview, webkitSettings);
+        GtkNative.GObjectUnref(webkitSettings);
+
         var userScript = GtkNative.WebkitUserScriptNew(
             LinuxBridgeJs.Script,
             1, // WEBKIT_USER_CONTENT_INJECT_TOP_FRAME（主帧）
