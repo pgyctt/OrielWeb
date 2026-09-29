@@ -20,18 +20,28 @@ internal static class NavSelfTest
 {
     private const string AboutUrl = "about.html";
 
+    /// <summary>失败导航的目标文件名：与当前页面同目录、且必定不存在。</summary>
+    private const string UnreachablePageName = "oriel-selftest-nonexistent-page.html";
+
     /// <summary>
-    /// 触发一次必定失败的导航：**同源且同目录**地指向一个不存在的页面。
+    /// 由当前页 URL 推出同目录下那个不存在的页面地址。
     /// </summary>
     /// <remarks>
-    /// 为什么在页面里用 <c>new URL(相对路径, location.href)</c> 拼，而不是在 C# 里写死绝对 URL：
-    /// 跨协议 / 跨源地改 <c>location</c>（例如从 <c>https://app.oriel/</c> 跳到 <c>file:///…</c>）
-    /// 会被引擎按安全策略处理——Windows（WebView2）与 Linux（WebKitGTK）上都实测到了同一个结果：
-    /// 那次导航变成"重新加载首页并上报成功"，而不是失败。只有同源且不存在的路径才给出确定的失败语义
-    /// （HTTP 404 / 文件不存在）。
+    /// 两条硬约束，都是实测换来的：
+    /// ① **必须与当前页面同源**。跨协议 / 跨源地改 <c>location</c>（例如从 <c>https://app.oriel/</c>
+    ///    跳到 <c>file:///…</c>）会被引擎按安全策略处理成别的导航——Windows（WebView2）与
+    ///    Linux（WebKitGTK）上都表现为"重新加载首页并上报成功"，而不是失败；
+    /// ② **在 C# 里拼成绝对地址**，沿用第 1~5 步已验证可行的 <c>location.href='&lt;绝对 URL&gt;'</c> 形式。
+    ///    曾试过在页面里写 <c>location.href = new URL(相对路径, location.href).href</c>：在 macOS 上
+    ///    它既不报错也没有任何导航事件（导航根本没发起），而同一目标由 C# 拼成绝对地址就没问题。
     /// </remarks>
-    private const string UnreachableScript =
-        "location.href = new URL('oriel-selftest-nonexistent-page.html', location.href).href";
+    private static string BuildUnreachableUrl(string currentUrl)
+    {
+        int slash = currentUrl.LastIndexOf('/');
+        return slash < 0
+            ? UnreachablePageName
+            : string.Concat(currentUrl.AsSpan(0, slash + 1), UnreachablePageName);
+    }
 
     private static readonly List<string> Failures = [];
     private static readonly object Gate = new();
@@ -149,7 +159,10 @@ internal static class NavSelfTest
                     CheckStartingSeen("刷新应触发 navigation.starting");
                     Check(args.Success, "刷新应成功");
                     Advance();
-                    _ = window.EvaluateJs(UnreachableScript);
+                    string unreachable = BuildUnreachableUrl(args.Url);
+                    // 打印出来：若再次出现"没有事件"，这一行能立刻区分"脚本没执行"还是"导航没发起"
+                    Console.WriteLine($"[nav-selftest] 触发失败导航：{unreachable}");
+                    _ = window.EvaluateJs($"location.href='{unreachable}'");
                     break;
 
                 case 5: // 不存在的同源页面
