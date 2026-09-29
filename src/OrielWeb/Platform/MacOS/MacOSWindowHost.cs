@@ -98,10 +98,11 @@ internal sealed class MacOSWindowHost : IWindowBackend
 
     internal void Create()
     {
-        var clsWindow = ObjCRuntime.GetClass("NSWindow");
-        var clsWKWebView = ObjCRuntime.GetClass("WKWebView");
-        var clsWKWebViewConfiguration = ObjCRuntime.GetClass("WKWebViewConfiguration");
-        var clsWKUserScript = ObjCRuntime.GetClass("WKUserScript");
+        // 取类即校验：类不存在时宁可显式报错，也不要让后面一长串 objc_msgSend 静默 no-op
+        var clsWindow = ObjCRuntime.GetClassOrThrow("NSWindow");
+        var clsWKWebView = ObjCRuntime.GetClassOrThrow("WKWebView");
+        var clsWKWebViewConfiguration = ObjCRuntime.GetClassOrThrow("WKWebViewConfiguration");
+        var clsWKUserScript = ObjCRuntime.GetClassOrThrow("WKUserScript");
 
         double width = _options.Width;
         double height = _options.Height;

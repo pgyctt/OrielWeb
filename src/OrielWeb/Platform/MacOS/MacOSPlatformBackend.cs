@@ -21,7 +21,16 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
 
     public MacOSPlatformBackend()
     {
-        _nsApp = ObjCRuntime.SendId(ObjCRuntime.GetClass("NSApplication"), ObjCRuntime.Sel("sharedApplication"));
+        // 必须最先做：纯 P/Invoke 的可执行文件不链接任何框架，不显式加载的话
+        // objc_getClass 全部返回 nil，后续 objc_msgSend 退化为静默 no-op——
+        // 进程会"正常"退出但从未建出窗口（见 ObjCRuntime.LoadFrameworks 的说明）。
+        ObjCRuntime.LoadFrameworks();
+
+        _nsApp = ObjCRuntime.SendId(ObjCRuntime.GetClassOrThrow("NSApplication"), ObjCRuntime.Sel("sharedApplication"));
+        if (_nsApp == 0)
+        {
+            throw new InvalidOperationException("NSApplication.sharedApplication 返回 nil：AppKit 未能正常初始化。");
+        }
         // NSApplicationActivationPolicyRegular = 0（普通应用，出现在 Dock）
         ObjCRuntime.SendVoidNint(_nsApp, ObjCRuntime.Sel("setActivationPolicy:"), 0);
 

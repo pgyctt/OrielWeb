@@ -18,6 +18,17 @@ namespace OrielWeb.Platform.MacOS.Interop;
 internal static unsafe partial class ObjCRuntime
 {
     private const string ObjCLib = "/usr/lib/libobjc.A.dylib";
+    private const string LibSystem = "/usr/lib/libSystem.B.dylib";
+
+    // dlopen 的 mode 取值（/usr/include/dlfcn.h）：RTLD_NOW=0x2、RTLD_GLOBAL=0x8
+    private const int RtldNow = 2;
+    private const int RtldGlobal = 8;
+
+    [LibraryImport(LibSystem, EntryPoint = "dlopen", StringMarshalling = StringMarshalling.Utf8)]
+    private static partial nint dlopen(string path, int mode);
+
+    [LibraryImport(LibSystem, EntryPoint = "dlerror")]
+    private static partial nint dlerror();
 
     // ---- runtime 基础 ----
 
@@ -107,9 +118,58 @@ internal static unsafe partial class ObjCRuntime
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool SendBoolRet(nint self, nint sel);
 
+    // ---- 框架加载 ----
+
+    private static readonly string[] Frameworks =
+    [
+        "/System/Library/Frameworks/Foundation.framework/Foundation",
+        "/System/Library/Frameworks/AppKit.framework/AppKit",
+        "/System/Library/Frameworks/WebKit.framework/WebKit",
+    ];
+
+    private static int s_frameworksLoaded;
+
+    /// <summary>
+    /// 加载 Foundation/AppKit/WebKit（幂等），必须在任何 objc 类查找与建窗之前调用。
+    ///
+    /// 为什么必须显式做：macOS 后端是纯 P/Invoke，只链接 libobjc，不链接任何框架；
+    /// 而产物是无 bundle 的裸可执行文件。于是 objc_getClass("NSApplication") / "NSWindow" /
+    /// "WKWebView" 全部返回 nil，而 ObjC 向 nil 发消息是**静默 no-op**——表现为"进程不崩、
+    /// 不报错、直接以 0 退出，但从来没有窗口、也没有 WebKit 子进程"（真机 CI 上实测到的现象）。
+    /// </summary>
+    internal static void LoadFrameworks()
+    {
+        if (System.Threading.Interlocked.Exchange(ref s_frameworksLoaded, 1) == 1)
+        {
+            return;
+        }
+
+        foreach (var framework in Frameworks)
+        {
+            if (dlopen(framework, RtldNow | RtldGlobal) == 0)
+            {
+                var error = dlerror();
+                var message = error == 0 ? "（dlerror 无信息）" : Marshal.PtrToStringUTF8(error);
+                throw new InvalidOperationException($"加载 {framework} 失败：{message}");
+            }
+        }
+    }
+
     // ---- 辅助 ----
 
     internal static nint GetClass(string name) => objc_getClass(name);
+
+    /// <summary>
+    /// 取类，取不到即抛。用于窗口/webview 这类关键类：把"类不存在 → 后续调用全部静默
+    /// no-op"这个最难排查的失败模式，转换成一条明确的异常。
+    /// </summary>
+    internal static nint GetClassOrThrow(string name)
+    {
+        var cls = objc_getClass(name);
+        return cls != 0
+            ? cls
+            : throw new InvalidOperationException($"找不到 Objective-C 类 {name}：对应的框架可能未加载。");
+    }
 
     internal static nint Sel(string name) => sel_registerName(name);
 
