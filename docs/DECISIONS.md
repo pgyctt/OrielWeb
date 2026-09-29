@@ -407,9 +407,10 @@ WSLg 显示服务的偶发波动（与本次改动无因果关系：那次连"�
 那条路，改用 GitHub Actions 的托管 macOS runner。但**"托管 runner 能否运行本机 AppKit 窗口应用"没有官方
 明文**——"能跑 iOS 模拟器上的 XCUITest"不能作为证据，模拟器有自己的渲染路径。所以先探，再验证。
 
-### 第 0 步：先探清 runner 能力（`tools/probe-macos.sh`）
+### 第 0 步：先探清 runner 能不能建窗
 
-用最小 AppKit/WKWebView 探针直接问，而不是靠猜：
+用一个最小 AppKit/WKWebView 探针直接问，而不是靠猜。该探针属**一次性诊断**，结论落地后已删除
+（连带那个手动触发的 workflow）；下表就是它当时的原始输出：
 
 | 组 | 探针结果 | 结论 |
 |---|---|---|
@@ -419,7 +420,9 @@ WSLg 显示服务的偶发波动（与本次改动无因果关系：那次连"�
 | D WebKit | `didFinish` + `document.title=oriel-probe`，且出现 `com.apple.WebKit.WebContent`/`Networking` | WKWebView 在该环境可用 |
 | E 字体 | 无 `PingFang.ttc`（macOS 26 挪了位置），但有 `STHeiti Light.ttc`/`Hiragino Sans GB.ttc` | 中文不会缺字形 |
 
-该探针 workflow 保留为**手动触发的环境诊断**（换 runner 镜像或系统版本时重新确认）。
+结论：托管 runner 具备完整 GUI 能力——有图形登录会话、能建出可见窗口、能截到真实像素、WKWebView
+能加载页面，因此可以做窗口级验证。注意这是 **GitHub 侧的前提**而非本库的保证：若哪天 runner 镜像
+去掉图形会话，`smoke-macos` 会失败，而那时要按"环境变了"而不是"代码坏了"来排查。
 
 ### 真机上依次暴露的四个缺陷
 

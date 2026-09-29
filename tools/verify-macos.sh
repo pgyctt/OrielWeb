@@ -136,7 +136,7 @@ import Foundation
 
 // 列出当前屏幕上的所有窗口：owner 名称、标题、窗口号、bounds。
 // 标题字段（kCGWindowName）需要「屏幕录制」权限；本仓库的验证环境已具备
-// （tools/probe-macos.sh 的 C 组 screencapture 成功即为证据）。取不到标题时仍可按 owner 匹配。
+// （2026-09-29 实测：screencapture 能截到 1024x768 真实像素）。取不到标题时仍可按 owner 匹配。
 let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
 guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
     FileHandle.standardError.write(Data("无法获取窗口列表\n".utf8))

@@ -230,8 +230,9 @@ WebView2 的运行需要微软的 `WebView2Loader.dll`。官方只有两条路�
   消费方无需处理。
 - **CI 上如何验证**：`smoke-macos` job 运行 `tools/verify-macos.sh`，断言进程存活、出现 `WebContent`
   子进程、以及 `CGWindowList` 能枚举到标题含 `Oriel Demo` 的窗口，并把截图作为 artifact 上传
-  （页面渲染、中文与 IPC 徽章只能人眼判定）。托管 runner 具备图形登录会话这一点，由
-  `tools/probe-macos.sh` 实测确认（手动触发的环境诊断，换 runner 镜像时可用它重新确认）。
+  （页面渲染、中文与 IPC 徽章只能人眼判定）。托管 runner 具备图形登录会话这一点在 2026-09-29
+  实测确认过（会话类型、屏幕数、截图、WKWebView 探针的原始数据见 `docs/DECISIONS.md`）——它属于
+  **GitHub 侧的前提假设**，不是本库的保证。
 
 ### WebView2 运行时与缺失引导
 
