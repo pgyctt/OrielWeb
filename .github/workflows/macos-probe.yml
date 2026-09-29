@@ -1,0 +1,43 @@
+name: macOS capability probe
+
+# 一次性诊断（手动触发）：回答「GitHub 托管的 macOS runner 能否运行本机 AppKit/WKWebView 窗口应用」。
+#
+# 为什么需要它：托管 runner 是否具备 GUI（Aqua）会话，官方文档没有明文；而「能跑 iOS 模拟器上的
+# XCUITest」不能作为证据——模拟器有自己的渲染路径，不需要本机窗口。所以用最小探针直接探。
+#
+# 本 workflow 只探测与取证，**不设失败门禁**：结论从日志与上传的产物读出。因此上传步骤恒为
+# if: always()，探针中途失败也要把已采集的证据留下。
+#
+# 用法：Actions → macOS capability probe → Run workflow。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show runner toolchain
+        run: |
+          sw_vers
+          echo "runner arch: $(uname -m)"
+          echo "xcode-select: $(xcode-select -p 2>&1)"
+          swiftc --version 2>&1 | head -2
+
+      - name: Run capability probe
+        # 探针自身只取证、不做判定；细节见 tools/probe-macos.sh 头部说明
+        run: bash tools/probe-macos.sh --out "$RUNNER_TEMP/macos-probe-out"
+
+      - name: Upload probe artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-probe
+          path: ${{ runner.temp }}/macos-probe-out
+          if-no-files-found: warn
+          retention-days: 14
