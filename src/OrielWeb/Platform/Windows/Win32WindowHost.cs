@@ -83,10 +83,18 @@ internal partial class Win32WindowHost : IWindowBackend
     private event Action? Closed;
     private event Action<string>? TitleChanged;
     private event Action<bool>? MaximizedChanged;
+    private event Action<string>? NavigationStarting;
+    private event Action<OrielNavigationCompletedEventArgs>? NavigationCompleted;
+    private event Action<OrielConsoleMessageEventArgs>? ConsoleMessage;
+    private event Action<OrielMessageReceivedEventArgs>? MessageReceived;
 
     // 上一次已知的最大化状态，用于在 WM_SIZE 里识别变化（用户在原生路径下最大化/还原时，
     // 页面无从得知，必须由宿主推送）
     private bool _wasMaximized;
+
+    // 最近一次 NavigationStarting 的 URL。WebView2 的 NavigationCompleted 参数里没有 URL
+    // （它只有 IsSuccess / WebErrorStatus / NavigationId），而事件参数要带上 URL，故在开始时缓存。
+    private string _lastNavigationUri = string.Empty;
 
     protected Win32WindowHost(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, WindowsPlatformBackend backend)
     {
@@ -113,8 +121,24 @@ internal partial class Win32WindowHost : IWindowBackend
     event Action? IWindowBackend.Closed { add => Closed += value; remove => Closed -= value; }
     event Action<string>? IWindowBackend.TitleChanged { add => TitleChanged += value; remove => TitleChanged -= value; }
     event Action<bool>? IWindowBackend.MaximizedChanged { add => MaximizedChanged += value; remove => MaximizedChanged -= value; }
+    event Action<string>? IWindowBackend.NavigationStarting { add => NavigationStarting += value; remove => NavigationStarting -= value; }
+    event Action<OrielNavigationCompletedEventArgs>? IWindowBackend.NavigationCompleted { add => NavigationCompleted += value; remove => NavigationCompleted -= value; }
+    event Action<OrielConsoleMessageEventArgs>? IWindowBackend.ConsoleMessage { add => ConsoleMessage += value; remove => ConsoleMessage -= value; }
+    event Action<OrielMessageReceivedEventArgs>? IWindowBackend.MessageReceived { add => MessageReceived += value; remove => MessageReceived -= value; }
 
     public bool IsMaximized => Win32.IsZoomed(_hwnd);
+
+    // ---- 导航操作（WebView2 内建历史；无历史时调用是空操作）----
+
+    public bool CanGoBack => _webView?.CanGoBack ?? false;
+    public bool CanGoForward => _webView?.CanGoForward ?? false;
+    public void GoBack() => _webView?.GoBack();
+    public void GoForward() => _webView?.GoForward();
+    public void Reload() => _webView?.Reload();
+
+    public void PostToUiThread(Action action) => _backend.PostToMainThread(action);
+
+    public void EmitEvent(string name, string jsonPayload) => PushEventOnUi(name, jsonPayload);
 
     // ------------------------------------------------------------------
     // 创建
@@ -638,10 +662,12 @@ internal partial class Win32WindowHost : IWindowBackend
 
             _webViewEvents = new CoreWebView2Events(_webView);
             _webViewEvents.WebMessageReceived += OnWebMessageReceived;
+            _webViewEvents.NavigationStarting += OnNavigationStarting;
             _webViewEvents.NavigationCompleted += OnNavigationCompleted;
             _webViewEvents.DocumentTitleChanged += OnDocumentTitleChanged;
 
-            await _webView.AddScriptToExecuteOnDocumentCreatedAsync(OrielBridgeJs.Script).ConfigureAwait(true);
+            await _webView.AddScriptToExecuteOnDocumentCreatedAsync(
+                OrielBridgeJs.Build(_options.ConsoleForwarding)).ConfigureAwait(true);
 
             _controller.IsVisible = true;
             UpdateBounds();
@@ -685,12 +711,28 @@ internal partial class Win32WindowHost : IWindowBackend
         {
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
-            if (root.ValueKind == JsonValueKind.Object
-                && root.TryGetProperty("__oriel", out var kind)
-                && kind.ValueKind == JsonValueKind.String
-                && kind.GetString() == "invoke")
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("__oriel", out var kind)
+                || kind.ValueKind != JsonValueKind.String)
             {
-                _ = DispatchInvokeAsync(root.Clone());
+                // 非 OrielWeb 协议的消息（页面自己的 postMessage），忽略
+                return;
+            }
+
+            switch (kind.GetString())
+            {
+                case "invoke":
+                    _ = DispatchInvokeAsync(root.Clone());
+                    break;
+                case "console":
+                    // 只有开启 console 转发时页面才会发这类消息（hook 由桥接脚本注入决定）
+                    RaiseConsoleMessage(ReadStringProperty(root, "level"), ReadStringProperty(root, "text"));
+                    break;
+                case "message":
+                    RaiseMessageReceived(
+                        ReadStringProperty(root, "name"),
+                        root.TryGetProperty("payload", out var payload) ? payload.GetRawText() : "null");
+                    break;
             }
         }
         catch (JsonException)
@@ -698,6 +740,12 @@ internal partial class Win32WindowHost : IWindowBackend
             // 非 OrielWeb 消息（页面自定义 postMessage），忽略
         }
     }
+
+    /// <summary>读字符串属性；缺失或类型不符时返回空串（页面数据不可信，一律按可缺席处理）。</summary>
+    private static string ReadStringProperty(JsonElement root, string name)
+        => root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() ?? string.Empty
+            : string.Empty;
 
     private async Task DispatchInvokeAsync(JsonElement message)
     {
@@ -718,7 +766,15 @@ internal partial class Win32WindowHost : IWindowBackend
         _wasMaximized = !Win32.IsZoomed(_hwnd);
         SyncMaximizedState();
 
-        if (args.IsSuccess)
+        bool success = args.IsSuccess;
+        // WebErrorStatus 是枚举（如 CONNECTION_ABORTED / HOST_NAME_NOT_RESOLVED），
+        // 这里只做字符串化——各平台文案不同，不试图统一成人话。
+        RaiseNavigationCompleted(new OrielNavigationCompletedEventArgs(
+            success,
+            _lastNavigationUri,
+            success ? null : args.WebErrorStatus.ToString()));
+
+        if (success)
         {
             RaiseLoadedIfFirst();
         }
@@ -807,6 +863,43 @@ internal partial class Win32WindowHost : IWindowBackend
         TitleChanged?.Invoke(title);
     }
 
+    private void OnNavigationStarting(object? sender, ICoreWebView2NavigationStartingEventArgs args)
+    {
+        RaiseNavigationStarting(args.Uri ?? string.Empty);
+    }
+
+    internal void RaiseNavigationStarting(string url)
+    {
+        _lastNavigationUri = url;
+        NavigationStarting?.Invoke(url);
+        PushEventOnUi("navigation.starting", $"{{\"url\":{JsonText.EncodeString(url)}}}");
+    }
+
+    internal void RaiseNavigationCompleted(OrielNavigationCompletedEventArgs args)
+    {
+        NavigationCompleted?.Invoke(args);
+        string error = args.Error is null ? "null" : JsonText.EncodeString(args.Error);
+        PushEventOnUi(
+            "navigation.completed",
+            $"{{\"success\":{(args.Success ? "true" : "false")},\"url\":{JsonText.EncodeString(args.Url)},\"error\":{error}}}");
+    }
+
+    internal void RaiseConsoleMessage(string level, string text)
+        => ConsoleMessage?.Invoke(new OrielConsoleMessageEventArgs(level, text));
+
+    internal void RaiseMessageReceived(string name, string json)
+        => MessageReceived?.Invoke(new OrielMessageReceivedEventArgs(name, json));
+
+    /// <summary>
+    /// 向页面推送一个 oriel 事件（页面侧 <c>window.oriel.on(name, handler)</c> 接收）。
+    /// 与回执通道 <see cref="PostMessageOnUi"/> 分开：那条只投递 <c>{"__oriel":"result",…}</c> 形态。
+    /// </summary>
+    private void PushEventOnUi(string name, string jsonValue)
+    {
+        PostMessageOnUi(
+            $"{{\"__oriel\":\"event\",\"name\":{JsonText.EncodeString(name)},\"value\":{jsonValue}}}");
+    }
+
     /// <summary>
     /// 检测最大化状态变化并推送给页面。用户经原生路径最大化/还原（拖边框到屏幕顶端、
     /// 双击标题栏、Win+↑）时，页面无从得知，标题栏的"最大化/还原"图标必须靠这条通知同步。
@@ -821,12 +914,7 @@ internal partial class Win32WindowHost : IWindowBackend
 
         _wasMaximized = isMaximized;
         MaximizedChanged?.Invoke(isMaximized);
-
-        if (_webView is not null)
-        {
-            PostMessageOnUi(
-                $"{{\"__oriel\":\"event\",\"name\":\"maximized\",\"value\":{(isMaximized ? "true" : "false")}}}");
-        }
+        PushEventOnUi("maximized", isMaximized ? "true" : "false");
     }
 
     internal void UpdateBounds()

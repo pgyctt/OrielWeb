@@ -401,6 +401,73 @@ WSLg 显示服务的偶发波动（与本次改动无因果关系：那次连"�
 
 **遗留**：macOS 的 `windowDidResize:` 是新增的原生回调，待有 Mac 环境时确认它不干扰拖拽/缩放路径。
 
+## 阶段 B：导航与页面通信（2026-09-29 实现并验证）
+
+**结论**：导航（前进 / 后退 / 刷新 + 开始 / 完成 / 失败事件）与三条 IPC 通道（console 转发、页面
+postMessage、宿主 EmitEvent）全部落地；Linux 上以**无人交互的自检**验证通过（`--nav-selftest`、
+`--ipc-selftest`），并接入 CI 的三平台冒烟。
+
+### 自检为什么写成事件驱动状态机，而不是 async/await
+
+第一版自检写成 `await window.EvaluateJs(...)` 顺序流程，跳转到第二个页面之后**进程直接 abort**。
+根因不在库：`await` 的续体落在**线程池**，而 GTK 只能在主线程上调用——从线程池调
+`gtk_window_is_maximized` 之类就是崩溃。GLib/AppKit 不提供 .NET 的 SynchronizationContext，所以
+"await 之后仍在 UI 线程"这个在 WinForms/WPF 里天经地义的假设，在这里不成立。
+
+**修法（两层）**：
+
+1. 自检改为事件驱动状态机，每一步都发生在 `NavigationCompleted` 回调里（= UI 线程）；
+2. 库补上缺口——新增 `WebviewWindow.PostToUiThread(Action)`：跨 `await` 编排的应用靠它回到 UI 线程
+   再碰窗口。自检的看门狗计时器回调就是它的用例（计时器在线程池触发，收尾动作必须切回 UI 线程）。
+
+**教训**：跨平台 UI 库必须显式提供"回 UI 线程"的入口并写进文档，否则每个消费方都会各踩一次。
+
+### 失败路径的取证：别用网络地址
+
+自检最后一步要验证"加载失败 → 上报 `Success=false` + `Error` 非空"。三次尝试：
+
+- 假域名 `https://oriel-selftest.invalid/`：第一次通过（TLS 握手失败），下一次**挂到 TCP 超时**
+  （90 秒看门狗先到）——同一台机器上都不稳定。
+- 环回 discard 端口 `http://127.0.0.1:9/index.html`：出现**极反直觉**的行为——注入的脚本与 `eval`
+  返回值都是该地址（已打印确认），导航也确实开始，但 WebKit 最终**提交加载的是本地
+  `file:///.../www/index.html`** 并上报**成功**，`load-failed` 一次都没发出。这是该环境（WSL + WSLg）
+  下的既有行为，不是本库缺陷。
+- 不存在的本地文件 `file:///nonexistent-oriel-selftest/page-xyz.html`：`load-failed` 稳定触发，错误信息
+  为 `Error opening file ...: No such file or directory` ✓
+
+**教训**：验证失败路径时，失败必须由**不经过网络**的方式制造；网络错误在不同环境下的形态差异
+（立即失败 / 长时间超时 / 被代理改写）足以让断言本身变成不确定项。
+
+### Linux 失败路径的两个实现要点
+
+1. **`load-failed` 之后必然还会来一次 `load-changed(FINISHED)`**（WebKitGTK 文档明确：错误页也要"加载完成"）。
+   若照 FINISHED 上报成功，调用方会先收到"失败"、再收到一条自相矛盾的"成功"。实现用
+   `_failedSinceLoadStart` 抑制那一趟，并在下一次 `STARTED` 时清除。
+2. **GError 的 message 按结构偏移取**：`{ GQuark domain; gint code; gchar* message; }`（64 位平台偏移 8），
+   不引入完整结构体映射——只需要这一个字段。实测取到的错误文本完整正确。
+
+### console 转发：一份实现，注入时开关
+
+原计划三平台各写一份（Windows 用 WebView2 的 console 事件，macOS/Linux 注入 hook），最终统一为
+**注入 hook**：实现写在共用的桥接模板里，注入时把 `__ORIEL_CONSOLE_ENABLED__` 替换成 `true`/`false`，
+未启用时代码保留但不执行。
+
+- **为什么不用 WebView2 的 console 事件**：那要走 `CallDevToolsProtocolMethod` 或 DevTools 协议事件
+  接收器，与另外两个平台是两套语义，也就无法用同一份 bridge 单测覆盖。
+- **为什么默认关闭**：包装 console 会改变页面对它的可观测行为（`console.log.toString()` 不再是原生实现），
+  且高频输出会变成持续的 IPC 流量。开发时用 `WithConsoleForwarding()` 打开。
+
+### 验证账（Linux 真机 + CI）
+
+- `--nav-selftest`：跳转 → 后退 → 前进 → 刷新 → 失败，共 6 次导航；每次 `starting`/`completed` 与 URL
+  都符合预期，失败那条带真实错误信息。
+- `--ipc-selftest`：console(`log`, `from-page 42`)、页面 postMessage(`{"n":1}`)、以及**闭环**——宿主
+  `EmitEvent("from-host")` → 页面 `oriel.on` 收到 → 页面 `postMessage('echo')` → 宿主收回 `{"k":1}`。
+- bridge 单测：新增 postMessage 与 console 转发用例（每平台 4 个），并把 console 桩注入脚本沙箱，
+  避免包装到 Node 的全局 console 上而污染测试进程。
+- CI：`smoke-linux` / `smoke-windows` 直接跑两个自检；`smoke-macos` 经 `tools/verify-macos.sh` 跑
+  （必须在 .app bundle 内运行——WKWebView 是进程架构，宿主需要 bundle 身份）。自检失败会让该 job 失败。
+
 ## macOS 首次真机运行验证（2026-09-29，GitHub 托管 macOS runner）
 
 **背景**：没有 Mac 硬件。在普通 PC 上虚拟化 macOS 违反 Apple 许可（只授权在 Apple 硬件上运行），故不走

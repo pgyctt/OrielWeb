@@ -25,7 +25,7 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 3. **收尾口径**：编译 0 警告 0 错误 + 单测 + 桥接测试 + 三平台 smoke 全绿。
 4. **优先复用已打通的通道**：宿主→页面事件、页面回环消息、源生成 IPC，不新造轮子。
 
-## 阶段 A —— 三平台一致性缺口（进行中）
+## 阶段 A —— 三平台一致性缺口（已完成）
 
 还清"部分有"的技术债，为后续改动铺好平台一致性。**这一批最便宜、且基本都能在现有环境验证**。
 
@@ -72,13 +72,14 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 
 应用价值最直接的一批，全部能在 bridge 单测与三平台 smoke 里断言。
 
-| 项 | 做法要点 | 验证方式 |
-|---|---|---|
-| 前进 / 后退 / 刷新 + 可用性查询 | Windows：`GoBack`/`GoForward`/`Reload` + `CanGoBack`/`CanGoForward`；macOS：`goBack:`/`goForward:`/`reload` + `canGoBack`；Linux：`webkit_web_view_go_back/forward/reload` | demo 加按钮 + smoke 断言 URL 或标题变化 |
-| 导航事件：开始 / 完成 / 失败（含错误信息） | 复用宿主→页面事件通道（Windows `__oriel:event`、Linux/macOS `_onEvent`），同时暴露公开 C# 事件 | bridge 单测 + 三平台 smoke（页面写标记、宿主断言收到） |
-| 页面 console 转发 | Windows：WebView2 的 console 消息事件；macOS/Linux：注入 console hook 后走已有消息通道 | demo 打印 console → CI 断言宿主收到 |
-| 公开的自定义事件发送 API | `EmitEvent(name, payload)`：payload 走 STJ 源生成上下文（AOT 安全），落到已有的 `_onEvent` | 单测 + bridge 测试 + smoke |
-| 通用「页面 → 宿主」消息 | `oriel.postMessage(name, payload)` + C# `MessageReceived` 事件 | 同上 |
+| 项 | 状态 | 做法要点 | 验证结果 |
+|---|---|---|---|
+| 前进 / 后退 / 刷新 + 可用性查询 | ✅ 完成 | 三平台各自的原生历史：Windows `GoBack`/`GoForward`/`Reload` + `CanGoBack`/`CanGoForward`；macOS `goBack:`/`goForward:`/`reload` + `canGoBack`；Linux `webkit_web_view_go_back/forward/reload`（本轮新增 P/Invoke） | `--nav-selftest` 在 Linux 真机跑通：跳转 → 后退 → 前进 → 刷新各一步，每一步的 URL 都符合预期 |
+| 导航事件：开始 / 完成 / 失败（含错误信息） | ✅ 完成 | 公开 C# 事件 `NavigationStarting`/`NavigationCompleted`（带 `Success`/`Url`/`Error`）+ 页面事件 `navigation.starting`/`navigation.completed`。Windows 订阅包装层的 `NavigationStarting`；Linux 新增 `load-failed` 信号（GError.message 按结构偏移取）；macOS 新增 `didStartProvisionalNavigation:` 与 NSError 解析 | 同上；失败分支刻意用**不存在的本地文件**触发，拿到真实错误信息（`Error opening file ...: No such file or directory`），并确认错误页那一次 `FINISHED` 不会重复上报"成功" |
+| 页面 console 转发 | ✅ 完成 | **三平台共用一份 hook**：实现写在桥接模板里，注入时由 `__ORIEL_CONSOLE_ENABLED__` 决定是否执行（默认关闭），C# 侧不再抄一份 | bridge 单测（3 平台 × 2 用例：开启时投递且原 console 方法仍被调用 / 未开启时不投递）+ `--ipc-selftest` 真机验证 |
+| 公开的自定义事件发送 API | ✅ 完成 | `EmitEvent(name, jsonPayload)` 与 `EmitEvent<T>(name, payload, JsonTypeInfo<T>)`（后者走源生成上下文，AOT 安全）→ 落到已有的 `_onEvent` | `--ipc-selftest` 的闭环：宿主 EmitEvent → 页面 `oriel.on` 收到 → 页面回 postMessage → 宿主收回 |
+| 通用「页面 → 宿主」消息 | ✅ 完成 | `oriel.postMessage(name, payload)` + C# `MessageReceived`（payload 以原始 JSON 文本给出，反序列化由调用方决定） | 同上闭环 + bridge 单测（协议形状、未给 payload、空 name 校验） |
+| 跨 `await` 回 UI 线程 | ✅ 完成（实现中发现） | `WebviewWindow.PostToUiThread(Action)`。做自检时踩到：`await` 续体在线程池上调 GTK 会直接 abort，而库此前没有提供回 UI 线程的手段 | 两个自检都依赖它；真实崩溃与修法见 DECISIONS |
 
 ## 阶段 C —— 平台集成外壳
 

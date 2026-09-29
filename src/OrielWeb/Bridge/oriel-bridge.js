@@ -1,8 +1,9 @@
 // OrielWeb 三平台共用的注入式桥接脚本模板（EmbeddedResource，见 OrielWeb.csproj）。
 //
-// 由 OrielBridgeTemplate 在创建窗口时替换两个占位符后注入：
+// 由 OrielBridgeTemplate 在创建窗口时替换三个占位符后注入：
 //   __ORIEL_PLATFORM__ → 'windows' | 'macos' | 'linux'
 //   __ORIEL_POST__     → 平台投递表达式（obj 为待发送对象）
+//   __ORIEL_CONSOLE_ENABLED__ → 'true' | 'false'（见 OrielWindowOptions.ConsoleForwarding）
 //
 // 三平台此前各自手抄一份，已导致缺陷同步传播（ready 的 TDZ、orielready 的时序
 // 都曾三份全中）。任何修改都会同时作用于三平台——这正是合并的目的。
@@ -66,6 +67,14 @@
             if (ok) entry.resolve(payload);
             else entry.reject(new Error(payload || ('oriel 命令失败 (id=' + id + ')')));
         },
+        // 页面 → 宿主的单向消息（宿主侧 MessageReceived 事件）。与 invoke 的区别：
+        // 不等回执、不占用回执 id——用于"通知宿主"这类不需要结果的语义。
+        postMessage(name, payload) {
+            if (typeof name !== 'string' || !name) {
+                throw new Error('oriel.postMessage: name 必须为非空字符串');
+            }
+            post({ __oriel: 'message', name: name, payload: payload === undefined ? null : payload });
+        },
         // 宿主 → 页面的事件通道。用于页面无法自行察觉的窗口状态变化，
         // 典型例子：用户在原生路径下最大化/还原（双击标题栏、拖边框到屏幕顶端、Win+↑）时
         // 刷新标题栏的"最大化/还原"图标。
@@ -99,6 +108,36 @@
     };
 
     window.oriel = oriel;
+
+    // 页面 console → 宿主（宿主侧 ConsoleMessage 事件）。是否启用由注入时的
+    // __ORIEL_CONSOLE_ENABLED__ 决定：未启用时代码保留但不执行，所以实现只存在于本模板，
+    // 不需要在 C# 侧另抄一份（三份手抄脚本互相漂移正是这个模板要消灭的问题）。
+    // 默认关闭的理由：包装 console 会改变页面对它的可观测行为（如 console.log.toString()），
+    // 且高频输出会变成持续的 IPC 流量。
+    if (__ORIEL_CONSOLE_ENABLED__) {
+        const consoleLevels = ['log', 'info', 'warn', 'error', 'debug'];
+        const renderConsoleArg = (value) => {
+            try {
+                if (typeof value === 'string') return value;
+                if (value instanceof Error) return value.stack || String(value);
+                if (typeof value === 'undefined') return 'undefined';
+                return JSON.stringify(value);
+            } catch (_) {
+                return String(value);
+            }
+        };
+        for (const level of consoleLevels) {
+            const original = console[level];
+            console[level] = function (...args) {
+                try {
+                    post({ __oriel: 'console', level: level, text: args.map(renderConsoleArg).join(' ') });
+                } catch (_) {
+                    // 投递失败不影响页面自身的 console 行为
+                }
+                return original.apply(console, args);
+            };
+        }
+    }
 
     // 接收命令回执：{ __oriel:'result', id, ok, value | error }
     // 仅 Windows（chrome.webview）有 message 事件；macOS/Linux 由宿主调用 _onResult。

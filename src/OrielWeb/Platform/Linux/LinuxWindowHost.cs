@@ -42,6 +42,9 @@ internal sealed class LinuxWindowHost : IWindowBackend
     private bool _wasMaximized;
     // 页面是否已加载完成（桥接脚本就绪）。就绪前不推事件；加载完成时会强制补推一次当前状态。
     private bool _pageReady;
+    // 本次加载是否已经失败过。WebKit 加载失败后会渲染错误页并再发一次 load-changed(FINISHED)，
+    // 这个标记用来避免把那一趟当成"又一次成功导航"上报。
+    private bool _failedSinceLoadStart;
 
     // 流式拖动状态（GTK 设备像素坐标）
     private (int X, int Y)? _dragPointerStart;
@@ -52,6 +55,10 @@ internal sealed class LinuxWindowHost : IWindowBackend
     private event Action? Closed;
     private event Action<string>? TitleChanged;
     private event Action<bool>? MaximizedChanged;
+    private event Action<string>? NavigationStarting;
+    private event Action<OrielNavigationCompletedEventArgs>? NavigationCompleted;
+    private event Action<OrielConsoleMessageEventArgs>? ConsoleMessage;
+    private event Action<OrielMessageReceivedEventArgs>? MessageReceived;
 
     internal LinuxWindowHost(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, LinuxPlatformBackend backend)
     {
@@ -77,8 +84,46 @@ internal sealed class LinuxWindowHost : IWindowBackend
     event Action? IWindowBackend.Closed { add => Closed += value; remove => Closed -= value; }
     event Action<string>? IWindowBackend.TitleChanged { add => TitleChanged += value; remove => TitleChanged -= value; }
     event Action<bool>? IWindowBackend.MaximizedChanged { add => MaximizedChanged += value; remove => MaximizedChanged -= value; }
+    event Action<string>? IWindowBackend.NavigationStarting { add => NavigationStarting += value; remove => NavigationStarting -= value; }
+    event Action<OrielNavigationCompletedEventArgs>? IWindowBackend.NavigationCompleted { add => NavigationCompleted += value; remove => NavigationCompleted -= value; }
+    event Action<OrielConsoleMessageEventArgs>? IWindowBackend.ConsoleMessage { add => ConsoleMessage += value; remove => ConsoleMessage -= value; }
+    event Action<OrielMessageReceivedEventArgs>? IWindowBackend.MessageReceived { add => MessageReceived += value; remove => MessageReceived -= value; }
 
     public bool IsMaximized => GtkNative.GtkWindowIsMaximized(_gtkWindow);
+
+    // ---- 导航操作（WebKitGTK 内建历史；无历史时调用是空操作）----
+    // _webview 在 destroy 之后被置 0，判空是必需的：这些调用不能对已销毁的 webview 下手。
+
+    public bool CanGoBack => _webview != 0 && GtkNative.WebkitWebViewCanGoBack(_webview) != 0;
+    public bool CanGoForward => _webview != 0 && GtkNative.WebkitWebViewCanGoForward(_webview) != 0;
+
+    public void GoBack()
+    {
+        if (_webview != 0)
+        {
+            GtkNative.WebkitWebViewGoBack(_webview);
+        }
+    }
+
+    public void GoForward()
+    {
+        if (_webview != 0)
+        {
+            GtkNative.WebkitWebViewGoForward(_webview);
+        }
+    }
+
+    public void Reload()
+    {
+        if (_webview != 0)
+        {
+            GtkNative.WebkitWebViewReload(_webview);
+        }
+    }
+
+    public void PostToUiThread(Action action) => _backend.PostToMainThread(action);
+
+    public void EmitEvent(string name, string jsonPayload) => PushEventOnUi(name, jsonPayload);
 
     // ------------------------------------------------------------------
     // 创建
@@ -112,7 +157,7 @@ internal sealed class LinuxWindowHost : IWindowBackend
         GtkNative.GObjectUnref(webkitSettings);
 
         var userScript = GtkNative.WebkitUserScriptNew(
-            LinuxBridgeJs.Script,
+            LinuxBridgeJs.Build(_options.ConsoleForwarding),
             1, // WEBKIT_USER_CONTENT_INJECT_TOP_FRAME（主帧）
             0, // WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START（文档开始处注入，与 Windows/macOS 后端一致）
             0,
@@ -206,12 +251,35 @@ internal sealed class LinuxWindowHost : IWindowBackend
         _backend.OnWindowDestroyed();
     }
 
+    internal void OnLoadStarted()
+    {
+        _failedSinceLoadStart = false;
+        RaiseNavigationStarting(CurrentUri());
+    }
+
+    /// <summary>
+    /// 整页加载失败（WebKitGTK 的 load-failed）。失败之后 WebKit 仍会发一次 load-changed 的
+    /// FINISHED（加载的是错误页），所以这里只上报"失败"这一次，不把它也算成一次成功导航。
+    /// </summary>
+    internal void OnLoadFailed(string failingUri, string? error)
+    {
+        _failedSinceLoadStart = true;
+        RaiseNavigationCompleted(new OrielNavigationCompletedEventArgs(false, failingUri, error));
+    }
+
     internal void OnLoadFinished()
     {
         // 新文档不知道当前最大化状态，且下面的 Loaded 只触发首次——所以补推放在早退之前，
         // 每次加载完成都无条件补推一次当前值（与 Windows 的 OnNavigationCompleted 对齐）。
         _pageReady = true;
         SyncMaximizedState(force: true);
+
+        // 失败之后这一趟 FINISHED 加载的是错误页：失败已经上报过，不再重复报成功（否则调用方
+        // 会先收到"失败"、再收到一条矛盾的"成功"）。
+        if (!_failedSinceLoadStart)
+        {
+            RaiseNavigationCompleted(new OrielNavigationCompletedEventArgs(true, CurrentUri(), null));
+        }
 
         if (_loadedRaised)
         {
@@ -236,6 +304,39 @@ internal sealed class LinuxWindowHost : IWindowBackend
         _title = title;
         TitleChanged?.Invoke(title);
         GtkNative.GtkWindowSetTitle(_gtkWindow, title);
+    }
+
+    internal void RaiseNavigationStarting(string url)
+    {
+        NavigationStarting?.Invoke(url);
+        PushEventOnUi("navigation.starting", $"{{\"url\":{JsonText.EncodeString(url)}}}");
+    }
+
+    internal void RaiseNavigationCompleted(OrielNavigationCompletedEventArgs args)
+    {
+        NavigationCompleted?.Invoke(args);
+        string error = args.Error is null ? "null" : JsonText.EncodeString(args.Error);
+        PushEventOnUi(
+            "navigation.completed",
+            $"{{\"success\":{(args.Success ? "true" : "false")},\"url\":{JsonText.EncodeString(args.Url)},\"error\":{error}}}");
+    }
+
+    internal void RaiseConsoleMessage(string level, string text)
+        => ConsoleMessage?.Invoke(new OrielConsoleMessageEventArgs(level, text));
+
+    internal void RaiseMessageReceived(string name, string json)
+        => MessageReceived?.Invoke(new OrielMessageReceivedEventArgs(name, json));
+
+    /// <summary>当前文档 URI；加载中/销毁后可能取不到，返回空串。</summary>
+    private string CurrentUri()
+    {
+        if (_webview == 0)
+        {
+            return string.Empty;
+        }
+
+        nint uriPtr = GtkNative.WebkitWebViewGetUri(_webview);
+        return uriPtr == 0 ? string.Empty : Marshal.PtrToStringUTF8(uriPtr) ?? string.Empty;
     }
 
     // ------------------------------------------------------------------

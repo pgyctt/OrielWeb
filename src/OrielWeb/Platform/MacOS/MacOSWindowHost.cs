@@ -64,6 +64,10 @@ internal sealed class MacOSWindowHost : IWindowBackend
     private event Action? Closed;
     private event Action<string>? TitleChanged;
     private event Action<bool>? MaximizedChanged;
+    private event Action<string>? NavigationStarting;
+    private event Action<OrielNavigationCompletedEventArgs>? NavigationCompleted;
+    private event Action<OrielConsoleMessageEventArgs>? ConsoleMessage;
+    private event Action<OrielMessageReceivedEventArgs>? MessageReceived;
 
     internal MacOSWindowHost(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, MacOSPlatformBackend backend)
     {
@@ -89,8 +93,46 @@ internal sealed class MacOSWindowHost : IWindowBackend
     event Action? IWindowBackend.Closed { add => Closed += value; remove => Closed -= value; }
     event Action<string>? IWindowBackend.TitleChanged { add => TitleChanged += value; remove => TitleChanged -= value; }
     event Action<bool>? IWindowBackend.MaximizedChanged { add => MaximizedChanged += value; remove => MaximizedChanged -= value; }
+    event Action<string>? IWindowBackend.NavigationStarting { add => NavigationStarting += value; remove => NavigationStarting -= value; }
+    event Action<OrielNavigationCompletedEventArgs>? IWindowBackend.NavigationCompleted { add => NavigationCompleted += value; remove => NavigationCompleted -= value; }
+    event Action<OrielConsoleMessageEventArgs>? IWindowBackend.ConsoleMessage { add => ConsoleMessage += value; remove => ConsoleMessage -= value; }
+    event Action<OrielMessageReceivedEventArgs>? IWindowBackend.MessageReceived { add => MessageReceived += value; remove => MessageReceived -= value; }
 
     public bool IsMaximized => ObjCRuntime.SendBoolRet(_nsWindow, ObjCRuntime.Sel("isZoomed"));
+
+    // ---- 导航操作（WKWebView 内建历史；无历史时调用是空操作）----
+    // _webview 在窗口销毁后被置 0，判空是必需的。
+
+    public bool CanGoBack => _webview != 0 && ObjCRuntime.SendBoolRet(_webview, ObjCRuntime.Sel("canGoBack"));
+    public bool CanGoForward => _webview != 0 && ObjCRuntime.SendBoolRet(_webview, ObjCRuntime.Sel("canGoForward"));
+
+    public void GoBack()
+    {
+        if (_webview != 0)
+        {
+            ObjCRuntime.SendVoid(_webview, ObjCRuntime.Sel("goBack"));
+        }
+    }
+
+    public void GoForward()
+    {
+        if (_webview != 0)
+        {
+            ObjCRuntime.SendVoid(_webview, ObjCRuntime.Sel("goForward"));
+        }
+    }
+
+    public void Reload()
+    {
+        if (_webview != 0)
+        {
+            ObjCRuntime.SendVoid(_webview, ObjCRuntime.Sel("reload"));
+        }
+    }
+
+    public void PostToUiThread(Action action) => _backend.PostToMainThread(action);
+
+    public void EmitEvent(string name, string jsonPayload) => PushEventOnUi(name, jsonPayload);
 
     // ------------------------------------------------------------------
     // 创建
@@ -155,7 +197,7 @@ internal sealed class MacOSWindowHost : IWindowBackend
         var userScript = ObjCRuntime.SendIdObjNintBool(
             ObjCRuntime.SendId(clsWKUserScript, ObjCRuntime.Sel("alloc")),
             ObjCRuntime.Sel("initWithSource:injectionTime:forMainFrameOnly:"),
-            ObjCRuntime.MakeNSString(MacOSBridgeJs.Script),
+            ObjCRuntime.MakeNSString(MacOSBridgeJs.Build(_options.ConsoleForwarding)),
             0, // WKUserScriptInjectionTimeAtDocumentStart
             true);
         ObjCRuntime.SendVoidObj(userContentController, ObjCRuntime.Sel("addUserScript:"), userScript);
@@ -305,7 +347,16 @@ internal sealed class MacOSWindowHost : IWindowBackend
         _backend.OnWindowDestroyed();
     }
 
-    internal void OnNavigationCompleted(bool success)
+    internal void OnNavigationStarted()
+    {
+        RaiseNavigationStarting(CurrentUri());
+    }
+
+    /// <summary>
+    /// 导航结束（成功或失败）。失败由 WKNavigationDelegate 的 didFail* 回调传来，
+    /// 带 NSError 压成的一行文本。
+    /// </summary>
+    internal void OnNavigationCompleted(bool success, string? error = null)
     {
         if (success)
         {
@@ -315,7 +366,15 @@ internal sealed class MacOSWindowHost : IWindowBackend
             SyncMaximizedState(force: true);
         }
 
-        if (success && !_loadedRaised)
+        // 失败时 webView.URL 仍然指向旧文档（取不到失败地址），所以失败一律给空串 URL。
+        RaiseNavigationCompleted(new OrielNavigationCompletedEventArgs(
+            success, success ? CurrentUri() : string.Empty, error));
+        if (!success)
+        {
+            return;
+        }
+
+        if (!_loadedRaised)
         {
             _loadedRaised = true;
             Loaded?.Invoke();
@@ -568,6 +627,44 @@ internal sealed class MacOSWindowHost : IWindowBackend
     {
         _title = title;
         TitleChanged?.Invoke(title);
+    }
+
+    internal void RaiseNavigationStarting(string url)
+    {
+        NavigationStarting?.Invoke(url);
+        PushEventOnUi("navigation.starting", $"{{\"url\":{JsonText.EncodeString(url)}}}");
+    }
+
+    internal void RaiseNavigationCompleted(OrielNavigationCompletedEventArgs args)
+    {
+        NavigationCompleted?.Invoke(args);
+        string error = args.Error is null ? "null" : JsonText.EncodeString(args.Error);
+        PushEventOnUi(
+            "navigation.completed",
+            $"{{\"success\":{(args.Success ? "true" : "false")},\"url\":{JsonText.EncodeString(args.Url)},\"error\":{error}}}");
+    }
+
+    internal void RaiseConsoleMessage(string level, string text)
+        => ConsoleMessage?.Invoke(new OrielConsoleMessageEventArgs(level, text));
+
+    internal void RaiseMessageReceived(string name, string json)
+        => MessageReceived?.Invoke(new OrielMessageReceivedEventArgs(name, json));
+
+    /// <summary>当前文档 URL（NSURL 的 absoluteString）；销毁后或取不到时返回空串。</summary>
+    private string CurrentUri()
+    {
+        if (_webview == 0)
+        {
+            return string.Empty;
+        }
+
+        nint url = ObjCRuntime.SendId(_webview, ObjCRuntime.Sel("URL"));
+        if (url == 0)
+        {
+            return string.Empty;
+        }
+
+        return ObjCRuntime.ToManagedString(ObjCRuntime.SendId(url, ObjCRuntime.Sel("absoluteString"))) ?? string.Empty;
     }
 
     void IWindowBackend.ShowMessageBox(string text, string? title, OrielMessageBoxIcon icon)

@@ -8,7 +8,9 @@ namespace OrielWeb.Platform.Linux;
 /// </summary>
 internal static class LinuxBridgeJs
 {
-    public static readonly string Script = OrielBridgeTemplate.Create(
+    /// <summary>按窗口选项生成注入脚本（<paramref name="forwardConsole"/> 见 <see cref="OrielWindowOptions.ConsoleForwarding"/>）。</summary>
+    public static string Build(bool forwardConsole) => OrielBridgeTemplate.Create(
         "'linux'",
-        "window.webkit.messageHandlers.oriel.postMessage(JSON.stringify(obj))");
+        "window.webkit.messageHandlers.oriel.postMessage(JSON.stringify(obj))",
+        forwardConsole);
 }

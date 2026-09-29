@@ -175,6 +175,38 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+section "阶段 B 自检：导航与 IPC（机器断言）"
+# 放在观察窗之前：自检自己驱动页面（跳转 / 后退 / 前进 / 刷新 / 失败、console 转发、
+# postMessage、EmitEvent 闭环），跑完自己关窗退出，退出码即结论，与后面的观察窗互不干扰。
+# 这里不用 timeout：macOS 自带的是 BSD 用户态，没有 GNU coreutils 的 timeout。
+# 自检自身有看门狗（nav 90s / ipc 30s），下面的等待循环只是兜底。
+SELFTEST_FAILED=0
+for mode in nav ipc; do
+    selftest_log="$OUT/selftest-$mode.log"
+    "$APP_EXE" "--$mode-selftest" >"$selftest_log" 2>&1 &
+    selftest_pid=$!
+    waited=0
+    while kill -0 "$selftest_pid" 2>/dev/null && (( waited < 150 )); do
+        sleep 1
+        waited=$((waited + 1))
+    done
+    if kill -0 "$selftest_pid" 2>/dev/null; then
+        kill -9 "$selftest_pid" 2>/dev/null || true
+        selftest_code=124
+    else
+        wait "$selftest_pid"
+        selftest_code=$?
+    fi
+
+    selftest_verdict="$(grep -E '^(NAV|IPC)-SELFTEST: ' "$selftest_log" | tail -1 || true)"
+    echo "  [$mode] 退出码=${selftest_code} 结论=${selftest_verdict:-无}"
+    if (( selftest_code != 0 )); then
+        SELFTEST_FAILED=1
+        grep -E '^  - ' "$selftest_log" | sed 's/^/    /' || true
+    fi
+done
+
+# ---------------------------------------------------------------------------
 section "运行取证（观察窗 ${OBSERVE_SECONDS}s）"
 echo "启动：${APP_EXE}"
 echo "请观察截图产物，确认页面右下角徽章为「IPC 已连接」（本脚本无法机器判定这一项）"
@@ -336,6 +368,7 @@ fi
 wait "$APP_PID" 2>/dev/null || true
 
 section "结果汇总"
+echo "导航/IPC 自检        : $([[ $SELFTEST_FAILED -eq 0 ]] && echo "通过（nav + ipc）" || echo "未通过，见 selftest-*.log")"
 echo "进程存活至观察窗结束 : $([[ $ALIVE -eq 1 ]] && echo 是 || echo 否)"
 if [[ -n "$EXIT_CODE" ]]; then
     echo "进程退出码           : ${EXIT_CODE}"
@@ -369,16 +402,18 @@ exit_code=0
 [[ $ALIVE -eq 1 ]] || exit_code=1
 [[ $WEBKIT_SEEN -eq 1 ]] || exit_code=1
 [[ -n "$WINDOW_LINE" ]] || exit_code=1
+[[ $SELFTEST_FAILED -eq 0 ]] || exit_code=1
 
 echo
 if [[ $exit_code -eq 0 ]]; then
-    echo "机器判定：PASS（进程存活 + WebContent 子进程 + 窗口存在）"
+    echo "机器判定：PASS（导航/IPC 自检 + 进程存活 + WebContent 子进程 + 窗口存在）"
     echo "待人工确认：截图 $OUT/shot-final.png 里的页面渲染、中文与徽章是否为「IPC 已连接」"
 else
     echo "机器判定：FAIL"
     [[ $ALIVE -eq 0 ]] || echo "  - 进程在观察窗结束前就退出了，看上面的进程输出"
     [[ $WEBKIT_SEEN -eq 0 ]] && echo "  - 全程没有出现 WebContent 子进程（webview 没有真正开始加载页面）"
     [[ -z "$WINDOW_LINE" ]] && echo "  - 未枚举到标题含 \"$WINDOW_TITLE_PATTERN\" 的窗口"
+    [[ $SELFTEST_FAILED -eq 0 ]] || echo "  - 导航/IPC 自检未通过（见 $OUT/selftest-*.log）"
 fi
 
 echo

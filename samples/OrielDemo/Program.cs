@@ -25,6 +25,12 @@ internal static class Program
         var hidden = args.Contains("--hidden");
         // --icon <path>：设置窗口图标（Windows/Linux 是窗口图标，macOS 会落到 Dock 图标）
         var icon = GetOptionValue(args, "--icon");
+        // --nav-selftest：无人交互的导航自检（跳转 → 后退 → 前进 → 刷新 → 失败导航），
+        // 打印 NAV-SELFTEST 结论并以退出码表达成败——CI 据此把导航行为变成机器断言。
+        var navSelfTest = args.Contains("--nav-selftest");
+        // --ipc-selftest：无人交互的 IPC 自检（页面 console → 宿主、页面 postMessage → 宿主、
+        // 宿主 EmitEvent → 页面 → 回显宿主）。它会顺带打开 ConsoleForwarding。
+        var ipcSelfTest = args.Contains("--ipc-selftest");
 
         Oriel.CreateBuilder(args)
             .UseEmbeddedAssets()
@@ -43,13 +49,35 @@ internal static class Program
                 {
                     w.WithIcon(icon);
                 }
+                if (ipcSelfTest)
+                {
+                    // 默认关闭（见选项说明）；自检需要它才能收到页面的 console 输出。
+                    w.WithConsoleForwarding();
+                }
                 w.WithTitle("Oriel Demo — Todo")
                     .WithSize(1024, 720)
                     .WithMinSize(640, 480)
                     .WithFrameless()
                     .Centered();
-            }, win => Window = win)
+            }, win =>
+            {
+                Window = win;
+                if (navSelfTest)
+                {
+                    NavSelfTest.Attach(win);
+                }
+                if (ipcSelfTest)
+                {
+                    IpcSelfTest.Attach(win);
+                }
+            })
             .Run();
+
+        // 自检的结论已在运行期打印，这里只把成败映射到进程退出码（CI 的冒烟脚本据此判定）。
+        if ((navSelfTest && NavSelfTest.Failed) || (ipcSelfTest && IpcSelfTest.Failed))
+        {
+            Environment.ExitCode = 1;
+        }
     }
 
     /// <summary>

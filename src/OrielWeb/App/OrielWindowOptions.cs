@@ -31,6 +31,13 @@ public sealed class OrielWindowOptions
     /// </summary>
     public string? Icon { get; set; }
 
+    /// <summary>
+    /// 是否把页面的 console 输出转发给宿主（<see cref="WebviewWindow.ConsoleMessage"/> 事件）。
+    /// 默认关闭：注入的 hook 会包装页面的 console 方法（改变其可观测行为，如 <c>console.log.toString()</c>），
+    /// 且高频输出会变成持续的 IPC 流量。开发/调试时打开它能看到页面的日志。
+    /// </summary>
+    public bool ConsoleForwarding { get; set; }
+
     public OrielWindowOptions WithTitle(string title) { Title = title; return this; }
     public OrielWindowOptions WithSize(int width, int height) { Width = width; Height = height; return this; }
     public OrielWindowOptions WithMinSize(int width, int height) { MinWidth = width; MinHeight = height; return this; }
@@ -47,4 +54,7 @@ public sealed class OrielWindowOptions
 
     /// <summary>设置窗口图标；平台差异见 <see cref="Icon"/>。</summary>
     public OrielWindowOptions WithIcon(string path) { Icon = path; return this; }
+
+    /// <summary>开启/关闭 console 转发；见 <see cref="ConsoleForwarding"/>。</summary>
+    public OrielWindowOptions WithConsoleForwarding(bool enabled = true) { ConsoleForwarding = enabled; return this; }
 }

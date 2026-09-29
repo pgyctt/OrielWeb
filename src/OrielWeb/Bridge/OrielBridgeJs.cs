@@ -6,7 +6,9 @@ namespace OrielWeb;
 /// </summary>
 internal static class OrielBridgeJs
 {
-    public static readonly string Script = OrielBridgeTemplate.Create(
+    /// <summary>按窗口选项生成注入脚本（<paramref name="forwardConsole"/> 见 <see cref="OrielWindowOptions.ConsoleForwarding"/>）。</summary>
+    public static string Build(bool forwardConsole) => OrielBridgeTemplate.Create(
         "'windows'",
-        "window.chrome.webview.postMessage(obj)");
+        "window.chrome.webview.postMessage(obj)",
+        forwardConsole);
 }

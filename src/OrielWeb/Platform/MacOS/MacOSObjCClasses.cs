@@ -195,6 +195,7 @@ internal static unsafe class MacOSObjCClasses
     private static nint BuildNavigationDelegate()
     {
         var cls = ObjCRuntime.objc_allocateClassPair(ObjCRuntime.GetClass("NSObject"), "OrielNavigationDelegate", 0);
+        AddMethod(cls, "webView:didStartProvisionalNavigation:", &DidStartProvisionalNavigation, "v@:@@");
         AddMethod(cls, "webView:didFinishNavigation:", &DidFinishNavigation, "v@:@@");
         AddMethod(cls, "webView:didFailNavigation:withError:", &DidFailNavigation, "v@:@@@");
         AddMethod(cls, "webView:didFailProvisionalNavigation:withError:", &DidFailProvisionalNavigation, "v@:@@@");
@@ -221,13 +222,30 @@ internal static unsafe class MacOSObjCClasses
     }
 
     [UnmanagedCallersOnly]
+    private static nint DidStartProvisionalNavigation(nint self, nint sel, nint webview, nint navigation)
+    {
+        try
+        {
+            if (NavigationDelegateStates.TryGetValue(self, out var host))
+            {
+                host.OnNavigationStarted();
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[OrielWeb] didStartProvisionalNavigation: 抛出异常：{ex}");
+        }
+        return 0;
+    }
+
+    [UnmanagedCallersOnly]
     private static nint DidFailNavigation(nint self, nint sel, nint webview, nint navigation, nint error)
     {
         try
         {
             if (NavigationDelegateStates.TryGetValue(self, out var host))
             {
-                host.OnNavigationCompleted(success: false);
+                host.OnNavigationCompleted(success: false, error: DescribeNSError(error));
             }
         }
         catch (Exception ex)
@@ -244,7 +262,7 @@ internal static unsafe class MacOSObjCClasses
         {
             if (NavigationDelegateStates.TryGetValue(self, out var host))
             {
-                host.OnNavigationCompleted(success: false);
+                host.OnNavigationCompleted(success: false, error: DescribeNSError(error));
             }
         }
         catch (Exception ex)
@@ -252,6 +270,29 @@ internal static unsafe class MacOSObjCClasses
             System.Diagnostics.Debug.WriteLine($"[OrielWeb] didFailProvisionalNavigation: 抛出异常：{ex}");
         }
         return 0;
+    }
+
+    /// <summary>
+    /// 把 NSError 压成一行文本（"domain: localizedDescription"）。取的是 ObjC 对象的属性而非
+    /// 结构体字段，因此不依赖 NSError 的内存布局。error 为 0（无错误对象）时返回 null。
+    /// </summary>
+    private static string? DescribeNSError(nint error)
+    {
+        if (error == 0)
+        {
+            return null;
+        }
+
+        string? domain = ObjCRuntime.ToManagedString(ObjCRuntime.SendId(error, ObjCRuntime.Sel("domain")));
+        string? description = ObjCRuntime.ToManagedString(
+            ObjCRuntime.SendId(error, ObjCRuntime.Sel("localizedDescription")));
+
+        if (string.IsNullOrEmpty(description))
+        {
+            return string.IsNullOrEmpty(domain) ? null : domain;
+        }
+
+        return string.IsNullOrEmpty(domain) ? description : $"{domain}: {description}";
     }
 
     // ---- 主线程泵（performSelectorOnMainThread 的接收端）----

@@ -54,6 +54,8 @@ internal static unsafe class LinuxSignalHandlers
             (delegate* unmanaged<nint, nint, nint, int>)&OnWindowStateEventTrampoline, 0, 0, 0);
         GtkNative.GSignalConnectData(webview, "load-changed",
             (delegate* unmanaged<nint, int, nint, void>)&OnLoadChangedTrampoline, 0, 0, 0);
+        GtkNative.GSignalConnectData(webview, "load-failed",
+            (delegate* unmanaged<nint, int, nint, nint, nint, void>)&OnLoadFailedTrampoline, 0, 0, 0);
         GtkNative.GSignalConnectData(webview, "notify::title",
             (delegate* unmanaged<nint, nint, nint, void>)&OnTitleNotifyTrampoline, 0, 0, 0);
         GtkNative.GSignalConnectData(userContentManager, "script-message-received::oriel",
@@ -122,7 +124,18 @@ internal static unsafe class LinuxSignalHandlers
     {
         try
         {
-            if (WebviewStates.TryGetValue(webview, out var host) && loadEvent == 3 /*WEBKIT_LOAD_FINISHED*/)
+            if (!WebviewStates.TryGetValue(webview, out var host))
+            {
+                return;
+            }
+
+            // WEBKIT_LOAD_STARTED = 0、WEBKIT_LOAD_FINISHED = 3。中间两个事件
+            // （REDIRECTED / COMMITTED）刻意不上报：门面只暴露"开始 / 完成 / 失败"三态。
+            if (loadEvent == 0)
+            {
+                host.OnLoadStarted();
+            }
+            else if (loadEvent == 3)
             {
                 host.OnLoadFinished();
             }
@@ -131,6 +144,44 @@ internal static unsafe class LinuxSignalHandlers
         {
             // 异常不外泄
         }
+    }
+
+    /// <summary>
+    /// WebKitGTK 的 <c>load-failed</c>（整页加载失败，如地址不可达、TLS 失败）。
+    /// 信号签名：<c>(WebKitWebView*, WebKitLoadEvent, const gchar* failing_uri, GError* error, gpointer)</c>。
+    /// </summary>
+    [UnmanagedCallersOnly]
+    internal static void OnLoadFailedTrampoline(nint webview, int loadEvent, nint failingUri, nint error, nint data)
+    {
+        try
+        {
+            if (WebviewStates.TryGetValue(webview, out var host))
+            {
+                host.OnLoadFailed(
+                    failingUri == 0 ? string.Empty : Marshal.PtrToStringUTF8(failingUri) ?? string.Empty,
+                    GErrorMessage(error));
+            }
+        }
+        catch
+        {
+            // 异常不外泄
+        }
+    }
+
+    /// <summary>
+    /// 取 GError 的 message 字段。GError 的布局自 GLib 2.0 起未变：
+    /// <c>{ GQuark domain; gint code; gchar* message; }</c>——在 64 位平台上 message 位于偏移 8。
+    /// 不为此引入完整的结构体映射，只需要这一个字段。
+    /// </summary>
+    private static string? GErrorMessage(nint error)
+    {
+        if (error == 0)
+        {
+            return null;
+        }
+
+        nint messagePtr = Marshal.ReadIntPtr(error, 8);
+        return messagePtr == 0 ? null : Marshal.PtrToStringUTF8(messagePtr);
     }
 
     [UnmanagedCallersOnly]

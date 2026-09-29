@@ -133,6 +133,15 @@ jobs:
         # 它们不影响判定，最终以脚本末尾的机器结论为准。
         run: xvfb-run -a bash tools/verify-linux.sh --backend x11 --out "$RUNNER_TEMP/linux-verify-out"
 
+      - name: Navigation & IPC self-tests
+        # 阶段 B 的机器断言：导航（跳转 / 后退 / 前进 / 刷新 / 失败）与 IPC（console 转发、
+        # postMessage、EmitEvent 闭环）。它们不依赖人眼，退出码即结论。xvfb 里没有窗口管理器，
+        # 但导航与 IPC 都不经过 WM，所以在这条路径上有效。产物路径与 verify-linux.sh 的发布位置一致。
+        run: |
+          demo=samples/OrielDemo/bin/Release/net10.0/linux-x64/publish/OrielDemo
+          xvfb-run -a "$demo" --nav-selftest
+          xvfb-run -a "$demo" --ipc-selftest
+
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -168,6 +177,17 @@ jobs:
           if ($p.HasExited) { throw "demo 启动后立即退出，ExitCode=$($p.ExitCode)" }
           Write-Output "OK: 进程存活，消息循环运行中"
           Stop-Process -Id $p.Id -Force
+
+      - name: Navigation & IPC self-tests
+        # 与 Linux 同款断言（见 smoke-linux 的说明）。自检跑完自己关窗退出，退出码即结论——
+        # 所以这里不用 Start-Process，直接调用并检查 $LASTEXITCODE。
+        shell: pwsh
+        run: |
+          $demo = "samples/OrielDemo/bin/Release/net10.0/win-x64/OrielDemo.exe"
+          & $demo --nav-selftest
+          if ($LASTEXITCODE -ne 0) { throw "nav-selftest 失败（退出码 $LASTEXITCODE）" }
+          & $demo --ipc-selftest
+          if ($LASTEXITCODE -ne 0) { throw "ipc-selftest 失败（退出码 $LASTEXITCODE）" }
 
   smoke-macos:
     runs-on: macos-latest

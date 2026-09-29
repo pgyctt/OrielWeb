@@ -208,6 +208,29 @@ internal static unsafe partial class GtkNative
     [LibraryImport(WebKit, EntryPoint = "webkit_web_view_get_title")]
     internal static partial nint WebkitWebViewGetTitle(nint webview);
 
+    // ---- 导航历史与重载 ----
+
+    [LibraryImport(WebKit, EntryPoint = "webkit_web_view_go_back")]
+    internal static partial void WebkitWebViewGoBack(nint webview);
+
+    [LibraryImport(WebKit, EntryPoint = "webkit_web_view_go_forward")]
+    internal static partial void WebkitWebViewGoForward(nint webview);
+
+    /// <summary>重新加载当前页面。</summary>
+    [LibraryImport(WebKit, EntryPoint = "webkit_web_view_reload")]
+    internal static partial void WebkitWebViewReload(nint webview);
+
+    /// <summary>是否有可后退/可前进的历史记录（返回 gboolean）。</summary>
+    [LibraryImport(WebKit, EntryPoint = "webkit_web_view_can_go_back")]
+    internal static partial int WebkitWebViewCanGoBack(nint webview);
+
+    [LibraryImport(WebKit, EntryPoint = "webkit_web_view_can_go_forward")]
+    internal static partial int WebkitWebViewCanGoForward(nint webview);
+
+    /// <summary>当前文档 URI（返回 gchar*，归 webview 所有，不要释放）。</summary>
+    [LibraryImport(WebKit, EntryPoint = "webkit_web_view_get_uri")]
+    internal static partial nint WebkitWebViewGetUri(nint webview);
+
     [LibraryImport(WebKit, EntryPoint = "webkit_web_view_evaluate_javascript", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void WebkitWebViewEvaluateJavaScript(nint webview, string script, nint length, nint worldName, nint sourceUri, nint cancellable, nint callback, nint userData);
 

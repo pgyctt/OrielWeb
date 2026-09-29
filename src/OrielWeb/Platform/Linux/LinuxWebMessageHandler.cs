@@ -42,6 +42,15 @@ internal sealed class LinuxWebMessageHandler : IIpcReplySink
                 case "evalResult":
                     CompleteEval(root);
                     break;
+                case "console":
+                    // 只有窗口选项打开了 console 转发，注入的桥接脚本才会发这类消息
+                    _host.RaiseConsoleMessage(ReadString(root, "level"), ReadString(root, "text"));
+                    break;
+                case "message":
+                    _host.RaiseMessageReceived(
+                        ReadString(root, "name"),
+                        root.TryGetProperty("payload", out var payload) ? payload.GetRawText() : "null");
+                    break;
             }
         }
         catch (JsonException)
@@ -85,6 +94,12 @@ internal sealed class LinuxWebMessageHandler : IIpcReplySink
     }
 
     internal void RegisterEval(int id, TaskCompletionSource<string> completion) => _pendingEvals[id] = completion;
+
+    /// <summary>读字符串属性；缺失或类型不符时返回空串（页面数据不可信，一律按可缺席处理）。</summary>
+    private static string ReadString(JsonElement root, string name)
+        => root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() ?? string.Empty
+            : string.Empty;
 
     // ---- IIpcReplySink（IPC 回执）：GTK 主线程约束 ----
 

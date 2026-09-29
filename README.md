@@ -9,6 +9,9 @@
 - **零反射 IPC**：`[OrielCommand]` + Roslyn 源生成器在编译期生成分发代码，`[ModuleInitializer]` 自动注册，运行期零反射
 - **Native AOT**：全局 `IsAotCompatible`/`IsTrimmable`，发布为原生单文件可执行文件（WebView2 的运行时加载器已内嵌，无需旁文件）
 - **无边框窗口**：自绘标题栏 + 流式/原生拖动 + 最大化/全屏/置顶切换
+- **导航与双向通信**：前进/后退/刷新 + 导航事件（开始/完成/失败，带错误信息）、页面 console 转发、
+  `EmitEvent(name, payload)` 推事件、`oriel.postMessage` 收消息——三条通道都能在无头环境里机器断言
+  （见 `--nav-selftest` / `--ipc-selftest`）
 - **系统 webview**：Windows 用 WebView2、macOS 用 WKWebView、Linux 用 WebKitGTK——不捆绑浏览器内核
 
 ## 快速开始
@@ -144,6 +147,72 @@ Windows 上这一点由 **Composition 宿主**保证：窗口以 `WS_EX_NOREDIRE
 代价是组合托管的 WebView 收不到系统输入，鼠标消息由宿主转发（键盘不需要）。
 详见 `docs/DECISIONS.md` 中的设计记录。
 
+## 导航与页面通信
+
+**导航**：`GoBack()` / `GoForward()` / `Reload()` 与 `CanGoBack` / `CanGoForward`，语义与各平台原生
+webview 一致（无历史时调用是空操作）。
+
+```csharp
+window.GoBack();
+window.Reload();
+bool canGoBack = window.CanGoBack;
+
+window.NavigationStarting += url => { /* 新文档开始加载 */ };
+window.NavigationCompleted += e =>         // 成功与失败都触发
+{
+    if (!e.Success) { Console.WriteLine($"加载失败：{e.Url} → {e.Error}"); }
+};
+```
+
+页面侧对应两个事件（页内跳转与刷新同样触发）：
+
+```js
+oriel.on('navigation.starting', (e) => console.log('开始加载', e.url));
+oriel.on('navigation.completed', (e) => { if (!e.success) showError(e.error); });
+```
+
+**三条 IPC 通道**：
+
+| 方向 | API | 语义 |
+|---|---|---|
+| 页面 → 宿主（要结果） | `oriel.invoke(name, args)` / `[OrielCommand]` | 零反射命令路由，有回执与超时 |
+| 页面 → 宿主（不要结果） | `oriel.postMessage(name, payload)` / `MessageReceived` | 单向通知，不等回执 |
+| 宿主 → 页面 | `EmitEvent(name, payload)` / `oriel.on(name, handler)` | 自定义事件 |
+| 页面 console → 宿主 | `WithConsoleForwarding()` / `ConsoleMessage` | 默认关闭，见下 |
+
+```csharp
+// 宿主 → 页面：payload 已是 JSON 文本（库只投递，不解析也不改写）
+window.EmitEvent("todo.changed", """{"count":3}""");
+
+// 或者直接传对象，用 STJ 类型信息序列化（源生成上下文导出，Native AOT 安全）
+window.EmitEvent("sys.info", info, AppJsonContext.Default.SysInfo);
+
+// 页面 → 宿主的单向消息
+window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
+```
+
+**console 转发默认关闭**（`WithConsoleForwarding()` 打开）：注入的 hook 会包装页面的 console 方法
+（改变其可观测行为，例如 `console.log.toString()`），且高频输出会变成持续的 IPC 流量。开发时打开它，
+就能在宿主侧直接看到页面日志。
+
+**跨 `await` 之后要回 UI 线程**：`await` 的续体不在 UI 线程上，而 GTK（Linux）与 AppKit（macOS）只允许在
+各自的主线程调用窗口 API——从线程池调用会直接崩。用 `PostToUiThread` 回到 UI 线程再碰窗口：
+
+```csharp
+await window.EvaluateJs("document.body.dataset.ready = '1'");
+window.PostToUiThread(() => window.SetTitle("页面已就绪"));   // 必须回 UI 线程
+```
+
+### 这两块能力怎么验证
+
+`samples/OrielDemo` 带两个自检开关，**不需要人眼**——它们自己驱动页面、打印结论，并以进程退出码表达成败
+（CI 的三平台冒烟都会跑）：
+
+```bash
+OrielDemo --nav-selftest    # 跳转 → 后退 → 前进 → 刷新 → 加载失败（含错误信息）
+OrielDemo --ipc-selftest    # console 转发、postMessage、EmitEvent 闭环（推送 → 页面回显 → 收回）
+```
+
 ## 构建
 
 ```bash
@@ -275,6 +344,8 @@ WebView2 的运行需要微软的 `WebView2Loader.dll`。官方只有两条路�
   因此**命令方法必须线程安全**——并发 invoke 可能同时进入同一方法。
 - 命令执行发生在**后台线程**（不阻塞 UI 消息循环）；回执由分发器切回 UI 线程后投递。
 - 命令内需要操作 UI 时，请经 `OrielApp.PostToMainThread(...)` 切回主线程。
+- 应用自己的异步流程同理：`await` 之后不在 UI 线程，碰窗口前要经 `WebviewWindow.PostToUiThread(...)`
+  （原因见「导航与页面通信」）。
 - 反例：`samples/OrielDemo` 的 `TodoCommands` 直接读写 `List<T>` 与 `_nextId++`，并发下并不安全；
   示例为保持简洁如此编写，实际项目请自行加锁或改用线程安全结构。
 

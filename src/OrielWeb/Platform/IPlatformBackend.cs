@@ -11,6 +11,14 @@ internal interface IWindowBackend
     event Action<string>? TitleChanged;
     /// <summary>窗口最大化状态变化（用户拖边框最大化、双击标题栏等原生路径也会触发）。</summary>
     event Action<bool>? MaximizedChanged;
+    /// <summary>导航开始（新文档开始加载）；参数为即将加载的 URL（平台未提供时为空串）。</summary>
+    event Action<string>? NavigationStarting;
+    /// <summary>导航完成——成功与失败都走这里，失败时带错误信息。页面内跳转与整页刷新同样触发。</summary>
+    event Action<OrielNavigationCompletedEventArgs>? NavigationCompleted;
+    /// <summary>页面 console 输出（需窗口选项打开 console 转发）。</summary>
+    event Action<OrielConsoleMessageEventArgs>? ConsoleMessage;
+    /// <summary>页面经 <c>oriel.postMessage(name, payload)</c> 发来的消息。</summary>
+    event Action<OrielMessageReceivedEventArgs>? MessageReceived;
 
     /// <summary>当前是否处于最大化状态。</summary>
     bool IsMaximized { get; }
@@ -49,6 +57,26 @@ internal interface IWindowBackend
     bool ToggleFullscreen();
     /// <summary>置顶切换，返回切换后是否置顶。</summary>
     bool ToggleOnTop();
+
+    /// <summary>是否有可后退的历史记录。</summary>
+    bool CanGoBack { get; }
+    /// <summary>是否有可前进的历史记录。</summary>
+    bool CanGoForward { get; }
+    /// <summary>后退一页（无历史时为空操作）。</summary>
+    void GoBack();
+    /// <summary>前进一页（无历史时为空操作）。</summary>
+    void GoForward();
+    /// <summary>重新加载当前页面。</summary>
+    void Reload();
+
+    /// <summary>
+    /// 把动作切回 UI 线程执行（已在 UI 线程则直接执行）。
+    /// 用于跨 <c>await</c> 之后碰窗口：await 的续体会落到线程池，而 GTK/AppKit 只能在各自的主线程调用。
+    /// </summary>
+    void PostToUiThread(Action action);
+
+    /// <summary>向页面推送自定义事件（页面侧 <c>oriel.on(name, …)</c> 接收）；jsonPayload 必须是合法 JSON 文本。</summary>
+    void EmitEvent(string name, string jsonPayload);
 
     Task<string> ExecuteScriptAsync(string script);
     void PostMessageAsJson(string json);

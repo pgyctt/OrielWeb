@@ -29,11 +29,15 @@ const bridges = [
 
 const template = readFileSync(join(repoRoot, templatePath), 'utf8');
 
-/** 复现 C# 侧的两次占位符替换，得到该平台真正被注入的脚本。 */
-function buildScript(bridge) {
+/**
+ * 复现 C# 侧的三次占位符替换，得到该平台真正被注入的脚本。
+ * forwardConsole 对应 OrielWindowOptions.ConsoleForwarding（默认关闭）。
+ */
+function buildScript(bridge, { forwardConsole = false } = {}) {
     const script = template
         .replaceAll('__ORIEL_PLATFORM__', `'${bridge.platform}'`)
-        .replaceAll('__ORIEL_POST__', bridge.post);
+        .replaceAll('__ORIEL_POST__', bridge.post)
+        .replaceAll('__ORIEL_CONSOLE_ENABLED__', forwardConsole ? 'true' : 'false');
     assert.ok(!script.includes('__ORIEL_'), `${bridge.platform}：生成的脚本仍残留占位符`);
     return script;
 }
@@ -76,7 +80,15 @@ function createEnvironment(channel) {
         },
     };
 
-    return { window: windowStub, document: documentStub, posted, messageListeners, domListeners };
+    // console 桩：console 转发 hook 会包装它，因此不能让它落到 Node 的全局 console 上
+    // （否则会污染测试进程，且多平台用例会互相叠加包装）。记录调用以便断言"原行为保留"。
+    const consoleCalls = [];
+    const consoleStub = {};
+    for (const level of ['log', 'info', 'warn', 'error', 'debug']) {
+        consoleStub[level] = (...args) => consoleCalls.push({ level, args });
+    }
+
+    return { window: windowStub, document: documentStub, console: consoleStub, consoleCalls, posted, messageListeners, domListeners };
 }
 
 /** 加载桥接脚本。加载期的异常不抛出而是记录，便于单独断言"加载本身无异常"。 */
@@ -84,7 +96,8 @@ function loadBridge(script, channel) {
     const env = createEnvironment(channel);
     const EventStub = class { constructor(type) { this.type = type; } };
     try {
-        new Function('window', 'document', 'Event', script)(env.window, env.document, EventStub);
+        new Function('window', 'document', 'Event', 'console', script)(
+            env.window, env.document, EventStub, env.console);
     } catch (error) {
         env.loadError = error;
     }
@@ -136,11 +149,42 @@ function deliverEvent(env, name, value) {
 test('模板：占位符齐备', () => {
     assert.ok(template.includes('__ORIEL_PLATFORM__'), '模板缺少 __ORIEL_PLATFORM__');
     assert.ok(template.includes('__ORIEL_POST__'), '模板缺少 __ORIEL_POST__');
+    assert.ok(template.includes('__ORIEL_CONSOLE_ENABLED__'), '模板缺少 __ORIEL_CONSOLE_ENABLED__');
     assert.ok(template.includes('window.__orielBridgeInstalled'), '模板缺少重复注入防护');
 });
 
 for (const bridge of bridges) {
     const label = `[${bridge.platform}]`;
+
+    test(`${label} postMessage：产生 __oriel:'message' 协议消息`, () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        env.window.oriel.postMessage('from-page', { n: 1 });
+        assert.equal(env.posted.length, 1);
+        assert.deepEqual(env.posted[0], { __oriel: 'message', name: 'from-page', payload: { n: 1 } });
+    });
+
+    test(`${label} postMessage：未给 payload 时投 null、空 name 立即抛出`, () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        env.window.oriel.postMessage('bare');
+        assert.deepEqual(env.posted[0], { __oriel: 'message', name: 'bare', payload: null });
+        assert.throws(() => env.window.oriel.postMessage(''), /postMessage/);
+    });
+
+    test(`${label} console 转发：开启后 console.* 送回宿主，原方法仍被调用`, () => {
+        const env = loadBridge(buildScript(bridge, { forwardConsole: true }), bridge.channel);
+        env.console.log('hello', 42);
+        const messages = env.posted.filter((m) => m && m.__oriel === 'console');
+        assert.equal(messages.length, 1, 'console.log 应产生一条 __oriel:console 消息');
+        assert.equal(messages[0].level, 'log');
+        assert.equal(messages[0].text, 'hello 42');
+        assert.equal(env.consoleCalls.length, 1, '原 console 方法应仍被调用');
+    });
+
+    test(`${label} console 转发：未开启时不产生 console 消息`, () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        env.console.log('silent');
+        assert.equal(env.posted.filter((m) => m && m.__oriel === 'console').length, 0);
+    });
 
     test(`${label} 就绪：脚本加载无异常且 window.oriel.ready 可 await`, async () => {
         const env = loadBridge(buildScript(bridge), bridge.channel);
