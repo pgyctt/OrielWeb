@@ -454,6 +454,26 @@ location.href = new URL('oriel-selftest-nonexistent-page.html', location.href).h
 平台上得到的反直觉结论，不要急着归因给环境**。这次若不是坚持在 Windows 上再跑一遍，就会把一个真实的
 构造缺陷当成"WSL 的怪癖"写进文档，还会把那个错误的做法固化进 CI。
 
+### 追加：三个引擎接受的"失败目标"各不相同（同日，macOS 真机）
+
+把自检接进 CI 之后，macOS 连续两轮都只失败一项——**第 6 步（失败导航）一个导航事件都没有**，
+连 `starting` 都没发出（看门狗 90 秒兜底）。逐步排查的结果：
+
+| 目标形式 | Windows（WebView2） | Linux（WebKitGTK） | macOS（WKWebView） |
+|---|---|---|---|
+| 跨协议 / 跨源绝对 URL（https 页面 → `file:///…`、file 页面 → `http://127.0.0.1:9/`） | 被改写成"重载首页并成功" | 同左 | — |
+| 页面内 `location.href = new URL(相对路径, location.href).href` | 正常失败 | 正常失败 | **静默无响应**：无事件、无报错 |
+| C# 拼的同源绝对 URL（指向不存在的文件） | 失败，`COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN` | 失败，`Error opening file …: No such file or directory` | **静默无响应**：`loadFileURL:allowingReadAccessToURL:` 的沙箱内，导航到不存在的文件被吞掉 |
+| 环回端口（`https://127.0.0.1:1/`） | — | — | 失败（CI run #18 通过） |
+
+**结论**："用一个不可达地址制造导航失败"没有三平台通用的写法——每个引擎都有自己接受的形态，
+也有它静默改写的形态（而且是**无报错**地改写）。自检因此不再赌单一目标，改为**候选列表逐个尝试**：
+同源缺失页 → 环回端口 1 → 保留 TLD 域名，每个给 15 秒，任一候选真的上报失败即通过，每次尝试都打进日志；
+被引擎改写成"成功"的候选会被记录并跳过，而不是当成"失败路径已验证"。
+
+**教训**：跨引擎的行为断言若依赖某个"大家都应该这样"的细节，往往只在一个平台上成立。把不确定的部分
+做成"多方案 + 打印过程"，比继续猜机制收敛得更快（这一处前后烧了 4 轮 CI，每轮约 4 分钟）。
+
 ### Linux 失败路径的两个实现要点
 
 1. **`load-failed` 之后必然还会来一次 `load-changed(FINISHED)`**（WebKitGTK 文档明确：错误页也要"加载完成"）。
