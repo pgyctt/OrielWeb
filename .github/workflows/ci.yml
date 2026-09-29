@@ -126,6 +126,9 @@ jobs:
         # timeout 的判定方式对"启动即崩溃"（非 124）与"卡死"（124）都能区分。
         # 注意：B-1（STA 检查）修复前本步骤必然失败——进程会因 Unix 上
         # ApartmentState 恒为 Unknown 直接抛异常退出，这是该缺陷的回归证据。
+        # 另两条输出是虚拟显示环境的预期噪音，不影响判定：dbind 的
+        # "org.a11y.Bus was not provided"（xvfb 里没有无障碍总线服务）、libEGL 的
+        # "DRI3 error: Could not get DRI3 device"（虚拟 X server 无 GPU，回落软件渲染）。
         run: |
           set +e
           timeout 20s xvfb-run -a dotnet run --project samples/OrielDemo -c Release -r linux-x64 --no-build
