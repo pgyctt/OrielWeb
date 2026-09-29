@@ -20,27 +20,58 @@ internal static class NavSelfTest
 {
     private const string AboutUrl = "about.html";
 
-    /// <summary>失败导航的目标文件名：与当前页面同目录、且必定不存在。</summary>
-    private const string UnreachablePageName = "oriel-selftest-nonexistent-page.html";
-
     /// <summary>
-    /// 由当前页 URL 推出同目录下那个不存在的页面地址。
+    /// 触发失败导航的目标候选，按顺序尝试，**任一候选真的上报失败即算通过**。
     /// </summary>
     /// <remarks>
-    /// 两条硬约束，都是实测换来的：
-    /// ① **必须与当前页面同源**。跨协议 / 跨源地改 <c>location</c>（例如从 <c>https://app.oriel/</c>
-    ///    跳到 <c>file:///…</c>）会被引擎按安全策略处理成别的导航——Windows（WebView2）与
-    ///    Linux（WebKitGTK）上都表现为"重新加载首页并上报成功"，而不是失败；
-    /// ② **在 C# 里拼成绝对地址**，沿用第 1~5 步已验证可行的 <c>location.href='&lt;绝对 URL&gt;'</c> 形式。
-    ///    曾试过在页面里写 <c>location.href = new URL(相对路径, location.href).href</c>：在 macOS 上
-    ///    它既不报错也没有任何导航事件（导航根本没发起），而同一目标由 C# 拼成绝对地址就没问题。
+    /// 为什么不赌单一形式：三个引擎对"不可达地址"的处理差异极大，且各自踩过坑——
+    /// 跨协议/跨源地改 <c>location</c>（如从 <c>https://app.oriel/</c> 跳到 <c>file:///…</c>）会被
+    /// 按安全策略改写成"重新加载首页并成功"（Windows、Linux 均实测）；页面里用
+    /// <c>new URL(相对路径, location.href)</c> 在 macOS 上静默无响应；而 macOS 用
+    /// <c>loadFileURL:allowingReadAccessToURL:</c> 加载的沙箱内，导航到不存在的文件同样无事件。
+    /// 占位 <c>{base}</c> 替换为刚完成那次导航的 URL 目录部分。
     /// </remarks>
-    private static string BuildUnreachableUrl(string currentUrl)
+    private static readonly string[] UnreachableCandidates =
+    [
+        "{base}oriel-selftest-nonexistent-page.html",   // 同源同目录但不存在（Windows 与 Linux 实测可行）
+        "https://127.0.0.1:1/oriel-selftest",           // 环回端口 1：连接必定被拒绝，不依赖 DNS 与同源
+        "https://oriel-selftest.invalid/page.html",     // RFC 6761 保留 TLD：域名必定解析失败
+    ];
+
+    /// <summary>取 URL 的目录部分（含末尾 '/'）；取不到时返回空串（候选里的 {base} 即退化为相对路径）。</summary>
+    private static string BuildBaseUrl(string url)
     {
-        int slash = currentUrl.LastIndexOf('/');
-        return slash < 0
-            ? UnreachablePageName
-            : string.Concat(currentUrl.AsSpan(0, slash + 1), UnreachablePageName);
+        int slash = url.LastIndexOf('/');
+        return slash < 0 ? string.Empty : url[..(slash + 1)];
+    }
+
+    /// <summary>
+    /// 试下一个候选目标：15 秒内没等到完成事件就换下一个。
+    /// 计时器在线程池触发，所以回调必须经 <see cref="WebviewWindow.PostToUiThread"/> 切回 UI 线程。
+    /// </summary>
+    private static void TryNextCandidate()
+    {
+        if (_candidateIndex >= UnreachableCandidates.Length)
+        {
+            Check(false, "没有任何候选目标产生导航失败事件（逐个尝试的过程见上方输出）");
+            Finish();
+            return;
+        }
+
+        string target = UnreachableCandidates[_candidateIndex].Replace("{base}", _baseUrl, StringComparison.Ordinal);
+        _candidateIndex++;
+        Console.WriteLine($"[nav-selftest] 尝试失败目标 #{_candidateIndex}：{target}");
+
+        _startingBeforeStep = Volatile.Read(ref _startingCount);
+        _step = 5;
+        _ = _window!.EvaluateJs($"location.href='{target}'");
+
+        _candidateTimer?.Dispose();
+        _candidateTimer = new Timer(
+            _ => _window?.PostToUiThread(TryNextCandidate),
+            null,
+            TimeSpan.FromSeconds(15),
+            Timeout.InfiniteTimeSpan);
     }
 
     private static readonly List<string> Failures = [];
@@ -48,9 +79,12 @@ internal static class NavSelfTest
 
     private static WebviewWindow? _window;
     private static Timer? _watchdog;
+    private static Timer? _candidateTimer;
     private static int _startingCount;
     private static int _startingBeforeStep;
     private static int _step;
+    private static int _candidateIndex;
+    private static string _baseUrl = string.Empty;
     private static bool _finished;
 
     /// <summary>自检是否失败——demo 的 Main 据此设置进程退出码。</summary>
@@ -158,17 +192,24 @@ internal static class NavSelfTest
                 case 4: // 刷新
                     CheckStartingSeen("刷新应触发 navigation.starting");
                     Check(args.Success, "刷新应成功");
-                    Advance();
-                    string unreachable = BuildUnreachableUrl(args.Url);
-                    // 打印出来：若再次出现"没有事件"，这一行能立刻区分"脚本没执行"还是"导航没发起"
-                    Console.WriteLine($"[nav-selftest] 触发失败导航：{unreachable}");
-                    _ = window.EvaluateJs($"location.href='{unreachable}'");
+                    _baseUrl = BuildBaseUrl(args.Url);
+                    _candidateIndex = 0;
+                    TryNextCandidate();
                     break;
 
-                case 5: // 不存在的同源页面
+                case 5: // 尝试一个应当失败的目标
+                    _candidateTimer?.Dispose();
+                    if (args.Success)
+                    {
+                        // 引擎把这次导航改写成了"成功"（例如跨源时重载了当前页）——换下一个候选，
+                        // 不能把这种结果当成"失败路径已验证"。
+                        Console.WriteLine("[nav-selftest] 该目标被引擎改写成了成功导航，换下一个候选");
+                        TryNextCandidate();
+                        break;
+                    }
+
                     // Linux 上加载失败后 WebKit 仍会渲染错误页并发一次 load-changed(FINISHED)，
                     // 实现里已抑制那一次"成功"上报，所以这里期望正好是一条失败。
-                    Check(!args.Success, "不存在的页面应上报失败");
                     Check(!string.IsNullOrEmpty(args.Error), "失败应带上错误信息");
                     Finish();
                     break;
@@ -218,6 +259,7 @@ internal static class NavSelfTest
         }
 
         _watchdog?.Dispose();
+        _candidateTimer?.Dispose();
 
         int failureCount;
         lock (Gate)
