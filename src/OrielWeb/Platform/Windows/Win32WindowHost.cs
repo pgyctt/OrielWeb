@@ -1083,7 +1083,7 @@ internal partial class Win32WindowHost : IWindowBackend
     // IPC（WebMessage 接收与回执见 Win32WebView2Ipc.cs，避免 async 与 unsafe 混用）
     // ------------------------------------------------------------------
 
-    internal OrielApp App => _app;
+    public OrielApp App => _app;
 
     internal WindowsPlatformBackend Backend => _backend;
 

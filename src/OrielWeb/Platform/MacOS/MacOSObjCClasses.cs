@@ -295,6 +295,51 @@ internal static unsafe class MacOSObjCClasses
         return string.IsNullOrEmpty(domain) ? description : $"{domain}: {description}";
     }
 
+    // ---- 主题观察者（NSDistributedNotificationCenter 的接收端）----
+
+    /// <summary>观察者实例 → 后端 的映射（通知回调需要找回后端实例）。</summary>
+    private static readonly ConcurrentDictionary<nint, MacOSPlatformBackend> ThemeObserverStates = [];
+
+    private static nint s_themeObserverClass;
+
+    /// <summary>
+    /// 建一个主题观察者实例。类只建一次（与 PumpHelper 同样的手工类对模式）。
+    /// </summary>
+    internal static nint CreateThemeObserver(MacOSPlatformBackend backend)
+    {
+        nint cls = s_themeObserverClass;
+        if (cls == 0)
+        {
+            cls = ObjCRuntime.objc_allocateClassPair(ObjCRuntime.GetClass("NSObject"), "OrielThemeObserver", 0);
+            AddMethod(cls, "orielThemeChanged:", &OnThemeChanged, "v@:@");
+            ObjCRuntime.objc_registerClassPair(cls);
+            s_themeObserverClass = cls;
+        }
+
+        nint observer = ObjCRuntime.SendId(
+            ObjCRuntime.SendId(cls, ObjCRuntime.Sel("alloc")), ObjCRuntime.Sel("init"));
+        ThemeObserverStates[observer] = backend;
+        return observer;
+    }
+
+    [UnmanagedCallersOnly]
+    private static nint OnThemeChanged(nint self, nint sel, nint notification)
+    {
+        try
+        {
+            if (ThemeObserverStates.TryGetValue(self, out var backend))
+            {
+                backend.RaiseThemeIfChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            // 异常不得穿越 ObjC 边界；主题同步失败不影响应用本身
+            System.Diagnostics.Debug.WriteLine($"[OrielWeb] orielThemeChanged: 抛出异常：{ex}");
+        }
+        return 0;
+    }
+
     // ---- 主线程泵（performSelectorOnMainThread 的接收端）----
 
     internal static readonly ConcurrentQueue<Action> MainThreadQueue = [];

@@ -87,6 +87,21 @@ internal static class Win32Constants
     public const int SM_CXSMICON = 49;
     public const int SM_CYSMICON = 50;
 
+    // ---- 系统主题 ----
+
+    public const uint WM_SETTINGCHANGE = 0x001A;
+    /// <summary>注册表根：HKEY_CURRENT_USER。</summary>
+    public static readonly nint HKEY_CURRENT_USER = unchecked((nint)0x80000001);
+    /// <summary>RegGetValue 的可接受类型：只要 REG_DWORD。</summary>
+    public const uint RRF_RT_REG_DWORD = 0x00000010;
+
+    // ---- 剪贴板 ----
+
+    /// <summary>剪贴板格式：UTF-16 文本。</summary>
+    public const uint CF_UNICODETEXT = 13;
+    /// <summary>GlobalAlloc 标志：可移动（剪贴板数据必须是可移动的全局内存块）。</summary>
+    public const uint GMEM_MOVEABLE = 0x0002;
+
     public const int MK_LBUTTON = 0x0001;
     public const int MK_RBUTTON = 0x0002;
     public const int MK_SHIFT = 0x0004;
@@ -446,6 +461,62 @@ internal static unsafe partial class Win32
 
     [LibraryImport("kernel32")]
     internal static partial uint GetCurrentThreadId();
+
+    // ---- 剪贴板（user32）----
+
+    [LibraryImport("user32", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool OpenClipboard(nint hwndNewOwner);
+
+    [LibraryImport("user32", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool CloseClipboard();
+
+    [LibraryImport("user32", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool EmptyClipboard();
+
+    [LibraryImport("user32", SetLastError = true)]
+    internal static partial nint GetClipboardData(uint format);
+
+    /// <summary>把全局内存块交给剪贴板。成功时所有权转移给系统（不要再释放）。</summary>
+    [LibraryImport("user32", SetLastError = true)]
+    internal static partial nint SetClipboardData(uint format, nint memory);
+
+    /// <summary>注册自定义剪贴板格式（如 "HTML Format"），返回格式 ID；同名重复注册返回同一个 ID。</summary>
+    [LibraryImport("user32", EntryPoint = "RegisterClipboardFormatW", StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial uint RegisterClipboardFormatW(string format);
+
+    // ---- 全局内存（kernel32）----
+
+    [LibraryImport("kernel32", SetLastError = true)]
+    internal static partial nint GlobalAlloc(uint flags, nuint bytes);
+
+    [LibraryImport("kernel32", SetLastError = true)]
+    internal static partial nint GlobalLock(nint memory);
+
+    [LibraryImport("kernel32", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool GlobalUnlock(nint memory);
+
+    [LibraryImport("kernel32", SetLastError = true)]
+    internal static partial nint GlobalFree(nint memory);
+
+    // ---- 注册表（advapi32）----
+
+    /// <summary>
+    /// 读注册表值。flags 用 <see cref="Win32Constants.RRF_RT_REG_DWORD"/> 限定类型；
+    /// 值不存在或类型不符时返回非 0（ERROR_*），此时 data 的内容无意义。
+    /// </summary>
+    [LibraryImport("advapi32", EntryPoint = "RegGetValueW", StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int RegGetValueW(
+        nint hkey,
+        string? subKey,
+        string? valueName,
+        uint flags,
+        nint type,
+        nint data,
+        ref uint dataSize);
 
     // ---- comdlg32 ----
 

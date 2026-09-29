@@ -16,6 +16,108 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
     public LinuxPlatformBackend()
     {
         GtkNative.GtkInit(0, 0);
+
+        // 主题：先记初值（否则"启动时已是深色"会漏报一次），再接上变化信号
+        _lastTheme = CurrentTheme;
+        nint settings = GtkNative.GtkSettingsGetDefault();
+        if (settings != 0)
+        {
+            LinuxSignalHandlers.ConnectThemeSignals(settings, this);
+        }
+    }
+
+    // ---- 系统主题 ----
+
+    /// <summary>GValue 在 64 位平台上的大小：GType（8）+ data 联合（2×8）= 24 字节。</summary>
+    private const int GValueSize = 24;
+
+    private OrielTheme _lastTheme = OrielTheme.Light;
+
+    public event Action<OrielTheme>? ThemeChanged;
+
+    public OrielTheme CurrentTheme => IsDarkTheme() ? OrielTheme.Dark : OrielTheme.Light;
+
+    /// <summary>重新读主题，变化了才上报（信号可能因任一属性变化而触发）。</summary>
+    internal void RaiseThemeIfChanged()
+    {
+        OrielTheme theme = CurrentTheme;
+        if (theme == _lastTheme)
+        {
+            return;
+        }
+
+        _lastTheme = theme;
+        ThemeChanged?.Invoke(theme);
+    }
+
+    /// <summary>
+    /// 判定当前是否为深色。两条依据任一成立即深色：
+    /// ① <c>gtk-application-prefer-dark-theme</c>（<c>GTK_THEME=Adwaita:dark</c> 这类会置真）；
+    /// ② 主题名里含 "dark"（Adwaita-dark / Yaru-dark / Breeze-Dark …）。
+    /// 只看主题名会在默认主题上漏判（名字通常不含 dark），所以两条都要看。
+    /// </summary>
+    private static bool IsDarkTheme()
+    {
+        // 依据 ①：GTK_THEME 环境变量（如 "Adwaita:dark"）。这是 GTK 认可的显式覆盖，也是 CI 里
+        // 「造两种值」的入口——它**不**会反映到下面两个属性上（实测过），所以要单独看。
+        string? envTheme = Environment.GetEnvironmentVariable("GTK_THEME");
+        if (envTheme is not null && envTheme.Contains("dark", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        nint settings = GtkNative.GtkSettingsGetDefault();
+        if (settings == 0)
+        {
+            return false;
+        }
+
+        // 依据 ②：gtk-application-prefer-dark-theme（桌面环境切深色时常走这条）
+        if (ReadSettingsBoolean(settings, "gtk-application-prefer-dark-theme"))
+        {
+            return true;
+        }
+
+        // 依据 ③：主题名里含 dark（Adwaita-dark / Yaru-dark / Breeze-Dark …）
+        string? name = ReadSettingsString(settings, "gtk-theme-name");
+        return name is not null && name.Contains("dark", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ReadSettingsBoolean(nint settings, string property)
+        => WithGValue(settings, property, "gboolean", value => GtkNative.GValueGetBoolean(value) != 0);
+
+    private static string? ReadSettingsString(nint settings, string property)
+        => WithGValue(settings, property, "gchararray", value =>
+        {
+            nint text = GtkNative.GValueGetString(value);
+            return text == 0 ? null : Marshal.PtrToStringUTF8(text);
+        });
+
+    /// <summary>
+    /// 经 GValue 读一个 GObject 属性的通用壳。GValue 必须先清零再 <c>g_value_init</c>，
+    /// 读完必须 <c>g_value_unset</c>（否则字符串类型会泄漏内部拷贝）。
+    /// </summary>
+    private static T WithGValue<T>(nint obj, string property, string typeName, Func<nint, T> read)
+    {
+        nint value = Marshal.AllocHGlobal(GValueSize);
+        try
+        {
+            Marshal.Copy(new byte[GValueSize], 0, value, GValueSize);
+            GtkNative.GValueInit(value, GtkNative.GTypeFromName(typeName));
+            try
+            {
+                GtkNative.GObjectGetProperty(obj, property, value);
+                return read(value);
+            }
+            finally
+            {
+                GtkNative.GValueUnset(value);
+            }
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(value);
+        }
     }
 
     public IWindowBackend CreateWindow(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory)

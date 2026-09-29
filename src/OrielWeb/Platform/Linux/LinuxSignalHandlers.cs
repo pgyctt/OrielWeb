@@ -44,6 +44,38 @@ internal static unsafe class LinuxSignalHandlers
 
     // ---- 信号连接 ----
 
+    /// <summary>GtkSettings → 后端 的映射（主题信号回调需要找回后端实例）。</summary>
+    private static readonly ConcurrentDictionary<nint, LinuxPlatformBackend> ThemeBackendStates = [];
+
+    /// <summary>
+    /// 连接主题相关信号。GtkSettings 是进程级单例，所以只连一次。
+    /// </summary>
+    internal static void ConnectThemeSignals(nint settings, LinuxPlatformBackend backend)
+    {
+        ThemeBackendStates[settings] = backend;
+        // 两条属性都要听：不同发行版/桌面表达深色的方式不同（见 LinuxPlatformBackend.IsDarkTheme）
+        GtkNative.GSignalConnectData(settings, "notify::gtk-theme-name",
+            (delegate* unmanaged<nint, nint, nint, void>)&OnThemeNotifyTrampoline, 0, 0, 0);
+        GtkNative.GSignalConnectData(settings, "notify::gtk-application-prefer-dark-theme",
+            (delegate* unmanaged<nint, nint, nint, void>)&OnThemeNotifyTrampoline, 0, 0, 0);
+    }
+
+    [UnmanagedCallersOnly]
+    internal static void OnThemeNotifyTrampoline(nint settings, nint pspec, nint data)
+    {
+        try
+        {
+            if (ThemeBackendStates.TryGetValue(settings, out var backend))
+            {
+                backend.RaiseThemeIfChanged();
+            }
+        }
+        catch
+        {
+            // 异常不外泄
+        }
+    }
+
     internal static void ConnectSignals(nint gtkWindow, nint webview, nint userContentManager)
     {
         GtkNative.GSignalConnectData(gtkWindow, "delete-event",

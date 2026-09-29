@@ -38,6 +38,53 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         // Win32 消息循环本身没有 SynchronizationContext：安装后，await 的续体会被 Post 回
         // UI 线程队列，这是 WebView2 生成绑定异步装配（Task 化）能正确工作的前提。
         Win32SynchronizationContext.Install(PostToMainThread);
+
+        // 主题：记下初值（否则"启动时已是深色"会漏报一次），并让静态 WndProc 能回调到本实例
+        // （消息窗口的 WndProc 必须是静态的，见 MessageWindowProc）。
+        _lastTheme = CurrentTheme;
+        s_current = this;
+    }
+
+    // ---- 系统主题 ----
+    // 应用级（而非窗口级）：主题是系统状态，与具体窗口无关。
+
+    private static WindowsPlatformBackend? s_current;
+    private OrielTheme _lastTheme = OrielTheme.Light;
+
+    public event Action<OrielTheme>? ThemeChanged;
+
+    public OrielTheme CurrentTheme => ReadAppsUseLightTheme() == 0 ? OrielTheme.Dark : OrielTheme.Light;
+
+    /// <summary>
+    /// 读 <c>HKCU\…\Themes\Personalize\AppsUseLightTheme</c>：1 = 浅色、0 = 深色。
+    /// 键不存在（旧系统或未设置）时返回 null，调用方按浅色处理。
+    /// </summary>
+    private static unsafe int? ReadAppsUseLightTheme()
+    {
+        uint size = sizeof(int);
+        int value = 0;
+        int status = Win32.RegGetValueW(
+            Win32Constants.HKEY_CURRENT_USER,
+            @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+            "AppsUseLightTheme",
+            Win32Constants.RRF_RT_REG_DWORD,
+            0,
+            (nint)(&value),
+            ref size);
+        return status == 0 ? value : null;
+    }
+
+    /// <summary>重新读主题，变化了才上报（去重：WM_SETTINGCHANGE 会因很多原因发来）。</summary>
+    private void RaiseThemeIfChanged()
+    {
+        OrielTheme theme = CurrentTheme;
+        if (theme == _lastTheme)
+        {
+            return;
+        }
+
+        _lastTheme = theme;
+        ThemeChanged?.Invoke(theme);
     }
 
     // ---- IPlatformBackend ----
@@ -117,6 +164,18 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
             }
             return 0;
         }
+        if (message == Win32Constants.WM_SETTINGCHANGE)
+        {
+            // 主题切换会带 "ImmersiveColorSet" 参数；其它设置变化（环境变量、区域等）不理会
+            if (lParam != 0
+                && Marshal.PtrToStringUni(lParam) is { } changed
+                && changed.Contains("ImmersiveColorSet", StringComparison.OrdinalIgnoreCase))
+            {
+                s_current?.RaiseThemeIfChanged();
+            }
+            return Win32.DefWindowProcW(hwnd, message, wParam, lParam);
+        }
+
         return Win32.DefWindowProcW(hwnd, message, wParam, lParam);
     }
 

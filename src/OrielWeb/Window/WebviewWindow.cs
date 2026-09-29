@@ -94,6 +94,16 @@ public sealed class WebviewWindow
     internal IWindowBackend Backend => _backend ?? throw new InvalidOperationException(
         "窗口后端尚未初始化：请在 OrielAppBuilder.Run() 之后使用窗口能力。");
 
+    /// <summary>
+    /// 本窗口所属的应用，用来访问应用级能力（主题、单实例等）。
+    /// </summary>
+    /// <remarks>
+    /// 窗口事件回调（如 <c>OrielAppBuilder.AddWindow</c> 的 <c>onCreated</c>）里拿不到自己创建的
+    /// <see cref="OrielApp"/> 变量——那个赋值要等 <c>Build()/Run()</c> 返回。经窗口反查应用即可绕开
+    /// 这个先有鸡还是先有蛋的问题。
+    /// </remarks>
+    public OrielApp App => Backend.App;
+
     internal void Attach(IWindowBackend backend)
     {
         lock (_gate)
@@ -169,6 +179,24 @@ public sealed class WebviewWindow
 
     /// <summary>重新加载当前页面（会重新触发导航事件与 <see cref="Loaded"/> 之外的导航流程）。</summary>
     public void Reload() => Backend.Reload();
+
+    // ---- 剪贴板 ----
+
+    /// <summary>剪贴板文本；没有文本时返回 null。</summary>
+    public string? ClipboardText => Backend.GetClipboardText();
+
+    /// <summary>写入剪贴板文本（替换现有内容）。</summary>
+    public void SetClipboardText(string text) => Backend.SetClipboardText(text);
+
+    /// <summary>剪贴板 HTML；没有 HTML 时返回 null。</summary>
+    public string? ClipboardHtml => Backend.GetClipboardHtml();
+
+    /// <summary>
+    /// 写入剪贴板 HTML；同时写一份纯文本回退（<paramref name="plainTextFallback"/> 为 null 时用 HTML 本身），
+    /// 这样只认文本的应用也能粘贴到内容。
+    /// </summary>
+    public void SetClipboardHtml(string html, string? plainTextFallback = null)
+        => Backend.SetClipboardHtml(html, plainTextFallback);
 
     /// <summary>
     /// 把动作切回 UI 线程执行（已在 UI 线程则直接执行）。

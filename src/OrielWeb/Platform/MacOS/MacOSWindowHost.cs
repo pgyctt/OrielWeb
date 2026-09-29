@@ -8,7 +8,7 @@ namespace OrielWeb.Platform.MacOS;
 /// macOS 窗口宿主：NSWindow + WKWebView，全部经 objc_msgSend。
 /// 窗口原点/尺寸由 JS 侧提供 + 宿主跟踪增量（不做 struct 返回的 msgSend）。
 /// </summary>
-internal sealed class MacOSWindowHost : IWindowBackend
+internal sealed partial class MacOSWindowHost : IWindowBackend
 {
     // NSWindowStyleMask
     private const nuint StyleTitled = 1 << 0;
@@ -84,7 +84,7 @@ internal sealed class MacOSWindowHost : IWindowBackend
 
     public nint NativeWindowHandle => _nsWindow;
 
-    internal OrielApp App => _app;
+    public OrielApp App => _app;
     internal bool IsOnUiThread() => _backend.IsOnUiThread();
     internal void PostToMainThread(Action action) => _backend.PostToMainThread(action);
 

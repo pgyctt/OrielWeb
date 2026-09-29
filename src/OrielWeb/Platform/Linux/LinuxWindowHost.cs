@@ -11,7 +11,7 @@ namespace OrielWeb.Platform.Linux;
 /// IPC 回执/ExecuteScript 走页面回环消息（与 macOS 同一模式）。
 /// 注意：GTK3 坐标为设备像素；HiDPI 缩放下的拖动偏移为已知限制（M4）。
 /// </summary>
-internal sealed class LinuxWindowHost : IWindowBackend
+internal sealed partial class LinuxWindowHost : IWindowBackend
 {
     private const int GtkWinPosCenter = 1;
     private const int GtkResponseOk = -5;
@@ -75,7 +75,7 @@ internal sealed class LinuxWindowHost : IWindowBackend
 
     public nint NativeWindowHandle => _gtkWindow;
 
-    internal OrielApp App => _app;
+    public OrielApp App => _app;
     internal bool IsOnUiThread() => _backend.IsOnUiThread();
     internal void PostToMainThread(Action action) => _backend.PostToMainThread(action);
 

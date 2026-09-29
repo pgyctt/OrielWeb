@@ -38,6 +38,68 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
         ObjCRuntime.SendVoidObj(_nsApp, ObjCRuntime.Sel("setDelegate:"), _appDelegate);
 
         _pumpHelper = MacOSObjCClasses.CreatePumpHelper();
+
+        // 主题：先记初值（否则"启动时已是深色"会漏报一次），再订系统通知。
+        // NSDistributedNotificationCenter 的 addObserver:selector:name:object: **不**持有观察者，
+        // 所以必须自己留着引用（_themeObserver），否则通知到达时对象已释放。
+        _lastTheme = CurrentTheme;
+        _themeObserver = MacOSObjCClasses.CreateThemeObserver(this);
+        nint center = ObjCRuntime.SendId(
+            ObjCRuntime.GetClassOrThrow("NSDistributedNotificationCenter"),
+            ObjCRuntime.Sel("defaultCenter"));
+        ObjCRuntime.SendVoidObjSelObjObj(
+            center,
+            ObjCRuntime.Sel("addObserver:selector:name:object:"),
+            _themeObserver,
+            ObjCRuntime.Sel("orielThemeChanged:"),
+            ObjCRuntime.MakeNSString("AppleInterfaceThemeChangedNotification"),
+            0);
+    }
+
+    // ---- 系统主题 ----
+
+    private OrielTheme _lastTheme = OrielTheme.Light;
+    private nint _themeObserver;
+
+    public event Action<OrielTheme>? ThemeChanged;
+
+    public OrielTheme CurrentTheme => IsDarkTheme() ? OrielTheme.Dark : OrielTheme.Light;
+
+    /// <summary>重新读主题，变化了才上报。</summary>
+    internal void RaiseThemeIfChanged()
+    {
+        OrielTheme theme = CurrentTheme;
+        if (theme == _lastTheme)
+        {
+            return;
+        }
+
+        _lastTheme = theme;
+        ThemeChanged?.Invoke(theme);
+    }
+
+    /// <summary>
+    /// 判定当前是否为深色：<c>NSUserDefaults</c> 的 <c>AppleInterfaceStyle</c> **仅在深色时存在**
+    /// （值为 "Dark"），浅色时该键不存在——所以"取不到"就是浅色，不是失败。
+    /// </summary>
+    private static bool IsDarkTheme()
+    {
+        nint defaults = ObjCRuntime.SendId(
+            ObjCRuntime.GetClassOrThrow("NSUserDefaults"), ObjCRuntime.Sel("standardUserDefaults"));
+        if (defaults == 0)
+        {
+            return false;
+        }
+
+        nint value = ObjCRuntime.SendIdObj(
+            defaults, ObjCRuntime.Sel("stringForKey:"), ObjCRuntime.MakeNSString("AppleInterfaceStyle"));
+        if (value == 0)
+        {
+            return false;
+        }
+
+        string? style = ObjCRuntime.ToManagedString(value);
+        return style is not null && style.Contains("Dark", StringComparison.OrdinalIgnoreCase);
     }
 
     // ---- IPlatformBackend ----

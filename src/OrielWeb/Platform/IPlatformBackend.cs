@@ -5,6 +5,9 @@ internal interface IWindowBackend
 {
     IntPtr NativeWindowHandle { get; }
 
+    /// <summary>本窗口所属的应用（窗口创建时注入）。</summary>
+    OrielApp App { get; }
+
     event Action? Loaded;
     event Action<OrielCloseRequestEventArgs>? Closing;
     event Action? Closed;
@@ -69,6 +72,15 @@ internal interface IWindowBackend
     /// <summary>重新加载当前页面。</summary>
     void Reload();
 
+    /// <summary>读剪贴板文本；没有文本时返回 null。</summary>
+    string? GetClipboardText();
+    /// <summary>写剪贴板文本（替换现有内容）。</summary>
+    void SetClipboardText(string text);
+    /// <summary>读剪贴板 HTML；没有 HTML 时返回 null。</summary>
+    string? GetClipboardHtml();
+    /// <summary>写剪贴板 HTML，并同时写一份纯文本回退（供只认文本的应用粘贴）。</summary>
+    void SetClipboardHtml(string html, string? plainTextFallback);
+
     /// <summary>
     /// 把动作切回 UI 线程执行（已在 UI 线程则直接执行）。
     /// 用于跨 <c>await</c> 之后碰窗口：await 的续体会落到线程池，而 GTK/AppKit 只能在各自的主线程调用。
@@ -89,6 +101,12 @@ internal interface IWindowBackend
 /// <summary>平台后端契约（消息循环 + 主线程调度 + 窗口工厂）。</summary>
 internal interface IPlatformBackend : IDisposable
 {
+    /// <summary>当前系统主题。</summary>
+    OrielTheme CurrentTheme { get; }
+
+    /// <summary>系统主题变化（用户切换深/浅色时触发；检测不到变化通道的平台不会触发）。</summary>
+    event Action<OrielTheme>? ThemeChanged;
+
     void RunMessageLoop();
     void Quit();
     /// <summary>把动作切回 UI 线程执行（已在 UI 线程则直接执行）。</summary>

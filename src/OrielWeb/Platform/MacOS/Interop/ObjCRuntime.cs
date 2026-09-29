@@ -115,6 +115,13 @@ internal static unsafe partial class ObjCRuntime
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial void SendVoidObjNint(nint self, nint sel, nint obj, nint arg);
 
+    /// <summary>
+    /// 四个对象/选择器参数的消息，例如
+    /// <c>addObserver:selector:name:object:</c>（observer、SEL、通知名、object）。
+    /// </summary>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial void SendVoidObjSelObjObj(nint self, nint sel, nint observer, nint selector, nint name, nint obj);
+
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial void SendVoidSelObjBool(nint self, nint sel, nint selectorArg, nint objectArg, [MarshalAs(UnmanagedType.Bool)] bool waitUntilDone);
 

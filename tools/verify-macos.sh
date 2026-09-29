@@ -175,13 +175,13 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-section "阶段 B 自检：导航与 IPC（机器断言）"
+section "机器断言自检：导航 / IPC / 剪贴板"
 # 放在观察窗之前：自检自己驱动页面（跳转 / 后退 / 前进 / 刷新 / 失败、console 转发、
 # postMessage、EmitEvent 闭环），跑完自己关窗退出，退出码即结论，与后面的观察窗互不干扰。
 # 这里不用 timeout：macOS 自带的是 BSD 用户态，没有 GNU coreutils 的 timeout。
 # 自检自身有看门狗（nav 90s / ipc 30s），下面的等待循环只是兜底。
 SELFTEST_FAILED=0
-for mode in nav ipc; do
+for mode in nav ipc clipboard theme; do
     selftest_log="$OUT/selftest-$mode.log"
     "$APP_EXE" "--$mode-selftest" >"$selftest_log" 2>&1 &
     selftest_pid=$!
@@ -198,7 +198,7 @@ for mode in nav ipc; do
         selftest_code=$?
     fi
 
-    selftest_verdict="$(grep -E '^(NAV|IPC)-SELFTEST: ' "$selftest_log" | tail -1 || true)"
+    selftest_verdict="$(grep -E '^(NAV|IPC|CLIPBOARD|THEME)-SELFTEST: ' "$selftest_log" | tail -1 || true)"
     echo "  [$mode] 退出码=${selftest_code} 结论=${selftest_verdict:-无}"
     # 明细总是回显到 CI 日志：artifact 里有完整文件，但日志能直接看
     sed 's/^/    /' "$selftest_log" || true

@@ -133,17 +133,18 @@ jobs:
         # 它们不影响判定，最终以脚本末尾的机器结论为准。
         run: xvfb-run -a bash tools/verify-linux.sh --backend x11 --out "$RUNNER_TEMP/linux-verify-out"
 
-      - name: Navigation & IPC self-tests
-        # 阶段 B 的机器断言：导航（跳转 / 后退 / 前进 / 刷新 / 失败）与 IPC（console 转发、
-        # postMessage、EmitEvent 闭环）。它们不依赖人眼，退出码即结论。xvfb 里没有窗口管理器，
-        # 但导航与 IPC 都不经过 WM，所以在这条路径上有效。产物路径与 verify-linux.sh 的发布位置一致。
+      - name: Self-tests (navigation / IPC / clipboard)
+        # 机器断言：导航（跳转 / 后退 / 前进 / 刷新 / 失败）、IPC（console 转发、postMessage、
+        # EmitEvent 闭环）与剪贴板（文本与 HTML 写→读回）。都不依赖人眼，以日志里的结论行判定。
+        # xvfb 里没有窗口管理器，但导航、IPC 与剪贴板都不经过 WM，所以在这条路径上有效。
+        # 剪贴板自检会覆盖系统剪贴板内容——CI 环境无人使用剪贴板，安全。
         run: |
           demo=samples/OrielDemo/bin/Release/net10.0/linux-x64/publish/OrielDemo
-          for mode in nav ipc; do
+          for mode in nav ipc clipboard; do
             log="$RUNNER_TEMP/selftest-$mode.log"
             xvfb-run -a "$demo" "--$mode-selftest" > "$log" 2>&1
             code=$?
-            verdict="$(grep -E '^(NAV|IPC)-SELFTEST: ' "$log" | tail -1 || true)"
+            verdict="$(grep -E '^(NAV|IPC|CLIPBOARD)-SELFTEST: ' "$log" | tail -1 || true)"
             echo "----- $mode-selftest（退出码 $code）$verdict -----"
             sed 's/^/  /' "$log"
             # 判定以日志里的结论行为准（与 macOS 一致）：应用的退出方式各平台不同，
@@ -153,6 +154,31 @@ jobs:
               exit 1
             fi
           done
+
+          # 主题：深浅两条路径都要走到——用 GTK_THEME（GTK 认可的入口）分别跑，并断言两次结论**不同**。
+          # 只跑一次只能证明"读得到主题"，证明不了"深浅判得对"；同一进程内又改不了系统主题，
+          # 所以只能这样造值。
+          pkill -x OrielDemo 2>/dev/null || true
+          theme_light=""
+          theme_dark=""
+          for pair in "light:" "dark:Adwaita:dark"; do
+            label="${pair%%:*}"
+            value="${pair#*:}"
+            log="$RUNNER_TEMP/theme-$label.log"
+            GTK_THEME="$value" xvfb-run -a "$demo" --theme-selftest > "$log" 2>&1
+            verdict="$(grep -E '^THEME-SELFTEST: ' "$log" | tail -1 || true)"
+            echo "----- theme=$label（GTK_THEME='$value'）$verdict -----"
+            sed 's/^/  /' "$log"
+            if [[ "$verdict" != *PASS* ]]; then
+              echo "::error::theme-selftest 未通过（$label，结论行：${verdict:-无}）"
+              exit 1
+            fi
+            if [ "$label" = "light" ]; then theme_light="$verdict"; else theme_dark="$verdict"; fi
+          done
+          if [ "$theme_light" = "$theme_dark" ]; then
+            echo "::error::深浅两次得到相同结论（$theme_light）——主题判定没有真正区分两条路径"
+            exit 1
+          fi
 
       - name: Upload evidence
         if: always()
@@ -190,7 +216,7 @@ jobs:
           Write-Output "OK: 进程存活，消息循环运行中"
           Stop-Process -Id $p.Id -Force
 
-      - name: Navigation & IPC self-tests
+      - name: Self-tests (navigation / IPC / clipboard)
         # 与 Linux 同款断言（见 smoke-linux 的说明）。刻意用 Start-Process 而不是 & 调用，两个原因：
         #  1) pwsh 的 $LASTEXITCODE 在 & 调用之后仍可能是上一条原生命令的值、甚至未定义（$null），
         #     而 $null -ne 0 为真——第一次接进来时就是这样被误报成失败的（步骤 1 秒内失败）；
@@ -199,7 +225,9 @@ jobs:
         shell: pwsh
         run: |
           $demo = "samples/OrielDemo/bin/Release/net10.0/win-x64/OrielDemo.exe"
-          foreach ($mode in @("nav", "ipc")) {
+          # 主题只跑一次：Windows 上没有像 GTK_THEME 那样可靠的"造值"入口（改注册表会影响 runner
+          # 的其它状态），所以这里只验证"读得到 + 事件通道通"，深/浅判得对由 smoke-linux 的双路径覆盖。
+          foreach ($mode in @("nav", "ipc", "clipboard", "theme")) {
             $out = "$env:RUNNER_TEMP\selftest-$mode.out.txt"
             $err = "$env:RUNNER_TEMP\selftest-$mode.err.txt"
             $p = Start-Process -FilePath $demo -ArgumentList "--$mode-selftest" -Wait -PassThru `
@@ -210,7 +238,7 @@ jobs:
             # 判定以日志里的结论行为准（与 Linux / macOS 一致），退出码只作为附加信息。
             $verdict = ""
             if (Test-Path $out) {
-              $last = Select-String -Path $out -Pattern '^(NAV|IPC)-SELFTEST: ' | Select-Object -Last 1
+              $last = Select-String -Path $out -Pattern '^(NAV|IPC|CLIPBOARD|THEME)-SELFTEST: ' | Select-Object -Last 1
               if ($last) { $verdict = $last.Line }
             }
             if ($verdict -notmatch 'PASS') {

@@ -177,6 +177,14 @@ formEl.addEventListener("submit", async (event) => {
     await refresh();
 });
 
+// 主题：宿主在系统主题变化时、以及每次导航完成后都会推 theme.changed（payload 是 "light" / "dark"）。
+// 这里把它落到 <html data-theme>（页面按需换配色），并回显一条 postMessage——宿主的
+// --theme-selftest 正是靠这条回显确认"宿主 → 页面 → 宿主"整条通道是通的。
+window.oriel.on("theme.changed", (theme) => {
+    document.documentElement.dataset.theme = theme;
+    window.oriel.postMessage("theme-echo", theme);
+});
+
 (async () => {
     try {
         await window.oriel.ready;

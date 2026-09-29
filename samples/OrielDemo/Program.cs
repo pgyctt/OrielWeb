@@ -31,8 +31,16 @@ internal static class Program
         // --ipc-selftest：无人交互的 IPC 自检（页面 console → 宿主、页面 postMessage → 宿主、
         // 宿主 EmitEvent → 页面 → 回显宿主）。它会顺带打开 ConsoleForwarding。
         var ipcSelfTest = args.Contains("--ipc-selftest");
+        // --clipboard-selftest：剪贴板文本与 HTML 的写→读回自检（会覆盖系统剪贴板内容）
+        var clipboardSelfTest = args.Contains("--clipboard-selftest");
+        // --theme-selftest：主题读取与 theme.changed 事件通道（页面回显确认；深浅两条路径由 CI 造值）
+        var themeSelfTest = args.Contains("--theme-selftest");
 
-        Oriel.CreateBuilder(args)
+        // 主题自检需要 OrielApp（主题是应用级的），所以这里显式 Build 再 Run；
+        // app 变量先声明、后赋值，闭包在 onCreated 里读它（onCreated 发生在 Run 内部，那时已赋值）。
+        OrielApp? app = null;
+
+        var builder = Oriel.CreateBuilder(args)
             .UseEmbeddedAssets()
             .UseJsonContext(AppJsonContext.Default)
             .AddCommands<TodoCommands>()
@@ -62,6 +70,13 @@ internal static class Program
             }, win =>
             {
                 Window = win;
+                if (themeSelfTest)
+                {
+                    // onCreated 阶段窗口门面还没有后端（window.Attach 要等 CreateWindow 返回），
+                    // 那时 win.App 会抛异常。推迟到 Loaded——那时后端已就位。
+                    WebviewWindow created = win;
+                    created.Loaded += () => ThemeSelfTest.Attach(created.App, created);
+                }
                 if (navSelfTest)
                 {
                     NavSelfTest.Attach(win);
@@ -70,11 +85,20 @@ internal static class Program
                 {
                     IpcSelfTest.Attach(win);
                 }
-            })
-            .Run();
+                if (clipboardSelfTest)
+                {
+                    ClipboardSelfTest.Attach(win);
+                }
+            });
+
+        app = builder.Build();
+        app.Run();
 
         // 自检的结论已在运行期打印，这里只把成败映射到进程退出码（CI 的冒烟脚本据此判定）。
-        if ((navSelfTest && NavSelfTest.Failed) || (ipcSelfTest && IpcSelfTest.Failed))
+        if ((navSelfTest && NavSelfTest.Failed)
+            || (ipcSelfTest && IpcSelfTest.Failed)
+            || (clipboardSelfTest && ClipboardSelfTest.Failed)
+            || (themeSelfTest && ThemeSelfTest.Failed))
         {
             Environment.ExitCode = 1;
         }

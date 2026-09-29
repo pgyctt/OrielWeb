@@ -27,6 +27,31 @@ public sealed class OrielApp : IDisposable
     public IReadOnlyList<WebviewWindow> Windows => _windows;
     private readonly List<WebviewWindow> _windows = [];
 
+    /// <summary>页面侧的主题事件名：<c>oriel.on('theme.changed', theme =&gt; …)</c>，payload 为 <c>"light"</c> / <c>"dark"</c>。</summary>
+    internal const string ThemeEventName = "theme.changed";
+
+    /// <summary>当前系统主题（应用未运行、或平台检测不到时按 <see cref="OrielTheme.Light"/> 处理）。</summary>
+    public OrielTheme Theme => _backend?.CurrentTheme ?? OrielTheme.Light;
+
+    /// <summary>
+    /// 系统主题变化（用户在系统设置里切换深/浅色时触发）。
+    /// 同一变化也会以 <c>theme.changed</c> 事件推给每个窗口的页面（含每次导航完成后的补推）。
+    /// </summary>
+    public event Action<OrielTheme>? ThemeChanged;
+
+    private void OnThemeChanged(OrielTheme theme)
+    {
+        ThemeChanged?.Invoke(theme);
+        foreach (WebviewWindow window in _windows)
+        {
+            PushTheme(window, theme);
+        }
+    }
+
+    /// <summary>把主题推给某个窗口的页面。参数已是 JSON 文本（见 <see cref="WebviewWindow.EmitEvent(string, string)"/>）。</summary>
+    private static void PushTheme(WebviewWindow window, OrielTheme theme)
+        => window.EmitEvent(ThemeEventName, theme == OrielTheme.Dark ? "\"dark\"" : "\"light\"");
+
     /// <summary>把动作切回 UI 线程执行（命令完成后的回执、跨线程 UI 更新都用它）。</summary>
     public void PostToMainThread(Action action)
     {
@@ -40,6 +65,7 @@ public sealed class OrielApp : IDisposable
         EnsureApartment();
 
         _backend = PlatformBackendFactory.Create();
+        _backend.ThemeChanged += OnThemeChanged;
 
         string? assetDirectory = _builder.UseAssets
             ? EmbeddedAssetExtractor.Extract(_builder.AssetResourcePrefix)
@@ -55,6 +81,16 @@ public sealed class OrielApp : IDisposable
             var backend = _backend.CreateWindow(window, options, this, assetDirectory);
             window.Attach(backend);
             _windows.Add(window);
+
+            // 每次导航成功都补推一次当前主题：否则新文档要等到用户下次切换才知道现在是深还是浅
+            WebviewWindow created = window;
+            created.NavigationCompleted += args =>
+            {
+                if (args.Success)
+                {
+                    PushTheme(created, Theme);
+                }
+            };
         }
 
         _backend.RunMessageLoop();

@@ -239,4 +239,73 @@ internal static unsafe partial class GtkNative
 
     [LibraryImport(JSC, EntryPoint = "jsc_value_to_string")]
     internal static partial nint JscValueToString(nint value);
+
+    // ---- GtkSettings（系统主题）----
+
+    /// <summary>进程级的 GtkSettings 单例（首次调用时创建）。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_settings_get_default")]
+    internal static partial nint GtkSettingsGetDefault();
+
+    /// <summary>按名字取 GType（如 "gboolean"、"gchararray"）——比硬编码 G_TYPE_* 常量稳妥。</summary>
+    [LibraryImport(GOject, EntryPoint = "g_type_from_name", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial nuint GTypeFromName(string name);
+
+    [LibraryImport(GOject, EntryPoint = "g_value_init")]
+    internal static partial nint GValueInit(nint value, nuint type);
+
+    [LibraryImport(GOject, EntryPoint = "g_value_unset")]
+    internal static partial void GValueUnset(nint value);
+
+    [LibraryImport(GOject, EntryPoint = "g_object_get_property", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial void GObjectGetProperty(nint obj, string propertyName, nint value);
+
+    [LibraryImport(GOject, EntryPoint = "g_value_get_boolean")]
+    internal static partial int GValueGetBoolean(nint value);
+
+    /// <summary>取 GValue 里的字符串（归 GValue 所有，不要释放）。</summary>
+    [LibraryImport(GOject, EntryPoint = "g_value_get_string")]
+    internal static partial nint GValueGetString(nint value);
+
+    // ---- 剪贴板 ----
+
+    /// <summary>取一个 GdkAtom（如 "CLIPBOARD"、"text/html"）；只做原子化，不涉及所有权。</summary>
+    [LibraryImport(Gdk, EntryPoint = "gdk_atom_intern", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial nint GdkAtomIntern(string atomName, int onlyIfExists);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_get")]
+    internal static partial nint GtkClipboardGet(nint selection);
+
+    /// <summary>阻塞等待剪贴板文本；返回需 g_free 的 UTF-8 副本，无文本时返回 0。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_wait_for_text")]
+    internal static partial nint GtkClipboardWaitForText(nint clipboard);
+
+    /// <summary>写入纯文本并取得所有权；length 传 -1 表示 NUL 结尾。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_set_text", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial void GtkClipboardSetText(nint clipboard, string text, int length);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_clear")]
+    internal static partial void GtkClipboardClear(nint clipboard);
+
+    /// <summary>阻塞等待指定 target 的内容；返回需 gtk_selection_data_free 的指针，无内容时返回 0。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_wait_for_contents")]
+    internal static partial nint GtkClipboardWaitForContents(nint clipboard, nint target);
+
+    /// <summary>
+    /// 以"声明式"方式拥有剪贴板：给出 target 列表与取数回调，对方来要时才回调取数据。
+    /// 自定义 target（如 text/html）只能用这种方式写（set_text 只支持纯文本）。
+    /// </summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_set_with_data")]
+    internal static partial int GtkClipboardSetWithData(nint clipboard, nint targets, uint nTargets, nint getFunc, nint clearFunc, nint userData);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_selection_data_get_data")]
+    internal static partial nint GtkSelectionDataGetData(nint selection);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_selection_data_get_length")]
+    internal static partial int GtkSelectionDataGetLength(nint selection);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_selection_data_set")]
+    internal static partial int GtkSelectionDataSet(nint selection, nint type, int format, nint data, int length);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_selection_data_free")]
+    internal static partial void GtkSelectionDataFree(nint selection);
 }
