@@ -170,3 +170,32 @@ jobs:
           if ($p.HasExited) { throw "demo 启动后立即退出，ExitCode=$($p.ExitCode)" }
           Write-Output "OK: 进程存活，消息循环运行中"
           Stop-Process -Id $p.Id -Force
+
+  smoke-macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Smoke run with evidence
+        # 托管 macOS runner 具备图形登录会话——这一点由 tools/probe-macos.sh 实测确认
+        # （managername=Aqua、/dev/console 属主为 runner、WindowServer 在跑、能截到 1024x768 真实像素），
+        # 所以这里能比 Windows 那条冒烟做得更硬：进程存活 + WebContent 子进程 + CGWindowList
+        # 枚举到标题含 "Oriel Demo" 的窗口，三者都断言。截图作 artifact 上传，供人眼确认页面渲染、
+        # 中文与 IPC 徽章（这三项没有宿主侧可观测信号）。
+        # 判读标准与实现细节见 tools/verify-macos.sh 头部注释。
+        run: bash tools/verify-macos.sh --out "$RUNNER_TEMP/macos-verify-out"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-smoke-evidence
+          path: ${{ runner.temp }}/macos-verify-out
+          if-no-files-found: warn
+          retention-days: 14

@@ -214,17 +214,12 @@ fi
 # ---------------------------------------------------------------------------
 step "E. 中文字体"
 
-for font in \
-    /System/Library/Fonts/PingFang.ttc \
-    "/System/Library/Fonts/STHeiti Light.ttc" \
-    /System/Library/Fonts/Hiragino\ Sans\ GB.ttc
-do
-    if [[ -e "$font" ]]; then
-        echo "存在：$font"
-    else
-        echo "缺失：$font"
-    fi
-done
+# 不硬编码具体字体路径：macOS 版本间会挪位置（实测 macOS 26 上 PingFang.ttc 已不在老路径），
+# 只列出字体目录里与 CJK 相关的条目，最终以截图里的实际渲染为准。
+echo "系统字体目录中的 CJK 相关条目："
+ls -1 /System/Library/Fonts 2>/dev/null | grep -E 'PingFang|Hei|Hiragino|Song|Kai' | sed 's/^/  /'
+echo "补充字体目录（Supplemental）中的 CJK 相关条目："
+ls -1 /System/Library/Fonts/Supplemental 2>/dev/null | grep -E 'PingFang|Hei|Hiragino|Song|Kai' | head -5 | sed 's/^/  /'
 
 # ---------------------------------------------------------------------------
 step "结论读法（本脚本只取证，不做判定）"
@@ -235,7 +230,7 @@ cat <<'README'
 - C：screencapture 成功且像素尺寸非零 → 能真的截到像素（失败通常是缺「屏幕录制」TCC 授权）
 - D：didFinish 且 document.title=oriel-probe、且列出的 WebKit 进程里有 WebContent
      → **WKWebView 在本机可用**，即本库 macOS 后端的技术路线在该环境可行
-- E：PingFang 存在 → 中文不会像 Linux 那轮那样渲染成方框
+- E：存在任一中文字体（Hei / Hiragino / Song / PingFang）→ 中文不会像 Linux 那轮那样渲染成方框
 
 若 B 或 D 不成立（NSScreen 为空 / 建窗失败 / didFinish 未收到），则托管 runner 不适合做
 窗口级验证，需要改走云端 Mac 或实体 Mac（见 docs/DECISIONS.md 的 macOS 验证记录）。
