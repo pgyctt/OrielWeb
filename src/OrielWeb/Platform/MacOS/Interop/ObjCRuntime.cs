@@ -122,6 +122,10 @@ internal static unsafe partial class ObjCRuntime
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool SendBoolRet(nint self, nint sel);
 
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool SendBoolRetObj(nint self, nint sel, nint arg);
+
     // ---- 框架加载 ----
 
     private static readonly string[] Frameworks =
