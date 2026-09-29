@@ -179,15 +179,24 @@ jobs:
           Stop-Process -Id $p.Id -Force
 
       - name: Navigation & IPC self-tests
-        # 与 Linux 同款断言（见 smoke-linux 的说明）。自检跑完自己关窗退出，退出码即结论——
-        # 所以这里不用 Start-Process，直接调用并检查 $LASTEXITCODE。
+        # 与 Linux 同款断言（见 smoke-linux 的说明）。刻意用 Start-Process 而不是 & 调用，两个原因：
+        #  1) pwsh 的 $LASTEXITCODE 在 & 调用之后仍可能是上一条原生命令的值、甚至未定义（$null），
+        #     而 $null -ne 0 为真——第一次接进来时就是这样被误报成失败的（步骤 1 秒内失败）；
+        #  2) 自检输出必须落到 CI 日志里，失败时才看得到是哪一项断言挂了。GUI 子系统下 & 的
+        #     重定向抓不到原生 stdout（本机实测过），Start-Process 的显式管道才行。
         shell: pwsh
         run: |
           $demo = "samples/OrielDemo/bin/Release/net10.0/win-x64/OrielDemo.exe"
-          & $demo --nav-selftest
-          if ($LASTEXITCODE -ne 0) { throw "nav-selftest 失败（退出码 $LASTEXITCODE）" }
-          & $demo --ipc-selftest
-          if ($LASTEXITCODE -ne 0) { throw "ipc-selftest 失败（退出码 $LASTEXITCODE）" }
+          foreach ($mode in @("nav", "ipc")) {
+            $out = "$env:RUNNER_TEMP\selftest-$mode.out.txt"
+            $err = "$env:RUNNER_TEMP\selftest-$mode.err.txt"
+            $p = Start-Process -FilePath $demo -ArgumentList "--$mode-selftest" -Wait -PassThru `
+                 -RedirectStandardOutput $out -RedirectStandardError $err
+            Write-Output "----- $mode-selftest（退出码 $($p.ExitCode)）-----"
+            if (Test-Path $out) { Get-Content $out -Encoding UTF8 | Write-Output }
+            if (Test-Path $err) { Get-Content $err -Encoding UTF8 | Write-Output }
+            if ($p.ExitCode -ne 0) { throw "$mode-selftest 失败（退出码 $($p.ExitCode)）" }
+          }
 
   smoke-macos:
     runs-on: macos-latest
