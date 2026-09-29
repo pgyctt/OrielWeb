@@ -21,13 +21,17 @@ internal static class NavSelfTest
     private const string AboutUrl = "about.html";
 
     /// <summary>
-    /// 必定加载失败的地址：一个不存在的本地文件。
-    /// 刻意不用网络地址：在 WSL + WSLg 下实测过一次极反直觉的行为——请求
-    /// <c>http://127.0.0.1:9/index.html</c>（连接必然被拒绝）时，WebKit 反而提交加载了**本地的
-    /// about/index 页面**并报成功，`load-failed` 一次都没发出。本地不存在的 file: 路径不经过
-    /// 网络与代理，失败的语义是确定的。
+    /// 触发一次必定失败的导航：**同源且同目录**地指向一个不存在的页面。
     /// </summary>
-    private const string UnreachableUrl = "file:///nonexistent-oriel-selftest/page-xyz.html";
+    /// <remarks>
+    /// 为什么在页面里用 <c>new URL(相对路径, location.href)</c> 拼，而不是在 C# 里写死绝对 URL：
+    /// 跨协议 / 跨源地改 <c>location</c>（例如从 <c>https://app.oriel/</c> 跳到 <c>file:///…</c>）
+    /// 会被引擎按安全策略处理——Windows（WebView2）与 Linux（WebKitGTK）上都实测到了同一个结果：
+    /// 那次导航变成"重新加载首页并上报成功"，而不是失败。只有同源且不存在的路径才给出确定的失败语义
+    /// （HTTP 404 / 文件不存在）。
+    /// </remarks>
+    private const string UnreachableScript =
+        "location.href = new URL('oriel-selftest-nonexistent-page.html', location.href).href";
 
     private static readonly List<string> Failures = [];
     private static readonly object Gate = new();
@@ -145,13 +149,13 @@ internal static class NavSelfTest
                     CheckStartingSeen("刷新应触发 navigation.starting");
                     Check(args.Success, "刷新应成功");
                     Advance();
-                    _ = window.EvaluateJs($"location.href='{UnreachableUrl}'");
+                    _ = window.EvaluateJs(UnreachableScript);
                     break;
 
-                case 5: // 不可达地址
-                    // WebKit 加载失败后仍会渲染错误页并发一次 load-changed(FINISHED)，实现里已抑制
-                    // 那一次"成功"上报，所以这里期望正好是一条失败。
-                    Check(!args.Success, "不可达地址应上报失败");
+                case 5: // 不存在的同源页面
+                    // Linux 上加载失败后 WebKit 仍会渲染错误页并发一次 load-changed(FINISHED)，
+                    // 实现里已抑制那一次"成功"上报，所以这里期望正好是一条失败。
+                    Check(!args.Success, "不存在的页面应上报失败");
                     Check(!string.IsNullOrEmpty(args.Error), "失败应带上错误信息");
                     Finish();
                     break;

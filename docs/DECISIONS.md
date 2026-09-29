@@ -422,21 +422,37 @@ postMessage、宿主 EmitEvent）全部落地；Linux 上以**无人交互的自
 
 **教训**：跨平台 UI 库必须显式提供"回 UI 线程"的入口并写进文档，否则每个消费方都会各踩一次。
 
-### 失败路径的取证：别用网络地址
+### 失败导航的构造：必须同源（一次被纠正的错误归因）
 
-自检最后一步要验证"加载失败 → 上报 `Success=false` + `Error` 非空"。三次尝试：
+自检最后一步要验证"加载失败 → 上报 `Success=false` + `Error` 非空"。这一项前后改了三次：
 
-- 假域名 `https://oriel-selftest.invalid/`：第一次通过（TLS 握手失败），下一次**挂到 TCP 超时**
-  （90 秒看门狗先到）——同一台机器上都不稳定。
-- 环回 discard 端口 `http://127.0.0.1:9/index.html`：出现**极反直觉**的行为——注入的脚本与 `eval`
-  返回值都是该地址（已打印确认），导航也确实开始，但 WebKit 最终**提交加载的是本地
-  `file:///.../www/index.html`** 并上报**成功**，`load-failed` 一次都没发出。这是该环境（WSL + WSLg）
-  下的既有行为，不是本库缺陷。
-- 不存在的本地文件 `file:///nonexistent-oriel-selftest/page-xyz.html`：`load-failed` 稳定触发，错误信息
-  为 `Error opening file ...: No such file or directory` ✓
+1. 假域名 `https://oriel-selftest.invalid/`：一次通过（TLS 握手失败），下一次**挂到 TCP 超时**
+   （90 秒看门狗先到）——同一台机器上都不稳定。
+2. 环回 discard 端口 `http://127.0.0.1:9/index.html`：出现极反直觉的结果——注入的脚本与 `eval` 返回值
+   都是该地址（已打印确认），但引擎**重新加载了首页并上报成功**，`failed` 一次都没发出。当时在 WSL 上，
+   我把它归因为"该环境的既有行为"——**这个归因是错的**。
+3. 换成"不存在的本地文件" `file:///nonexistent-…/page-xyz.html`：在 WSL 上通过，但**在 Windows 上重现了
+   同样的问题**——第 6 步变成 `starting: https://app.oriel/index.html` / `completed: success=True`。
+   两个引擎表现一致，说明问题出在我的构造方式上，而不是环境。
 
-**教训**：验证失败路径时，失败必须由**不经过网络**的方式制造；网络错误在不同环境下的形态差异
-（立即失败 / 长时间超时 / 被代理改写）足以让断言本身变成不确定项。
+**真正的根因**：这几次都是从**当前页面的源**跳到**另一个协议 / 源**（`https://app.oriel/` → `file:///…`、
+`file:///…` → `http://127.0.0.1:9/`）。跨协议 / 跨源的 `location` 变更会被引擎按安全策略处理成别的导航
+（实测表现为"重新加载首页并上报成功"），而不是那个地址的加载失败。
+
+**最终做法**：在页面里用**自身基址**拼一个不存在的相对路径——
+
+```js
+location.href = new URL('oriel-selftest-nonexistent-page.html', location.href).href
+```
+
+于是 Windows 上是 `https://app.oriel/oriel-selftest-nonexistent-page.html`（错误码
+`COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN`），Linux 上是
+`file:///…/www/oriel-selftest-nonexistent-page.html`（`Error opening file …: No such file or directory`），
+两边都稳定失败并带上错误信息。
+
+**教训（两条）**：① 验证失败路径时，失败要由一个**同源且确定不存在**的目标制造；② 更重要的——**在一个
+平台上得到的反直觉结论，不要急着归因给环境**。这次若不是坚持在 Windows 上再跑一遍，就会把一个真实的
+构造缺陷当成"WSL 的怪癖"写进文档，还会把那个错误的做法固化进 CI。
 
 ### Linux 失败路径的两个实现要点
 
