@@ -40,7 +40,9 @@ jobs:
         # 注意：必须显式给出文件路径——Node 把纯目录参数当作入口模块解析。
         run: node --test tests/bridge/bridge.test.mjs
 
-  aot-windows:
+  compile-windows:
+    # 与 compile-linux / compile-macos 同属"编译并产出可执行产物"这一组；
+    # Windows 侧这里额外检查 AOT 产物是否存在与大小（smoke-windows 依赖它）。
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -142,7 +144,7 @@ jobs:
 
   smoke-windows:
     runs-on: windows-latest
-    needs: [aot-windows]
+    needs: [compile-windows]
     steps:
       - uses: actions/checkout@v4
 
@@ -169,7 +171,7 @@ jobs:
 
   smoke-macos:
     runs-on: macos-latest
-    # 与 smoke-linux（needs compile-linux）、smoke-windows（needs aot-windows）对齐：
+    # 与 smoke-linux（needs compile-linux）、smoke-windows（needs compile-windows）对齐：
     # 库编译不过时不必让昂贵的 macOS runner 白跑一轮。代价是每次晚约 1 分钟才开始排队——
     # 本 job 自包含（verify-macos.sh 自己 publish），所以这是一处刻意取舍，不是疏忽。
     needs: [compile-macos]
