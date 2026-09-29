@@ -180,7 +180,8 @@ echo "启动：${APP_EXE}"
 echo "请观察截图产物，确认页面右下角徽章为「IPC 已连接」（本脚本无法机器判定这一项）"
 echo
 
-"$APP_EXE" >"$RUN_LOG" 2>&1 &
+# DOTNET_EnableCrashReport：崩溃时生成 JSON 崩溃报告（含托管栈），零成本
+DOTNET_EnableCrashReport=1 "$APP_EXE" >"$RUN_LOG" 2>&1 &
 APP_PID=$!
 
 ALIVE=1
@@ -287,6 +288,34 @@ if command -v log >/dev/null 2>&1; then
         # 经 os_log 上报（不写 stderr），这里往往是唯一能看到失败原因的地方
         grep -iE 'fatal|unhandled|abort|assert|trap|exception|terminat|orieldemo' "$OUT/system-log.txt" 2>/dev/null \
             | tail -30 | cut -c1-300 | sed 's/^/    /' || true
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 进程被信号终止时用 lldb 复跑一次抓调用栈。AOT 二进制没有符号，但帧里的镜像名
+# （WebKit / AppKit / OrielDemo）足以判断崩在哪一侧——这比继续读 os_log 有效得多，
+# 因为 WebKit 的断言走 __builtin_trap，经 os_log 只留下 trap 之前的最后几条。
+# 权限：进程由 lldb 自己启动（不是 attach），且产物是 ad-hoc 签名、未启用 hardened runtime，
+# 因此不需要 get-task-allow 就能在信号处停住。
+if [[ -n "$EXIT_CODE" && "$EXIT_CODE" -gt 128 ]] && command -v lldb >/dev/null 2>&1; then
+    section "lldb 复跑抓栈（上次被信号终止）"
+    ( lldb -b -o "run" -o "thread backtrace" -o "quit" -- "$APP_EXE" ) >"$OUT/lldb.txt" 2>&1 &
+    LLDB_PID=$!
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+        kill -0 "$LLDB_PID" 2>/dev/null || break
+        sleep 1
+    done
+    if kill -0 "$LLDB_PID" 2>/dev/null; then
+        kill "$LLDB_PID" 2>/dev/null || true
+        echo "  lldb 30 秒未返回，已终止（部分输出见 lldb.txt）"
+    fi
+    wait "$LLDB_PID" 2>/dev/null || true
+
+    if grep -q 'frame #' "$OUT/lldb.txt" 2>/dev/null; then
+        grep -E 'stop reason|frame #[0-9]+:' "$OUT/lldb.txt" | head -30 | cut -c1-240 | sed 's/^/  /'
+    else
+        echo "  未取到调用栈，lldb.txt 末尾："
+        tail -12 "$OUT/lldb.txt" 2>/dev/null | cut -c1-240 | sed 's/^/    /' || true
     fi
 fi
 
