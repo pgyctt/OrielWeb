@@ -192,6 +192,16 @@ internal static unsafe partial class GtkNative
     [LibraryImport(GOject, EntryPoint = "g_object_unref")]
     internal static partial void GObjectUnref(nint obj);
 
+    // ---- 窗口图标 ----
+
+    /// <summary>
+    /// 从文件设置窗口图标。X11 下 GTK 会把它写进 <c>_NET_WM_ICON</c>（可用 xprop 验证）；
+    /// Wayland 下窗口图标由合成器决定，多数合成器忽略它（那时以 desktop 文件的 Icon 为准）。
+    /// error 传 0 表示不接收 GError（加载失败即静默保持无图标）。
+    /// </summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_window_set_icon_from_file", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial int GtkWindowSetIconFromFile(nint window, string filename, nint error);
+
     [LibraryImport(WebKit, EntryPoint = "webkit_web_view_load_uri", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void WebkitWebViewLoadUri(nint webview, string uri);
 

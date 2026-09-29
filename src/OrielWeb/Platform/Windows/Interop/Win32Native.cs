@@ -71,6 +71,22 @@ internal static class Win32Constants
     public const uint WM_SETFOCUS = 0x0007;
     public const uint WM_KILLFOCUS = 0x0008;
 
+    // ---- 窗口图标 ----
+
+    public const uint WM_SETICON = 0x0080;
+    /// <summary>WM_SETICON 的 wParam：小图标（标题栏 / Alt-Tab）与大图标（任务栏）。</summary>
+    public const nuint ICON_SMALL = 0;
+    public const nuint ICON_BIG = 1;
+    /// <summary>LoadImage 的 type 参数：图标。</summary>
+    public const uint IMAGE_ICON = 1;
+    /// <summary>LoadImage 的 fuLoad 标志：从文件路径加载（而非资源）。</summary>
+    public const uint LR_LOADFROMFILE = 0x0010;
+    /// <summary>图标尺寸度量（按显示设置加载窗口图标用）。</summary>
+    public const int SM_CXICON = 11;
+    public const int SM_CYICON = 12;
+    public const int SM_CXSMICON = 49;
+    public const int SM_CYSMICON = 50;
+
     public const int MK_LBUTTON = 0x0001;
     public const int MK_RBUTTON = 0x0002;
     public const int MK_SHIFT = 0x0004;
@@ -397,6 +413,10 @@ internal static unsafe partial class Win32
 
     [LibraryImport("user32", EntryPoint = "SendMessageW")]
     internal static partial nint SendMessageW(nint hwnd, uint message, nuint wParam, nint lParam);
+
+    /// <summary>从文件或资源加载图标/光标/位图；窗口图标用 <c>IMAGE_ICON | LR_LOADFROMFILE</c>。</summary>
+    [LibraryImport("user32", EntryPoint = "LoadImageW", StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial nint LoadImageW(nint hinst, string name, uint type, int cx, int cy, uint fuLoad);
 
     [LibraryImport("user32")]
     [return: MarshalAs(UnmanagedType.Bool)]

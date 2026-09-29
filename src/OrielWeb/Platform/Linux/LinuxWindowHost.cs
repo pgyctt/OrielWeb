@@ -127,6 +127,12 @@ internal sealed class LinuxWindowHost : IWindowBackend
 
         GtkNative.GtkContainerAdd(_gtkWindow, _webview);
 
+        // 窗口图标：X11 下写入 _NET_WM_ICON（可用 xprop 验证）；Wayland 下由合成器决定，通常忽略。
+        if (!string.IsNullOrEmpty(_options.Icon))
+        {
+            _ = GtkNative.GtkWindowSetIconFromFile(_gtkWindow, _options.Icon, 0);
+        }
+
         if (_options.Center)
         {
             GtkNative.GtkWindowSetPosition(_gtkWindow, GtkWinPosCenter);

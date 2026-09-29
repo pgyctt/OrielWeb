@@ -10,12 +10,21 @@ internal static class Program
 {
     internal static WebviewWindow? Window;
 
+    /// <summary>取 <c>--name value</c> 形式的参数值；未提供时返回 null。</summary>
+    private static string? GetOptionValue(string[] args, string name)
+    {
+        int index = Array.IndexOf(args, name);
+        return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
+    }
+
     [STAThread]
     private static void Main(string[] args)
     {
         // --hidden：以隐藏窗口启动。既用于验证三平台的 Hidden 语义（窗口不上屏，但页面照常
         // 加载、IPC 照常往返），也是"先隐藏预热、准备好再显示"这类用法的示例。
         var hidden = args.Contains("--hidden");
+        // --icon <path>：设置窗口图标（Windows/Linux 是窗口图标，macOS 会落到 Dock 图标）
+        var icon = GetOptionValue(args, "--icon");
 
         Oriel.CreateBuilder(args)
             .UseEmbeddedAssets()
@@ -24,12 +33,22 @@ internal static class Program
             .AddCommands<WindowCommands>()
             .UseDebug()
             .OnWebView2RuntimeMissing(HandleWebView2RuntimeMissing)
-            .AddWindow(w => (hidden ? w.WithHidden() : w)
-                .WithTitle("Oriel Demo — Todo")
-                .WithSize(1024, 720)
-                .WithMinSize(640, 480)
-                .WithFrameless()
-                .Centered(), win => Window = win)
+            .AddWindow(w =>
+            {
+                if (hidden)
+                {
+                    w.WithHidden();
+                }
+                if (icon is not null)
+                {
+                    w.WithIcon(icon);
+                }
+                w.WithTitle("Oriel Demo — Todo")
+                    .WithSize(1024, 720)
+                    .WithMinSize(640, 480)
+                    .WithFrameless()
+                    .Centered();
+            }, win => Window = win)
             .Run();
     }
 

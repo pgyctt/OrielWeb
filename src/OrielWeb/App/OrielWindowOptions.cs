@@ -23,6 +23,14 @@ public sealed class OrielWindowOptions
     /// <summary>是否启用开发者工具（DevTools）。</summary>
     public bool Debug { get; set; }
 
+    /// <summary>
+    /// 窗口图标文件路径（PNG / ICO）。各平台落到最贴近的位置：
+    /// Linux 设窗口图标（X11 下写入 <c>_NET_WM_ICON</c>）；Windows 用 <c>WM_SETICON</c> 覆盖 exe 图标；
+    /// macOS **没有窗口级图标概念**，设置的是应用（Dock）图标 <c>NSApplication.applicationIconImage</c>。
+    /// 未设置时 Windows 沿用 exe 自带图标、macOS 沿用 .app bundle 的图标。
+    /// </summary>
+    public string? Icon { get; set; }
+
     public OrielWindowOptions WithTitle(string title) { Title = title; return this; }
     public OrielWindowOptions WithSize(int width, int height) { Width = width; Height = height; return this; }
     public OrielWindowOptions WithMinSize(int width, int height) { MinWidth = width; MinHeight = height; return this; }
@@ -36,4 +44,7 @@ public sealed class OrielWindowOptions
     public OrielWindowOptions WithMaximized(bool maximized = true) { Maximized = maximized; return this; }
     public OrielWindowOptions WithUrl(string url) { Url = url; return this; }
     public OrielWindowOptions WithDebug(bool debug = true) { Debug = debug; return this; }
+
+    /// <summary>设置窗口图标；平台差异见 <see cref="Icon"/>。</summary>
+    public OrielWindowOptions WithIcon(string path) { Icon = path; return this; }
 }

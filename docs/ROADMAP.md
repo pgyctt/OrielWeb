@@ -29,16 +29,15 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 
 还清"部分有"的技术债，为后续改动铺好平台一致性。**这一批最便宜、且基本都能在现有环境验证**。
 
-| 项 | 现状 | 做法要点 | 验证方式 |
+| 项 | 状态 | 做法要点 | 验证结果 |
 |---|---|---|---|
-| Linux 隐藏启动 | `Hidden` 选项存在，仅 Windows/macOS 处理；Linux 仍 `show_all` | 不 `show_all`（窗口保持未映射），`Show()` 仍可后续显示 | WSL：断言进程存活至观察窗结束但 `xwininfo` 枚举不到窗口 |
-| macOS/Linux DevTools | 仅 Windows 落地（`AreDevToolsEnabled`） | macOS：`WKWebView.isInspectable`；Linux：`webkit_settings_set_enable_developer_extras`（+ 可选 `webkit_web_inspector_show`） | WSL + CI macOS：断言开关可设、进程不崩；**面板本身需真机人眼** |
-| macOS/Linux 窗口图标 | 仅 Windows（exe 图标 → 窗口类） | 待定图标来源（见下） | CI macOS：截图看 Dock 图标；WSL：截图看窗口装饰 |
-| Linux HiDPI 拖动偏移 | 已知限制（GTK3 用设备像素，未按缩放折算） | 用 `gdk_window_get_scale_factor` 折算增量 | **需真实高 DPI 缩放环境** → 待真机验证 |
+| Linux 隐藏启动 | ✅ 已完成 | `show_all` 后立刻 `hide`（GTK 的 realize 自上而下，不 show 则 webview 不被 realize，页面可能推迟到可见才开始加载） | WSL 实测：`--hidden` 下 `Map State: IsUnMapped`，同时 `WebKitWebProcess` 照常出现（页面照常加载） |
+| macOS/Linux DevTools | ⚠️ 已实现未验证 | macOS：`WKWebView.isInspectable`（13.3+，先 `respondsToSelector:` 探测）；Linux：`WebKitSettings.enable_developer_extras` | 编译通过 + Linux smoke 通过；**面板本身需真机人眼**（见下） |
+| 窗口图标（统一 `WithIcon`） | ✅ Linux 已验证；Windows/macOS 未验证 | 各平台落到真正有图标槽的位置：Linux 窗口图标（`gtk_window_set_icon_from_file`）、Windows `WM_SETICON` 覆盖 exe 图标、macOS Dock 图标 | WSL 对照实测：带 `--icon` 时 `_NET_WM_ICON` 出现 `Icon (48 x 48)`，不带时 `not found` |
+| Linux HiDPI 拖动偏移 | ⏳ 未开始 | 用 `gdk_window_get_scale_factor` 折算增量 | **需真实高 DPI 缩放环境** → 见待真机清单 |
 
-**阶段 A 里唯一需要先决策的**：窗口图标的来源。Windows 现在是"取本进程 exe 的图标"（`ExtractIconEx`），
-而 macOS 的 `applicationIconImage` / Linux 的 `gtk_window_set_icon_from_file` 都要求**显式给图像或文件路径**，
-没有"从 exe 取"的概念。
+**已定**：图标来源用显式的 `OrielWindowOptions.WithIcon(path)`——不做"从 exe 取图标"的跨平台抽象，
+因为 macOS 的 `NSWindow` 根本没有窗口级图标槽（它设的是 Dock 图标），硬凑一个统一语义只会在某个平台上失真。
 
 ### 待真机验证清单（阶段 A）
 
@@ -55,6 +54,15 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 - 若不符：macOS 先确认系统 ≥ 13.3（`isInspectable` 是 13.3+ 的公开 API，更早的系统上代码会因
   `respondsToSelector:` 探测失败而跳过设置，此时依赖 Safari 的默认行为）；Linux 看
   `LinuxWindowHost.Create` 里 `webkit_settings_set_enable_developer_extras` 是否被调用。
+
+#### 窗口图标（Windows / macOS）
+- 状态：**Linux 已验证**（上面的 `_NET_WM_ICON` 对照实验）；Windows 与 macOS **只做了编译验证**。
+- 环境：Windows 桌面 / macOS 桌面。
+- 步骤：1) 用 `--icon <png|ico 路径>` 启动 `samples/OrielDemo`（或代码里 `.WithIcon(path)`）；
+  2) Windows：看任务栏按钮与 Alt-Tab 缩略图；macOS：看 Dock 图标。
+- 预期：显示为指定图片；不传 `--icon` 时 Windows 仍显示 exe 图标、macOS 仍显示 .app bundle 图标。
+- 若不符：Windows 看 `LoadImageW` 是否返回 0（路径不存在或格式不支持时会静默保持原图标）；
+  macOS 看 `NSImage` 是否构造成功（`initWithContentsOfFile:` 返回 0 时跳过设置，不报错）。
 
 #### macOS 隐藏启动
 - 状态：**已实现未验证**（Linux 侧已在 WSL 验证；macOS 的 `Hidden` 走"不 orderFront"分支，

@@ -209,7 +209,7 @@ capture_shot() {
 }
 
 CASE_LABEL=(); CASE_BACKEND=(); CASE_ALIVE=(); CASE_WEBKIT=(); CASE_WEBKIT_NOTE=()
-CASE_WINDOW=(); CASE_WINDOW_AT=(); CASE_EVIDENCE=(); CASE_LOG=(); CASE_SHOTS=(); CASE_MAP=()
+CASE_WINDOW=(); CASE_WINDOW_AT=(); CASE_EVIDENCE=(); CASE_LOG=(); CASE_SHOTS=(); CASE_MAP=(); CASE_ICON=()
 
 run_case() {
     local label="$1" backend="$2"
@@ -280,12 +280,15 @@ run_case() {
     # 放在收尾复检之后、杀进程之前——此刻页面已渲染完、徽章也已更新。
     local shots=""
     local map_state=""
+    local icon_evidence=""
     if [[ $seen -eq 1 && -n "$evidence" ]]; then
         local window_id
         window_id="$(echo "$evidence" | head -1 | awk '{print $1}')"
         # 窗口映射状态：隐藏启动（--app-arg --hidden）时应为 IsUnMapped，正常启动为 IsViewable。
         # 只记录不判定——期望值取决于调用方传了什么参数。
         map_state="$(xwininfo -id "$window_id" 2>/dev/null | grep -i 'Map State' | sed 's/^ *//' || true)"
+        # 窗口图标：X11 下只有真的设了图标才会有 _NET_WM_ICON 属性（即 WithIcon 的机器可判定证据）
+        icon_evidence="$(xprop -id "$window_id" _NET_WM_ICON 2>/dev/null | head -c 120 || true)"
         # 末尾的 || true 是必需的：本脚本开着 set -e，而截图只是补充证据，
         # 失败（或缺 ImageMagick）绝不能把整个验证流程带崩。
         capture_shot "$window_id" "$OUT/shot-${backend}-window.png" \
@@ -314,6 +317,7 @@ run_case() {
     CASE_EVIDENCE+=("$evidence"); CASE_LOG+=("$log")
     CASE_SHOTS+=("$shots")
     CASE_MAP+=("$map_state")
+    CASE_ICON+=("$icon_evidence")
     echo
 }
 
@@ -369,6 +373,11 @@ for i in "${!CASE_LABEL[@]}"; do
     fi
     if [[ -n "${CASE_MAP[$i]}" ]]; then
         echo "  窗口映射状态：${CASE_MAP[$i]}"
+    fi
+    if [[ -n "${CASE_ICON[$i]}" ]]; then
+        echo "  窗口图标（_NET_WM_ICON）：${CASE_ICON[$i]}"
+    else
+        echo "  窗口图标（_NET_WM_ICON）：无（未传 --icon 时属正常）"
     fi
     if [[ -n "${CASE_SHOTS[$i]}" ]]; then
         echo "  截图（人眼判定用）："

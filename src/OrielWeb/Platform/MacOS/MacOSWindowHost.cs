@@ -216,6 +216,21 @@ internal sealed class MacOSWindowHost : IWindowBackend
             SetFullscreen(true);
         }
 
+        // 图标：macOS 没有窗口级图标，能设的只有应用（Dock）图标——平台事实，不是偷懒。
+        // initWithContentsOfFile: 要的是 NSString*（不是 char*）：必须用 MakeNSString 造对象，
+        // 直接传 C# 字符串会被 marshal 成 char*，ObjC 侧一问类型就 trap（见 ObjCRuntime 的注释）。
+        if (!string.IsNullOrEmpty(_options.Icon))
+        {
+            nint image = ObjCRuntime.SendIdObj(
+                ObjCRuntime.SendId(ObjCRuntime.GetClass("NSImage"), ObjCRuntime.Sel("alloc")),
+                ObjCRuntime.Sel("initWithContentsOfFile:"),
+                ObjCRuntime.MakeNSString(_options.Icon));
+            if (image != 0)
+            {
+                ObjCRuntime.SendVoidObj(SharedApplication(), ObjCRuntime.Sel("setApplicationIconImage:"), image);
+            }
+        }
+
         Navigate();
     }
 

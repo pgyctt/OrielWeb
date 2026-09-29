@@ -156,6 +156,12 @@ internal partial class Win32WindowHost : IWindowBackend
         }
         host._hwnd = hwnd;
 
+        // WithIcon：覆盖窗口类带来的（exe）图标
+        if (!string.IsNullOrEmpty(options.Icon))
+        {
+            ApplyExplicitIcon(hwnd, options.Icon);
+        }
+
         host.SetupComposition();
         host.PostCreate();
         return host;
@@ -244,6 +250,36 @@ internal partial class Win32WindowHost : IWindowBackend
         }
 
         InitializeWebView2();
+    }
+
+    /// <summary>用 <see cref="OrielWindowOptions.Icon"/> 指定的文件覆盖本窗口的图标。</summary>
+    /// <remarks>
+    /// 大/小两个尺寸分别按当前系统度量加载（小图标用于标题栏与 Alt-Tab，大图标用于任务栏）。
+    /// 走 <c>WM_SETICON</c> 而不是改窗口类：窗口类是进程级共享的，而图标是每窗口的选项。
+    /// 加载到的 HICON 不释放——WM_SETICON 不接管所有权，但窗口销毁时要逐个跟踪释放，
+    /// 而句柄数量与窗口数同阶（实际应用通常 1～2 个窗口），这里选择明确不释放而不是引入一套句柄生命周期管理。
+    /// </remarks>
+    private static void ApplyExplicitIcon(nint hwnd, string path)
+    {
+        nint large = Win32.LoadImageW(
+            0, path, Win32Constants.IMAGE_ICON,
+            Win32.GetSystemMetrics(Win32Constants.SM_CXICON),
+            Win32.GetSystemMetrics(Win32Constants.SM_CYICON),
+            Win32Constants.LR_LOADFROMFILE);
+        nint small = Win32.LoadImageW(
+            0, path, Win32Constants.IMAGE_ICON,
+            Win32.GetSystemMetrics(Win32Constants.SM_CXSMICON),
+            Win32.GetSystemMetrics(Win32Constants.SM_CYSMICON),
+            Win32Constants.LR_LOADFROMFILE);
+
+        if (large != 0)
+        {
+            _ = Win32.SendMessageW(hwnd, Win32Constants.WM_SETICON, Win32Constants.ICON_BIG, large);
+        }
+        if (small != 0)
+        {
+            _ = Win32.SendMessageW(hwnd, Win32Constants.WM_SETICON, Win32Constants.ICON_SMALL, small);
+        }
     }
 
     private static unsafe void EnsureWindowClass()
