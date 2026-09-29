@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <Authors>OrielWeb Contributors</Authors>
     <!-- Native AOT / 裁剪全局约束：任何反射/动态行为在编译期即报错 -->

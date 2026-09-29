@@ -5,7 +5,7 @@
     <Description>OrielWeb — 类 Tauri 的 C# 跨平台系统 webview 核心库。无 C++ 中间层、无 GUI 框架依赖、Native AOT 友好、零反射 IPC。</Description>
     <PackageTags>webview;tauri;desktop;cross-platform;nativeaot;aot;gtk;wkwebview</PackageTags>
     <PackageId>OrielWeb</PackageId>
-    <!-- 版本号统一取自根 Directory.Build.props（0.1.0），此处不再重复声明 -->
+    <!-- 版本号统一取自根 Directory.Build.props 的 <Version>，此处不再重复声明 -->
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>orielweb.png</PackageIcon>

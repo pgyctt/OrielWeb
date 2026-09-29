@@ -4,8 +4,8 @@ name: release
 # 产物：GitHub Release（NuGet 包 + demo 单文件 exe）+ nuget.org。
 # 前置：仓库 Secrets 里配置 NUGET_API_KEY（nuget.org 的 Push API Key）；
 #       未配置时工作流在最后一步失败，但 Release 资产已在上传完毕（推 NuGet 放在最后）。
-# 版本号唯一来源是根 Directory.Build.props 的 <Version>（当前 0.1.0）；
-# 标签必须与之一致（v0.1.0 对应 0.1.0），下面的校验步骤会拦截不一致的发布。
+# 版本号唯一来源是根 Directory.Build.props 的 <Version>；
+# 标签必须与之一致（形如 vX.Y.Z 对应 X.Y.Z），下面的校验步骤会拦截不一致的发布。
 
 on:
   push:
