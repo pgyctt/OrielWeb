@@ -213,6 +213,8 @@ else
 fi
 
 section "崩溃报告与系统日志（进程异常退出时才有内容）"
+# ReportCrash 是异步写报告的：进程刚退就查往往还没有，稍等一下
+sleep 3
 CRASH_DIR="$HOME/Library/Logs/DiagnosticReports"
 if [[ -d "$CRASH_DIR" ]]; then
     CRASH_FOUND=0
@@ -242,6 +244,10 @@ if command -v log >/dev/null 2>&1; then
         echo "  统一日志查询超时（结果已部分写入 system-log.txt）"
     else
         echo "  统一日志已写入 system-log.txt（$(wc -l <"$OUT/system-log.txt" 2>/dev/null | tr -d ' ') 行）"
+        # 关键行直接进 CI 日志，省去下载 artifact：托管运行时的 FailFast/断言在 macOS 上
+        # 经 os_log 上报（不写 stderr），这里往往是唯一能看到失败原因的地方
+        grep -iE 'fatal|unhandled|abort|assert|trap|exception|terminat|orieldemo' "$OUT/system-log.txt" 2>/dev/null \
+            | tail -30 | cut -c1-300 | sed 's/^/    /' || true
     fi
 fi
 
