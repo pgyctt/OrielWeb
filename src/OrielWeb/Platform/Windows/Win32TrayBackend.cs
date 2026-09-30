@@ -9,8 +9,7 @@ namespace OrielWeb.Platform.Windows;
 /// <remarks>
 /// 回调窗口复用平台的调度窗口（<see cref="WindowsPlatformBackend.MessageWindowHandle"/>）：
 /// 托盘图标不随任何窗口存活，而调度窗口的生命周期与消息循环一致，正是它需要的宿主。
-/// 用独立的自定义消息（<see cref="Win32Constants.WM_APP_TRAY"/>）而不是 <c>WM_COMMAND</c>：
-/// 菜单用 <c>TPM_RETURNCMD</c> 直接取回选中项 id，不需要额外的命令路由。
+/// 菜单用 <c>TPM_RETURNCMD</c> 直接取回选中项 id（<see cref="Win32Menu.Popup"/>），不需要命令路由。
 /// </remarks>
 internal sealed unsafe class Win32TrayBackend : ITrayBackend
 {
@@ -24,10 +23,9 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
     private nint _icon;
     private bool _ownsIcon;
     private bool _added;
+    private bool _hidden;
     private string _tooltip = "OrielWeb";
-    private nint _menu;
-    private readonly Dictionary<uint, OrielMenuItem> _menuTargets = [];
-    private uint _nextCommandId = 1;
+    private Win32Menu? _menu;
     private bool _disposed;
 
     public event Action? Clicked;
@@ -63,27 +61,13 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
     /// <summary>V4 下右键不在回调消息里，而是 <c>WM_CONTEXTMENU</c>。</summary>
     internal void ShowMenu()
     {
-        if (_menu == 0 || _disposed)
+        if (_disposed)
         {
             return;
         }
 
-        nint hwnd = _owner.MessageWindowHandle;
-        _ = Win32.GetCursorPos(out POINT cursor);
-
-        // 两个经典 workaround，缺了会出"菜单点外面不消失"或"菜单立刻被关闭"：
-        // ① 弹出前把宿主窗口置前台；② 跟踪结束后补一条 WM_NULL 让菜单的消息队列收尾。
-        _ = Win32.SetForegroundWindow(hwnd);
-        uint command = Win32.TrackPopupMenuEx(
-            _menu,
-            Win32Constants.TPM_RIGHTBUTTON | Win32Constants.TPM_RETURNCMD,
-            cursor.X,
-            cursor.Y,
-            hwnd,
-            0);
-        _ = Win32.PostMessageW(hwnd, Win32Constants.WM_NULL, 0, 0);
-
-        if (command != 0 && _menuTargets.TryGetValue(command, out OrielMenuItem? item))
+        OrielMenuItem? item = _menu?.Popup(_owner.MessageWindowHandle);
+        if (item is not null)
         {
             Activate(item);
         }
@@ -134,10 +118,8 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
 
     public void SetMenu(IReadOnlyList<OrielMenuItem> items)
     {
-        DestroyMenu();
-        _nextCommandId = 1;
-        _menuTargets.Clear();
-        _menu = BuildMenu(items);
+        _menu?.Dispose();
+        _menu = Win32Menu.Build(items);
     }
 
     public void Show() => SetHidden(hidden: false);
@@ -146,8 +128,6 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
 
     /// <summary><c>Shell_NotifyIcon(NIM_ADD)</c> 是否成功（失败时托盘静默缺失，见 <see cref="Add"/>）。</summary>
     public bool IsVisible => _added && !_hidden;
-
-    private bool _hidden;
 
     public void Dispose()
     {
@@ -165,7 +145,8 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
             _added = false;
         }
 
-        DestroyMenu();
+        _menu?.Dispose();
+        _menu = null;
 
         if (_ownsIcon && _icon != 0)
         {
@@ -174,110 +155,24 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
         }
     }
 
-    // ---- 菜单构建 ----
-
-    /// <summary>
-    /// 递归构建（子菜单在托盘菜单里同样受支持：Windows 的托盘菜单就是普通弹出菜单，
-    /// 与 Linux 的 GtkStatusIcon 只有一层不同）。
-    /// </summary>
-    private nint BuildMenu(IReadOnlyList<OrielMenuItem> items)
-    {
-        nint menu = Win32.CreatePopupMenu();
-        if (menu == 0)
-        {
-            return 0;
-        }
-
-        foreach (OrielMenuItem item in items)
-        {
-            if (item.IsSeparator)
-            {
-                _ = Win32.AppendMenuW(menu, Win32Constants.MF_SEPARATOR, 0, null);
-                continue;
-            }
-
-            uint flags = Win32Constants.MF_STRING;
-            if (!item.Enabled)
-            {
-                flags |= Win32Constants.MF_GRAYED;
-            }
-            if (item.Checked)
-            {
-                flags |= Win32Constants.MF_CHECKED;
-            }
-
-            string label = BuildLabel(item);
-
-            if (item.Items is { Count: > 0 } children)
-            {
-                nint submenu = BuildMenu(children);
-                if (submenu != 0)
-                {
-                    _ = Win32.AppendMenuW(menu, flags | Win32Constants.MF_POPUP, (nuint)submenu, label);
-                    continue;
-                }
-            }
-
-            // role 项也分配 id：点击要回到 Activate 里做平台动作
-            uint id = _nextCommandId++;
-            _menuTargets[id] = item;
-            _ = Win32.AppendMenuW(menu, flags, id, label);
-        }
-
-        return menu;
-    }
-
-    private static string BuildLabel(OrielMenuItem item)
-    {
-        string text = item.Label ?? DefaultLabel(item.Role) ?? string.Empty;
-
-        // Windows 菜单用制表符把快捷键右对齐显示。它只是显示：库不拦截按键，
-        // 按键仍会送到页面（与 macOS 上"真正生效的 key equivalent"不同，见 README 平台矩阵）。
-        if (item.Accelerator is { Length: > 0 } acceleratorText
-            && OrielAccelerator.TryParse(acceleratorText, out OrielAccelerator? accelerator))
-        {
-            text += "\t" + accelerator!.DisplayString;
-        }
-
-        return text;
-    }
-
-    /// <summary>未提供 <see cref="OrielMenuItem.Label"/> 时的英文默认文案（要本地化就自己给 Label）。</summary>
-    private static string? DefaultLabel(string? role) => role switch
-    {
-        OrielMenuRole.Quit => "Quit",
-        OrielMenuRole.Close => "Close",
-        OrielMenuRole.Minimize => "Minimize",
-        OrielMenuRole.Zoom => "Maximize",
-        OrielMenuRole.ToggleFullScreen => "Full Screen",
-        OrielMenuRole.About => "About",
-        _ => null,
-    };
+    // ---- 菜单项激活 ----
 
     private void Activate(OrielMenuItem item)
     {
         if (item.Role is { Length: > 0 } role)
         {
-            ActivateRole(role);
+            // 托盘没有"当前窗口"：窗口级/编辑类 role 在这里没有明确目标，
+            // OrielMenuRoles 会返回 false 表示"没人处理"，我们据此静默忽略（而不是猜一个窗口去操作）。
+            if (!OrielMenuRoles.TryActivate(role, _app, window: null))
+            {
+                System.Diagnostics.Debug.WriteLine($"[OrielWeb] 托盘菜单的 role「{role}」在当前上下文无法执行，已忽略。");
+            }
             return;
         }
 
         if (item.Id is { Length: > 0 } id)
         {
             MenuItemClicked?.Invoke(id);
-        }
-    }
-
-    /// <summary>
-    /// 托盘菜单里可用的 role：只有应用级动作。
-    /// 窗口级（minimize/close/zoom）与编辑级（copy/paste）在托盘语境里没有"当前窗口"这个概念，
-    /// 猜一个窗口去操作只会做出用户没预期的行为，因此明确忽略。
-    /// </summary>
-    private void ActivateRole(string role)
-    {
-        if (role == OrielMenuRole.Quit)
-        {
-            _app.Quit();
         }
     }
 
@@ -318,6 +213,7 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
         }
 
         _hidden = hidden;
+
         var data = CreateData(Win32Constants.NIF_STATE);
         data.dwState = hidden ? Win32Constants.NIS_HIDDEN : 0;
         data.dwStateMask = Win32Constants.NIS_HIDDEN;
@@ -340,18 +236,7 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
         }
     }
 
-    private void DestroyMenu()
-    {
-        if (_menu != 0)
-        {
-            _ = Win32.DestroyMenu(_menu);
-            _menu = 0;
-        }
-    }
-
-    /// <summary>
-    /// 写定长宽字符缓冲（截断到 capacity-1 并保证结尾 NUL）。
-    /// </summary>
+    /// <summary>写定长宽字符缓冲（截断到 capacity-1 并保证结尾 NUL）。</summary>
     internal static void WriteFixed(char* destination, int capacity, string? value)
     {
         if (string.IsNullOrEmpty(value))

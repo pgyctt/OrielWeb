@@ -68,6 +68,7 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     private event Action<OrielNavigationCompletedEventArgs>? NavigationCompleted;
     private event Action<OrielConsoleMessageEventArgs>? ConsoleMessage;
     private event Action<OrielMessageReceivedEventArgs>? MessageReceived;
+    private event Action<string>? ContextMenuItemClicked;
 
     internal MacOSWindowHost(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, MacOSPlatformBackend backend)
     {
@@ -97,6 +98,7 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     event Action<OrielNavigationCompletedEventArgs>? IWindowBackend.NavigationCompleted { add => NavigationCompleted += value; remove => NavigationCompleted -= value; }
     event Action<OrielConsoleMessageEventArgs>? IWindowBackend.ConsoleMessage { add => ConsoleMessage += value; remove => ConsoleMessage -= value; }
     event Action<OrielMessageReceivedEventArgs>? IWindowBackend.MessageReceived { add => MessageReceived += value; remove => MessageReceived -= value; }
+    event Action<string>? IWindowBackend.ContextMenuItemClicked { add => ContextMenuItemClicked += value; remove => ContextMenuItemClicked -= value; }
 
     public bool IsMaximized => ObjCRuntime.SendBoolRet(_nsWindow, ObjCRuntime.Sel("isZoomed"));
 
@@ -133,6 +135,47 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     public void PostToUiThread(Action action) => _backend.PostToMainThread(action);
 
     public void EmitEvent(string name, string jsonPayload) => PushEventOnUi(name, jsonPayload);
+
+    // ------------------------------------------------------------------
+    // 上下文菜单
+    // ------------------------------------------------------------------
+
+    private MacOSMenu? _contextMenu;
+
+    /// <summary>
+    /// 上下文菜单：构建 → 在鼠标位置弹出。
+    /// </summary>
+    /// <remarks>
+    /// 弹出是异步的，菜单对象因此留到下一次弹出前才释放（不能弹完即抛）。
+    /// 位置由当前 <c>NSEvent</c> 决定；没有当前事件时 <see cref="MacOSMenu.Popup"/> 会明确跳过并记日志，
+    /// 而不是弹到随机位置。
+    /// </remarks>
+    public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items)
+    {
+        _contextMenu?.Dispose();
+        _contextMenu = MacOSMenu.Build(items, ActivateMenuItem);
+        if (_contextMenu is not null && _webview != 0)
+        {
+            _contextMenu.Popup(_webview);
+        }
+    }
+
+    private void ActivateMenuItem(OrielMenuItem item)
+    {
+        if (item.Role is { Length: > 0 } role)
+        {
+            if (!OrielMenuRoles.TryActivate(role, _app, _window))
+            {
+                System.Diagnostics.Debug.WriteLine($"[OrielWeb] 菜单 role「{role}」在 macOS 上未被处理。");
+            }
+            return;
+        }
+
+        if (item.Id is { Length: > 0 } id)
+        {
+            ContextMenuItemClicked?.Invoke(id);
+        }
+    }
 
     // ------------------------------------------------------------------
     // 创建

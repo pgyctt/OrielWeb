@@ -35,6 +35,8 @@ internal static class Win32Constants
 
     public const uint WM_NULL = 0x0000;
     public const uint WM_CONTEXTMENU = 0x007B;
+    /// <summary>菜单栏与加速键发来的命令消息；LOWORD(wParam) 是命令 id。</summary>
+    public const uint WM_COMMAND = 0x0111;
 
     // ---- 托盘（Shell_NotifyIcon）----
 
@@ -609,6 +611,11 @@ internal static unsafe partial class Win32
     [LibraryImport("user32")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool GetCursorPos(out POINT point);
+
+    /// <summary>给窗口设置菜单栏；传 0 移除。菜单句柄的所有权转移给窗口（窗口销毁时释放）。</summary>
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool SetMenu(nint hwnd, nint menu);
 }
 
 /// <summary>

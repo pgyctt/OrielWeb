@@ -100,7 +100,50 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         var host = Win32WindowHost.Create(window, options, app, assetDirectory, this);
 
         _aliveWindows++;
+
+        // 应用菜单若已设置，后创建的窗口要补上菜单栏（Windows 的菜单挂在窗口上，不是进程级）
+        if (_appMenuItems.Count > 0)
+        {
+            host.ApplyAppMenu(_appMenuItems);
+        }
+
         return host;
+    }
+
+    // ---- 应用菜单（Windows 上就是每个窗口的菜单栏）----
+
+    private IReadOnlyList<OrielMenuItem> _appMenuItems = [];
+
+    public event Action<string>? AppMenuItemClicked;
+
+    internal void RaiseAppMenuItemClicked(string id) => AppMenuItemClicked?.Invoke(id);
+
+    /// <summary>
+    /// Windows 没有"应用级菜单栏"这种东西：菜单属于窗口（<c>SetMenu</c>），所以给当前所有窗口各设一份，
+    /// 并记住这份定义，供之后创建的窗口补上。
+    /// </summary>
+    public void SetAppMenu(IReadOnlyList<OrielMenuItem> items, OrielApp app)
+    {
+        _appMenuItems = items;
+        foreach (WebviewWindow window in app.Windows)
+        {
+            if (window.Backend is Win32WindowHost host)
+            {
+                host.ApplyAppMenu(items);
+            }
+        }
+    }
+
+    public void ResetAppMenu(OrielApp app)
+    {
+        _appMenuItems = [];
+        foreach (WebviewWindow window in app.Windows)
+        {
+            if (window.Backend is Win32WindowHost host)
+            {
+                host.ApplyAppMenu([]);
+            }
+        }
     }
 
     public void RunMessageLoop()

@@ -85,6 +85,13 @@ internal static unsafe partial class ObjCRuntime
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial nint SendIdObjObjObj(nint self, nint sel, nint a, nint b, nint c);
 
+    /// <summary>
+    /// 三个对象参数且无返回值的调用。类方法也走它（self 位置传类对象），
+    /// 例如 <c>NSMenu popUpContextMenu:withEvent:forView:</c>。
+    /// </summary>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial void SendVoidObjObjObj(nint self, nint sel, nint a, nint b, nint c);
+
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial nint SendIdObjBool(nint self, nint sel, nint arg, [MarshalAs(UnmanagedType.Bool)] bool flag);
 

@@ -111,7 +111,8 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 | 拖放（文件拖入 → 路径列表 + 事件） | ⏳ 未开始 | — | 逻辑可注入事件测，真实拖拽需真机 |
 | 系统托盘（`AddTray` / `app.Tray`） | ✅ 已实现；Linux 取证通过 | Windows `Shell_NotifyIconW` + `TrackPopupMenuEx`；macOS `NSStatusBar`/`NSMenu`；Linux GTK3 `GtkStatusIcon`/`GtkMenu`（用 GTK 自带而非 AppIndicator，理由见 DECISIONS） | Windows/macOS 编译验证；Linux 由 `--shell-selftest` 断言"托盘创建 + 一份含分隔线/勾选/禁用/子菜单/role 的菜单能设进去、进程不崩"，并由 `tools/verify-linux-shell.sh` 采集证据。**图标可见性需人眼**（见下） |
 | 系统通知（`ShowNotification`） | ✅ 已实现；Linux 硬断言 | Windows 用**独立的隐藏托盘项**发 `NIF_INFO` 气球（因此不启用托盘也能发）；macOS `osascript`；Linux `notify-send` | Linux：真 `notify-send` → 会话总线 → 假通知服务，断言**标题与正文逐字符正确**（`tools/verify-linux-shell.sh`）。点击上报仅 Windows 支持，另两个平台**显式空实现**（不是"忘触发"） |
-| 应用菜单 / 上下文菜单 / 全局快捷键 / 徽章 | ⏳ 未开始 | 参照 Ryn 的 MenuBar/GlobalShortcut/Badge 插件能力面，做成主包内的应用级 API（菜单类型 `OrielMenuItem` 与加速键 `OrielAccelerator` 已就位，正是为这一批准备的） | — |
+| 应用菜单 + 窗口上下文菜单 | ✅ 已实现 | 应用菜单：macOS `NSApplication.setMainMenu:`（语义最贴合）、Windows 每个窗口的 `SetMenu`（**无边框窗口跳过**——客户区铺满窗口会盖住菜单栏，与其"设了看不见"不如显式跳过）、Linux **空操作**（现代 GTK 用 header bar，且菜单栏会与 webview 布局层级打架）。上下文菜单三平台都支持（Windows 阻塞、另两个异步）。菜单构建按平台抽成共享类（`Win32Menu`/`GtkMenu`/`MacOSMenu`），role 由 `OrielMenuRoles` 统一解释 | 三平台编译 ✓；Linux `--shell-selftest` 断言"设置应用菜单 + 构建各形态菜单不崩"。**菜单外观、上下文菜单交互、macOS 加速键是否生效需人眼**（见下） |
+| 全局快捷键 / 徽章 | ⏳ 未开始 | 参照 Ryn 的 GlobalShortcut/Badge 插件；注意 Linux 上两者都没有标准 API（Ryn 也是 Stub）：快捷键要 X11 的 `XGrabKey`（Wayland 无解），徽章无跨桌面方案 | — |
 | deep link / 开机自启 | ⏳ 未开始（B 批） | — | 写注册表/.desktop/LaunchAgent 的内容可机器断言 |
 
 ### 托盘与通知的待真机清单
@@ -125,6 +126,17 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 - 若不符：按平台看后端——Windows `Win32TrayBackend.Add()`（`Shell_NotifyIconW` 失败时只写调试输出）、
   Linux `GtkTrayBackend`（GNOME Shell 未装扩展、或 Wayland 会话下本就不显示，属平台事实）、
   macOS `MacOSTrayBackend`（没给图标时会显示占位字符 `●`）。
+
+#### 菜单的外观与交互
+- 环境：三平台桌面各一次。
+- 步骤：1) `OrielDemo --shell-selftest`；
+  macOS 看顶部菜单栏是否被换成了自检设置的那份（Hello / Copy / Quit）；
+  Windows **预期看不到窗口菜单栏**（demo 是无边框窗口，后端按设计跳过，属正常）；
+  2) 用 devtools 控制台执行 `oriel.invoke('win.contextMenu')` 看上下文菜单。
+- 预期：菜单按设置渲染（子菜单可展开、勾选项带勾、禁用项是灰的、分隔线正确）；
+  macOS 上 `Cmd+C` 之类的加速键被系统拦下并触发对应项；`Quit` 项能退出应用。
+- 若不符：macOS 看 `MacOSMenu.Popup` 的"没有当前 NSEvent"日志（后台回调里调用时无法定位菜单）；
+  Windows 看 `Win32WindowHost.ApplyAppMenu` 的跳过日志（无边框）；Linux 本就不实现应用菜单。
 
 #### 通知的展示与点击
 - 环境：三平台桌面各一次。

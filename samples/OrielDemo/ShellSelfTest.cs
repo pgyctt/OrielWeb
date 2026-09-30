@@ -89,6 +89,18 @@ internal static class ShellSelfTest
                 Console.WriteLine("[shell-selftest] 环境缺通知客户端（notify-send）：按设计报告不支持");
             }
 
+            // 应用菜单：macOS 上真的会替换主菜单栏，Windows 上（无边框窗口）按设计跳过，Linux 是空操作。
+            // 上下文菜单不在这里测：它会弹出并等待用户选择（Windows 上还会阻塞），
+            // 交互式的东西不进无人自检——它的可判定部分（菜单构建）已由上面托盘菜单覆盖。
+            _app.SetAppMenu(
+            [
+                OrielMenuItem.Item("app-hello", "Hello"),
+                OrielMenuItem.Separator(),
+                OrielMenuItem.RoleItem(OrielMenuRole.Copy),
+                OrielMenuItem.RoleItem(OrielMenuRole.Quit),
+            ]);
+            Console.WriteLine("[shell-selftest] 应用菜单已设置（macOS 生效 / Windows 无边框窗口跳过 / Linux 空操作）");
+
             Console.WriteLine("SHELL-SELFTEST: PASS");
         }
         catch (Exception ex)

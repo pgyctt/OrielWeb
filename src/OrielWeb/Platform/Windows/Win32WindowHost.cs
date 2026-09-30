@@ -125,6 +125,7 @@ internal partial class Win32WindowHost : IWindowBackend
     event Action<OrielNavigationCompletedEventArgs>? IWindowBackend.NavigationCompleted { add => NavigationCompleted += value; remove => NavigationCompleted -= value; }
     event Action<OrielConsoleMessageEventArgs>? IWindowBackend.ConsoleMessage { add => ConsoleMessage += value; remove => ConsoleMessage -= value; }
     event Action<OrielMessageReceivedEventArgs>? IWindowBackend.MessageReceived { add => MessageReceived += value; remove => MessageReceived -= value; }
+    event Action<string>? IWindowBackend.ContextMenuItemClicked { add => ContextMenuItemClicked += value; remove => ContextMenuItemClicked -= value; }
 
     public bool IsMaximized => Win32.IsZoomed(_hwnd);
 
@@ -139,6 +140,91 @@ internal partial class Win32WindowHost : IWindowBackend
     public void PostToUiThread(Action action) => _backend.PostToMainThread(action);
 
     public void EmitEvent(string name, string jsonPayload) => PushEventOnUi(name, jsonPayload);
+
+    // ------------------------------------------------------------------
+    // 上下文菜单与应用菜单
+    // ------------------------------------------------------------------
+
+    private event Action<string>? ContextMenuItemClicked;
+
+    /// <summary>
+    /// 上下文菜单：构建 → 在鼠标位置弹出（**阻塞**）→ 释放。
+    /// </summary>
+    /// <remarks>
+    /// 每次调用都新建并销毁原生菜单：上下文菜单的内容通常随调用点而变（点在不同对象上），
+    /// 缓存它反而要额外判断"内容变了没有"。
+    /// </remarks>
+    public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items)
+    {
+        using Win32Menu? menu = Win32Menu.Build(items);
+        if (menu is null)
+        {
+            return;
+        }
+
+        OrielMenuItem? item = menu.Popup(_hwnd);
+        if (item is not null)
+        {
+            ActivateMenuItem(item, appMenu: false);
+        }
+    }
+
+    private Win32Menu? _appMenu;
+
+    /// <summary>
+    /// 应用菜单在 Windows 上就是"每个窗口的菜单栏"（由平台后端对每个窗口调用它）。
+    /// </summary>
+    internal void ApplyAppMenu(IReadOnlyList<OrielMenuItem> items)
+    {
+        _appMenu?.Dispose();
+        _appMenu = null;
+
+        if (_options.Frameless)
+        {
+            // 无边框窗口的客户区铺满整个窗口（WM_NCCALCSIZE 把客户区设成窗口矩形），
+            // 而系统菜单栏画在非客户区——它会被客户区盖住。这里明确跳过，
+            // 而不是"设了但用户看不见"。无边框窗口要菜单时应当把入口画在页面里。
+            System.Diagnostics.Debug.WriteLine("[OrielWeb] 无边框窗口不支持系统菜单栏（客户区铺满窗口），已跳过。");
+            return;
+        }
+
+        if (items.Count == 0)
+        {
+            _ = Win32.SetMenu(_hwnd, 0);
+            return;
+        }
+
+        _appMenu = Win32Menu.Build(items);
+        _ = Win32.SetMenu(_hwnd, _appMenu?.Handle ?? 0);
+    }
+
+    /// <summary>
+    /// 菜单项 → 行为：role 走共享解释器；自定义项按来源上报。
+    /// 应用菜单与上下文菜单分成两个事件，因为调用方订阅的本来就是两回事。
+    /// </summary>
+    private void ActivateMenuItem(OrielMenuItem item, bool appMenu)
+    {
+        if (item.Role is { Length: > 0 } role)
+        {
+            if (!OrielMenuRoles.TryActivate(role, _app, _window))
+            {
+                System.Diagnostics.Debug.WriteLine($"[OrielWeb] 菜单 role「{role}」在 Windows 上未被处理。");
+            }
+            return;
+        }
+
+        if (item.Id is { Length: > 0 } id)
+        {
+            if (appMenu)
+            {
+                _backend.RaiseAppMenuItemClicked(id);
+            }
+            else
+            {
+                ContextMenuItemClicked?.Invoke(id);
+            }
+        }
+    }
 
     // ------------------------------------------------------------------
     // 创建
@@ -423,6 +509,19 @@ internal partial class Win32WindowHost : IWindowBackend
     {
         switch (message)
         {
+            case Win32Constants.WM_COMMAND:
+            {
+                // 窗口菜单栏发来的命令；LOWORD(wParam) 是命令 id（HIWORD 是通知码，本项目不设加速键表故不看）。
+                uint commandId = (uint)(wParam & 0xFFFF);
+                OrielMenuItem? item = _appMenu?.Find(commandId);
+                if (item is not null)
+                {
+                    ActivateMenuItem(item, appMenu: true);
+                    return 0;
+                }
+                break;
+            }
+
             case Win32Constants.WM_NCCALCSIZE:
             {
                 // 无边框窗口：客户区等于整个窗口，四周不留任何系统边框。

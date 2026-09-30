@@ -194,6 +194,28 @@ public sealed partial class WindowCommands
 
     [OrielCommand("win.pickFile")]
     public static string? PickFile() => Program.Window?.ShowOpenFileDialog("选择文件", "所有文件|*.*");
+
+    /// <summary>
+    /// 弹出一个覆盖各形态的上下文菜单——真机验证用的入口（页面里用
+    /// <c>oriel.invoke('win.contextMenu')</c> 或 devtools 控制台触发）。
+    /// 无人自检**不**调它：上下文菜单要等用户选择，Windows 上还会阻塞。
+    /// </summary>
+    [OrielCommand("win.contextMenu")]
+    public static void ShowContextMenu() => Program.Window?.ShowContextMenu(
+    [
+        OrielMenuItem.Item("ctx-hello", "Hello from context menu"),
+        OrielMenuItem.Separator(),
+        new OrielMenuItem { Id = "ctx-pin", Label = "置顶（勾选示例）", Checked = true },
+        new OrielMenuItem { Id = "ctx-disabled", Label = "禁用项", Enabled = false },
+        new OrielMenuItem
+        {
+            Label = "子菜单",
+            Items = [OrielMenuItem.Item("ctx-sub", "子项")],
+        },
+        OrielMenuItem.Separator(),
+        OrielMenuItem.RoleItem(OrielMenuRole.Copy),
+        OrielMenuItem.RoleItem(OrielMenuRole.Close),
+    ]);
 }
 
 /// <summary>DTO：STJ 源生成上下文（AOT 安全序列化的唯一入口）。</summary>

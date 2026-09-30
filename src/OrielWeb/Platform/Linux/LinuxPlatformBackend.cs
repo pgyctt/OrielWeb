@@ -141,6 +141,27 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
 
     public ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app) => new GtkTrayBackend(app, options);
 
+    // ---- 应用菜单 ----
+    // Linux 上**不实现**：现代 GTK 应用用 header bar，GTK3 的 GtkMenuBar 在主流桌面上已不再惯用；
+    // 硬把一个菜单栏塞进 GtkWindow 还会与 webview 的布局层级打架（Ryn 在同一处也放弃了 Linux 菜单栏，
+    // 给的理由是"应用惯例 + 框架拥有窗口的 child 层级"）。
+    // 所以 SetAppMenu 是空操作、AppMenuItemClicked 永不触发——这是刻意的平台取舍，不是漏做。
+    // 需要菜单的应用应当把入口画在页面里。
+
+    public void SetAppMenu(IReadOnlyList<OrielMenuItem> items, OrielApp app)
+    {
+    }
+
+    public void ResetAppMenu(OrielApp app)
+    {
+    }
+
+    public event Action<string>? AppMenuItemClicked
+    {
+        add { }
+        remove { }
+    }
+
     // ---- 通知 ----
     // Linux 的通知交给 freedesktop 通知守护（经 notify-send 子进程）。
 

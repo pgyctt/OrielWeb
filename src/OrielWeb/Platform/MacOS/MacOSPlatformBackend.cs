@@ -117,6 +117,51 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
 
     public ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app) => new MacOSTrayBackend(app, options);
 
+    // ---- 应用菜单（macOS 就是顶部主菜单栏）----
+
+    private MacOSMenu? _appMenu;
+
+    public event Action<string>? AppMenuItemClicked;
+
+    /// <summary>
+    /// macOS 的应用菜单就是主菜单栏（<c>NSApplication.setMainMenu:</c>），这是三平台里语义最贴合的。
+    /// </summary>
+    public void SetAppMenu(IReadOnlyList<OrielMenuItem> items, OrielApp app)
+    {
+        _appMenu?.Dispose();
+        _appMenu = MacOSMenu.Build(items, item => ActivateAppMenuItem(item, app));
+        _appMenu?.SetAsMainMenu();
+    }
+
+    public void ResetAppMenu(OrielApp app)
+    {
+        _appMenu?.Dispose();
+        _appMenu = null;
+        MacOSMenu.ClearMainMenu();
+    }
+
+    /// <summary>
+    /// 应用菜单里的 role 有明确的作用目标（不像托盘那样无窗口可用）：取第一个窗口。
+    /// 多窗口场景下"关闭/最小化哪个窗口"本就没有通用答案，取首个是明确且可预期的选择。
+    /// </summary>
+    private void ActivateAppMenuItem(OrielMenuItem item, OrielApp app)
+    {
+        if (item.Role is { Length: > 0 } role)
+        {
+            WebviewWindow? target = app.Windows.Count > 0 ? app.Windows[0] : null;
+            if (!OrielMenuRoles.TryActivate(role, app, target))
+            {
+                System.Diagnostics.Debug.WriteLine($"[OrielWeb] 应用菜单的 role「{role}」在 macOS 上未被处理。");
+            }
+            return;
+        }
+
+        if (item.Id is { Length: > 0 } id)
+        {
+            AppMenuItemClicked?.Invoke(id);
+        }
+    }
+
     // ---- 通知 ----
 
     /// <summary>macOS 自带 osascript，因此通知总是可用（未打包运行时的唯一可行路径）。</summary>

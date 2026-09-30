@@ -95,6 +95,33 @@ public sealed class OrielApp : IDisposable
     public void ShowNotification(string title, string? body = null)
         => ShowNotification(new OrielNotificationOptions { Title = title, Body = body });
 
+    // ---- 应用菜单（应用级）----
+
+    /// <summary>应用菜单里的自定义项被点击；参数是该项的 <see cref="OrielMenuItem.Id"/>（role 项不走这里）。</summary>
+    public event Action<string>? AppMenuItemClicked;
+
+    /// <summary>
+    /// 设置应用菜单：<b>macOS</b> 是顶部主菜单栏、<b>Windows</b> 是每个窗口的菜单栏、
+    /// <b>Linux 不支持</b>（现代 GTK 应用用 header bar；详见 README 平台矩阵）。
+    /// </summary>
+    /// <remarks>
+    /// 平台不支持的实现是**空操作**而不是抛异常：同一份跨平台代码里调用它不该因为换了平台就崩，
+    /// "这个平台没有这个表面"应当是静默但可被文档查到的事实。
+    /// </remarks>
+    public void SetAppMenu(IReadOnlyList<OrielMenuItem> items)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        var backend = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
+        backend.SetAppMenu(items, this);
+    }
+
+    /// <summary>清空应用菜单（macOS 与 Windows 都会移除现有菜单）。</summary>
+    public void ResetAppMenu()
+    {
+        var backend = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
+        backend.ResetAppMenu(this);
+    }
+
     /// <summary>创建窗口、进入消息循环；阻塞直到所有窗口关闭。</summary>
     public void Run()
     {
@@ -119,6 +146,7 @@ public sealed class OrielApp : IDisposable
         _backend = PlatformBackendFactory.Create();
         _backend.ThemeChanged += OnThemeChanged;
         _backend.NotificationClicked += id => NotificationClicked?.Invoke(id);
+        _backend.AppMenuItemClicked += id => AppMenuItemClicked?.Invoke(id);
 
         // 托盘先于窗口创建：托盘是应用的外壳，先就绪才能让"启动即最小化到托盘"这类形态成立
         if (_builder.TrayOptions is { } trayOptions)

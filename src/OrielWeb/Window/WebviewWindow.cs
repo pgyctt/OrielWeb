@@ -90,6 +90,29 @@ public sealed class WebviewWindow
     public event Action<OrielConsoleMessageEventArgs>? ConsoleMessage;
     /// <summary>页面经 <c>oriel.postMessage(name, payload)</c> 发来的消息。</summary>
     public event Action<OrielMessageReceivedEventArgs>? MessageReceived;
+    /// <summary>上下文菜单里的自定义项被点击；参数是该项的 <see cref="OrielMenuItem.Id"/>。</summary>
+    public event Action<string>? ContextMenuItemClicked;
+
+    /// <summary>
+    /// 在鼠标位置弹出上下文菜单（项里的 <see cref="OrielMenuItem.Role"/> 走平台语义，
+    /// 自定义项在用户选择后触发 <see cref="ContextMenuItemClicked"/>）。
+    /// </summary>
+    /// <remarks>
+    /// <b>Windows 上这个调用会阻塞</b>，直到用户选择或取消——原生弹出菜单自带模态消息循环。
+    /// macOS 与 Linux 是异步弹出（调用立即返回，之后事件才来）。
+    /// 因此不要从"需要立刻继续"的路径里调用它（例如页面命令处理里同步等结果）；三平台的共同保证只有
+    /// "用户选中自定义项后会触发事件"，没有"调用返回时用户已选完"。
+    /// </remarks>
+    public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        if (items.Count == 0)
+        {
+            return;
+        }
+
+        Backend.ShowContextMenu(items);
+    }
 
     internal IWindowBackend Backend => _backend ?? throw new InvalidOperationException(
         "窗口后端尚未初始化：请在 OrielAppBuilder.Run() 之后使用窗口能力。");
@@ -119,6 +142,7 @@ public sealed class WebviewWindow
         backend.NavigationCompleted += args => NavigationCompleted?.Invoke(args);
         backend.ConsoleMessage += args => ConsoleMessage?.Invoke(args);
         backend.MessageReceived += args => MessageReceived?.Invoke(args);
+        backend.ContextMenuItemClicked += id => ContextMenuItemClicked?.Invoke(id);
     }
 
     // ---- 显示状态 ----

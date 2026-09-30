@@ -12,8 +12,9 @@
 - **导航与双向通信**：前进/后退/刷新 + 导航事件（开始/完成/失败，带错误信息）、页面 console 转发、
   `EmitEvent(name, payload)` 推事件、`oriel.postMessage` 收消息——三条通道都能在无头环境里机器断言
   （见 `--nav-selftest` / `--ipc-selftest`）
-- **平台集成**：剪贴板（文本 + HTML）、系统主题（深/浅 + 变更事件）、单实例、**系统托盘与系统通知**——
-  同样都有无头自检（见 `--clipboard-selftest` / `--theme-selftest` / `--shell-selftest` / 单实例的双进程断言）
+- **平台集成**：剪贴板（文本 + HTML）、系统主题（深/浅 + 变更事件）、单实例、系统托盘、系统通知、
+  **菜单**（应用菜单 + 窗口上下文菜单，含平台 role 与加速键）——都有无头自检
+  （见 `--clipboard-selftest` / `--theme-selftest` / `--shell-selftest` / 单实例的双进程断言）
 - **系统 webview**：Windows 用 WebView2、macOS 用 WKWebView、Linux 用 WebKitGTK——不捆绑浏览器内核
 
 ## 快速开始
@@ -270,9 +271,9 @@ Oriel.CreateBuilder(args)
 
 > 与路线图的约定一致：这里只写有证据的结论；未验证项同样列在 `docs/ROADMAP.md` 的待真机清单里。
 
-## 托盘与通知
+## 托盘、通知与菜单
 
-两者都是**应用级**能力（不属于任何窗口）。托盘经 `AddTray` 配置、运行期从 `app.Tray` 取：
+托盘与通知都是**应用级**能力（不属于任何窗口）。托盘经 `AddTray` 配置、运行期从 `app.Tray` 取：
 
 ```csharp
 Oriel.CreateBuilder(args)
@@ -315,10 +316,48 @@ app.NotificationClicked += id => { /* 点了哪条通知（平台差异见下表
 | 托盘 | `--shell-selftest`：创建托盘 + 设进一份含分隔线/勾选/禁用/子菜单/role 的菜单，进程不崩；`tools/verify-linux-shell.sh` 采集证据 | **图标是否真的出现在托盘区**、菜单外观、点击行为。Linux 另有平台限制：GNOME Shell 需 AppIndicator 扩展、Wayland 会话多数不显示 |
 | 通知投递 | `tools/verify-linux-shell.sh`：真 `notify-send` → 会话总线 → 假通知服务，断言**标题与正文逐字符正确** | macOS 的通知横幅外观与点击上报；Windows 气球的实际展示 |
 | 通知点击上报 | Windows：气球点击回传 `Id` | Linux（`notify-send` 拿不到点击，要改 libnotify 的 action 回调）、macOS（`osascript` 无回调）——两处都在代码里**显式空实现**，而不是"忘了触发" |
+| 菜单 | `--shell-selftest` 设置一份含子菜单/自定义项/role 的应用菜单并断言不崩（Linux 上是空操作）；加速键解析有 41 个单测 | 菜单的外观、上下文菜单的弹出位置与交互、macOS 上加速键是否真的生效——需人眼 |
 
 > 三平台实现：Windows `Shell_NotifyIconW` + 弹出菜单（`TrackPopupMenuEx`）、macOS `NSStatusBar`/`NSMenu`、
 > Linux GTK3 `GtkStatusIcon`/`GtkMenu`。通知：Windows 用独立的隐藏托盘项发气球（因此不启用托盘也能发）、
 > macOS 走 `osascript`、Linux 走 `notify-send`。
+
+### 菜单
+
+菜单项结构与加速键语法在**三处共用**（托盘菜单、应用菜单、窗口上下文菜单），role 由同一套解释器落到行为上：
+
+```csharp
+window.ShowContextMenu(
+[
+    OrielMenuItem.Item("copy-path", "复制路径"),
+    OrielMenuItem.Separator(),
+    new OrielMenuItem { Id = "pin", Label = "置顶", Checked = true },
+    OrielMenuItem.RoleItem(OrielMenuRole.Copy),      // 平台标准项
+]);
+window.ContextMenuItemClicked += id => { /* 自定义项的 Id */ };
+
+app.SetAppMenu(
+[
+    OrielMenuItem.Item("about", "关于"),
+    OrielMenuItem.Separator(),
+    OrielMenuItem.RoleItem(OrielMenuRole.Quit),
+]);
+app.AppMenuItemClicked += id => { /* 自定义项的 Id */ };
+```
+
+平台差异集中列在这里，免得逐处猜：
+
+| 项 | macOS | Windows | Linux |
+|---|---|---|---|
+| 应用菜单 | ✅ 顶部主菜单栏（`setMainMenu:`） | ✅ 每个窗口的菜单栏；**无边框窗口会跳过**（客户区铺满窗口，系统菜单栏会被盖住，与其"设了看不见"不如明确跳过） | ❌ 不支持：现代 GTK 应用用 header bar，且硬塞菜单栏会与 webview 的布局层级打架。`SetAppMenu` 是空操作，**需要菜单就把入口画在页面里** |
+| 上下文菜单 | ✅ 鼠标位置弹出（异步） | ✅ 同样在鼠标位置，但**调用会阻塞**到用户选择（原生弹出菜单自带模态消息循环） | ✅ 指针位置弹出（异步） |
+| 菜单加速键 | **真快捷键**（系统拦下按键） | 只作显示（按键仍送到页面） | 只作显示（跟在标签后面） |
+| 子菜单 / 勾选 / 禁用 / 分隔线 | ✅ | ✅ | ✅ |
+| role 项 | 全部（`close`/`minimize`/`zoom`/编辑类等） | 窗口类与编辑类；托盘菜单里只有应用级（`quit`）——托盘没有"当前窗口" | 同 Windows（但无应用菜单） |
+
+> role 的语义由 `OrielMenuRoles` 统一解释（`quit` 退出应用、`copy` 交给页面 `document.execCommand` 等），
+> 三平台后端只负责"把菜单画出来"和"把选择报回来"。编辑类 role 是**尽力而为**：
+> `copy`/`selectAll`/`undo`/`redo` 通常可用，`cut`/`paste` 在多数 webview 里会被安全策略拦下。
 
 ## 构建
 

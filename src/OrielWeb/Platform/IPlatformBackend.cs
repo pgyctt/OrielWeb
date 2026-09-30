@@ -90,6 +90,15 @@ internal interface IWindowBackend
     /// <summary>向页面推送自定义事件（页面侧 <c>oriel.on(name, …)</c> 接收）；jsonPayload 必须是合法 JSON 文本。</summary>
     void EmitEvent(string name, string jsonPayload);
 
+    /// <summary>
+    /// 在鼠标位置弹出一个上下文菜单。<b>Windows 上是阻塞的</b>（TrackPopupMenu 自带模态消息循环，
+    /// 直到用户选择或取消才返回），macOS 与 Linux 是异步弹出——这一点写进文档，因为它影响调用时机。
+    /// </summary>
+    void ShowContextMenu(IReadOnlyList<OrielMenuItem> items);
+
+    /// <summary>上下文菜单里的自定义项被点击，参数是该项的 <see cref="OrielMenuItem.Id"/>。</summary>
+    event Action<string>? ContextMenuItemClicked;
+
     Task<string> ExecuteScriptAsync(string script);
     void PostMessageAsJson(string json);
 
@@ -115,6 +124,19 @@ internal interface IPlatformBackend : IDisposable
 
     /// <summary>创建托盘图标（应用级，最多一个）。</summary>
     ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app);
+
+    /// <summary>
+    /// 设置应用菜单。平台差异见 README：macOS 是顶部主菜单栏（<c>NSApplication.setMainMenu:</c>）、
+    /// Windows 是每个窗口的菜单栏（<c>SetMenu</c>）、Linux **不支持**——现代 GTK 应用用 header bar，
+    /// GTK3 的 <c>GtkMenuBar</c> 在主stream桌面上已不再惯用。这是平台事实下的取舍，不是遗漏。
+    /// </summary>
+    void SetAppMenu(IReadOnlyList<OrielMenuItem> items, OrielApp app);
+
+    /// <summary>清空应用菜单。</summary>
+    void ResetAppMenu(OrielApp app);
+
+    /// <summary>应用菜单里的自定义项被点击，参数是该项的 <see cref="OrielMenuItem.Id"/>。</summary>
+    event Action<string>? AppMenuItemClicked;
 
     /// <summary>
     /// 本平台是否支持系统通知。用于让调用方决定"要不要退回到应用内提示"，
