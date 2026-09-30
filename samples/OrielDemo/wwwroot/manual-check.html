@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Oriel Demo — 手动验证</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        /* 操作台专用样式。内联而不加进 styles.css：那些类属于 Todo 示例页，
+           这一页是验证工具，两者不该互相牵制。 */
+
+        .app { overflow-y: auto; padding-bottom: 24px; }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 14px 16px;
+            margin-bottom: 12px;
+        }
+
+        .panel h2 { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
+
+        .row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+        .panel button {
+            padding: 8px 14px;
+            font-size: 13px;
+            font-family: inherit;
+            color: var(--text);
+            background: #1e2330;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        .panel button:hover { border-color: var(--accent); }
+        .panel button:active { background: var(--accent-strong); border-color: var(--accent-strong); }
+
+        .hint { margin: 10px 0 0; color: var(--muted); font-size: 12px; line-height: 1.65; }
+        .hint code { color: var(--text); }
+        .hint strong { color: var(--text); }
+
+        #state { color: var(--muted); font-size: 12px; line-height: 1.8; }
+        #state b { color: var(--text); }
+
+        #log {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+            max-height: 240px;
+            overflow-y: auto;
+            font-family: Consolas, "Cascadia Mono", monospace;
+            font-size: 12px;
+            line-height: 1.7;
+        }
+
+        #log li { padding: 2px 0; border-bottom: 1px solid rgba(38, 43, 54, 0.55); }
+        #log li .ts { color: var(--muted); margin-right: 8px; }
+        #log li.evt { color: var(--accent); }
+        #log li.ok { color: #4cc38a; }
+        #log li.err { color: var(--danger); }
+    </style>
+</head>
+<body>
+    <header class="titlebar">
+        <div class="drag-region" id="drag-region">
+            <span class="app-title">Oriel Demo — 手动验证操作台</span>
+        </div>
+        <div class="win-controls">
+            <button id="btn-min" class="win-btn" title="最小化" aria-label="最小化">
+                <svg class="glyph" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+                    <path d="M0 5.5 H10" />
+                </svg>
+            </button>
+            <button id="btn-max" class="win-btn" title="最大化" aria-label="最大化">
+                <svg class="glyph glyph-maximize" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+                    <rect x="0.5" y="0.5" width="9" height="9" />
+                </svg>
+                <svg class="glyph glyph-restore" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+                    <path d="M0.5 2.5 H7.5 V9.5 H0.5 Z" />
+                    <path d="M2.5 0.5 H9.5 V7.5 H7.5" />
+                </svg>
+            </button>
+            <button id="btn-close" class="win-btn close" title="关闭" aria-label="关闭">
+                <svg class="glyph" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+                    <path d="M0.5 0.5 L9.5 9.5 M9.5 0.5 L0.5 9.5" />
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    <main class="app">
+        <div class="header">
+            <div>
+                <h1>手动验证操作台</h1>
+                <p class="subtitle">点按钮做动作，宿主侧的回调以<strong>蓝色</strong>出现在日志里</p>
+            </div>
+            <span class="badge ok">已连接</span>
+        </div>
+
+        <section class="panel">
+            <h2>环境</h2>
+            <div id="state">读取中…</div>
+        </section>
+
+        <section class="panel">
+            <h2>托盘与通知</h2>
+            <div class="row">
+                <button data-cmd="manual.notify">发一条通知</button>
+                <button data-cmd="manual.notifyId">发一条带 Id 的通知（可点击）</button>
+                <button data-cmd="manual.trayMenu">重设托盘菜单</button>
+            </div>
+            <p class="hint">
+                托盘图标在任务栏通知区（可能被收进 <code>^</code> 里）。悬停看 tooltip，左/右键点它弹菜单，
+                点菜单项会以蓝色出现在日志里。<strong>通知</strong>是右下角横幅，点横幅本体应出现「通知点击」。
+            </p>
+        </section>
+
+        <section class="panel">
+            <h2>菜单</h2>
+            <div class="row">
+                <button data-cmd="manual.appMenu">设置应用菜单</button>
+                <button data-cmd="manual.resetAppMenu">清空应用菜单</button>
+                <button data-cmd="manual.contextMenu">弹出上下文菜单</button>
+            </div>
+            <p class="hint">
+                本窗口是<strong>无边框</strong>窗口：应用菜单在 Windows 上按设计<strong>跳过</strong>——
+                预期是「没有菜单栏，也不报错」（客户区铺满时菜单栏会被盖住，与其设了看不见不如明确跳过）。
+                上下文菜单弹在鼠标位置；Windows 上它会<strong>阻塞</strong>消息循环直到你选择或取消，这是原生行为。
+            </p>
+        </section>
+
+        <section class="panel">
+            <h2>全局快捷键</h2>
+            <div class="row">
+                <button data-cmd="manual.shortcutOn">注册 Ctrl+Shift+F12</button>
+                <button data-cmd="manual.shortcutOff">注销</button>
+            </div>
+            <p class="hint">
+                注册后按 <code>Ctrl+Shift+F12</code>——<strong>焦点在别的程序上也要有反应</strong>才算全局。
+                触发会以「快捷键触发」出现在日志里。
+            </p>
+        </section>
+
+        <section class="panel">
+            <h2>徽章</h2>
+            <div class="row">
+                <button data-cmd="manual.badgeOn">设置徽章「3」</button>
+                <button data-cmd="manual.badgeOff">清除徽章</button>
+            </div>
+            <p class="hint">
+                Windows 上是<strong>文档化的 no-op</strong>（任务栏 overlay 要自绘位图，尚未实现）；
+                macOS 上会改 Dock 徽章。这里只验证「调用不崩」。
+            </p>
+        </section>
+
+        <section class="panel">
+            <h2>对话框</h2>
+            <div class="row">
+                <button data-cmd="manual.messageBox">消息框</button>
+                <button data-cmd="manual.openSingle">打开（单选）</button>
+                <button data-cmd="manual.openMultiple">打开（多选）</button>
+                <button data-cmd="manual.save">保存</button>
+                <button data-cmd="manual.pickFolder">选文件夹</button>
+            </div>
+            <p class="hint">
+                打开对话框的类型下拉应有<strong>两项</strong>（文本文件 / 所有文件）；多选要返回<strong>全部</strong>路径。
+                保存时输入不带扩展名的名字，落盘文件名应自动带上 <code>.txt</code>。
+                选文件夹在 Windows 上<strong>不支持初始目录</strong>（老 API 的已知取舍）。
+            </p>
+        </section>
+
+        <section class="panel">
+            <h2>Shell（系统集成）</h2>
+            <div class="row">
+                <button data-cmd="manual.openExternal">打开外部链接</button>
+                <button data-cmd="manual.revealSelf">在文件管理器里显示自己</button>
+                <button data-cmd="manual.openSelf">用默认程序打开自己</button>
+                <button data-cmd="manual.dangerous">尝试危险目标（应被拒）</button>
+            </div>
+            <p class="hint">
+                最后一项传 <code>file:///etc/passwd</code> 与裸路径，<strong>必须返回 false</strong>
+                且不应有任何窗口弹出来——这是安全边界的检查，比「能用」更值得看。
+            </p>
+        </section>
+
+        <section class="panel">
+            <h2>开机自启</h2>
+            <div class="row">
+                <button data-cmd="manual.autoStartOn">启用</button>
+                <button data-cmd="manual.autoStartQuery">查询</button>
+                <button data-cmd="manual.autoStartOff">禁用</button>
+            </div>
+            <p class="hint">
+                Windows 写 <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code>，可在
+                <code>regedit</code> 里核对同名值。<strong>验证完请点「禁用」</strong>，别把自启项留在系统里。
+            </p>
+        </section>
+
+        <section class="panel">
+            <h2>拖放</h2>
+            <p class="hint">
+                从资源管理器拖 <strong>1 个文件</strong> / <strong>多个文件</strong> / <strong>一个文件夹</strong>
+                进窗口，路径应出现在日志里；拖<strong>一段选中的文本</strong>则不应触发（只受理文件 URL）。
+            </p>
+        </section>
+
+        <section class="panel">
+            <h2>日志 <span class="hint" style="display:inline">（宿主的回调都在这里）</span></h2>
+            <ol id="log"></ol>
+            <div class="row" style="margin-top:10px">
+                <button id="clear-log">清空</button>
+            </div>
+        </section>
+    </main>
+
+    <script src="manual-check.js"></script>
+</body>
+</html>

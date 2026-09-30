@@ -8,6 +8,12 @@ namespace OrielDemo;
 
 internal static class Program
 {
+    /// <summary>
+    /// 内嵌资源的虚拟主机名。必须与 <c>UseEmbeddedAssets(host)</c> 一致：
+    /// 操作台页面的 URL 要手写它（库里的 <c>AssetHost</c> 是 internal，示例拿不到）。
+    /// </summary>
+    private const string AssetHost = "app.oriel";
+
     internal static WebviewWindow? Window;
 
     /// <summary>取 <c>--name value</c> 形式的参数值；未提供时返回 null。</summary>
@@ -39,16 +45,22 @@ internal static class Program
         var singleInstanceSelfTest = args.Contains("--single-instance-selftest");
         // --shell-selftest：托盘与通知的自检（建托盘、设菜单、发通知，随后退出）
         var shellSelfTest = args.Contains("--shell-selftest");
+        // --manual-check：手动验证操作台（停在那里等人点，不自动退出）。
+        // 与 --shell-selftest 的分工：那个是给 CI 的无人断言，这个是给人看的——
+        // 每项做成按钮，托管侧的回调（托盘菜单项、通知点击、快捷键、拖放）回显到页面。
+        // 之所以要回显：demo 在 Windows 上是 WinExe，没有控制台，打印的东西看不见。
+        var manualCheck = args.Contains("--manual-check");
 
         // 主题自检需要 OrielApp（主题是应用级的），所以这里显式 Build 再 Run；
         // app 变量先声明、后赋值，闭包在 onCreated 里读它（onCreated 发生在 Run 内部，那时已赋值）。
         OrielApp? app = null;
 
         var builder = Oriel.CreateBuilder(args)
-            .UseEmbeddedAssets()
+            .UseEmbeddedAssets(AssetHost)
             .UseJsonContext(AppJsonContext.Default)
             .AddCommands<TodoCommands>()
             .AddCommands<WindowCommands>()
+            .AddCommands<ManualCommands>()
             .UseDebug()
             .OnWebView2RuntimeMissing(HandleWebView2RuntimeMissing)
             .AddWindow(w =>
@@ -66,7 +78,12 @@ internal static class Program
                     // 默认关闭（见选项说明）；自检需要它才能收到页面的 console 输出。
                     w.WithConsoleForwarding();
                 }
-                w.WithTitle("Oriel Demo — Todo")
+                if (manualCheck)
+                {
+                    // 操作台走独立页面：Todo 页保持它作为"API 用法示例"的干净面貌
+                    w.WithUrl($"https://{AssetHost}/manual-check.html");
+                }
+                w.WithTitle(manualCheck ? "Oriel Demo — 手动验证" : "Oriel Demo — Todo")
                     .WithSize(1024, 720)
                     .WithMinSize(640, 480)
                     .WithFrameless()
@@ -80,6 +97,12 @@ internal static class Program
                     // 那时 win.App 会抛异常。推迟到 Loaded——那时后端已就位。
                     WebviewWindow created = win;
                     created.Loaded += () => ThemeSelfTest.Attach(created.App, created);
+                }
+                if (manualCheck)
+                {
+                    // 同上：需要 app（托盘/快捷键/自启都是应用级），所以等 Loaded
+                    WebviewWindow created = win;
+                    created.Loaded += () => ManualCheck.Attach(created.App, created);
                 }
                 if (navSelfTest)
                 {
@@ -103,10 +126,11 @@ internal static class Program
                 SingleInstanceSelfTest.OnActivatedBySecondInstance);
         }
 
-        if (shellSelfTest)
+        if (shellSelfTest || manualCheck)
         {
-            // 托盘是应用级能力，必须在 Run() 之前配置：原生资源在 Run 期间创建
-            builder.AddTray(o => o.Tooltip = "OrielWeb self-test");
+            // 托盘是应用级能力，必须在 Run() 之前配置：原生资源在 Run 期间创建。
+            // 操作台同样要它——这一批里"看得见"的东西大多挂在托盘上。
+            builder.AddTray(o => o.Tooltip = shellSelfTest ? "OrielWeb self-test" : "OrielWeb 手动验证");
         }
 
         app = builder.Build();
@@ -223,4 +247,6 @@ public sealed partial class WindowCommands
 [JsonSerializable(typeof(TodoItem))]
 [JsonSerializable(typeof(TodoItem[]))]
 [JsonSerializable(typeof(SysInfo))]
+[JsonSerializable(typeof(ManualLog))]
+[JsonSerializable(typeof(ManualState))]
 internal sealed partial class AppJsonContext : JsonSerializerContext;
