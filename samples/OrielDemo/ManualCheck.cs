@@ -156,8 +156,8 @@ public sealed partial class ManualCommands
         });
 
         ManualCheck.Log(delivered
-            ? "通知已提交给系统（带 Id）：点横幅本体应当回传；没看到横幅就查系统通知设置"
-            : "通知提交失败：这是实现侧的问题，Windows 上意味着 NIM_MODIFY 返回了 false");
+            ? "通知已提交给系统（带 Id）。注意：Windows 上是 WinRT toast，点击激活尚未实现（未打包应用的限制）"
+            : "通知提交失败：这是实现侧的问题（Windows 上走 PowerShell + WinRT toast，脚本非 0 退出）");
     }
 
     /// <summary>重设托盘菜单（顺带验证 <c>SetMenu</c> 可以重复调用）。</summary>
