@@ -48,6 +48,7 @@ public sealed class OrielTray : IDisposable
 
         backend.Clicked += () => Clicked?.Invoke();
         backend.MenuItemClicked += id => MenuItemClicked?.Invoke(id);
+        backend.RawEvent += text => RawEvent?.Invoke(text);
     }
 
     /// <summary>图标被点击（Windows 左键抬起、macOS 状态项按钮点击、Linux 的 activate 信号）。</summary>
@@ -55,6 +56,12 @@ public sealed class OrielTray : IDisposable
 
     /// <summary>菜单项被点击；参数是该项的 <see cref="OrielMenuItem.Id"/>（没有 id 的项不上报）。</summary>
     public event Action<string>? MenuItemClicked;
+
+    /// <summary>
+    /// 托盘收到的原始平台事件（诊断用）。排查"点了图标没反应"时订阅它：
+    /// 有事件说明送达正常（问题在识别或弹菜单），一个都没有说明回调通道本身有问题。
+    /// </summary>
+    public event Action<string>? RawEvent;
 
     /// <summary>悬停提示文本（可随时更新）。</summary>
     public string Tooltip

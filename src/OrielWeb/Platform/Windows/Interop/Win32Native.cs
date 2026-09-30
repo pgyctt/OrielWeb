@@ -89,6 +89,9 @@ internal static class Win32Constants
     /// <summary>注册表值类型：以 NUL 结尾的字符串。</summary>
     public const uint REG_SZ = 1;
 
+    /// <summary>打开键时只请求"写值"权限（自启项只需要这个，权限要得越少越好）。</summary>
+    public const uint KEY_SET_VALUE = 0x0002;
+
     /// <summary>RegGetValueW 的 flags：只接受 REG_SZ（用于"值存在与否"的探测）。</summary>
     public const uint RRF_RT_REG_SZ = 0x00000002;
 
@@ -718,20 +721,45 @@ internal static unsafe partial class Win32
     // ---- 注册表写（advapi32）----
 
     /// <summary>
-    /// 写注册表值。HKCU 下的写入不需要管理员权限；<paramref name="dataSize"/> 是字节数（字符串含结尾 NUL）。
+    /// 在<b>已打开的键</b>下写一个值。HKCU 下的写入不需要管理员权限；
+    /// <paramref name="dataSize"/> 是字节数（字符串含结尾 NUL）。
     /// </summary>
+    /// <remarks>
+    /// 注意第二个参数是**值名**，不是子键路径——<c>RegSetValueEx</c> 没有子键参数，
+    /// 子键要靠 <see cref="RegCreateKeyExW"/> 先打开。这里原先把它命名成 <c>subKey</c>，
+    /// 调用方于是把 <c>"Software\...\Run"</c> 当值名传了进来：写入照样成功，
+    /// 但值落在了 HKCU 根下，查询（走带子键的 <c>RegGetValueW</c>）永远找不到。
+    /// </remarks>
     [LibraryImport("advapi32", EntryPoint = "RegSetValueExW", StringMarshalling = StringMarshalling.Utf16)]
     internal static partial int RegSetValueExW(
         nint hkey,
-        string? subKey,
+        string valueName,
         uint reserved,
         uint type,
         nint data,
         uint dataSize);
 
-    /// <summary>删注册表值；值本来就不存在时返回 ERROR_FILE_NOT_FOUND(2)。</summary>
+    /// <summary>删注册表值（两个参数，**没有**子键参数）；值本来就不存在时返回 ERROR_FILE_NOT_FOUND(2)。</summary>
     [LibraryImport("advapi32", EntryPoint = "RegDeleteValueW", StringMarshalling = StringMarshalling.Utf16)]
-    internal static partial int RegDeleteValueW(nint hkey, string? subKey, string valueName);
+    internal static partial int RegDeleteValueW(nint hkey, string valueName);
+
+    /// <summary>
+    /// 打开（不存在则创建）一个子键，返回需 <see cref="RegCloseKey"/> 释放的句柄。
+    /// </summary>
+    [LibraryImport("advapi32", EntryPoint = "RegCreateKeyExW", StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int RegCreateKeyExW(
+        nint hkey,
+        string subKey,
+        uint reserved,
+        nint className,
+        uint options,
+        uint desiredAccess,
+        nint securityAttributes,
+        out nint resultKey,
+        out uint disposition);
+
+    [LibraryImport("advapi32", EntryPoint = "RegCloseKey")]
+    internal static partial int RegCloseKey(nint hkey);
 }
 
 /// <summary>

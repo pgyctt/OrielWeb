@@ -30,6 +30,7 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
 
     public event Action? Clicked;
     public event Action<string>? MenuItemClicked;
+    public event Action<string>? RawEvent;
 
     internal Win32TrayBackend(WindowsPlatformBackend owner, OrielApp app, OrielTrayOptions options)
     {
@@ -44,19 +45,36 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
     // ---- 原生回调入口（由调度窗口的 WndProc 转发）----
 
     /// <summary>
-    /// V4 回调：<paramref name="eventType"/> 是回调消息 <c>wParam</c> 里的事件类型。
+    /// 托盘回调。两种送法都接：
+    /// <list type="bullet">
+    /// <item><b>V4</b>（<c>NIM_SETVERSION(NOTIFYICON_VERSION_4)</c>）：<paramref name="wParam"/> 是事件类型，
+    /// 左键 <c>NIN_SELECT</c>、右键直接就是 <c>WM_CONTEXTMENU</c>，坐标在 <paramref name="lParam"/>。</item>
+    /// <item><b>旧式</b>：<paramref name="wParam"/> 是图标 ID，<paramref name="lParam"/> 是鼠标消息
+    /// （<c>WM_LBUTTONUP</c> / <c>WM_RBUTTONUP</c>）。</item>
+    /// </list>
     /// </summary>
     /// <remarks>
     /// <b>右键在这里，不在窗口消息里</b>：V4 起所有托盘事件都经 <c>uCallbackMessage</c> 送达，
-    /// 右键的 <c>wParam</c> 就是 <c>WM_CONTEXTMENU</c>（<c>0x007B</c>）——它**不是**一条发给窗口的
-    /// <c>WM_CONTEXTMENU</c> 消息。早先只在窗口过程里等那条消息，于是右键永远没人处理、菜单弹不出来。
-    /// 另外 V4 的 <c>lParam</c> 低字是图标中心的 x、高字是 y（这里仍用
-    /// <see cref="Win32Menu.Popup"/> 里的 <c>GetCursorPos</c>：右键时指针就在图标上，两者一致，
-    /// 而前者在读坐标的场合更简单）。
+    /// 右键的 <c>wParam</c> 就是 <c>WM_CONTEXTMENU</c>——它**不是**一条发给窗口的
+    /// <c>WM_CONTEXTMENU</c> 消息。早先只在窗口过程里等那条消息，所以右键永远没人处理、菜单弹不出来。
+    /// <para>
+    /// 之所以把两种模式都接上：V4 是否真的生效取决于 <c>NIM_SETVERSION</c> 的返回（它是被忽略的返回值），
+    /// 一旦没生效，<c>wParam</c> 就变成图标 ID、事件类型跑到 <c>lParam</c> 里。分辨两者只需看
+    /// <c>wParam</c> 是不是本托盘的 ID——比"假定 V4 一定生效"稳得多。手动验证时正是这里让菜单不弹的。
+    /// </para>
     /// </remarks>
-    internal void HandleCallback(nuint eventType)
+    internal void HandleCallback(nuint wParam, nint lParam)
     {
-        if (eventType == Win32Constants.NIN_SELECT)
+        // wParam 等于本托盘 ID ⇒ 旧式送法，事件类型其实是 lParam（鼠标消息）
+        uint eventType = wParam == TrayId ? (uint)lParam : (uint)wParam;
+
+        // 诊断输出：把原始参数与解析结果一起报出去。"点了没反应"的三种可能
+        //（事件没送达 / 送达了没识别 / 识别了菜单没弹出）靠这一行就能分开。
+        RawEvent?.Invoke(wParam == TrayId
+            ? $"wParam=0x{wParam:X}（本托盘 ID ⇒ 旧式送法，事件类型取 lParam）lParam=0x{(ulong)lParam:X}"
+            : $"wParam=0x{wParam:X}（V4 送法）lParam=0x{(ulong)lParam:X} → 事件类型 0x{eventType:X}");
+
+        if (eventType is Win32Constants.NIN_SELECT or Win32Constants.WM_LBUTTONUP)
         {
             Clicked?.Invoke();
             if (_menuOnClick)
@@ -66,7 +84,7 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
             return;
         }
 
-        if (eventType == Win32Constants.WM_CONTEXTMENU)
+        if (eventType is Win32Constants.WM_CONTEXTMENU or Win32Constants.WM_RBUTTONUP)
         {
             ShowMenu();
         }
@@ -212,11 +230,23 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
         SetVersion4();
     }
 
+    /// <summary>请求 V4 行为（事件类型进 wParam、右键走 WM_CONTEXTMENU）。</summary>
+    /// <remarks>
+    /// flags 沿用 <c>NIM_ADD</c> 那一套（官方示例也是复用同一个结构体、只改 uVersion）。
+    /// 失败**不致命**：<see cref="HandleCallback"/> 同时认旧式送法，只是记一笔便于排查——
+    /// Windows 上没有别的可见通道。
+    /// </remarks>
     private void SetVersion4()
     {
-        var data = CreateData(0);
+        var data = CreateData(Win32Constants.NIF_MESSAGE | Win32Constants.NIF_ICON | Win32Constants.NIF_TIP);
+        data.hIcon = _icon;
+        WriteTip(ref data);
         data.uVersionOrTimeout = Win32Constants.NOTIFYICON_VERSION_4;
-        _ = Win32.Shell_NotifyIconW(Win32Constants.NIM_SETVERSION, ref data);
+
+        if (!Win32.Shell_NotifyIconW(Win32Constants.NIM_SETVERSION, ref data))
+        {
+            System.Diagnostics.Debug.WriteLine("[OrielWeb] 托盘 NIM_SETVERSION 失败：回退到旧式回调形态（事件类型在 lParam）。");
+        }
     }
 
     private void SetHidden(bool hidden)

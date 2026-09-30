@@ -1023,3 +1023,39 @@ logpanel = 1627               ← 日志区撑到 1627px
 
 **教训**：布局问题别靠推理，量一次比推十次快。看不见页面的时候，探针页 + 截图能把
 "我以为的布局"变成"实际的尺寸"。
+
+### 自启：`RegSetValueEx` 没有子键参数（值被写到 HKCU 根下）
+
+手动验证里"启用返回 true、紧接着查询返回 false"——这是**最省事的 bug 形状**：两个返回值直接
+把矛盾摆出来了。根因是 Win32 声明写错：`RegSetValueEx(HKEY, lpValueName, …)` 的第二个参数是
+**值名**，不是子键路径（它根本没有子键参数，子键必须先 `RegCreateKeyEx` 打开）。我们却把
+`"Software\Microsoft\Windows\CurrentVersion\Run"` 当值名传了进去，于是：
+
+- 写入**成功**（值名可以是任意字符串），`Enable` 如实返回 true；
+- 值落在 **HKCU 根**下，名字是那个路径字符串；
+- 查询走 `RegGetValueW`——它**确实**有子键参数——去正确的 Run 键下找 id，永远找不到 → false。
+
+真机核对证实了这一点：HKCU 根下躺着那个错值（内容正是 `OrielDemo.exe" --minimized`），
+而真正的 Run 键里没有 OrielDemo。另外 `RegDeleteValueW` 的声明也多了一个参数
+（真实 API 是 `(HKEY, valueName)`），所以 `Disable` 删的是同一个错值而非自启项。
+
+两处声明都已改正，补齐 `RegCreateKeyExW` / `RegCloseKey`，用户机器上那个错值也清掉了。
+
+**教训**：把错误命名的参数当好名字用，编译器不会拦。这个声明里参数叫 `subKey`，
+实际却是 `lpValueName`——**声明里的参数名必须与平台文档一致**，否则调用方照着名字就会传错东西。
+另外这个 bug 在 Linux 上永远测不出来（那边走 `LinuxAutoStart`），只能被真机手动验证抓到。
+
+### 托盘回调：不要假定 `NIM_SETVERSION` 生效
+
+"托盘图标点不出菜单"在修了一处之后**依然复现**。上一轮修的是"右键事件不在窗口消息里"（那确实是
+一个 bug），但没解释为什么还是不行。真正的盲区是：**V4 是否生效**取决于 `NIM_SETVERSION` 的返回，
+而那个返回值一直被忽略。一旦它失败，事件的形态就是旧式的——`wParam` 是图标 ID、
+事件类型跑到 `lParam` 里（`WM_LBUTTONUP` / `WM_RBUTTONUP`），于是只认 V4 的分派逻辑
+**一个分支都匹配不上**，左键与右键一起静默落空。
+
+现在两种形态都认：`wParam == 本托盘 ID` 即旧式，否则按 V4 解读。`NIM_SETVERSION` 也改成复用
+`NIM_ADD` 的 flags（官方示例就是这么写的）并检查返回值。
+
+为了让这类问题下次能一次定位，加了 `OrielTray.RawEvent`：把原始 `wParam`/`lParam` 与解析出的
+事件类型报出来。"点了没反应"的三种可能——事件没送达 / 送达了没识别 / 识别了但菜单没弹出——
+靠它就能分开，在此之前只能靠猜。

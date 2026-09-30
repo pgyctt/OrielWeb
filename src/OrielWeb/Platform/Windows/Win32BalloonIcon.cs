@@ -65,9 +65,17 @@ internal sealed unsafe class Win32BalloonIcon : IDisposable
         return Win32.Shell_NotifyIconW(Win32Constants.NIM_MODIFY, ref data);
     }
 
-    /// <summary>气球回调（由调度窗口按 <see cref="Win32Constants.WM_APP_NOTIFY"/> 转发）。</summary>
-    internal void HandleCallback(nuint eventType)
+    /// <summary>
+    /// 气球回调（由调度窗口按 <see cref="Win32Constants.WM_APP_NOTIFY"/> 转发）。
+    /// </summary>
+    /// <remarks>
+    /// 与托盘一样兼容两种送法：V4 下 <paramref name="wParam"/> 是事件类型，
+    /// 旧式下它是图标 ID 而事件类型在 <paramref name="lParam"/> 里。
+    /// </remarks>
+    internal void HandleCallback(nuint wParam, nint lParam)
     {
+        uint eventType = wParam == Id ? (uint)lParam : (uint)wParam;
+
         if (eventType == Win32Constants.NIN_BALLOONUSERCLICK && _lastNotificationId is { Length: > 0 } id)
         {
             Clicked?.Invoke(id);
@@ -120,10 +128,19 @@ internal sealed unsafe class Win32BalloonIcon : IDisposable
 
         _added = true;
 
-        // V4 后回调的 wParam 才是事件类型（NIN_BALLOONUSERCLICK）；不设版本拿不到统一的回调形态
-        var version = CreateData(0);
+        // V4 后回调的 wParam 才是事件类型（NIN_BALLOONUSERCLICK）；不设版本拿不到统一的回调形态。
+        // flags 沿用 NIM_ADD 那一套（官方示例同样复用结构体），失败只是回退到旧式送法。
+        var version = CreateData(Win32Constants.NIF_MESSAGE | Win32Constants.NIF_ICON | Win32Constants.NIF_STATE);
+        version.uCallbackMessage = Win32Constants.WM_APP_NOTIFY;
+        version.dwState = Win32Constants.NIS_HIDDEN;
+        version.dwStateMask = Win32Constants.NIS_HIDDEN;
+        version.hIcon = _icon;
         version.uVersionOrTimeout = Win32Constants.NOTIFYICON_VERSION_4;
-        _ = Win32.Shell_NotifyIconW(Win32Constants.NIM_SETVERSION, ref version);
+        if (!Win32.Shell_NotifyIconW(Win32Constants.NIM_SETVERSION, ref version))
+        {
+            System.Diagnostics.Debug.WriteLine("[OrielWeb] 通知载体 NIM_SETVERSION 失败：回退到旧式回调形态。");
+        }
+
         return true;
     }
 

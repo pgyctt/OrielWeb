@@ -30,6 +30,7 @@ internal sealed class MacOSTrayBackend : ITrayBackend
 
     public event Action? Clicked;
     public event Action<string>? MenuItemClicked;
+    public event Action<string>? RawEvent;
 
     internal MacOSTrayBackend(OrielApp app, OrielTrayOptions options)
     {
@@ -130,6 +131,9 @@ internal sealed class MacOSTrayBackend : ITrayBackend
     // ---- 供 handler 回调 ----
 
     internal void RaiseClicked() => Clicked?.Invoke();
+
+    /// <summary>上报一条原始事件（事件只能在声明它的类型里触发，故由这里代发）。</summary>
+    internal void RaiseRawEvent(string text) => RawEvent?.Invoke(text);
 
     // ---- 菜单项激活 ----
 

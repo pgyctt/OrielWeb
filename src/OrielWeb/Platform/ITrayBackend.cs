@@ -29,6 +29,18 @@ internal interface ITrayBackend : IDisposable
     void Hide();
 
     /// <summary>
+    /// 托盘收到的**原始平台事件**（诊断用，参数已是可读文本）。
+    /// </summary>
+    /// <remarks>
+    /// 为什么值得进公开面："点了图标却什么都没发生"是最难排查的一类问题——
+    /// 可能是事件没送达、可能是送达了但没识别、也可能是识别了但菜单没弹出来。
+    /// 这个事件把第一种与后两种分开。正常使用不需要订阅它。
+    /// 各平台能给的粒度不同：Windows 给 wParam/lParam 与解析出的事件类型，
+    /// 另两个平台目前只上报信号/selector 名。
+    /// </remarks>
+    event Action<string>? RawEvent;
+
+    /// <summary>
     /// 托盘是否**真的对用户可见**。语义按平台能力解释：
     /// Windows = 图标已成功加入通知区（<c>Shell_NotifyIcon</c> 成功）；macOS = 状态项已创建且未被隐藏；
     /// Linux = 图标被托盘宿主接收（<c>gtk_status_icon_is_embedded</c>——GNOME 未装扩展、Wayland 会话下为 false）。

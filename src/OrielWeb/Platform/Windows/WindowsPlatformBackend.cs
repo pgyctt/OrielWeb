@@ -291,13 +291,16 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         }
         if (message == Win32Constants.WM_APP_TRAY)
         {
-            // V4 起回调的 wParam 才是事件类型（NIN_SELECT 等），坐标在 lParam
-            s_current?._tray?.HandleCallback(wParam);
+            // V4 下 wParam 是事件类型（NIN_SELECT / WM_CONTEXTMENU）、lParam 是坐标；
+            // 旧式下 wParam 是图标 ID、lParam 是鼠标消息（WM_LBUTTONUP / WM_RBUTTONUP）。
+            // 两个都交给托盘后端判——不赌 NIM_SETVERSION 一定生效。
+            s_current?._tray?.HandleCallback(wParam, lParam);
             return 0;
         }
         if (message == Win32Constants.WM_APP_NOTIFY)
         {
-            s_current?._balloon?.HandleCallback(wParam);
+            // 与托盘同样的两种送法（V4：wParam 是事件类型；旧式：wParam 是图标 ID、事件在 lParam）
+            s_current?._balloon?.HandleCallback(wParam, lParam);
             return 0;
         }
         if (message == Win32Constants.WM_HOTKEY)

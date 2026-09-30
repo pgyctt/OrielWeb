@@ -32,6 +32,7 @@ internal sealed unsafe class GtkTrayBackend : ITrayBackend
 
     public event Action? Clicked;
     public event Action<string>? MenuItemClicked;
+    public event Action<string>? RawEvent;
 
     internal GtkTrayBackend(OrielApp app, OrielTrayOptions options)
     {
@@ -174,6 +175,7 @@ internal sealed unsafe class GtkTrayBackend : ITrayBackend
         {
             if (s_icons.TryGetValue(statusIcon, out GtkTrayBackend? backend))
             {
+                backend.RawEvent?.Invoke("信号 activate（左键单击）");
                 backend.RaiseClicked();
             }
         }
@@ -191,6 +193,7 @@ internal sealed unsafe class GtkTrayBackend : ITrayBackend
         {
             if (s_icons.TryGetValue(statusIcon, out GtkTrayBackend? backend))
             {
+                backend.RawEvent?.Invoke($"信号 popup-menu（button={button}）");
                 backend.ShowMenu();
             }
         }

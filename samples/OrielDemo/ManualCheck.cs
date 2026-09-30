@@ -85,6 +85,8 @@ internal static class ManualCheck
         tray.Tooltip = "OrielWeb 手动验证";
         tray.Clicked += () => Log("托盘图标被点击");
         tray.MenuItemClicked += id => Log($"托盘菜单项被点击：{id}");
+        // 原始事件：排查"点了没反应"时全靠它——有事件说明送达正常，一个都没有说明通道有问题
+        tray.RawEvent += text => Log($"托盘原始事件：{text}");
         tray.SetMenu(TrayMenu());
     }
 

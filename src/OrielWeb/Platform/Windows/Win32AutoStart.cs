@@ -24,43 +24,80 @@ internal static class Win32AutoStart
 
     internal static bool Enable(string id, IReadOnlyList<string>? arguments)
     {
-        string value = AutoStartContent.WindowsRunValue(ExecutablePath, arguments);
-        nint buffer = Marshal.StringToHGlobalUni(value);
+        // 先打开（不存在则创建）目标子键：RegSetValueEx 没有子键参数，值只能写在已打开的键下。
+        int status = Win32.RegCreateKeyExW(
+            Win32Constants.HKEY_CURRENT_USER,
+            RunKey,
+            0,
+            className: 0,
+            options: 0,
+            Win32Constants.KEY_SET_VALUE,
+            securityAttributes: 0,
+            out nint key,
+            out _);
+
+        if (status != 0)
+        {
+            Debug.WriteLine($"[OrielWeb] 打开 Run 键失败（Win32 错误 {status}）。");
+            return false;
+        }
+
         try
         {
-            // 字节数含结尾的 NUL
-            uint bytes = (uint)((value.Length + 1) * 2);
-            int status = Win32.RegSetValueExW(
-                Win32Constants.HKEY_CURRENT_USER,
-                RunKey,
-                0,
-                Win32Constants.REG_SZ,
-                buffer,
-                bytes);
-
-            if (status != 0)
+            string value = AutoStartContent.WindowsRunValue(ExecutablePath, arguments);
+            nint buffer = Marshal.StringToHGlobalUni(value);
+            try
             {
-                Debug.WriteLine($"[OrielWeb] 写 Run 键失败（Win32 错误 {status}）。");
-            }
+                // 字节数含结尾的 NUL
+                uint bytes = (uint)((value.Length + 1) * 2);
+                status = Win32.RegSetValueExW(key, id, 0, Win32Constants.REG_SZ, buffer, bytes);
+                if (status != 0)
+                {
+                    Debug.WriteLine($"[OrielWeb] 写自启项失败（Win32 错误 {status}）。");
+                }
 
-            return status == 0;
+                return status == 0;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
         }
         finally
         {
-            Marshal.FreeHGlobal(buffer);
+            _ = Win32.RegCloseKey(key);
         }
     }
 
     internal static bool Disable(string id)
     {
-        int status = Win32.RegDeleteValueW(Win32Constants.HKEY_CURRENT_USER, RunKey, id);
+        // 同样先拿键句柄（Run 键必然存在，这里不会真的新建）。
+        int status = Win32.RegCreateKeyExW(
+            Win32Constants.HKEY_CURRENT_USER,
+            RunKey,
+            0,
+            className: 0,
+            options: 0,
+            Win32Constants.KEY_SET_VALUE,
+            securityAttributes: 0,
+            out nint key,
+            out _);
+
         if (status != 0)
         {
-            // 值本来就不存在（ERROR_FILE_NOT_FOUND = 2）也算成功：结果就是"没有自启项"
-            return status == 2;
+            return false;
         }
 
-        return true;
+        try
+        {
+            status = Win32.RegDeleteValueW(key, id);
+            // 值本来就不存在（ERROR_FILE_NOT_FOUND = 2）也算成功：结果就是"没有自启项"
+            return status == 0 || status == 2;
+        }
+        finally
+        {
+            _ = Win32.RegCloseKey(key);
+        }
     }
 
     internal static bool IsEnabled(string id)

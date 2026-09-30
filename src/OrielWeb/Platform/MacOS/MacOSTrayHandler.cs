@@ -62,6 +62,7 @@ internal static unsafe class MacOSTrayHandler
         {
             if (s_states.TryGetValue(self, out MacOSTrayBackend? backend))
             {
+                backend.RaiseRawEvent("orielStatusItemClicked:（状态项按钮 action）");
                 backend.RaiseClicked();
             }
         }
