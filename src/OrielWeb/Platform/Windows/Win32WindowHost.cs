@@ -1411,15 +1411,89 @@ internal partial class Win32WindowHost : IWindowBackend
     // 对话框
     // ------------------------------------------------------------------
 
-    public string? ShowOpenFileDialog(string? title, string? filter, string? initialDirectory)
-        => ShowFileDialog(isSave: false, title, filter, defaultExtension: null, initialDirectory);
+    public string[] ShowOpenFileDialog(OrielOpenFileDialogOptions options)
+        => ShowFileDialog(
+            isSave: false,
+            options.Title,
+            options.Filters,
+            defaultExtension: null,
+            options.InitialDirectory,
+            options.AllowMultiple);
 
-    public string? ShowSaveFileDialog(string? title, string? filter, string? defaultExtension)
-        => ShowFileDialog(isSave: true, title, filter, defaultExtension, initialDirectory: null);
-
-    private string? ShowFileDialog(bool isSave, string? title, string? filter, string? defaultExtension, string? initialDirectory)
+    public string? ShowSaveFileDialog(OrielSaveFileDialogOptions options)
     {
-        string filterString = ConvertFilter(filter);
+        string[] paths = ShowFileDialog(
+            isSave: true,
+            options.Title,
+            options.Filters,
+            options.DefaultExtension,
+            options.InitialDirectory,
+            allowMultiple: false);
+
+        return paths.Length > 0 ? paths[0] : null;
+    }
+
+    public string? ShowFolderDialog(string? title, string? initialDirectory)
+    {
+        // initialDirectory 在 Windows 上被忽略：SHBrowseForFolder 要设初始位置得挂 BFFM_INITIALIZED 回调
+        // （见 Win32Native 里选型说明）。这里显式丢弃，而不是假装支持。
+        _ = initialDirectory;
+
+        nint titlePtr = title is null ? 0 : Marshal.StringToHGlobalUni(title);
+        nint pathBuffer = Marshal.AllocHGlobal((Win32Constants.MAX_PATH + 1) * sizeof(char));
+        try
+        {
+            Marshal.WriteInt16(pathBuffer, 0);
+
+            var browseInfo = new BROWSEINFOW
+            {
+                hwndOwner = _hwnd,
+                lpszTitle = titlePtr,
+                ulFlags = Win32Constants.BIF_RETURNONLYFSDIRS | Win32Constants.BIF_USENEWUI,
+            };
+
+            nint pidl = Win32.SHBrowseForFolderW(ref browseInfo);
+            if (pidl == 0)
+            {
+                return null; // 取消
+            }
+
+            try
+            {
+                if (!Win32.SHGetPathFromIDListW(pidl, pathBuffer))
+                {
+                    return null;
+                }
+
+                return Marshal.PtrToStringUni(pathBuffer) is { Length: > 0 } path ? path : null;
+            }
+            finally
+            {
+                Win32.CoTaskMemFree(pidl);
+            }
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(pathBuffer);
+            if (titlePtr != 0)
+            {
+                Marshal.FreeHGlobal(titlePtr);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 打开/保存对话框的公共实现。返回路径数组（取消为空数组）。
+    /// </summary>
+    private string[] ShowFileDialog(
+        bool isSave,
+        string? title,
+        IReadOnlyList<OrielFileFilter>? filters,
+        string? defaultExtension,
+        string? initialDirectory,
+        bool allowMultiple)
+    {
+        string filterString = OrielFileFilter.RenderForWin32(filters ?? []);
         nint filterPtr = Marshal.StringToHGlobalUni(filterString);
         nint bufferPtr = Marshal.AllocHGlobal(32768 * sizeof(char));
         nint titlePtr = title is null ? 0 : Marshal.StringToHGlobalUni(title);
@@ -1431,6 +1505,16 @@ internal partial class Win32WindowHost : IWindowBackend
             // 预填当前目录，避免对话框落在系统目录
             Marshal.WriteInt16(bufferPtr, 0);
 
+            uint flags = isSave
+                ? Win32Constants.OFN_OVERWRITEPROMPT | Win32Constants.OFN_PATHMUSTEXIST | Win32Constants.OFN_HIDEREADONLY | Win32Constants.OFN_NOCHANGEDIR
+                : Win32Constants.OFN_FILEMUSTEXIST | Win32Constants.OFN_PATHMUSTEXIST | Win32Constants.OFN_HIDEREADONLY | Win32Constants.OFN_NOCHANGEDIR;
+
+            if (allowMultiple && !isSave)
+            {
+                // OFN_EXPLORER 必须一起带：否则原生对话框按旧格式返回，且单个文件也会带出目录段
+                flags |= Win32Constants.OFN_ALLOWMULTISELECT | Win32Constants.OFN_EXPLORER;
+            }
+
             var ofn = new OPENFILENAMEW
             {
                 lStructSize = (uint)Marshal.SizeOf<OPENFILENAMEW>(),
@@ -1441,18 +1525,18 @@ internal partial class Win32WindowHost : IWindowBackend
                 lpstrTitle = titlePtr,
                 lpstrInitialDir = initialDirPtr,
                 lpstrDefExt = defExtPtr,
-                Flags = isSave
-                    ? Win32Constants.OFN_OVERWRITEPROMPT | Win32Constants.OFN_PATHMUSTEXIST | Win32Constants.OFN_HIDEREADONLY | Win32Constants.OFN_NOCHANGEDIR
-                    : Win32Constants.OFN_FILEMUSTEXIST | Win32Constants.OFN_PATHMUSTEXIST | Win32Constants.OFN_HIDEREADONLY | Win32Constants.OFN_NOCHANGEDIR,
+                Flags = flags,
             };
 
             bool ok = isSave ? Win32.GetSaveFileNameW(ref ofn) : Win32.GetOpenFileNameW(ref ofn);
             if (!ok)
             {
-                return null; // 取消或错误（CommDlgExtendedError 区分，M1 统一返回 null）
+                return []; // 取消或错误（CommDlgExtendedError 区分，统一当取消）
             }
 
-            return Marshal.PtrToStringUni(bufferPtr)?.TrimEnd('\0') is { Length: > 0 } path ? path : null;
+            // 多选时缓冲区里是"目录\0名\0名\0\0"这种多段结构，所以**必须按长度读**：
+            // Marshal.PtrToStringUni(ptr) 遇到第一个 \0 就截断，那样拿到的是目录段（或被截短的文件名）。
+            return OrielFileDialogSupport.ParseWin32MultiSelect(Marshal.PtrToStringUni(bufferPtr, 32768));
         }
         finally
         {
@@ -1462,19 +1546,6 @@ internal partial class Win32WindowHost : IWindowBackend
             if (initialDirPtr != 0) Marshal.FreeHGlobal(initialDirPtr);
             if (defExtPtr != 0) Marshal.FreeHGlobal(defExtPtr);
         }
-    }
-
-    private static string ConvertFilter(string? filter)
-    {
-        // "文本|*.txt|全部|*.*" → Win32 要求以双 null 结尾的过滤器格式。
-        // 此前只补一个 '\0'，靠 StringToHGlobalUni 自动追加的终止符侥幸成立，
-        // 用户自定义 filter 实际依赖该 API 容错；此处显式补足双 null，
-        // 并容忍用户 filter 末尾多出的 '|'（否则会产生空条目）。
-        if (string.IsNullOrEmpty(filter))
-        {
-            return "所有文件\0*.*\0\0";
-        }
-        return filter.TrimEnd('|').Replace('|', '\0') + "\0\0";
     }
 
     void IWindowBackend.ShowMessageBox(string text, string? title, OrielMessageBoxIcon icon)

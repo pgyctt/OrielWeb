@@ -733,48 +733,137 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
 
     // ---- 文件对话框（NSOpenPanel / NSSavePanel）----
 
-    public string? ShowOpenFileDialog(string? title, string? filter, string? initialDirectory)
-        => ShowPanel(isSave: false, title);
+    public string[] ShowOpenFileDialog(OrielOpenFileDialogOptions options)
+    {
+        nint panel = CreatePanel(isSave: false, options.Title, options.Filters, options.InitialDirectory);
+        ObjCRuntime.SendVoidBool(panel, ObjCRuntime.Sel("setCanChooseFiles:"), true);
+        ObjCRuntime.SendVoidBool(panel, ObjCRuntime.Sel("setCanChooseDirectories:"), false);
+        ObjCRuntime.SendVoidBool(panel, ObjCRuntime.Sel("setAllowsMultipleSelection:"), options.AllowMultiple);
 
-    public string? ShowSaveFileDialog(string? title, string? filter, string? defaultExtension)
-        => ShowPanel(isSave: true, title);
+        return RunPanel(panel);
+    }
 
-    private string? ShowPanel(bool isSave, string? title)
+    public string? ShowSaveFileDialog(OrielSaveFileDialogOptions options)
+    {
+        nint panel = CreatePanel(isSave: true, options.Title, options.Filters, options.InitialDirectory);
+        ObjCRuntime.SendVoidBool(panel, ObjCRuntime.Sel("setExtensionHidden:"), true);
+
+        if (!string.IsNullOrWhiteSpace(options.DefaultFileName))
+        {
+            // 预填文件名；扩展名不在这里补——Cocoa 由 allowedFileTypes 与系统行为共同决定
+            ObjCRuntime.SendVoidObj(
+                panel,
+                ObjCRuntime.Sel("setNameFieldStringValue:"),
+                ObjCRuntime.MakeNSString(options.DefaultFileName));
+        }
+
+        string[] paths = RunPanel(panel);
+        return paths.Length > 0 ? paths[0] : null;
+    }
+
+    public string? ShowFolderDialog(string? title, string? initialDirectory)
+    {
+        nint panel = CreatePanel(isSave: false, title, filters: null, initialDirectory);
+        ObjCRuntime.SendVoidBool(panel, ObjCRuntime.Sel("setCanChooseFiles:"), false);
+        ObjCRuntime.SendVoidBool(panel, ObjCRuntime.Sel("setCanChooseDirectories:"), true);
+        ObjCRuntime.SendVoidBool(panel, ObjCRuntime.Sel("setAllowsMultipleSelection:"), false);
+
+        string[] paths = RunPanel(panel);
+        return paths.Length > 0 ? paths[0] : null;
+    }
+
+    /// <summary>建面板并做三平台共通的配置（标题、过滤器、初始目录）。</summary>
+    private static nint CreatePanel(bool isSave, string? title, IReadOnlyList<OrielFileFilter>? filters, string? initialDirectory)
     {
         var clsName = isSave ? "NSSavePanel" : "NSOpenPanel";
-        var panel = ObjCRuntime.SendId(ObjCRuntime.GetClass(clsName), ObjCRuntime.Sel(isSave ? "savePanel" : "openPanel"));
+        nint panel = ObjCRuntime.SendId(ObjCRuntime.GetClass(clsName), ObjCRuntime.Sel(isSave ? "savePanel" : "openPanel"));
         if (panel == 0)
         {
-            return null;
+            return 0;
         }
 
-        if (isSave)
-        {
-            ObjCRuntime.SendVoidBool(panel, ObjCRuntime.Sel("setExtensionHidden:"), true);
-        }
-        else
-        {
-            ObjCRuntime.SendVoidBool(panel, ObjCRuntime.Sel("setCanChooseFiles:"), true);
-            ObjCRuntime.SendVoidBool(panel, ObjCRuntime.Sel("setCanChooseDirectories:"), false);
-        }
         if (title is not null)
         {
             ObjCRuntime.SendVoidObj(panel, ObjCRuntime.Sel("setMessage:"), ObjCRuntime.MakeNSString(title));
         }
 
-        var response = ObjCRuntime.SendId(panel, ObjCRuntime.Sel("runModal"));
-        if (response != 1) // NSModalResponseOK
+        // 空列表意味着"任意文件"，此时**不设置** allowedFileTypes（塞一个 "*" 进去会把面板
+        // 锁成只能选无扩展名文件——见 OrielFileFilter.CocoaExtensions 的说明）
+        IReadOnlyList<string> extensions = OrielFileFilter.CocoaExtensions(filters ?? []);
+        if (extensions.Count > 0)
         {
-            return null;
+            // allowedFileTypes 已在 macOS 12 起标废弃，但仍是最省事的路径：
+            // 现代替代是 allowedContentTypes + UTType，需要额外框架与 AOT 友好的绑定，记在 ROADMAP
+            ObjCRuntime.SendVoidObj(panel, ObjCRuntime.Sel("setAllowedFileTypes:"), MakeStringArray(extensions));
         }
 
-        var urls = ObjCRuntime.SendId(panel, ObjCRuntime.Sel("URLs"));
-        var first = ObjCRuntime.SendId(urls, ObjCRuntime.Sel("firstObject"));
-        if (first == 0)
+        if (!string.IsNullOrWhiteSpace(initialDirectory))
         {
-            return null;
+            nint url = ObjCRuntime.SendIdObj(
+                ObjCRuntime.GetClass("NSURL"),
+                ObjCRuntime.Sel("fileURLWithPath:"),
+                ObjCRuntime.MakeNSString(initialDirectory));
+            if (url != 0)
+            {
+                ObjCRuntime.SendVoidObj(panel, ObjCRuntime.Sel("setDirectoryURL:"), url);
+            }
         }
-        var path = ObjCRuntime.SendId(first, ObjCRuntime.Sel("path"));
-        return path == 0 ? null : ObjCRuntime.ToManagedString(path);
+
+        return panel;
+    }
+
+    /// <summary>托管字符串数组 → NSArray（经 NSMutableArray 逐项 <c>addObject:</c>）。</summary>
+    private static nint MakeStringArray(IReadOnlyList<string> items)
+    {
+        nint array = ObjCRuntime.SendId(
+            ObjCRuntime.SendId(ObjCRuntime.GetClass("NSMutableArray"), ObjCRuntime.Sel("alloc")),
+            ObjCRuntime.Sel("init"));
+
+        foreach (string item in items)
+        {
+            ObjCRuntime.SendVoidObj(array, ObjCRuntime.Sel("addObject:"), ObjCRuntime.MakeNSString(item));
+        }
+
+        return array;
+    }
+
+    /// <summary>
+    /// 运行面板并收集**全部**选中路径，取消返回空数组。
+    /// </summary>
+    /// <remarks>
+    /// 走 <c>URLs</c> 数组而不是 <c>URL</c>：<c>URL</c> 只反映"最后/唯一选中项"，
+    /// 多选时拿不全。逐项 <c>objectAtIndex:</c> 与单选共用同一条路径，因此单选也走这里。
+    /// </remarks>
+    private static string[] RunPanel(nint panel)
+    {
+        if (panel == 0 || ObjCRuntime.SendId(panel, ObjCRuntime.Sel("runModal")) != 1) // NSModalResponseOK
+        {
+            return [];
+        }
+
+        nint urls = ObjCRuntime.SendId(panel, ObjCRuntime.Sel("URLs"));
+        if (urls == 0)
+        {
+            return [];
+        }
+
+        int count = (int)ObjCRuntime.SendId(urls, ObjCRuntime.Sel("count"));
+        var paths = new List<string>(count);
+        for (int i = 0; i < count; i++)
+        {
+            nint url = ObjCRuntime.SendIdNint(urls, ObjCRuntime.Sel("objectAtIndex:"), i);
+            if (url == 0)
+            {
+                continue;
+            }
+
+            nint nsPath = ObjCRuntime.SendId(url, ObjCRuntime.Sel("path"));
+            if (nsPath != 0 && ObjCRuntime.ToManagedString(nsPath) is { Length: > 0 } path)
+            {
+                paths.Add(path);
+            }
+        }
+
+        return [.. paths];
     }
 }

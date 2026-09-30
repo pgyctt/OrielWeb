@@ -187,6 +187,43 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gtk, EntryPoint = "gtk_file_chooser_set_current_name", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void GtkFileChooserSetCurrentName(nint chooser, string name);
 
+    [LibraryImport(Gtk, EntryPoint = "gtk_file_chooser_set_current_folder", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial int GtkFileChooserSetCurrentFolder(nint chooser, string filename);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_file_chooser_set_select_multiple")]
+    internal static partial void GtkFileChooserSetSelectMultiple(nint chooser, [MarshalAs(UnmanagedType.Bool)] bool selectMultiple);
+
+    /// <summary>多选结果：返回需 <see cref="GSListFree"/> 的 GSList，元素是需 g_free 的路径串。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_file_chooser_get_filenames")]
+    internal static partial nint GtkFileChooserGetFilenames(nint chooser);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_file_filter_new")]
+    internal static partial nint GtkFileFilterNew();
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_file_filter_set_name", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial void GtkFileFilterSetName(nint filter, string name);
+
+    /// <summary>给过滤器加一条通配模式（<c>*.txt</c>）；同名模式重复加没有副作用。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_file_filter_add_pattern", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial void GtkFileFilterAddPattern(nint filter, string pattern);
+
+    /// <summary>把过滤器挂到 chooser 上；chooser 取得所有权，无需手动释放 filter。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_file_chooser_add_filter")]
+    internal static partial void GtkFileChooserAddFilter(nint chooser, nint filter);
+
+    // ---- GSList（glib）----
+    // 只用到三个操作：长度、按下标取数据、整体释放。元素本身由调用方逐个 g_free。
+
+    [LibraryImport(Glib, EntryPoint = "g_slist_length")]
+    internal static partial uint GSListLength(nint list);
+
+    /// <summary>取第 n 个元素的数据指针；越界返回 0（GTK 不检查，由调用方保证 n 在范围内）。</summary>
+    [LibraryImport(Glib, EntryPoint = "g_slist_nth_data")]
+    internal static partial nint GSListNthData(nint list, uint n);
+
+    [LibraryImport(Glib, EntryPoint = "g_slist_free")]
+    internal static partial void GSListFree(nint list);
+
     // ---- GDK ----
 
     [LibraryImport(Gdk, EntryPoint = "gdk_screen_get_width")]

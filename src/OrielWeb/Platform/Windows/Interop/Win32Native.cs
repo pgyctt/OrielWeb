@@ -220,6 +220,23 @@ internal static class Win32Constants
     public const uint OFN_NOCHANGEDIR = 0x8;
     public const uint OFN_PATHMUSTEXIST = 0x800;
     public const uint OFN_FILEMUSTEXIST = 0x1000;
+    /// <summary>多选。必须与 <see cref="OFN_EXPLORER"/> 同用，否则返回的是旧格式。</summary>
+    public const uint OFN_ALLOWMULTISELECT = 0x200;
+    /// <summary>新版（资源管理器风格）对话框：多选返回值才有"目录 + 文件名单段"的形状。</summary>
+    public const uint OFN_EXPLORER = 0x80000;
+
+    // ---- 文件夹选择（SHBrowseForFolder）----
+
+    /// <summary>只返回文件系统目录（否则列表里会出现"网上邻居"这类虚拟项）。</summary>
+    public const uint BIF_RETURNONLYFSDIRS = 0x0001;
+    /// <summary>现代外观（含"新建文件夹"）；老样式在 Win10+ 上很难看且没有新建入口。</summary>
+    public const uint BIF_NEWDIALOGSTYLE = 0x0040;
+    /// <summary>带一个可输入路径的编辑框。</summary>
+    public const uint BIF_EDITBOX = 0x0010;
+    public const uint BIF_USENEWUI = BIF_NEWDIALOGSTYLE | BIF_EDITBOX;
+
+    /// <summary>路径缓冲区的传统上限（含结尾 null）。<c>SHGetPathFromIDListW</c> 需要这么大一块。</summary>
+    public const int MAX_PATH = 260;
 
     public const uint MB_OK = 0x0;
     public const uint MB_ICONERROR = 0x10;
@@ -611,6 +628,24 @@ internal static unsafe partial class Win32
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool Shell_NotifyIconW(uint message, ref NOTIFYICONDATAW data);
 
+    // ---- 文件夹选择（shell32）----
+    // 用老的 SHBrowseForFolder 而不是 IFileOpenDialog + FOS_PICKFOLDERS：
+    // 后者是 COM 接口，本库没有 COM 互操作基础（NativeAOT 下要自己搭 vtable 或引入 ComWrappers），
+    // 为一个文件夹对话框引入那套机制不划算。代价是**设不了初始目录**——SHBrowseForFolder 要设初值
+    // 得挂 BFFM_INITIALIZED 回调（记在 ROADMAP 里）。
+
+    /// <summary>弹出文件夹选择器；返回需要 <see cref="CoTaskMemFree"/> 的 PIDL，取消返回 0。</summary>
+    [LibraryImport("shell32", EntryPoint = "SHBrowseForFolderW")]
+    internal static partial nint SHBrowseForFolderW(ref BROWSEINFOW browseInfo);
+
+    /// <summary>把 PIDL 转成文件系统路径；缓冲区需至少 MAX_PATH 个字符。</summary>
+    [LibraryImport("shell32", EntryPoint = "SHGetPathFromIDListW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool SHGetPathFromIDListW(nint pidl, nint pathBuffer);
+
+    [LibraryImport("ole32")]
+    internal static partial void CoTaskMemFree(nint ptr);
+
     // ---- 弹出菜单（user32）----
 
     [LibraryImport("user32")]
@@ -698,4 +733,24 @@ internal unsafe struct NOTIFYICONDATAW
     public uint dwInfoFlags;
     public Guid guidItem;
     public nint hBalloonIcon;
+}
+
+/// <summary>
+/// 文件夹选择器的参数（<c>BROWSEINFOW</c>）。
+/// </summary>
+/// <remarks>
+/// <c>pszDisplayName</c> 指向一块调用方提供的缓冲：老 API 会把"用户在树里选中的显示名"写进去，
+/// 但**它不是最终路径**（那要走 <c>SHGetPathFromIDListW</c>）——传 null 也合法，本库不读它。
+/// </remarks>
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+internal struct BROWSEINFOW
+{
+    public nint hwndOwner;
+    public nint pidlRoot;
+    public nint pszDisplayName;
+    public nint lpszTitle;
+    public uint ulFlags;
+    public nint lpfn;
+    public nint lParam;
+    public int iImage;
 }

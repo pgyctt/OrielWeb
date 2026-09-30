@@ -102,8 +102,23 @@ internal interface IWindowBackend
     Task<string> ExecuteScriptAsync(string script);
     void PostMessageAsJson(string json);
 
-    string? ShowOpenFileDialog(string? title, string? filter, string? initialDirectory);
-    string? ShowSaveFileDialog(string? title, string? filter, string? defaultExtension);
+    /// <summary>
+    /// 打开文件对话框。取消时返回**空数组**（空数组而不是 null：多选下"没选"与"选了一个"的区分
+    /// 本来就在长度上，用 null 还要额外区分三种情况）。
+    /// </summary>
+    string[] ShowOpenFileDialog(OrielOpenFileDialogOptions options);
+
+    /// <summary>保存文件对话框；取消返回 null。</summary>
+    string? ShowSaveFileDialog(OrielSaveFileDialogOptions options);
+
+    /// <summary>
+    /// 选择文件夹。取消返回 null。
+    /// 三平台都有原生入口，但**没有一个是跨平台一致的**：Windows 是老式 shell 文件夹选择器
+    /// （<c>SHBrowseForFolder</c>），GTK 是同一个 GtkFileChooserDialog 切到
+    /// <c>SELECT_FOLDER</c>，Cocoa 是 NSOpenPanel 打开"可选目录"。
+    /// </summary>
+    string? ShowFolderDialog(string? title, string? initialDirectory);
+
     void ShowMessageBox(string text, string? title, OrielMessageBoxIcon icon);
 }
 

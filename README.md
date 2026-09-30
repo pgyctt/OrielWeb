@@ -429,6 +429,54 @@ app.DisableAutoStart();
 > 三段配置文本由共用的纯函数生成（`AutoStartContent`），因此格式正确性能被单测覆盖——
 > 自启项写错不会当场失败，而是等用户下次开机才发现应用没起来。
 
+## 对话框
+
+三个入口都挂在窗口上（对话框需要一个宿主窗口）：
+
+```csharp
+// 消息框（模态）
+window.ShowMessage("保存成功", "提示", OrielMessageBoxIcon.Info);
+
+// 打开文件：可多选；取消返回**空数组**
+string[] files = window.ShowOpenFileDialog(new OrielOpenFileDialogOptions
+{
+    Title = "导入",
+    Filters = [OrielFileFilter.Of("文本", "*.txt", "*.md"), OrielFileFilter.AllFiles],
+    AllowMultiple = true,
+});
+
+// 保存文件；取消返回 null
+string? target = window.ShowSaveFileDialog(new OrielSaveFileDialogOptions
+{
+    Title = "导出",
+    Filters = [OrielFileFilter.Of("Markdown", "*.md")],
+    DefaultExtension = "md",
+    DefaultFileName = "报告",
+});
+
+// 选择文件夹；取消返回 null
+string? folder = window.ShowFolderDialog("选择输出目录");
+```
+
+旧的字符串写法仍然可用（内部经 `OrielFileFilter.Parse` 转成结构化过滤器，行为不变）：
+
+```csharp
+string? single = window.ShowOpenFileDialog("打开", "文本文件|*.txt;*.md|所有文件|*.*");
+```
+
+### 对话框的三平台差异
+
+| 项 | Windows | macOS | Linux |
+|---|---|---|---|
+| 多选 | `OFN_ALLOWMULTISELECT` + `OFN_EXPLORER`，返回值是「目录 + 多个文件名」的多段缓冲区，需自己拼回完整路径 | `allowsMultipleSelection`，直接读 `URLs` 数组 | `gtk_file_chooser_set_select_multiple`，读 `GSList` |
+| 文件夹选择 | `SHBrowseForFolderW`（**忽略初始目录**：要设初值得挂 `BFFM_INITIALIZED` 回调） | `NSOpenPanel` + `setCanChooseDirectories:` | 同一个 chooser 切到 `SELECT_FOLDER` |
+| 过滤器 | `名称\0模式;模式\0…\0`（**双 null 结尾**） | 扩展名数组（`*.tar.gz` → `tar.gz`）；`*.*` 等于「不设」 | 逐条 `gtk_file_filter_add_pattern`；`*.*` 要归一成 `*`（fnmatch 要求文件名含点） |
+| 补扩展名 | 原生对话框自己补（`lpstrDefExt`） | 系统行为 | **不补**，由 `OrielFileDialogSupport.EnsureExtension` 补 |
+
+> 过滤器与返回值的转换全是纯函数（`OrielFileFilter` 的三个平台渲染 + `OrielFileDialogSupport` 的
+> Win32 多选解析），所以它们有单测、在 Linux 的 CI 上就能跑——**包括为 Windows 写的那两个**。
+> 对话框本身弹出后没法在无头环境断言（README 的验证账里如实标着），仍需人眼。
+
 ## 构建
 
 ```bash

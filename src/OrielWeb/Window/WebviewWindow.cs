@@ -255,14 +255,54 @@ public sealed class WebviewWindow
 
     // ---- 对话框（pywebview 基本面）----
 
+    /// <summary>消息框（模态，阻塞到用户关闭）。</summary>
     public void ShowMessage(string text, string? title = null, OrielMessageBoxIcon icon = OrielMessageBoxIcon.Info)
         => Backend.ShowMessageBox(text, title, icon);
 
-    /// <summary>打开文件对话框。filter 形如 "文本文件|*.txt|所有文件|*.*"；取消返回 null。</summary>
-    public string? ShowOpenFileDialog(string? title = null, string? filter = null, string? initialDirectory = null)
-        => Backend.ShowOpenFileDialog(title, filter, initialDirectory);
+    /// <summary>
+    /// 打开文件对话框（可用 <see cref="OrielOpenFileDialogOptions.AllowMultiple"/> 多选）。
+    /// 取消返回**空数组**。
+    /// </summary>
+    public string[] ShowOpenFileDialog(OrielOpenFileDialogOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return Backend.ShowOpenFileDialog(options);
+    }
 
-    /// <summary>保存文件对话框。取消返回 null。</summary>
+    /// <summary>
+    /// 打开单个文件。取消返回 null。
+    /// filter 形如 <c>"文本文件|*.txt;*.md|所有文件|*.*"</c>（等价于
+    /// <see cref="OrielFileFilter.Parse"/> 之后走选项重载）。
+    /// </summary>
+    public string? ShowOpenFileDialog(string? title = null, string? filter = null, string? initialDirectory = null)
+    {
+        string[] paths = Backend.ShowOpenFileDialog(new OrielOpenFileDialogOptions
+        {
+            Title = title,
+            Filters = OrielFileFilter.Parse(filter),
+            InitialDirectory = initialDirectory,
+        });
+
+        return paths.Length > 0 ? paths[0] : null;
+    }
+
+    /// <summary>保存文件对话框（结构化过滤器）。取消返回 null。</summary>
+    public string? ShowSaveFileDialog(OrielSaveFileDialogOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return Backend.ShowSaveFileDialog(options);
+    }
+
+    /// <summary>保存文件对话框（字符串过滤器，旧写法）。取消返回 null。</summary>
     public string? ShowSaveFileDialog(string? title = null, string? filter = null, string? defaultExtension = null)
-        => Backend.ShowSaveFileDialog(title, filter, defaultExtension);
+        => Backend.ShowSaveFileDialog(new OrielSaveFileDialogOptions
+        {
+            Title = title,
+            Filters = OrielFileFilter.Parse(filter),
+            DefaultExtension = defaultExtension,
+        });
+
+    /// <summary>选择文件夹。取消返回 null。</summary>
+    public string? ShowFolderDialog(string? title = null, string? initialDirectory = null)
+        => Backend.ShowFolderDialog(title, initialDirectory);
 }

@@ -111,6 +111,7 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 | 拖放（文件拖入 → 路径列表 + 事件） | ⏳ 未开始 | — | 逻辑可注入事件测，真实拖拽需真机 |
 | 系统托盘（`AddTray` / `app.Tray`） | ✅ 已实现；Linux 取证通过 | Windows `Shell_NotifyIconW` + `TrackPopupMenuEx`；macOS `NSStatusBar`/`NSMenu`；Linux GTK3 `GtkStatusIcon`/`GtkMenu`（用 GTK 自带而非 AppIndicator，理由见 DECISIONS） | Windows/macOS 编译验证；Linux 由 `--shell-selftest` 断言"托盘创建 + 一份含分隔线/勾选/禁用/子菜单/role 的菜单能设进去、进程不崩"，并由 `tools/verify-linux-shell.sh` 采集证据。**图标可见性需人眼**（见下） |
 | 系统通知（`ShowNotification`） | ✅ 已实现；Linux 硬断言 | Windows 用**独立的隐藏托盘项**发 `NIF_INFO` 气球（因此不启用托盘也能发）；macOS `osascript`；Linux `notify-send` | Linux：真 `notify-send` → 会话总线 → 假通知服务，断言**标题与正文逐字符正确**（`tools/verify-linux-shell.sh`）。点击上报仅 Windows 支持，另两个平台**显式空实现**（不是"忘触发"） |
+| 对话框（消息框 / 打开 / 保存 / 选文件夹） | ✅ 已实现（扩展版） | 打开可多选、可给结构化过滤器、可指定初始目录；新增文件夹选择。Windows `GetOpenFileNameW`（`OFN_ALLOWMULTISELECT`+`OFN_EXPLORER`）/ `SHBrowseForFolderW`；macOS `NSOpenPanel`（`URLs` 数组）/ `NSSavePanel`；Linux `GtkFileChooserDialog`（多选读 `GSList`）。过滤器在三种平台形状间的转换与 Win32 多选缓冲区的解析都在纯函数里（`OrielFileFilter` / `OrielFileDialogSupport`） | **30 个单测**（在 Linux CI 上跑，含为 Windows 写的用例）：解析旧字符串、Win32 双 null 渲染、GTK 的 `*.*` 归一、Cocoa 扩展名提取、Win32 多选「单段 vs 多段」两种形状、补扩展名。**对话框外观与交互需人眼**（见下） |
 | 应用菜单 + 窗口上下文菜单 | ✅ 已实现 | 应用菜单：macOS `NSApplication.setMainMenu:`（语义最贴合）、Windows 每个窗口的 `SetMenu`（**无边框窗口跳过**——客户区铺满窗口会盖住菜单栏，与其"设了看不见"不如显式跳过）、Linux **空操作**（现代 GTK 用 header bar，且菜单栏会与 webview 布局层级打架）。上下文菜单三平台都支持（Windows 阻塞、另两个异步）。菜单构建按平台抽成共享类（`Win32Menu`/`GtkMenu`/`MacOSMenu`），role 由 `OrielMenuRoles` 统一解释 | 三平台编译 ✓；Linux `--shell-selftest` 断言"设置应用菜单 + 构建各形态菜单不崩"。**菜单外观、上下文菜单交互、macOS 加速键是否生效需人眼**（见下） |
 | 全局快捷键 | ✅ 已实现（Linux 按平台事实不支持） | Windows `RegisterHotKey`（复用调度窗口收 `WM_HOTKEY`）、macOS Carbon `RegisterEventHotKey`（唯一不需要辅助功能权限的公开接口）、Linux **如实返回 false**（X11 未落地、Wayland 无解）。语法与菜单加速键共用 `OrielAccelerator` | Linux 取证断言"如实报告不支持 + 注册成功时查得到/注销得掉"；Windows/macOS 编译验证。**按键真的能触发需真机**（见下） |
 | 徽章 | ⚠️ 仅 macOS | macOS `dockTile.badgeLabel`；Windows 的等价物 `ITaskbarList3.SetOverlayIcon` 需要自绘 overlay 图标（GDI），未做；Linux 无跨桌面方案 | 调用不抛异常已断言；**外观需人眼** |
@@ -148,6 +149,17 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 - 预期：横幅显示标题与正文；Windows 上点击后触发 `NotificationClicked`（回传 `Id`）。
 - 若不符：Windows 看系统"专注助手/通知"设置里的开关；macOS 看"通知"权限
   （未打包运行时 `osascript` 的通知归属于 Script Editor，可能在系统设置里被静音）。
+
+#### 对话框的外观与交互
+- 环境：三平台桌面各一次（对话框弹出后无人操作会一直等，无头环境里跑不出来，因此不进自检）。
+- 步骤：1) 在示例里调 `ShowOpenFileDialog`（开 `AllowMultiple`）、`ShowSaveFileDialog`、`ShowFolderDialog`；
+  2) 看过滤器下拉、多选行为、初始目录、保存时是否补上扩展名。
+- 预期：过滤器下拉显示传入的名称；多选后每一项都出现在返回数组里；
+  保存时输入不带扩展名的名字，落盘文件名带 `DefaultExtension`。
+- 若不符：按平台看后端——Windows `Win32WindowHost.ShowFileDialog`（多选返回值走
+  `OrielFileDialogSupport.ParseWin32MultiSelect`，那里的单段/多段分支有单测；
+  文件夹选择器**不支持初始目录**，属已知取舍）、Linux `LinuxWindowHost.ReadSelectedPaths`
+  （`GSList` 遍历）、macOS `MacOSWindowHost.RunPanel`（读 `URLs` 数组；`allowedFileTypes` 已废弃但仍可用）。
 
 ### C 的验证账规则（必守）
 

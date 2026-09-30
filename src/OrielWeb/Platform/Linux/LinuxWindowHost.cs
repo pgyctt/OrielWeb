@@ -15,6 +15,7 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
 {
     private const int GtkWinPosCenter = 1;
     private const int GtkResponseOk = -5;
+    private const int GtkResponseCancel = -6;
     private const int WebkitLoadFinished = 3;
 
     private readonly WebviewWindow _window;
@@ -613,43 +614,158 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
 
     // ---- 文件对话框（GtkFileChooserDialog）----
 
-    public string? ShowOpenFileDialog(string? title, string? filter, string? initialDirectory)
-        => ShowPanel(isSave: false, title, filter, defaultExtension: null);
-
-    public string? ShowSaveFileDialog(string? title, string? filter, string? defaultExtension)
-        => ShowPanel(isSave: true, title, filter, defaultExtension);
-
-    private string? ShowPanel(bool isSave, string? title, string? filter, string? defaultExtension)
+    public string[] ShowOpenFileDialog(OrielOpenFileDialogOptions options)
     {
         const int FileChooserActionOpen = 0;
+        nint dialog = CreateChooser(options.Title ?? "打开", FileChooserActionOpen, "打开");
+        try
+        {
+            ApplyFilters(dialog, options.Filters);
+            SetInitialFolder(dialog, options.InitialDirectory);
+            GtkNative.GtkFileChooserSetSelectMultiple(dialog, options.AllowMultiple);
+
+            return GtkNative.GtkDialogRun(dialog) == GtkResponseOk ? ReadSelectedPaths(dialog) : [];
+        }
+        finally
+        {
+            GtkNative.GtkWidgetDestroy(dialog);
+        }
+    }
+
+    public string? ShowSaveFileDialog(OrielSaveFileDialogOptions options)
+    {
         const int FileChooserActionSave = 1;
-        var action = isSave ? FileChooserActionSave : FileChooserActionOpen;
-
-        var dialog = GtkNative.GtkFileChooserDialogNew(
-            title ?? (isSave ? "保存" : "打开"),
-            _gtkWindow,
-            action,
-            0); // varargs 终止：无内置按钮
-        GtkNative.GtkDialogAddButton(dialog, isSave ? "保存" : "打开", GtkResponseOk);
-
-        if (isSave && !string.IsNullOrEmpty(defaultExtension))
+        nint dialog = CreateChooser(options.Title ?? "保存", FileChooserActionSave, "保存");
+        try
         {
-            GtkNative.GtkFileChooserSetCurrentName(dialog, "未命名." + defaultExtension);
+            ApplyFilters(dialog, options.Filters);
+            SetInitialFolder(dialog, options.InitialDirectory);
             GtkNative.GtkFileChooserSetDoOverwriteConfirmation(dialog, true);
+
+            string suggested = options.DefaultFileName
+                ?? (string.IsNullOrWhiteSpace(options.DefaultExtension) ? "" : "未命名." + options.DefaultExtension);
+            if (suggested.Length > 0)
+            {
+                GtkNative.GtkFileChooserSetCurrentName(dialog, suggested);
+            }
+
+            return GtkNative.GtkDialogRun(dialog) == GtkResponseOk ? ReadSinglePath(dialog, options.DefaultExtension) : null;
+        }
+        finally
+        {
+            GtkNative.GtkWidgetDestroy(dialog);
+        }
+    }
+
+    public string? ShowFolderDialog(string? title, string? initialDirectory)
+    {
+        // GTK 的文件夹选择就是同一个 chooser 换个 action，不需要另一个对话框类型
+        const int FileChooserActionSelectFolder = 2;
+        nint dialog = CreateChooser(title ?? "选择文件夹", FileChooserActionSelectFolder, "选择");
+        try
+        {
+            SetInitialFolder(dialog, initialDirectory);
+            return GtkNative.GtkDialogRun(dialog) == GtkResponseOk ? ReadSinglePath(dialog, extension: null) : null;
+        }
+        finally
+        {
+            GtkNative.GtkWidgetDestroy(dialog);
+        }
+    }
+
+    /// <summary>建一个只有「取消 / 确认」两个按钮的 chooser（不加内置按钮，文案由调用方给）。</summary>
+    private nint CreateChooser(string title, int action, string acceptLabel)
+    {
+        nint dialog = GtkNative.GtkFileChooserDialogNew(title, _gtkWindow, action, 0); // varargs 终止
+        GtkNative.GtkDialogAddButton(dialog, "取消", GtkResponseCancel);
+        GtkNative.GtkDialogAddButton(dialog, acceptLabel, GtkResponseOk);
+        return dialog;
+    }
+
+    private static void SetInitialFolder(nint dialog, string? directory)
+    {
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            GtkNative.GtkFileChooserSetCurrentFolder(dialog, directory);
+        }
+    }
+
+    private static void ApplyFilters(nint dialog, IReadOnlyList<OrielFileFilter>? filters)
+    {
+        if (filters is not { Count: > 0 })
+        {
+            return;
         }
 
-        var response = GtkNative.GtkDialogRun(dialog);
-        string? path = null;
-        if (response == GtkResponseOk)
+        foreach (OrielFileFilter filter in filters)
         {
-            var filename = GtkNative.GtkFileChooserGetFilename(dialog);
-            if (filename != 0)
+            if (filter.Patterns.Count == 0)
             {
-                path = Marshal.PtrToStringUTF8(filename);
-                GtkNative.GFree(filename);
+                continue;
             }
+
+            // 一个 OrielFileFilter 对应一个 GtkFileFilter，模式逐条加进去；
+            // "*.*" 的归一化在 OrielFileFilter.GtkPatterns 里（fnmatch 语义差异，那里有单测）
+            nint gtkFilter = GtkNative.GtkFileFilterNew();
+            GtkNative.GtkFileFilterSetName(gtkFilter, filter.Name);
+            foreach (string pattern in OrielFileFilter.GtkPatterns([filter]))
+            {
+                GtkNative.GtkFileFilterAddPattern(gtkFilter, pattern);
+            }
+
+            GtkNative.GtkFileChooserAddFilter(dialog, gtkFilter);
         }
-        GtkNative.GtkWidgetDestroy(dialog);
-        return string.IsNullOrEmpty(path) ? null : path;
+    }
+
+    private static string? ReadSinglePath(nint dialog, string? extension)
+    {
+        nint filename = GtkNative.GtkFileChooserGetFilename(dialog);
+        if (filename == 0)
+        {
+            return null;
+        }
+
+        string? path = Marshal.PtrToStringUTF8(filename);
+        GtkNative.GFree(filename);
+
+        // GTK 不像 Windows 的对话框那样自动补扩展名（见 OrielFileDialogSupport 的说明）
+        return string.IsNullOrEmpty(path) ? null : OrielFileDialogSupport.EnsureExtension(path, extension);
+    }
+
+    private static string[] ReadSelectedPaths(nint dialog)
+    {
+        nint list = GtkNative.GtkFileChooserGetFilenames(dialog);
+        if (list == 0)
+        {
+            return [];
+        }
+
+        try
+        {
+            uint count = GtkNative.GSListLength(list);
+            var paths = new List<string>((int)count);
+            for (uint i = 0; i < count; i++)
+            {
+                nint item = GtkNative.GSListNthData(list, i);
+                if (item == 0)
+                {
+                    continue;
+                }
+
+                string? path = Marshal.PtrToStringUTF8(item);
+                GtkNative.GFree(item);
+                if (!string.IsNullOrEmpty(path))
+                {
+                    paths.Add(path);
+                }
+            }
+
+            return [.. paths];
+        }
+        finally
+        {
+            // 只释放链表节点；里面的字符串已在上面逐个 g_free
+            GtkNative.GSListFree(list);
+        }
     }
 }
