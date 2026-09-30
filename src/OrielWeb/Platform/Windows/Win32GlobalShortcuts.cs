@@ -8,7 +8,8 @@ namespace OrielWeb.Platform.Windows;
 /// <remarks>
 /// <para>
 /// 用平台已有的调度窗口作为接收者，因此不需要额外的消息循环或专用线程——
-/// 这正是托盘与通知选择的同一宿主（见 <see cref="WindowsPlatformBackend.MessageWindowHandle"/>）。
+/// 热键消息由系统直接投递到注册它的那个窗口，不存在托盘那种"自选消息号可能与
+/// 第三方组件（WebView2）撞车"的问题，所以这里可以放心共用调度窗口。
 /// </para>
 /// <para>
 /// id 的分配区间是 <c>0x4F00</c> 起：Win32 规定应用可用 0x0000–0xBFFF（0xC000 以上归系统），

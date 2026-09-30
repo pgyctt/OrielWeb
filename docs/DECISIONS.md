@@ -1059,3 +1059,41 @@ logpanel = 1627               ← 日志区撑到 1627px
 为了让这类问题下次能一次定位，加了 `OrielTray.RawEvent`：把原始 `wParam`/`lParam` 与解析出的
 事件类型报出来。"点了没反应"的三种可能——事件没送达 / 送达了没识别 / 识别了但菜单没弹出——
 靠它就能分开，在此之前只能靠猜。
+
+### 真正的根因：托盘回调的窗口与 WebView2 共享消息空间
+
+`RawEvent` 一上就出结果了，而且是意料之外的那种：日志里刷出**大量**"托盘事件"，形如
+
+```
+wParam=0x42A0567 lParam=0x10200     ← lParam 低字 0x200 是 WM_MOUSEMOVE
+wParam=0x0       lParam=0x10407     ← lParam 低字 0x407 是 WM_USER+7
+```
+
+`wParam` 像指针、还在连续变化，`lParam` 里是鼠标消息——**这些根本不是托盘回调**。
+原因是：托盘的回调窗口一直借用**平台的调度窗口**，而那个窗口的消息空间是**与 WebView2 共享**的。
+WebView2 的合成宿主自己也在用 `WM_APP` 范围的私有消息，于是我们自选的 `WM_APP + 2`
+与它撞在一起：真正的托盘回调淹没在一堆无关消息里，左键右键都匹配不上。
+
+**参考实现 Ryn 的做法正是给托盘单开一个窗口**（自己注册窗口类、自己建窗、自己的消息循环），
+消息号仍用 `WM_APP + n`，但只在**自己的**窗口上，不与任何第三方组件共享。本次照做：
+新增 `Win32MessageWindow`（不可见的普通窗口——**不能**用 message-only 窗口，
+因为弹菜单前要 `SetForegroundWindow`，而 message-only 窗口无法成为前台窗口）。
+
+顺带按 Ryn 停在了**旧式回调**上（不调 `NIM_SETVERSION`）：形态简单可靠
+（`wParam` = 图标 ID、`lParam` 低字 = 鼠标消息），而且避开了 `uTimeoutOrVersion` 那个联合体的
+二义性——不碰版本设置，这个字段的语义就始终是它字面上的意思。
+
+### 通知也照 Ryn 重做：PowerShell + WinRT toast
+
+原来的托盘气球（`NIF_INFO`）有两个问题：一要求托盘图标存在，二在实测里**根本没显示出来**
+（换来的是能回传点击，但看不见的通知谈不上"能用"）。Ryn 走的
+PowerShell + `ToastNotificationManager` 被它的注释称为 "reliable for any app"，本次照搬。
+
+代价是**拿不到点击激活**：未打包应用的 toast 激活需要开始菜单快捷方式携带 AUMID
+并注册 COM 激活器，那是打包器的职责（Ryn 也把这一项列为已知缺口）。因此 `NotificationClicked`
+在 Windows 上也改成**显式空实现**——三平台在这件事上如实一致（都拿不到），
+而不是让某一个平台看起来支持。
+
+**教训**：与第三方组件（尤其是 WebView2 这种"住进你窗口里"的组件）共享窗口时，
+`WM_APP + n` 这种"看起来安全"的自选消息号并不安全。要么用 `RegisterWindowMessage`，
+要么（更简单）**给需要回调的组件一个自己的窗口**。

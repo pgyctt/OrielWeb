@@ -142,7 +142,7 @@ public sealed partial class ManualCommands
 
         ManualCheck.Log(delivered
             ? "通知已提交给系统（无 Id）。看不到横幅不是本库的问题——查系统通知设置与专注助手"
-            : "通知提交失败：这是实现侧的问题，Windows 上意味着 NIM_MODIFY 返回了 false");
+            : "通知提交失败：这是实现侧的问题（Windows 上走 PowerShell + WinRT toast，脚本非 0 退出）");
     }
 
     [OrielCommand("manual.notifyId")]

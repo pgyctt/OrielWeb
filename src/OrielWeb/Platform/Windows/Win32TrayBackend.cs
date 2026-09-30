@@ -7,18 +7,25 @@ namespace OrielWeb.Platform.Windows;
 /// Windows 托盘后端：<c>Shell_NotifyIconW</c> + 弹出菜单。
 /// </summary>
 /// <remarks>
-/// 回调窗口复用平台的调度窗口（<see cref="WindowsPlatformBackend.MessageWindowHandle"/>）：
-/// 托盘图标不随任何窗口存活，而调度窗口的生命周期与消息循环一致，正是它需要的宿主。
+/// 回调窗口是**本类型专属**的不可见窗口（<see cref="Win32MessageWindow"/>）：
+/// 托盘图标不随任何应用窗口存活，而平台的调度窗口与 WebView2 共享消息空间——
+/// 自选的 "WM_APP + n" 会与 WebView2 的私有消息撞车（现象见 <see cref="Win32MessageWindow"/> 的说明），
+/// 所以这里另开一个窗口，不与任何第三方组件共用消息号。
 /// 菜单用 <c>TPM_RETURNCMD</c> 直接取回选中项 id（<see cref="Win32Menu.Popup"/>），不需要命令路由。
 /// </remarks>
 internal sealed unsafe class Win32TrayBackend : ITrayBackend
 {
-    /// <summary>本托盘的图标 ID（同一窗口上"用户托盘"与"通知气球"用不同 ID 区分）。</summary>
+    /// <summary>本托盘的图标 ID。</summary>
     private const uint TrayId = 1;
 
-    private readonly WindowsPlatformBackend _owner;
     private readonly OrielApp _app;
     private readonly bool _menuOnClick;
+
+    /// <summary>
+    /// 专属消息窗口：托盘回调必须有一个**不与 WebView2 共享**的消息空间
+    /// （理由见 <see cref="Win32MessageWindow"/> 的说明）。
+    /// </summary>
+    private readonly Win32MessageWindow _window;
 
     private nint _icon;
     private bool _ownsIcon;
@@ -32,14 +39,26 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
     public event Action<string>? MenuItemClicked;
     public event Action<string>? RawEvent;
 
-    internal Win32TrayBackend(WindowsPlatformBackend owner, OrielApp app, OrielTrayOptions options)
+    internal Win32TrayBackend(OrielApp app, OrielTrayOptions options)
     {
-        _owner = owner;
         _app = app;
         _menuOnClick = options.MenuOnClick;
         _tooltip = options.Tooltip;
         _icon = LoadIcon(options.IconPath, out _ownsIcon);
+
+        _window = new Win32MessageWindow();
+        _window.MessageReceived += OnWindowMessage;
+
         Add();
+    }
+
+    /// <summary>专属窗口收到的消息：托盘回调（左键与右键）都走这里。</summary>
+    private void OnWindowMessage(uint message, nuint wParam, nint lParam)
+    {
+        if (message == Win32Constants.WM_APP_TRAY)
+        {
+            HandleCallback(wParam, lParam);
+        }
     }
 
     // ---- 原生回调入口（由调度窗口的 WndProc 转发）----
@@ -54,25 +73,25 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
     /// </list>
     /// </summary>
     /// <remarks>
-    /// <b>右键在这里，不在窗口消息里</b>：V4 起所有托盘事件都经 <c>uCallbackMessage</c> 送达，
-    /// 右键的 <c>wParam</c> 就是 <c>WM_CONTEXTMENU</c>——它**不是**一条发给窗口的
-    /// <c>WM_CONTEXTMENU</c> 消息。早先只在窗口过程里等那条消息，所以右键永远没人处理、菜单弹不出来。
+    /// <b>右键也在这里，不在窗口消息里</b>：托盘事件一律经 <c>uCallbackMessage</c> 送达。
+    /// 早先只在窗口过程里等一条发给窗口的 <c>WM_CONTEXTMENU</c>，所以右键永远没人处理。
     /// <para>
-    /// 之所以把两种模式都接上：V4 是否真的生效取决于 <c>NIM_SETVERSION</c> 的返回（它是被忽略的返回值），
-    /// 一旦没生效，<c>wParam</c> 就变成图标 ID、事件类型跑到 <c>lParam</c> 里。分辨两者只需看
-    /// <c>wParam</c> 是不是本托盘的 ID——比"假定 V4 一定生效"稳得多。手动验证时正是这里让菜单不弹的。
+    /// 送法有两种，两条都认，但**不依赖版本设置是否生效**：
+    /// 旧式（默认，参考实现 Ryn 也走这条）<c>wParam</c> 是图标 ID、<c>lParam</c> 的**低字**是鼠标消息；
+    /// V4（调用过 <c>NIM_SETVERSION</c>）则把事件类型放进 <c>wParam</c>。
+    /// 分辨只需看 <c>wParam</c> 是不是本托盘的 ID。
     /// </para>
     /// </remarks>
     internal void HandleCallback(nuint wParam, nint lParam)
     {
-        // wParam 等于本托盘 ID ⇒ 旧式送法，事件类型其实是 lParam（鼠标消息）
-        uint eventType = wParam == TrayId ? (uint)lParam : (uint)wParam;
+        uint legacyEvent = (uint)(lParam & 0xFFFF);
+        uint eventType = wParam == TrayId ? legacyEvent : (uint)wParam;
 
         // 诊断输出：把原始参数与解析结果一起报出去。"点了没反应"的三种可能
         //（事件没送达 / 送达了没识别 / 识别了菜单没弹出）靠这一行就能分开。
         RawEvent?.Invoke(wParam == TrayId
-            ? $"wParam=0x{wParam:X}（本托盘 ID ⇒ 旧式送法，事件类型取 lParam）lParam=0x{(ulong)lParam:X}"
-            : $"wParam=0x{wParam:X}（V4 送法）lParam=0x{(ulong)lParam:X} → 事件类型 0x{eventType:X}");
+            ? $"旧式回调：wParam=0x{wParam:X}（图标 ID）lParam=0x{(ulong)lParam:X} → 事件 0x{legacyEvent:X}"
+            : $"V4 回调：wParam=0x{wParam:X}（事件类型）lParam=0x{(ulong)lParam:X}");
 
         if (eventType is Win32Constants.NIN_SELECT or Win32Constants.WM_LBUTTONUP)
         {
@@ -98,7 +117,8 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
             return;
         }
 
-        OrielMenuItem? item = _menu?.Popup(_owner.MessageWindowHandle);
+        // owner 用专属窗口：Popup 会先把它置前台（托盘菜单的硬性要求）
+        OrielMenuItem? item = _menu?.Popup(_window.Handle);
         if (item is not null)
         {
             Activate(item);
@@ -185,6 +205,9 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
             _ = Win32.DestroyIcon(_icon);
             _icon = 0;
         }
+
+        // 窗口最后释放：NIM_DELETE 已经做完，句柄不再需要
+        _window.Dispose();
     }
 
     // ---- 菜单项激活 ----
@@ -227,26 +250,12 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
         }
 
         _added = true;
-        SetVersion4();
-    }
 
-    /// <summary>请求 V4 行为（事件类型进 wParam、右键走 WM_CONTEXTMENU）。</summary>
-    /// <remarks>
-    /// flags 沿用 <c>NIM_ADD</c> 那一套（官方示例也是复用同一个结构体、只改 uVersion）。
-    /// 失败**不致命**：<see cref="HandleCallback"/> 同时认旧式送法，只是记一笔便于排查——
-    /// Windows 上没有别的可见通道。
-    /// </remarks>
-    private void SetVersion4()
-    {
-        var data = CreateData(Win32Constants.NIF_MESSAGE | Win32Constants.NIF_ICON | Win32Constants.NIF_TIP);
-        data.hIcon = _icon;
-        WriteTip(ref data);
-        data.uVersionOrTimeout = Win32Constants.NOTIFYICON_VERSION_4;
-
-        if (!Win32.Shell_NotifyIconW(Win32Constants.NIM_SETVERSION, ref data))
-        {
-            System.Diagnostics.Debug.WriteLine("[OrielWeb] 托盘 NIM_SETVERSION 失败：回退到旧式回调形态（事件类型在 lParam）。");
-        }
+        // 刻意**不调** NIM_SETVERSION，就停在旧式回调上（参考实现 Ryn 也是这样）。
+        // 原因有二：一是旧式形态简单可靠（wParam = 图标 ID、lParam 低字 = 鼠标消息）；
+        // 二是 NOTIFYICONDATA.uTimeoutOrVersion 是联合体，调了版本它就被读作"版本号"、
+        // 不调则被读作"气球停留毫秒数"——两边都不小心就会写出自相矛盾的值（见 Win32BalloonIcon 的历史坑）。
+        // 不碰版本设置，这个字段的语义就始终是它字面上的意思。
     }
 
     private void SetHidden(bool hidden)
@@ -267,7 +276,7 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
     private NOTIFYICONDATAW CreateData(uint flags) => new()
     {
         cbSize = (uint)sizeof(NOTIFYICONDATAW),
-        hWnd = _owner.MessageWindowHandle,
+        hWnd = _window.Handle,
         uID = TrayId,
         uFlags = flags,
     };

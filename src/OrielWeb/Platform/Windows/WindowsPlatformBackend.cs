@@ -18,10 +18,10 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
     private int _aliveWindows;
 
     private Win32TrayBackend? _tray;
-    private Win32BalloonIcon? _balloon;
 
-    /// <summary>调度窗口句柄。托盘与通知都用它做回调宿主（见 <see cref="Win32TrayBackend"/> 的说明）。</summary>
-    internal nint MessageWindowHandle => _messageHwnd;
+    // 托盘与通知**不再**借用调度窗口：那个窗口的消息空间与 WebView2 共享，
+    // 自选的 WM_APP + n 会与它的私有消息撞车（见 Win32MessageWindow 的说明）。
+    // 两者各自持有 Win32MessageWindow。
 
     public WindowsPlatformBackend()
     {
@@ -201,31 +201,33 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
 
     public ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app)
     {
-        _tray = new Win32TrayBackend(this, app, options);
+        _tray = new Win32TrayBackend(app, options);
         return _tray;
     }
 
     // ---- 通知 ----
 
-    /// <summary>Windows 的通知始终可用：载体是一个独立的隐藏托盘项（见 <see cref="Win32BalloonIcon"/>）。</summary>
+    /// <summary>
+    /// Windows 的通知始终可用：走 WinRT toast（经 PowerShell 调用，见 <see cref="Win32ToastNotification"/>）。
+    /// </summary>
     public bool NotificationsSupported => true;
 
-    public event Action<string>? NotificationClicked;
-
-    public bool ShowNotification(OrielNotificationOptions notification) => Balloon.Show(notification);
-
-    private Win32BalloonIcon Balloon
+    /// <summary>
+    /// 声明但**永不触发**：未打包应用的 toast 激活需要开始菜单快捷方式携带 AUMID 并注册 COM 激活器，
+    /// 那是打包器的职责（参考实现 Ryn 也把这一项列为已知缺口）。
+    /// </summary>
+    /// <remarks>
+    /// 显式空实现，与 Linux/macOS 同一理由：让"这里确实没有触发源"在代码里可见，
+    /// 而不是看起来像"忘了触发"。三平台一致——都拿不到点击，而不是某个平台看起来支持。
+    /// </remarks>
+    public event Action<string>? NotificationClicked
     {
-        get
-        {
-            if (_balloon is null)
-            {
-                _balloon = new Win32BalloonIcon(_messageHwnd);
-                _balloon.Clicked += id => NotificationClicked?.Invoke(id);
-            }
-            return _balloon;
-        }
+        add { }
+        remove { }
     }
+
+    public bool ShowNotification(OrielNotificationOptions notification)
+        => Win32ToastNotification.Send(notification);
 
     public void Quit() => Win32.PostQuitMessage(0);
 
@@ -249,11 +251,11 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         }
     }
 
-    /// <summary>释放托盘、通知载体与已注册的全局快捷键；调度窗口随消息循环结束销毁。</summary>
+    /// <summary>释放托盘与已注册的全局快捷键；调度窗口随消息循环结束销毁。</summary>
     public void Dispose()
     {
+        // 托盘会连带释放它自己的消息窗口（通知走 PowerShell，无需释放）
         _tray?.Dispose();
-        _balloon?.Dispose();
         // 热键注册属于进程级资源：不显式注销，系统会一直占着这个组合
         _shortcuts?.UnregisterAll();
     }
@@ -289,32 +291,13 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
             }
             return 0;
         }
-        if (message == Win32Constants.WM_APP_TRAY)
-        {
-            // V4 下 wParam 是事件类型（NIN_SELECT / WM_CONTEXTMENU）、lParam 是坐标；
-            // 旧式下 wParam 是图标 ID、lParam 是鼠标消息（WM_LBUTTONUP / WM_RBUTTONUP）。
-            // 两个都交给托盘后端判——不赌 NIM_SETVERSION 一定生效。
-            s_current?._tray?.HandleCallback(wParam, lParam);
-            return 0;
-        }
-        if (message == Win32Constants.WM_APP_NOTIFY)
-        {
-            // 与托盘同样的两种送法（V4：wParam 是事件类型；旧式：wParam 是图标 ID、事件在 lParam）
-            s_current?._balloon?.HandleCallback(wParam, lParam);
-            return 0;
-        }
+        // 托盘的 WM_APP_TRAY 与通知的 WM_APP_NOTIFY 不在这里处理：
+        // 那个消息号会与 WebView2 的私有消息撞车，所以它们各自用专属窗口
+        //（见 Win32MessageWindow），不再共享本窗口的消息空间。
         if (message == Win32Constants.WM_HOTKEY)
         {
             // wParam 是注册时给的热键 id（见 Win32GlobalShortcuts.Register）
             s_current?._shortcuts?.HandleHotKey(wParam);
-            return 0;
-        }
-        if (message == Win32Constants.WM_CONTEXTMENU)
-        {
-            // 兼容路径：只有**未**启用 V4 的托盘才会把右键作为窗口消息发过来。
-            // 本库走 V4，右键实际经托盘的 uCallbackMessage 送达
-            //（见 Win32TrayBackend.HandleCallback）——这条留着是为了万一有旧模式，不是主路径。
-            s_current?._tray?.ShowMenu();
             return 0;
         }
         if (message == Win32Constants.WM_SETTINGCHANGE)
