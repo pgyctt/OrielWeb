@@ -746,3 +746,21 @@ Linux 的应用菜单**不实现**：现代 GTK 应用用 header bar，GTK3 的 
 **复利**：全局快捷键的语法直接复用了第一批就落地的 `OrielAccelerator`（同一套语法、同一份 41 个单测），
 平台侧只多了一张"规范化键名 → 原生键码"的映射表（Windows 是 VK 码、macOS 是 keyCode，两者毫无关系，
 各自一张）。这也是当初把解析器与平台映射分开的原因。
+
+## 一次 CI 失败的诊断：别被工作区的行尾带偏（2026-09-30）
+
+`test (windows-latest)` 在快捷键那批之后失败，注解只有一句 `Process completed with exit code 1`
+（拿不到步骤日志时，注解能给的就这么少）。本地复现的第一步是跑
+`dotnet format --verify-no-changes`：它报了 46 条 `ENDOFLINE` 和 46 条 `WHITESPACE`。
+
+很容易就此收工——"是 CRLF 惹的祸"，把工作区文件转成 LF 了事。**但转 LF 是无效操作**：
+`git add` 早就把索引里的行尾规范化成 LF 了（git 每次提交都打印 "CRLF will be replaced by LF
+the next time Git touches it"），CI 检出的从来就是 LF，**`ENDOFLINE` 只在本地工作区成立**。
+判据是 `git diff` 有没有因此变化——实测转完一行 diff 都没有。
+
+真正让 CI 失败的是那 46 条 `WHITESPACE`：macOS 的键码映射表我按列用空格对齐了，而
+`.editorconfig` 要求一行一项。跑一次不带 `--verify-no-changes` 的 `dotnet format` 就修好了
+（改动的正是那一张表），CI 随之转绿。
+
+教训：**门禁工具的输出要按"哪些能在 CI 复现"过一遍**，而不是看到红字就动手。
+工作区与索引的行尾差异属于"只在本地成立"的那一类——它会稳定地制造一次假诊断。
