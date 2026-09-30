@@ -198,6 +198,13 @@ internal interface IPlatformBackend : IDisposable
     /// <summary>当前是否已设为开机自启（读平台里实际存在的配置，不是内存里的标记）。</summary>
     bool IsAutoStartEnabled(string id);
 
-    /// <summary>发送系统通知；平台不支持时静默忽略（不抛异常——通知失败不该影响业务）。</summary>
-    void ShowNotification(OrielNotificationOptions notification);
+    /// <summary>
+    /// 发送系统通知。
+    /// </summary>
+    /// <returns>
+    /// <c>true</c> 表示**已成功提交给系统**——注意它不等于"用户看见了"：横幅显示与否由系统的通知设置、
+    /// 专注助手、免打扰时段决定，那些不在本库的控制范围内。失败**不抛异常**（通知失败不该影响业务），
+    /// 只如实返回 <c>false</c>，让调用方能据此在应用内补一个提示。
+    /// </returns>
+    bool ShowNotification(OrielNotificationOptions notification);
 }

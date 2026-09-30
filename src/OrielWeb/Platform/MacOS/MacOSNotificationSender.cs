@@ -27,7 +27,14 @@ internal static class MacOSNotificationSender
     /// <summary>macOS 自带 osascript，因此通知总是可用。</summary>
     internal static bool IsAvailable => File.Exists(Executable);
 
-    internal static void Send(OrielNotificationOptions notification)
+    /// <summary>
+    /// 投递一条通知。
+    /// </summary>
+    /// <returns>
+    /// <c>osascript</c> 是否**成功退出（退出码 0）**。脚本本身出错（例如通知权限被拒）时它为非 0，
+    /// 这个返回值就是"没看到横幅"与"没发出去"的分界。
+    /// </returns>
+    internal static bool Send(OrielNotificationOptions notification)
     {
         try
         {
@@ -48,7 +55,7 @@ internal static class MacOSNotificationSender
             using Process? process = Process.Start(startInfo);
             if (process is null)
             {
-                return;
+                return false;
             }
 
             if (!process.WaitForExit(3000))
@@ -61,12 +68,23 @@ internal static class MacOSNotificationSender
                 {
                     Debug.WriteLine($"[OrielWeb] 结束 osascript 失败：{ex.Message}");
                 }
+
+                return false; // 超时未退出：不能当作已投递
             }
+
+            if (process.ExitCode != 0)
+            {
+                Debug.WriteLine($"[OrielWeb] osascript 退出码 {process.ExitCode}：通知未投递（常见于通知权限被拒）。");
+                return false;
+            }
+
+            return true;
         }
         catch (Exception ex)
         {
             // 通知失败不影响业务
             Debug.WriteLine($"[OrielWeb] osascript 调用失败：{ex.Message}");
+            return false;
         }
     }
 

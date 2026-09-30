@@ -212,7 +212,7 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
 
     public event Action<string>? NotificationClicked;
 
-    public void ShowNotification(OrielNotificationOptions notification) => Balloon.Show(notification);
+    public bool ShowNotification(OrielNotificationOptions notification) => Balloon.Show(notification);
 
     private Win32BalloonIcon Balloon
     {

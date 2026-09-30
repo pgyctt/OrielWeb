@@ -82,17 +82,24 @@ public sealed class OrielApp : IDisposable
     /// <summary>用户点击了某条通知；参数是 <see cref="OrielNotificationOptions.Id"/>（见其平台差异说明）。</summary>
     public event Action<string>? NotificationClicked;
 
-    /// <summary>发送一条系统通知。</summary>
-    public void ShowNotification(OrielNotificationOptions notification)
+    /// <summary>
+    /// 发送一条系统通知。
+    /// </summary>
+    /// <returns>
+    /// <c>true</c> 表示**已成功提交给系统**，不等于"用户看见了"——横幅显示与否还取决于系统的
+    /// 通知设置与专注助手（Windows 上可在「设置 → 系统 → 通知」里按应用名关闭；
+    /// macOS 上未打包运行的通知归属于 Script Editor）。失败不抛异常，返回 <c>false</c>。
+    /// </returns>
+    public bool ShowNotification(OrielNotificationOptions notification)
     {
         ArgumentNullException.ThrowIfNull(notification);
         ArgumentException.ThrowIfNullOrWhiteSpace(notification.Title);
         var backend = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
-        backend.ShowNotification(notification);
+        return backend.ShowNotification(notification);
     }
 
-    /// <summary>发送一条系统通知（便捷重载）。</summary>
-    public void ShowNotification(string title, string? body = null)
+    /// <summary>发送一条系统通知（便捷重载）；返回值语义见 <see cref="ShowNotification(OrielNotificationOptions)"/>。</summary>
+    public bool ShowNotification(string title, string? body = null)
         => ShowNotification(new OrielNotificationOptions { Title = title, Body = body });
 
     // ---- 应用菜单（应用级）----

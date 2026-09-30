@@ -9,7 +9,34 @@
         /* 操作台专用样式。内联而不加进 styles.css：那些类属于 Todo 示例页，
            这一页是验证工具，两者不该互相牵制。 */
 
-        .app { overflow-y: auto; padding-bottom: 24px; }
+        /* 布局：标题栏下面分两块——上面是操作区（可滚动），下面是日志区（固定可见）。
+           上一版把日志放在最底下随整页滚动，结果是"点了按钮看不到回调"——
+           验证工具的第一要求就是反馈始终在视野里。 */
+        .app {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            padding: 0 24px;
+            gap: 12px;
+        }
+
+        .scroll {
+            flex: 1 1 auto;
+            /* min-height: 0 是必须的：flex 子项默认 min-height:auto 会把容器撑开，
+               于是内部 overflow-y 永远不生效（这正是上一版滚不动的根因） */
+            min-height: 0;
+            overflow-y: auto;
+            padding-top: 12px;
+        }
+
+        .logpanel {
+            flex: 0 0 34%;
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 12px;
+        }
+
+        .logpanel #log { flex: 1 1 auto; min-height: 0; max-height: none; }
 
         .panel {
             background: var(--panel);
@@ -99,6 +126,7 @@
             <span class="badge ok">已连接</span>
         </div>
 
+        <div class="scroll">
         <section class="panel">
             <h2>环境</h2>
             <div id="state">读取中…</div>
@@ -114,6 +142,10 @@
             <p class="hint">
                 托盘图标在任务栏通知区（可能被收进 <code>^</code> 里）。悬停看 tooltip，左/右键点它弹菜单，
                 点菜单项会以蓝色出现在日志里。<strong>通知</strong>是右下角横幅，点横幅本体应出现「通知点击」。
+                <br>
+                <strong>横幅没出现时先看日志那一行</strong>：写「已提交给系统」说明本库已经交出去了，
+                去<strong>设置 → 系统 → 通知</strong>里看 <code>OrielDemo</code> 是否被关掉、专注助手/免打扰是否开着；
+                写「提交失败」才是实现侧的问题。
             </p>
         </section>
 
@@ -150,7 +182,8 @@
                 <button data-cmd="manual.badgeOff">清除徽章</button>
             </div>
             <p class="hint">
-                Windows 上是<strong>文档化的 no-op</strong>（任务栏 overlay 要自绘位图，尚未实现）；
+                <strong>Windows 上任务栏图标不会有任何变化——这是预期行为</strong>，不是坏了：
+                任务栏 overlay 需要自绘位图，尚未实现（明确不支持比"设了但看不见"更可查）；
                 macOS 上会改 Dock 徽章。这里只验证「调用不崩」。
             </p>
         </section>
@@ -206,7 +239,9 @@
             </p>
         </section>
 
-        <section class="panel">
+        </div>
+
+        <section class="panel logpanel">
             <h2>日志 <span class="hint" style="display:inline">（宿主的回调都在这里）</span></h2>
             <ol id="log"></ol>
             <div class="row" style="margin-top:10px">

@@ -33,12 +33,16 @@ internal sealed unsafe class Win32BalloonIcon : IDisposable
 
     internal Win32BalloonIcon(nint hwnd) => _hwnd = hwnd;
 
-    /// <summary>展示一条通知。同一条隐藏托盘项上连续调用会替换上一条（系统一次只显示一个气球）。</summary>
-    internal void Show(OrielNotificationOptions notification)
+    /// <summary>
+    /// 展示一条通知。同一条隐藏托盘项上连续调用会替换上一条（系统一次只显示一个气球）。
+    /// </summary>
+    /// <returns>是否已成功提交给系统（<c>NIM_MODIFY</c> 的返回值）——系统没显示横幅时，
+    /// 这个返回值能区分"没提交成功"（实现问题）与"提交了但被系统的通知设置拦住"。</returns>
+    internal bool Show(OrielNotificationOptions notification)
     {
         if (!EnsureAdded())
         {
-            return;
+            return false;
         }
 
         // 气球点击时系统只回传"哪个图标的气球被点了"，没有通知 id 这个概念，
@@ -51,9 +55,14 @@ internal sealed unsafe class Win32BalloonIcon : IDisposable
         Win32TrayBackend.WriteFixed(data.szInfo, 256, notification.Body);
 
         data.dwInfoFlags = Win32Constants.NIIF_INFO;
-        // 未启用 V4 实时语义时这是气球停留时长（毫秒）；只作为上限，系统可能按辅助功能设置提前收走
-        data.uVersionOrTimeout = 10_000;
-        _ = Win32.Shell_NotifyIconW(Win32Constants.NIM_MODIFY, ref data);
+
+        // 这个成员是 uTimeout / uVersion 的联合体，解释权归 shell：由于 EnsureAdded 已经调用过
+        // NIM_SETVERSION(NOTIFYICON_VERSION_4)，它在这里被读作**版本**。
+        // 早先填的是 10000（当作"停留 10 秒"）——那等于告诉 shell"版本 10000"，
+        // 是自相矛盾的无意义值，可能让 shell 直接丢掉整条通知。填版本号才是正确语义。
+        data.uVersionOrTimeout = Win32Constants.NOTIFYICON_VERSION_4;
+
+        return Win32.Shell_NotifyIconW(Win32Constants.NIM_MODIFY, ref data);
     }
 
     /// <summary>气球回调（由调度窗口按 <see cref="Win32Constants.WM_APP_NOTIFY"/> 转发）。</summary>

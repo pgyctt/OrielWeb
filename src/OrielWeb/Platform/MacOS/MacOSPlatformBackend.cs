@@ -222,7 +222,7 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
         remove { }
     }
 
-    public void ShowNotification(OrielNotificationOptions notification) => MacOSNotificationSender.Send(notification);
+    public bool ShowNotification(OrielNotificationOptions notification) => MacOSNotificationSender.Send(notification);
 
     public void RunMessageLoop()
     {

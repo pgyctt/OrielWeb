@@ -120,24 +120,30 @@ public sealed partial class ManualCommands
     [OrielCommand("manual.notify")]
     public static void Notify()
     {
-        App.ShowNotification(new OrielNotificationOptions
+        bool delivered = App.ShowNotification(new OrielNotificationOptions
         {
             Title = "OrielWeb 手动验证",
             Body = "这条没有 Id，点它不会有回调。",
         });
-        ManualCheck.Log("已投递一条通知（无 Id，点它不会回传）");
+
+        ManualCheck.Log(delivered
+            ? "通知已提交给系统（无 Id）。看不到横幅不是本库的问题——查系统通知设置与专注助手"
+            : "通知提交失败：这是实现侧的问题，Windows 上意味着 NIM_MODIFY 返回了 false");
     }
 
     [OrielCommand("manual.notifyId")]
     public static void NotifyWithId()
     {
-        App.ShowNotification(new OrielNotificationOptions
+        bool delivered = App.ShowNotification(new OrielNotificationOptions
         {
             Title = "点我试试",
             Body = "点击这条通知，日志里应当出现「通知被点击」。",
             Id = "manual-notify",
         });
-        ManualCheck.Log("已投递带 Id 的通知（Windows 上点横幅可回传）");
+
+        ManualCheck.Log(delivered
+            ? "通知已提交给系统（带 Id）：点横幅本体应当回传；没看到横幅就查系统通知设置"
+            : "通知提交失败：这是实现侧的问题，Windows 上意味着 NIM_MODIFY 返回了 false");
     }
 
     /// <summary>重设托盘菜单（顺带验证 <c>SetMenu</c> 可以重复调用）。</summary>

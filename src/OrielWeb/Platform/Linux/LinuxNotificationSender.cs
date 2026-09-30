@@ -26,13 +26,20 @@ internal static class LinuxNotificationSender
     /// <summary>环境里是否有 notify-send（决定 <see cref="OrielApp.NotificationsSupported"/>）。</summary>
     internal static bool IsAvailable => s_executable.Value is not null;
 
-    internal static void Send(OrielNotificationOptions notification)
+    /// <summary>
+    /// 投递一条通知。
+    /// </summary>
+    /// <returns>
+    /// <c>notify-send</c> 是否**成功退出（退出码 0）**。环境里没有通知守护时它会以非 0 退出，
+    /// 此时通知不会出现——这个返回值就是"没看到横幅"与"没发出去"的分界。
+    /// </returns>
+    internal static bool Send(OrielNotificationOptions notification)
     {
         string? executable = s_executable.Value;
         if (executable is null)
         {
             Debug.WriteLine("[OrielWeb] 未找到 notify-send：通知被忽略（安装 libnotify-bin 即可）。");
-            return;
+            return false;
         }
 
         try
@@ -56,7 +63,7 @@ internal static class LinuxNotificationSender
             using Process? process = Process.Start(startInfo);
             if (process is null)
             {
-                return;
+                return false;
             }
 
             // 有守护进程时 notify-send 立即返回；没有时也立即失败退出。给个上限防止极端情况下挂住。
@@ -70,12 +77,23 @@ internal static class LinuxNotificationSender
                 {
                     Debug.WriteLine($"[OrielWeb] 结束 notify-send 失败：{ex.Message}");
                 }
+
+                return false; // 超时未退出：不能当作已投递
             }
+
+            if (process.ExitCode != 0)
+            {
+                Debug.WriteLine($"[OrielWeb] notify-send 退出码 {process.ExitCode}：通知未投递（通常是没有通知守护）。");
+                return false;
+            }
+
+            return true;
         }
         catch (Exception ex)
         {
             // 通知失败不该影响业务：记一笔就走
             Debug.WriteLine($"[OrielWeb] notify-send 调用失败：{ex.Message}");
+            return false;
         }
     }
 
