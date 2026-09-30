@@ -109,9 +109,9 @@ internal static class OrielShellCommand
     }
 
     /// <summary>
-    /// 取父目录。刻意用字符串处理而不用 <see cref="Path.GetDirectoryName"/>：
+    /// 取父目录。刻意用字符串处理而不用 <see cref="Path.GetDirectoryName(string?)"/>：
     /// "Linux 分支收到 POSIX 路径"这个行为要在 **Windows 上也能被测试断言**，
-    /// 而 Path API 在 Windows 上会把不带盘符的 POSIX 路径按相对路径解析（<c>/home/x</code> 变成
+    /// 而 Path API 在 Windows 上会把不带盘符的 POSIX 路径按相对路径解析（<c>/home/x</c> 变成
     /// 当前盘符下的 <c>\home\x</c>）——纯函数一旦调了平台相关 API，就不再纯。
     /// </summary>
     private static string ParentDirectory(string path)
