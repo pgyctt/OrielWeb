@@ -46,6 +46,16 @@ if [[ -z "$OUT_DIR" ]]; then
 fi
 mkdir -p "$OUT_DIR"
 
+# 没有显示时 GTK 初始化会失败、demo 立刻退出——那不是代码问题，所以先明确诊断，
+# 免得把"缺 xvfb"误读成"托盘实现有 bug"。
+if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
+    echo "警告：环境里没有 DISPLAY / WAYLAND_DISPLAY，GTK 无法初始化，demo 会立即失败。"
+    echo "      需要图形环境，或用 xvfb-run 包一层："
+    echo "        xvfb-run -a bash tools/verify-linux-shell.sh --no-publish"
+    echo "      （CI 的 smoke-linux 步骤就是这么调的）"
+    echo
+fi
+
 APP_LOG="$OUT_DIR/app.log"
 SERVICE_LOG="$OUT_DIR/notification-service.log"
 

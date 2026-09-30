@@ -212,7 +212,9 @@ jobs:
         #    无头环境没有通知守护），断言标题与正文**逐字符正确**。
         #    这样"通知确实发出去了、内容没在传参路上被改写"是机器可判定的，而不是"没报错"。
         # 复用上面已发布的产物（--no-publish），与 Self-tests 同一份二进制。
-        run: bash tools/verify-linux-shell.sh --no-publish --out "$RUNNER_TEMP/linux-shell-out"
+        # xvfb-run 是必需的：runner 没有显示，GTK 初始化会直接失败（前面的自检步骤同样套了它）。
+        # 脚本内再起 dbus-run-session —— xvfb 与 dbus 各管一头，互不干扰。
+        run: xvfb-run -a bash tools/verify-linux-shell.sh --no-publish --out "$RUNNER_TEMP/linux-shell-out"
 
       - name: Upload evidence
         if: always()
