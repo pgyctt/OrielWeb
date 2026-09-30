@@ -99,7 +99,7 @@ public sealed class OrielTray : IDisposable
     /// <summary>
     /// 设置菜单。分隔线、禁用、勾选与子菜单在三平台都可用（底层分别是 Win32 弹出菜单、
     /// GtkMenu 与 NSMenu，都支持嵌套）。
-    /// 加速键的**行为**按平台不同：macOS 上是真快捷键（系统拦下按键），Windows/Linux 上只作提示显示。
+    /// 加速键的**行为**按平台不同：macOS 上由 AppKit 在菜单打开时匹配，Windows/Linux 上只作提示显示。
     /// </summary>
     public void SetMenu(IReadOnlyList<OrielMenuItem> items) => _backend.SetMenu(items);
 

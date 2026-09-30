@@ -5,7 +5,7 @@ using OrielWeb.Platform.MacOS.Interop;
 namespace OrielWeb.Platform.MacOS;
 
 /// <summary>
-/// NSMenu 的构建、弹出与释放，自带一个 ObjC target 实例（托盘菜单、窗口上下文菜单、应用菜单栏共用）。
+/// NSMenu 的构建、弹出与释放，自带一个 ObjC target 实例（托盘菜单与窗口上下文菜单共用）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -14,7 +14,7 @@ namespace OrielWeb.Platform.MacOS;
 /// 就不需要额外的全局表，也不会出现两个菜单的 tag 互相串味。
 /// </para>
 /// <para>
-/// 加速键（key equivalent）在 macOS 上是**真快捷键**（系统会拦下按键），这一点与 Windows/Linux 不同，
+/// 加速键（key equivalent）由 AppKit 在菜单打开时匹配，与 Windows/Linux 把按键留给页面不同，
 /// 见 README 平台矩阵。只映射单字符键：方向键与 F 键在 AppKit 里要用 0xF700 段私有码位，
 /// 映射它们要再维护一张码位表，收益不抵复杂度。
 /// </para>
@@ -50,7 +50,7 @@ internal sealed unsafe class MacOSMenu : IDisposable
         return menu._handle == 0 ? null : menu;
     }
 
-    /// <summary>原生 NSMenu 句柄（<c>setMenu:</c>/<c>setMainMenu:</c>/<c>setSubmenu:</c> 需要它）。</summary>
+    /// <summary>原生 NSMenu 句柄（<c>setMenu:</c>/<c>setSubmenu:</c> 需要它）。</summary>
     internal nint Handle => _handle;
 
     /// <summary>
@@ -84,27 +84,6 @@ internal sealed unsafe class MacOSMenu : IDisposable
             view);
     }
 
-    /// <summary>设为应用主菜单栏（macOS 的应用菜单就是顶部菜单栏）。</summary>
-    internal void SetAsMainMenu()
-    {
-        if (_handle == 0)
-        {
-            return;
-        }
-
-        nint app = ObjCRuntime.SendId(
-            ObjCRuntime.GetClassOrThrow("NSApplication"), ObjCRuntime.Sel("sharedApplication"));
-        ObjCRuntime.SendVoidObj(app, ObjCRuntime.Sel("setMainMenu:"), _handle);
-    }
-
-    /// <summary>清空应用主菜单栏（传 nil 让 AppKit 回到无菜单栏的状态）。</summary>
-    internal static void ClearMainMenu()
-    {
-        nint app = ObjCRuntime.SendId(
-            ObjCRuntime.GetClassOrThrow("NSApplication"), ObjCRuntime.Sel("sharedApplication"));
-        ObjCRuntime.SendVoidObj(app, ObjCRuntime.Sel("setMainMenu:"), 0);
-    }
-
     public void Dispose()
     {
         if (_disposed)
@@ -124,7 +103,7 @@ internal sealed unsafe class MacOSMenu : IDisposable
 
         if (_handle != 0)
         {
-            // 菜单可能已被 setMainMenu:/setMenu: 持有，release 只减少我们这一份引用
+            // 菜单可能已被 setMenu: 持有，release 只减少我们这一份引用
             ObjCRuntime.objc_release(_handle);
             _handle = 0;
         }

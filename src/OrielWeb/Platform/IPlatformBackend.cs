@@ -153,19 +153,6 @@ internal interface IPlatformBackend : IDisposable
     ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app);
 
     /// <summary>
-    /// 设置应用菜单。平台差异见 README：macOS 是顶部主菜单栏（<c>NSApplication.setMainMenu:</c>）、
-    /// Windows 是每个窗口的菜单栏（<c>SetMenu</c>）、Linux **不支持**——现代 GTK 应用用 header bar，
-    /// GTK3 的 <c>GtkMenuBar</c> 在主stream桌面上已不再惯用。这是平台事实下的取舍，不是遗漏。
-    /// </summary>
-    void SetAppMenu(IReadOnlyList<OrielMenuItem> items, OrielApp app);
-
-    /// <summary>清空应用菜单。</summary>
-    void ResetAppMenu(OrielApp app);
-
-    /// <summary>应用菜单里的自定义项被点击，参数是该项的 <see cref="OrielMenuItem.Id"/>。</summary>
-    event Action<string>? AppMenuItemClicked;
-
-    /// <summary>
     /// 本平台是否支持系统通知。用于让调用方决定"要不要退回到应用内提示"，
     /// 而不是发出一条永远不出现的通知。各平台的实际支持度见 README 平台矩阵。
     /// </summary>
@@ -173,21 +160,6 @@ internal interface IPlatformBackend : IDisposable
 
     /// <summary>用户点击了某条通知；参数是 <see cref="OrielNotificationOptions.Id"/>。</summary>
     event Action<string>? NotificationClicked;
-
-    /// <summary>
-    /// 注册一个系统级快捷键。<paramref name="id"/> 是平台无关的规范化串（<see cref="OrielAccelerator"/>），
-    /// 回调与注销都用它。返回 false 表示平台侧拒绝（不支持、或该组合已被别的程序占用）。
-    /// </summary>
-    bool RegisterGlobalShortcut(OrielAccelerator accelerator, string id);
-
-    /// <summary>注销一个已注册的快捷键；未注册时返回 false。</summary>
-    bool UnregisterGlobalShortcut(string id);
-
-    /// <summary>注销本应用注册的全部快捷键（应用退出前的清理入口）。</summary>
-    void UnregisterAllGlobalShortcuts();
-
-    /// <summary>某个已注册的快捷键被按下；参数是注册时的 <c>id</c>（规范化串）。</summary>
-    event Action<string>? GlobalShortcutActivated;
 
     /// <summary>
     /// 启用开机自启。<paramref name="id"/> 是应用标识（注册表值名 / .desktop 文件名 / LaunchAgent Label），

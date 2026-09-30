@@ -189,17 +189,6 @@ else
     echo "  （跳过通知投递断言：本环境没有通知客户端）"
 fi
 
-# 全局快捷键：Linux 实现是"如实返回不支持"（X11 可做但未实现、Wayland 无解），
-# 所以这里断言 false。将来若实现了 X11 的 XGrabKey，这条断言要改成"与平台能力一致"。
-shortcut="$(grep -oE "GLOBAL-SHORTCUT-REGISTERED: (true|false)" "$APP_LOG" | tail -1 | awk '{print $2}')"
-if [[ -z "$shortcut" ]]; then
-    fail "没有找到 GLOBAL-SHORTCUT-REGISTERED 输出行"
-elif [[ "$shortcut" == "false" ]]; then
-    pass "全局快捷键在 Linux 上如实报告不支持（返回 false，而不是假装注册成功）"
-else
-    fail "全局快捷键报告为 true——Linux 实现当前不支持，若已实现 X11 版本请同步更新本断言"
-fi
-
 # 内建右键菜单：断言**默认策略**。过滤本身发生在渲染引擎内部（无头环境看不到菜单内容），
 # 但"默认就是只留剪切/复制/粘贴"是需求的核心，也是这里唯一可机器判定的一环。
 if grep -q "CONTEXT-MENU-POLICY: Editing" "$APP_LOG"; then

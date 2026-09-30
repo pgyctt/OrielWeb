@@ -147,108 +147,6 @@ public sealed class OrielApp : IDisposable
     public bool ShowNotification(string title, string? body = null)
         => ShowNotification(new OrielNotificationOptions { Title = title, Body = body });
 
-    // ---- 应用菜单（应用级）----
-
-    /// <summary>应用菜单里的自定义项被点击；参数是该项的 <see cref="OrielMenuItem.Id"/>（role 项不走这里）。</summary>
-    public event Action<string>? AppMenuItemClicked;
-
-    /// <summary>
-    /// 设置应用菜单：<b>macOS</b> 是顶部主菜单栏、<b>Windows</b> 是每个窗口的菜单栏、
-    /// <b>Linux 不支持</b>（现代 GTK 应用用 header bar；详见 README 平台矩阵）。
-    /// </summary>
-    /// <remarks>
-    /// 平台不支持的实现是**空操作**而不是抛异常：同一份跨平台代码里调用它不该因为换了平台就崩，
-    /// "这个平台没有这个表面"应当是静默但可被文档查到的事实。
-    /// </remarks>
-    public void SetAppMenu(IReadOnlyList<OrielMenuItem> items)
-    {
-        ArgumentNullException.ThrowIfNull(items);
-        var backend = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
-        backend.SetAppMenu(items, this);
-    }
-
-    /// <summary>清空应用菜单（macOS 与 Windows 都会移除现有菜单）。</summary>
-    public void ResetAppMenu()
-    {
-        var backend = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
-        backend.ResetAppMenu(this);
-    }
-
-    // ---- 全局快捷键（应用级）----
-
-    /// <summary>规范化串 → 用户给的原始加速键串（回调时原样回传，便于调用方直接比对）。</summary>
-    private readonly Dictionary<string, string> _shortcuts = new(StringComparer.Ordinal);
-
-    /// <summary>某个已注册的全局快捷键被按下；参数是注册时给的加速键串。</summary>
-    public event Action<string>? GlobalShortcutActivated;
-
-    /// <summary>
-    /// 注册系统级快捷键（应用不在前台时也会触发）。返回 false 表示没注册成功，可能原因：
-    /// 语法不合法、没有修饰键（会吞掉正常打字）、平台不支持（Linux 见 README）、
-    /// 或该组合已被别的程序占用。<b>失败是正常结果，不是异常</b>——调用方应当据此提示用户换一个。
-    /// </summary>
-    public bool RegisterGlobalShortcut(string accelerator)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(accelerator);
-        var backend = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
-
-        // 必须带修饰键：没有修饰键的全局组合会把普通输入吞掉，这是 Ryn 也有的同一道闸
-        if (!OrielAccelerator.TryParse(accelerator, OperatingSystem.IsMacOS(), requireModifier: true, out OrielAccelerator? parsed))
-        {
-            return false;
-        }
-
-        string id = parsed!.ToCanonicalString();
-        if (_shortcuts.ContainsKey(id))
-        {
-            return true;
-        }
-
-        if (!backend.RegisterGlobalShortcut(parsed, id))
-        {
-            return false;
-        }
-
-        _shortcuts[id] = accelerator;
-        return true;
-    }
-
-    /// <summary>注销一个已注册的快捷键；未注册时返回 false。</summary>
-    public bool UnregisterGlobalShortcut(string accelerator)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(accelerator);
-        var backend = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
-
-        if (!OrielAccelerator.TryParse(accelerator, OperatingSystem.IsMacOS(), requireModifier: false, out OrielAccelerator? parsed))
-        {
-            return false;
-        }
-
-        string id = parsed!.ToCanonicalString();
-        if (!_shortcuts.Remove(id))
-        {
-            return false;
-        }
-
-        _ = backend.UnregisterGlobalShortcut(id);
-        return true;
-    }
-
-    /// <summary>该加速键当前是否已注册（按规范化结果比较，写法不同但等价算同一个）。</summary>
-    public bool IsGlobalShortcutRegistered(string accelerator)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(accelerator);
-        return OrielAccelerator.TryParse(accelerator, OperatingSystem.IsMacOS(), requireModifier: false, out OrielAccelerator? parsed)
-            && _shortcuts.ContainsKey(parsed!.ToCanonicalString());
-    }
-
-    /// <summary>注销本应用注册的全部快捷键。</summary>
-    public void UnregisterAllGlobalShortcuts()
-    {
-        _shortcuts.Clear();
-        _backend?.UnregisterAllGlobalShortcuts();
-    }
-
     // ---- 开机自启 ----
 
     /// <summary>自启标识：默认可执行文件名，可用 <see cref="OrielAppBuilder.UseAutoStartId"/> 覆盖。</summary>
@@ -377,15 +275,6 @@ public sealed class OrielApp : IDisposable
         _backend = PlatformBackendFactory.Create();
         _backend.ThemeChanged += OnThemeChanged;
         _backend.NotificationClicked += id => NotificationClicked?.Invoke(id);
-        _backend.AppMenuItemClicked += id => AppMenuItemClicked?.Invoke(id);
-        _backend.GlobalShortcutActivated += id =>
-        {
-            // 平台只回传规范化串；这里换回用户给的原始写法，调用方不必自己规范化
-            if (_shortcuts.TryGetValue(id, out string? original))
-            {
-                GlobalShortcutActivated?.Invoke(original);
-            }
-        };
 
         // 托盘先于窗口创建：托盘是应用的外壳，先就绪才能让"启动即最小化到托盘"这类形态成立。
         // 与 RestoreTray 同一条路径，免得"启动时建"和"重建"两处各写一遍。

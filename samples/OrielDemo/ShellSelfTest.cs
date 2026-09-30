@@ -117,40 +117,9 @@ internal static class ShellSelfTest
                 Console.WriteLine("[shell-selftest] 环境缺通知客户端（notify-send）：按设计报告不支持");
             }
 
-            // 应用菜单：macOS 上真的会替换主菜单栏，Windows 上（无边框窗口）按设计跳过，Linux 是空操作。
-            // 上下文菜单不在这里测：它会弹出并等待用户选择（Windows 上还会阻塞），
-            // 交互式的东西不进无人自检——它的可判定部分（菜单构建）已由上面托盘菜单覆盖。
-            _app.SetAppMenu(
-            [
-                OrielMenuItem.Item("app-hello", "Hello"),
-                OrielMenuItem.Separator(),
-                OrielMenuItem.RoleItem(OrielMenuRole.Copy),
-                OrielMenuItem.RoleItem(OrielMenuRole.Quit),
-            ]);
-            Console.WriteLine("[shell-selftest] 应用菜单已设置（macOS 生效 / Windows 无边框窗口跳过 / Linux 空操作）");
-
-            // 全局快捷键：Linux 上按平台事实返回 false（X11 可做但未实现、Wayland 无解）。
-            // 这里断言的是"如实报告"而不是"注册成功"——两种结果都能 PASS，但输出不同，
-            // 取证脚本据平台断言具体取值。
-            bool shortcutRegistered = _app.RegisterGlobalShortcut("CmdOrCtrl+Shift+F12");
-            Console.WriteLine($"[shell-selftest] GLOBAL-SHORTCUT-REGISTERED: {(shortcutRegistered ? "true" : "false")}");
-
-            if (shortcutRegistered)
-            {
-                // 注册成功时必须查得到（写法不同但等价也算同一个），且注销要成功——
-                // 这两条在三平台都能机器断言，与"按键能否真的触发"无关。
-                bool found = _app.IsGlobalShortcutRegistered("ctrl+shift+f12");
-                bool unregistered = _app.UnregisterGlobalShortcut("CmdOrCtrl+Shift+F12");
-                Console.WriteLine($"[shell-selftest] GLOBAL-SHORTCUT-LOOKUP: {(found ? "true" : "false")}");
-                Console.WriteLine($"[shell-selftest] GLOBAL-SHORTCUT-UNREGISTERED: {(unregistered ? "true" : "false")}");
-
-                if (!found || !unregistered)
-                {
-                    Failed = true;
-                    Console.WriteLine("SHELL-SELFTEST: FAIL —— 注册成功但查不到或注销失败");
-                    return;
-                }
-            }
+            // 菜单：这里**只**验托盘菜单（上面那步）——它的构建路径覆盖了菜单项的全部形态
+            // （分隔线 / 勾选 / 禁用 / 子菜单 / role）。上下文菜单不在这里测：它会弹出并等待用户选择
+            // （Windows 上还会阻塞），交互式的东西不进无人自检。
 
             // 内建右键菜单：能断言的只有"默认策略确实是只留剪切/复制/粘贴"这一条——
             // 过滤动作发生在渲染引擎内部，无头环境里既弹不出菜单也看不到剩下哪几项。

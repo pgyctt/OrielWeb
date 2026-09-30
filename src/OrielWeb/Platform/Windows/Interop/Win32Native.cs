@@ -35,25 +35,12 @@ internal static class Win32Constants
 
     public const uint WM_NULL = 0x0000;
     public const uint WM_CONTEXTMENU = 0x007B;
-    /// <summary>菜单栏与加速键发来的命令消息；LOWORD(wParam) 是命令 id。</summary>
-    public const uint WM_COMMAND = 0x0111;
 
     /// <summary>有文件被拖到窗口上；wParam 是 HDROP，用完必须 DragFinish。</summary>
     public const uint WM_DROPFILES = 0x0233;
 
     /// <summary>窗口扩展样式：接收文件拖放。</summary>
     public const uint WS_EX_ACCEPTFILES = 0x00000010;
-    /// <summary>已注册的系统级快捷键被按下；wParam 是注册时给的 id。</summary>
-    public const uint WM_HOTKEY = 0x0312;
-
-    // ---- 全局快捷键（RegisterHotKey 的修饰键）----
-
-    public const uint MOD_ALT = 0x0001;
-    public const uint MOD_CONTROL = 0x0002;
-    public const uint MOD_SHIFT = 0x0004;
-    public const uint MOD_WIN = 0x0008;
-    /// <summary>按住不重复触发（否则长按会刷出一串事件）。</summary>
-    public const uint MOD_NOREPEAT = 0x4000;
 
     // ---- 托盘（Shell_NotifyIcon）----
 
@@ -698,25 +685,6 @@ internal static unsafe partial class Win32
     [LibraryImport("user32")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool GetCursorPos(out POINT point);
-
-    /// <summary>给窗口设置菜单栏；传 0 移除。菜单句柄的所有权转移给窗口（窗口销毁时释放）。</summary>
-    [LibraryImport("user32")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool SetMenu(nint hwnd, nint menu);
-
-    // ---- 全局快捷键（user32）----
-
-    /// <summary>
-    /// 注册系统级快捷键。<paramref name="id"/> 由调用方分配（0x0000–0xBFFF 可用，0xC000 以上归系统），
-    /// 与 hwnd 一起唯一标识这次注册；失败通常是被别的程序占用（ERROR_HOTKEY_ALREADY_REGISTERED）。
-    /// </summary>
-    [LibraryImport("user32", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool RegisterHotKey(nint hwnd, int id, uint modifiers, uint virtualKey);
-
-    [LibraryImport("user32", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool UnregisterHotKey(nint hwnd, int id);
 
     // ---- 注册表写（advapi32）----
 

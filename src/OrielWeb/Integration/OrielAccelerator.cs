@@ -10,7 +10,7 @@ namespace OrielWeb;
 /// <para>
 /// 解析与平台无关：这里只给"抽象键名 + 修饰键集合"，各平台自己映射到原生表示
 /// （Windows 虚拟键码、macOS keyCode + modifier mask、X11 keycode）。
-/// 应用菜单的加速键与全局快捷键共用本类型——它们是同一套语法，没有理由写两个解析器。
+/// 上下文菜单与托盘菜单的加速键共用本类型——它们是同一套语法，没有理由写两个解析器。
 /// </para>
 /// <para>
 /// 语法：<c>修饰键+修饰键+…+键名</c>。修饰键可写 <c>Ctrl</c>/<c>Control</c>、
@@ -48,7 +48,7 @@ public sealed class OrielAccelerator
 
     /// <summary>解析加速键语法（按当前平台解释 <c>CmdOrCtrl</c>）。</summary>
     public static bool TryParse(string? text, out OrielAccelerator? accelerator)
-        => TryParse(text, OperatingSystem.IsMacOS(), requireModifier: false, out accelerator);
+        => TryParse(text, OperatingSystem.IsMacOS(), out accelerator);
 
     /// <summary>
     /// 本平台的展示文本。macOS 用符号形式（<c>⌃⌥⇧⌘A</c>），其它平台用 <c>Ctrl+Shift+A</c> 形式。
@@ -103,18 +103,16 @@ public sealed class OrielAccelerator
     }
 
     /// <summary>
-    /// 与平台无关的规范化串（<c>Ctrl+Shift+A</c> 形式），用于注册表去重：
+    /// 与平台无关的规范化串（<c>Ctrl+Shift+A</c> 形式），用来判断两种写法是不是同一个组合：
     /// <c>"ctrl+a"</c> 与 <c>"CmdOrCtrl+A"</c> 在非 macOS 上是同一个组合。
     /// </summary>
     internal string ToCanonicalString() => ToDisplayString(isMac: false);
 
     /// <summary>
     /// 解析实现。<paramref name="isMac"/> 决定 <c>CmdOrCtrl</c> 落到 Command 还是 Control
-    /// （显式传入而非读环境，测试才能两个平台都覆盖）；<paramref name="requireModifier"/>
-    /// 用于全局快捷键——没有修饰键的全局组合会吞掉正常打字，
-    /// 菜单里的加速键则可以只有功能键（如 <c>"F5"</c>）。
+    /// （显式传入而非读环境，测试才能两个平台都覆盖）。
     /// </summary>
-    internal static bool TryParse(string? text, bool isMac, bool requireModifier, out OrielAccelerator? accelerator)
+    internal static bool TryParse(string? text, bool isMac, out OrielAccelerator? accelerator)
     {
         accelerator = null;
         if (string.IsNullOrWhiteSpace(text))
@@ -193,7 +191,7 @@ public sealed class OrielAccelerator
             }
         }
 
-        if (key is null || (requireModifier && !control && !alt && !shift && !command))
+        if (key is null)
         {
             return false;
         }

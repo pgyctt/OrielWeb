@@ -3,7 +3,7 @@ using OrielWeb.Platform.Windows.Interop;
 namespace OrielWeb.Platform.Windows;
 
 /// <summary>
-/// Win32 弹出菜单的构建、跟踪与释放（托盘菜单、窗口上下文菜单、窗口菜单栏共用）。
+/// Win32 弹出菜单的构建、跟踪与释放（托盘菜单、窗口上下文菜单共用）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -12,7 +12,7 @@ namespace OrielWeb.Platform.Windows;
 /// role 的语义由 <see cref="OrielMenuRoles"/> 统一解释。
 /// </para>
 /// <para>
-/// 命令 id 由本对象分配并维护映射（<c>TPM_RETURNCMD</c> 直接返回它，菜单栏走 <c>WM_COMMAND</c>），
+/// 命令 id 由本对象分配并维护映射（<c>TPM_RETURNCMD</c> 直接返回它），
 /// 因此一个 <see cref="Win32Menu"/> 实例对应"一份菜单定义"，重建菜单就是换一个实例。
 /// </para>
 /// </remarks>
@@ -24,9 +24,6 @@ internal sealed unsafe class Win32Menu : IDisposable
     private bool _disposed;
 
     private Win32Menu(nint handle) => _handle = handle;
-
-    /// <summary>原生菜单句柄（菜单栏用 <c>SetMenu(hwnd, handle)</c>）。</summary>
-    internal nint Handle => _handle;
 
     /// <summary>构建一份菜单；<paramref name="items"/> 为空时返回 null（调用方按"没有菜单"处理）。</summary>
     internal static Win32Menu? Build(IReadOnlyList<OrielMenuItem> items)
@@ -47,7 +44,7 @@ internal sealed unsafe class Win32Menu : IDisposable
         return menu;
     }
 
-    /// <summary>按命令 id 找回菜单项（<c>WM_COMMAND</c> 路由用）。</summary>
+    /// <summary>按命令 id 找回菜单项（<see cref="Popup"/> 用它把 <c>TrackPopupMenuEx</c> 的返回值还原成项）。</summary>
     internal OrielMenuItem? Find(uint commandId)
         => _targets.TryGetValue(commandId, out OrielMenuItem? item) ? item : null;
 

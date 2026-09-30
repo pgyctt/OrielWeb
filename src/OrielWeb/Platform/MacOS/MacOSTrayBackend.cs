@@ -13,7 +13,7 @@ namespace OrielWeb.Platform.MacOS;
 /// 这是平台行为而不是遗漏（<see cref="OrielTrayOptions.MenuOnClick"/> 在 macOS 上没有意义）。
 /// </para>
 /// <para>
-/// 菜单的构建与点击映射都在 <see cref="MacOSMenu"/> 里（与窗口上下文菜单、应用菜单栏共用）。
+/// 菜单的构建与点击映射都在 <see cref="MacOSMenu"/> 里（与窗口上下文菜单共用）。
 /// </para>
 /// </remarks>
 internal sealed class MacOSTrayBackend : ITrayBackend

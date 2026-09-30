@@ -194,28 +194,13 @@
         </section>
 
         <section class="panel">
-            <h2>菜单</h2>
+            <h2>上下文菜单</h2>
             <div class="row">
-                <button data-cmd="manual.appMenu">设置应用菜单</button>
-                <button data-cmd="manual.resetAppMenu">清空应用菜单</button>
                 <button data-cmd="manual.contextMenu">弹出上下文菜单</button>
             </div>
             <p class="hint">
-                本窗口是<strong>无边框</strong>窗口：应用菜单在 Windows 上按设计<strong>跳过</strong>——
-                预期是「没有菜单栏，也不报错」（客户区铺满时菜单栏会被盖住，与其设了看不见不如明确跳过）。
-                上下文菜单弹在鼠标位置；Windows 上它会<strong>阻塞</strong>消息循环直到你选择或取消，这是原生行为。
-            </p>
-        </section>
-
-        <section class="panel">
-            <h2>全局快捷键</h2>
-            <div class="row">
-                <button data-cmd="manual.shortcutOn">注册 Ctrl+Shift+F12</button>
-                <button data-cmd="manual.shortcutOff">注销</button>
-            </div>
-            <p class="hint">
-                注册后按 <code>Ctrl+Shift+F12</code>——<strong>焦点在别的程序上也要有反应</strong>才算全局。
-                触发会以「快捷键触发」出现在日志里。
+                弹在鼠标位置，含自定义项、勾选、禁用项、子菜单与平台 role 项（复制 / 关闭）。
+                Windows 上它会<strong>阻塞</strong>消息循环直到你选择或取消，这是原生行为。
             </p>
         </section>
 

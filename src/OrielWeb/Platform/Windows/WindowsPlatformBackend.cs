@@ -101,77 +101,8 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
 
         _aliveWindows++;
 
-        // 应用菜单若已设置，后创建的窗口要补上菜单栏（Windows 的菜单挂在窗口上，不是进程级）
-        if (_appMenuItems.Count > 0)
-        {
-            host.ApplyAppMenu(_appMenuItems);
-        }
-
         return host;
     }
-
-    // ---- 应用菜单（Windows 上就是每个窗口的菜单栏）----
-
-    private IReadOnlyList<OrielMenuItem> _appMenuItems = [];
-
-    public event Action<string>? AppMenuItemClicked;
-
-    internal void RaiseAppMenuItemClicked(string id) => AppMenuItemClicked?.Invoke(id);
-
-    /// <summary>
-    /// Windows 没有"应用级菜单栏"这种东西：菜单属于窗口（<c>SetMenu</c>），所以给当前所有窗口各设一份，
-    /// 并记住这份定义，供之后创建的窗口补上。
-    /// </summary>
-    public void SetAppMenu(IReadOnlyList<OrielMenuItem> items, OrielApp app)
-    {
-        _appMenuItems = items;
-        foreach (WebviewWindow window in app.Windows)
-        {
-            if (window.Backend is Win32WindowHost host)
-            {
-                host.ApplyAppMenu(items);
-            }
-        }
-    }
-
-    public void ResetAppMenu(OrielApp app)
-    {
-        _appMenuItems = [];
-        foreach (WebviewWindow window in app.Windows)
-        {
-            if (window.Backend is Win32WindowHost host)
-            {
-                host.ApplyAppMenu([]);
-            }
-        }
-    }
-
-    // ---- 全局快捷键 ----
-
-    private Win32GlobalShortcuts? _shortcuts;
-
-    public event Action<string>? GlobalShortcutActivated;
-
-    private Win32GlobalShortcuts Shortcuts
-    {
-        get
-        {
-            if (_shortcuts is null)
-            {
-                _shortcuts = new Win32GlobalShortcuts(_messageHwnd);
-                _shortcuts.Activated += id => GlobalShortcutActivated?.Invoke(id);
-            }
-
-            return _shortcuts;
-        }
-    }
-
-    public bool RegisterGlobalShortcut(OrielAccelerator accelerator, string id)
-        => Shortcuts.Register(accelerator, id);
-
-    public bool UnregisterGlobalShortcut(string id) => _shortcuts?.Unregister(id) ?? false;
-
-    public void UnregisterAllGlobalShortcuts() => _shortcuts?.UnregisterAll();
 
     // ---- 开机自启（HKCU 的 Run 键）----
 
@@ -242,13 +173,11 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         }
     }
 
-    /// <summary>释放托盘与已注册的全局快捷键；调度窗口随消息循环结束销毁。</summary>
+    /// <summary>释放托盘；调度窗口随消息循环结束销毁。</summary>
     public void Dispose()
     {
         // 托盘会连带释放它自己的消息窗口（通知走 PowerShell，无需释放）
         _tray?.Dispose();
-        // 热键注册属于进程级资源：不显式注销，系统会一直占着这个组合
-        _shortcuts?.UnregisterAll();
     }
 
     // ---- 消息窗口 ----
@@ -285,12 +214,6 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         // 托盘的 WM_APP_TRAY 与通知的 WM_APP_NOTIFY 不在这里处理：
         // 那个消息号会与 WebView2 的私有消息撞车，所以它们各自用专属窗口
         //（见 Win32MessageWindow），不再共享本窗口的消息空间。
-        if (message == Win32Constants.WM_HOTKEY)
-        {
-            // wParam 是注册时给的热键 id（见 Win32GlobalShortcuts.Register）
-            s_current?._shortcuts?.HandleHotKey(wParam);
-            return 0;
-        }
         if (message == Win32Constants.WM_SETTINGCHANGE)
         {
             // 主题切换会带 "ImmersiveColorSet" 参数；其它设置变化（环境变量、区域等）不理会

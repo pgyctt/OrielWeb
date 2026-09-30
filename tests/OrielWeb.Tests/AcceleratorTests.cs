@@ -3,14 +3,14 @@ using Xunit;
 namespace OrielWeb.Tests;
 
 /// <summary>
-/// 加速键解析的单测。解析器是应用菜单加速键与全局快捷键的共用基础，
+/// 加速键解析的单测。解析器服务于菜单与托盘的加速键（窗口上下文菜单、托盘菜单），
 /// 且它的行为随平台而变（<c>CmdOrCtrl</c> 的落点、展示文本），所以两个平台都覆盖。
 /// </summary>
 public sealed class AcceleratorTests
 {
     private static OrielAccelerator Parse(string text, bool isMac = false)
     {
-        Assert.True(OrielAccelerator.TryParse(text, isMac, requireModifier: false, out var accelerator), $"应能解析：{text}");
+        Assert.True(OrielAccelerator.TryParse(text, isMac, out var accelerator), $"应能解析：{text}");
         return accelerator!;
     }
 
@@ -148,7 +148,7 @@ public sealed class AcceleratorTests
     [InlineData("Ctrl+F0")]
     [InlineData("Ctrl+-")]          // 标点必须用具名键（Minus）
     public void InvalidInputsAreRejected(string? text)
-        => Assert.False(OrielAccelerator.TryParse(text, isMac: false, requireModifier: false, out _), $"不应解析成功：{text}");
+        => Assert.False(OrielAccelerator.TryParse(text, isMac: false, out _), $"不应解析成功：{text}");
 
     [Fact]
     public void PunctuationUsesNamedKeys()
@@ -157,19 +157,21 @@ public sealed class AcceleratorTests
         Assert.Equal("Comma", Parse("ctrl+comma").Key);
     }
 
-    // ---- requireModifier（全局快捷键用）----
+    // ---- 裸功能键 ----
 
+    /// <remarks>
+    /// 菜单加速键允许只有功能键（如 <c>F5</c>）：它只在菜单展开时生效，不会吞掉正常输入。
+    /// </remarks>
     [Fact]
-    public void RequireModifier_RejectsBareFunctionKey()
+    public void BareFunctionKeyIsValid()
     {
-        Assert.False(OrielAccelerator.TryParse("F5", isMac: false, requireModifier: true, out _));
-        Assert.True(OrielAccelerator.TryParse("F5", isMac: false, requireModifier: false, out var bare));
+        Assert.True(OrielAccelerator.TryParse("F5", isMac: false, out var bare));
         Assert.Equal("F5", bare!.Key);
     }
 
     [Fact]
-    public void RequireModifier_AcceptsModifiedKey()
-        => Assert.True(OrielAccelerator.TryParse("CmdOrCtrl+Shift+P", isMac: false, requireModifier: true, out _));
+    public void ModifiedKeyIsValid()
+        => Assert.True(OrielAccelerator.TryParse("CmdOrCtrl+Shift+P", isMac: false, out _));
 
     // ---- 展示文本 ----
 
@@ -197,7 +199,7 @@ public sealed class AcceleratorTests
     [Fact]
     public void CanonicalString_IsStableForDedup()
     {
-        // 同一个组合的不同写法必须落到同一个规范化串，否则全局快捷键去重会漏
+        // 同一个组合的不同写法必须落到同一个规范化串，否则按它做的比对会漏
         Assert.Equal(
             Parse("CmdOrCtrl+Shift+A", isMac: false).ToCanonicalString(),
             Parse("ctrl+shift+a", isMac: false).ToCanonicalString());

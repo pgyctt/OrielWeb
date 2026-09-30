@@ -141,50 +141,6 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
 
     public ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app) => new GtkTrayBackend(app, options);
 
-    // ---- 应用菜单 ----
-    // Linux 上**不实现**：现代 GTK 应用用 header bar，GTK3 的 GtkMenuBar 在主流桌面上已不再惯用；
-    // 硬把一个菜单栏塞进 GtkWindow 还会与 webview 的布局层级打架（Ryn 在同一处也放弃了 Linux 菜单栏，
-    // 给的理由是"应用惯例 + 框架拥有窗口的 child 层级"）。
-    // 所以 SetAppMenu 是空操作、AppMenuItemClicked 永不触发——这是刻意的平台取舍，不是漏做。
-    // 需要菜单的应用应当把入口画在页面里。
-
-    public void SetAppMenu(IReadOnlyList<OrielMenuItem> items, OrielApp app)
-    {
-    }
-
-    public void ResetAppMenu(OrielApp app)
-    {
-    }
-
-    public event Action<string>? AppMenuItemClicked
-    {
-        add { }
-        remove { }
-    }
-
-    // ---- 全局快捷键 ----
-    // Linux 上**不实现**，注册一律如实返回 false：
-    //  · X11 下技术上可行（XGrabKey + GDK 事件过滤器），但要额外的 libX11 互操作与 XEvent 解析；
-    //  · Wayland 下没有等价物——正路是 xdg-desktop-portal 的 GlobalShortcuts 接口，会话里拿不到 grab。
-    // Ryn 在同一处也是 Stub，理由相同。
-    // 关键在于**如实返回 false 而不是假装注册成功**：调用方据此提示用户换一个组合，
-    // 而不是一直等一个永远不会触发的事件。
-
-    public bool RegisterGlobalShortcut(OrielAccelerator accelerator, string id) => false;
-
-    public bool UnregisterGlobalShortcut(string id) => false;
-
-    public void UnregisterAllGlobalShortcuts()
-    {
-    }
-
-    public event Action<string>? GlobalShortcutActivated
-    {
-        add { }
-        remove { }
-    }
-
-
     // ---- 开机自启（freedesktop 的 autostart 目录）----
 
     public bool EnableAutoStart(string id, IReadOnlyList<string>? arguments) => LinuxAutoStart.Enable(id, arguments);

@@ -11,7 +11,6 @@ public sealed record ManualState(
     bool TrayCreated,
     bool TrayVisible,
     bool NotificationsSupported,
-    bool ShortcutRegistered,
     bool AutoStartEnabled);
 
 /// <summary>
@@ -64,8 +63,6 @@ internal static class ManualCheck
 
         // 其余回调：每一项都是"操作了才会出现"的
         app.NotificationClicked += id => Log($"通知被点击：{id}");
-        app.AppMenuItemClicked += id => Log($"应用菜单项被点击：{id}");
-        app.GlobalShortcutActivated += accelerator => Log($"全局快捷键触发：{accelerator}");
 
         window.ContextMenuItemClicked += id => Log($"上下文菜单项被点击：{id}");
         window.FileDropped += e => Log($"拖入 {e.Paths.Count} 项：{string.Join("  |  ", e.Paths)}");
@@ -111,9 +108,6 @@ internal static class ManualCheck
 /// <summary>操作台按钮对应的命令（页面经 <c>oriel.invoke</c> 调用，返回值直接显示在日志里）。</summary>
 public sealed partial class ManualCommands
 {
-    /// <summary>页面与日志里都用这个写法；Windows 上 CmdOrCtrl 落 Ctrl。</summary>
-    private const string Shortcut = "CmdOrCtrl+Shift+F12";
-
     private static WebviewWindow Window => Program.Window
         ?? throw new InvalidOperationException("窗口尚未创建。");
 
@@ -126,7 +120,6 @@ public sealed partial class ManualCommands
         TrayCreated: App.Tray is not null,
         TrayVisible: App.Tray?.IsVisible ?? false,
         NotificationsSupported: App.NotificationsSupported,
-        ShortcutRegistered: App.IsGlobalShortcutRegistered(Shortcut),
         AutoStartEnabled: App.IsAutoStartEnabled);
 
     // ---- 托盘与通知 ----
@@ -202,27 +195,7 @@ public sealed partial class ManualCommands
         return true;
     }
 
-    // ---- 菜单 ----
-
-    [OrielCommand("manual.appMenu")]
-    public static void SetAppMenu()
-    {
-        App.SetAppMenu(
-        [
-            OrielMenuItem.Item("app-hello", "Hello"),
-            OrielMenuItem.Separator(),
-            OrielMenuItem.RoleItem(OrielMenuRole.Copy),
-            OrielMenuItem.RoleItem(OrielMenuRole.Quit),
-        ]);
-        ManualCheck.Log("应用菜单已设置（本窗口是无边框的，Windows 上按设计跳过——预期没有菜单栏）");
-    }
-
-    [OrielCommand("manual.resetAppMenu")]
-    public static void ResetAppMenu()
-    {
-        App.ResetAppMenu();
-        ManualCheck.Log("应用菜单已清空");
-    }
+    // ---- 上下文菜单 ----
 
     [OrielCommand("manual.contextMenu")]
     public static void ShowContextMenu()
@@ -244,21 +217,6 @@ public sealed partial class ManualCommands
             OrielMenuItem.RoleItem(OrielMenuRole.Close),
         ]);
     }
-
-    // ---- 全局快捷键 ----
-
-    [OrielCommand("manual.shortcutOn")]
-    public static bool ShortcutOn()
-    {
-        bool ok = App.RegisterGlobalShortcut(Shortcut);
-        ManualCheck.Log(ok
-            ? "快捷键已注册：切到别的程序再按 Ctrl+Shift+F12，应当有回调"
-            : "注册失败——该组合可能已被别的程序占用");
-        return ok;
-    }
-
-    [OrielCommand("manual.shortcutOff")]
-    public static bool ShortcutOff() => App.UnregisterGlobalShortcut(Shortcut);
 
     // ---- 内建右键菜单（渲染引擎自己弹的那个，不是 ShowContextMenu）----
 

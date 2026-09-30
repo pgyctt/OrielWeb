@@ -2,26 +2,53 @@
 
 类 Tauri 的 C# 跨平台系统 webview 核心库。无 C++ 中间层、无 GUI 框架依赖、Native AOT 友好、零反射 IPC。
 
+## 目录
+
+- [特性](#特性) · [平台支持](#平台支持) · [快速开始](#快速开始)
+- [无边框窗口](#无边框窗口) · [导航与页面通信](#导航与页面通信)
+- [剪贴板、系统主题与单实例](#剪贴板系统主题与单实例) · [平台集成](#平台集成)
+- [对话框](#对话框) · [文件拖放](#文件拖放) · [内建右键菜单](#内建右键菜单)
+- [手动验证与无人自检](#手动验证与无人自检)
+- [构建与发布](#构建与发布) · [平台运行要求](#平台运行要求)
+- [路线图](#路线图) · [许可](#许可)
+
+> 各节末尾的 **验证账** 是该能力的证据与缺口：哪些有单测、哪些只有编译验证、哪些必须人眼。
+> 无头环境验证不了的部分另见 [docs/ROADMAP.md](docs/ROADMAP.md) 的待真机清单。
+
 ## 特性
 
-- **纯 C# 互操作**：macOS（WKWebView + ObjC runtime）与 Linux（GTK3 + WebKitGTK）为手写 P/Invoke；Windows 的 WebView2 COM 走 `WebView2Aot` 的 `[GeneratedComInterface]`/`[GeneratedComClass]` **源生成绑定**（无手写 vtable/IID/RefCount）。三平台均不需要 C++ 中间层
-- **Composition 宿主**（Windows）：WebView2 作为 DirectComposition 的一份视觉合成进窗口，而非子窗口——因此无边框窗口的边缘 resize 能走系统原生路径，且窗口内容可与其它视觉自由合成
-- **零反射 IPC**：`[OrielCommand]` + Roslyn 源生成器在编译期生成分发代码，`[ModuleInitializer]` 自动注册，运行期零反射
-- **Native AOT**：全局 `IsAotCompatible`/`IsTrimmable`，发布为原生单文件可执行文件（WebView2 的运行时加载器已内嵌，无需旁文件）
-- **无边框窗口**：自绘标题栏 + 流式/原生拖动 + 最大化/全屏/置顶切换
-- **导航与双向通信**：前进/后退/刷新 + 导航事件（开始/完成/失败，带错误信息）、页面 console 转发、
-  `EmitEvent(name, payload)` 推事件、`oriel.postMessage` 收消息——三条通道都能在无头环境里机器断言
-  （见 `--selftest nav` / `--selftest ipc`）
-- **平台集成**：剪贴板（文本 + HTML）、系统主题（深/浅 + 变更事件）、单实例、系统托盘、系统通知、
-  **菜单**（应用菜单 + 窗口上下文菜单，含平台 role 与加速键）、**全局快捷键**——都有无头自检
-  （见 `--selftest clipboard` / `--selftest theme` / `--selftest shell` / `--selftest single-instance`）
-- **文件对话框**：打开（可多选）/ 保存 / 选文件夹，支持结构化过滤器与初始目录——过滤器的三种平台形状
-  转换与 Win32 多选缓冲区解析都是**纯函数**，因此在 Linux 的 CI 上就有单测（含为 Windows 写的那些）
-- **文件拖放**：外部文件拖进窗口 → 本地路径列表（`window.FileDropped`）——URI 解析有单测；
-  真实拖拽需要人眼（见下方验证账）
-- **内建右键菜单策略**：默认只留剪切/复制/粘贴（`Editing`），可切 `Native`（平台原样）/ `Disabled`；
-  运行时随时可改——三平台的保留名单转换是纯数据比较，因此有单测
 - **系统 webview**：Windows 用 WebView2、macOS 用 WKWebView、Linux 用 WebKitGTK——不捆绑浏览器内核
+- **纯 C# 互操作**：macOS（WKWebView + ObjC runtime）与 Linux（GTK3 + WebKitGTK）为手写 P/Invoke；Windows 的 WebView2 COM 走 `WebView2Aot` 的 `[GeneratedComInterface]`/`[GeneratedComClass]` **源生成绑定**（无手写 vtable/IID/RefCount）。三平台都不需要 C++ 中间层
+- **Composition 宿主**（Windows）：WebView2 作为 DirectComposition 的一份视觉合成进窗口，而非子窗口——无边框窗口的边缘 resize 因此能走系统原生路径
+- **零反射 IPC**：`[OrielCommand]` + Roslyn 源生成器在编译期生成分发代码，运行期零反射
+- **Native AOT**：全局 `IsAotCompatible`/`IsTrimmable`，发布为原生单文件（WebView2 的运行时加载器已内嵌，无旁文件）
+- **无边框窗口**：自绘标题栏 + 流式/原生拖动 + 最大化/全屏/置顶切换
+- **导航与双向通信**：前进/后退/刷新、导航事件（带错误信息）、页面 console 转发、`EmitEvent` 推事件、`postMessage` 收消息
+- **文件对话框**：打开（可多选）/ 保存 / 选文件夹，支持结构化过滤器与初始目录
+- **文件拖放**：外部文件拖进窗口 → 本地路径列表（`window.FileDropped`）
+- **内建右键菜单策略**：默认只留剪切/复制/粘贴，可切平台原样或完全禁用
+- **平台集成**：剪贴板（文本 + HTML）、系统主题、单实例、系统托盘、系统通知、菜单（窗口上下文菜单 + 托盘菜单，含平台 role 与加速键）、Shell 集成、开机自启
+
+> 每项能力**验证到什么程度**（哪些有单测、哪些只有编译、哪些必须人眼）在本文件中就地标注，
+> 未验证项的清单汇总在 [docs/ROADMAP.md](docs/ROADMAP.md)。demo 带两类验证入口：
+> 给人看的操作台（直接运行）与给 CI 的无人自检（`--selftest <名字>`），见[手动验证与无人自检](#手动验证与无人自检)。
+
+## 平台支持
+
+| 平台 | Webview | 状态 |
+|---|---|---|
+| Windows x64/arm64 | WebView2 (Evergreen) | ✅ **已运行验证**（demo IPC 往返、单测、AOT 发布） |
+| Linux x64 | WebKitGTK 4.1 | ✅ **已运行验证**（WSL2 + WSLg 真机：窗口、渲染、IPC 往返；X11 与 Wayland 双后端各跑通一次） |
+| macOS arm64 | WKWebView | ✅ **已运行验证**（GitHub 托管 macOS runner：窗口、渲染、中文、IPC 往返） |
+| Linux arm64 | WebKitGTK 4.1 | ⚠️ 编译通过；CI 在 xvfb 下冒烟（进程存活）；未在真机运行 |
+| macOS x64 | WKWebView | ⚠️ 编译通过（CI `compile-macos`）；未在真机运行 |
+
+> 只写有证据的结论：Windows 与 Linux x64 是本地真机，macOS arm64 是 GitHub 托管的 runner；
+> 三者的 IPC 往返都由页面徽章人眼确认。其余平台目前只有编译与冒烟级别的验证。
+> Linux x64 与 macOS 的验证过程（真机上依次暴露的后端缺陷及修法）见 `docs/DECISIONS.md`——
+> 那些缺陷在只有编译验证时完全看不出来。
+>
+> **各平台的环境依赖与已知限制**不在这里展开，见后面的[平台运行要求](#平台运行要求)。
 
 ## 快速开始
 
@@ -156,6 +183,20 @@ Windows 上这一点由 **Composition 宿主**保证：窗口以 `WS_EX_NOREDIRE
 代价是组合托管的 WebView 收不到系统输入，鼠标消息由宿主转发（键盘不需要）。
 详见 `docs/DECISIONS.md` 中的设计记录。
 
+### 应用图标
+
+任务栏与 Alt-Tab 的按钮图标取自**窗口图标**：窗口完全没有图标时，Windows 退回的是**通用应用图标**，
+而不是 exe 自带的那个（实测确认）。因此本库在建窗口类时会主动把 exe 的图标取来设到窗口上
+（`ExtractIconEx`，走 shell 自身的解析，不依赖图标资源 ID）。
+
+应用侧只需在 csproj 里声明图标即可：
+
+```xml
+<ApplicationIcon>app.ico</ApplicationIcon>
+```
+
+不声明则窗口不带图标，任务栏显示系统通用图标。
+
 ## 导航与页面通信
 
 **导航**：`GoBack()` / `GoForward()` / `Reload()` 与 `CanGoBack` / `CanGoForward`，语义与各平台原生
@@ -212,7 +253,17 @@ await window.EvaluateJs("document.body.dataset.ready = '1'");
 window.PostToUiThread(() => window.SetTitle("页面已就绪"));   // 必须回 UI 线程
 ```
 
-### 这两块能力怎么验证
+### 命令线程模型
+
+- **命令实例是共享的**：`AddCommands<T>()` 注册的类型只创建一次（惰性单例），所有 invoke 都作用于同一实例。
+  因此**命令方法必须线程安全**——并发 invoke 可能同时进入同一方法。
+- 命令执行发生在**后台线程**（不阻塞 UI 消息循环）；回执由分发器切回 UI 线程后投递。
+- 命令内需要操作 UI 时，请经 `OrielApp.PostToMainThread(...)` 切回主线程。
+- 应用自己的异步流程同理：`await` 之后不在 UI 线程，碰窗口前要经 `WebviewWindow.PostToUiThread(...)`（见上文）。
+- 反例：`samples/OrielDemo` 的 `TodoCommands` 直接读写 `List<T>` 与 `_nextId++`，并发下并不安全；
+  示例为保持简洁如此编写，实际项目请自行加锁或改用线程安全结构。
+
+### 验证账
 
 `samples/OrielDemo` 带两个自检开关，**不需要人眼**——它们自己驱动页面、打印结论，并以进程退出码表达成败
 （CI 的三平台冒烟都会跑）：
@@ -267,7 +318,7 @@ Oriel.CreateBuilder(args)
 ⚠️ 不要用"同名命名管道能否创建成功"来判定——Unix 上 .NET 会先删掉已存在的 socket 再绑定，
 第二个实例也会"成功"，于是两个进程都以为自己是首实例（实测踩到过）。
 
-### 这三项的验证账
+### 验证账
 
 | 能力 | 机器断言（三平台 CI 都跑） | 尚未验证 |
 |---|---|---|
@@ -277,7 +328,10 @@ Oriel.CreateBuilder(args)
 
 > 与路线图的约定一致：这里只写有证据的结论；未验证项同样列在 `docs/ROADMAP.md` 的待真机清单里。
 
-## 托盘、通知与菜单
+## 平台集成
+
+本节是**应用级**能力（不属于某个窗口）：托盘、通知、菜单、Shell 集成、开机自启。
+它们各自的证据与缺口统一放在节末的「验证账」里。
 
 托盘与通知都是**应用级**能力（不属于任何窗口）。托盘经 `AddTray` 配置、运行期从 `app.Tray` 取：
 
@@ -326,25 +380,13 @@ tray?.SetMenu(/* … */);                 // 重建出来的是**新对象**：�
 > 这一对 API 值在"原生资源真的被撤销"：Windows 上最难查的不是"图标没出现"，
 > 而是进程退出后图标还留在通知区（幽灵图标）——那正是没调 `NIM_DELETE` 的症状。
 
-### 托盘与通知的验证账
-
-| 能力 | 机器断言 | 尚未验证（需人眼或真机） |
-|---|---|---|
-| 托盘 | `--selftest shell`：创建托盘 + 设进一份含分隔线/勾选/禁用/子菜单/role 的菜单，进程不崩；`tools/verify-linux-shell.sh` 采集证据 | **图标是否真的出现在托盘区**、菜单外观、点击行为。Linux 另有平台限制：GNOME Shell 需 AppIndicator 扩展、Wayland 会话多数不显示 |
-| 通知投递 | `tools/verify-linux-shell.sh`：真 `notify-send` → 会话总线 → 假通知服务，断言**标题与正文逐字符正确** | macOS 的通知横幅外观与点击上报；Windows 气球的实际展示 |
-| 通知点击上报 | Windows：气球点击回传 `Id` | Linux（`notify-send` 拿不到点击，要改 libnotify 的 action 回调）、macOS（`osascript` 无回调）——两处都在代码里**显式空实现**，而不是"忘了触发" |
-| 菜单 | `--selftest shell` 设置一份含子菜单/自定义项/role 的应用菜单并断言不崩（Linux 上是空操作）；加速键解析有 41 个单测 | 菜单的外观、上下文菜单的弹出位置与交互、macOS 上加速键是否真的生效——需人眼 |
-| 全局快捷键 | `--selftest shell`：注册结果必须**如实反映平台能力**（Linux 上必须是 `false`），注册成功时还必须查得到、注销得掉 | 按键**真的**能触发（要有人按下去）——macOS / Windows 待真机 |
-| 开机自启 | `--selftest shell`：**启用 → 查得到 → 禁用 → 查不到**的闭环（三平台都成立）；Linux 上还逐项核对写出的 `.desktop` 内容；三段配置文本另有 12 个单测 | 下次**开机/登录时是否真的自动启动**——需要真机重启 |
-| Shell 集成 | 取证脚本用 `xdg-open` 替身断言两件事：URL **真的**交给了系统默认程序，且 `file:`/裸路径/`javascript:` **一次都没调出去**（白名单有效性）；另有 24 个单测覆盖校验与三平台命令翻译 | 真实桌面上弹出的浏览器/文件管理器是否符合预期——需人眼 |
-
 > 三平台实现：Windows `Shell_NotifyIconW` + 弹出菜单（`TrackPopupMenuEx`）、macOS `NSStatusBar`/`NSMenu`、
 > Linux GTK3 `GtkStatusIcon`/`GtkMenu`。通知：Windows 用独立的隐藏托盘项发气球（因此不启用托盘也能发）、
 > macOS 走 `osascript`、Linux 走 `notify-send`。
 
 ### 菜单
 
-菜单项结构与加速键语法在**三处共用**（托盘菜单、应用菜单、窗口上下文菜单），role 由同一套解释器落到行为上：
+菜单项结构与加速键语法在**两处共用**（托盘菜单、窗口上下文菜单），role 由同一套解释器落到行为上：
 
 ```csharp
 window.ShowContextMenu(
@@ -355,48 +397,20 @@ window.ShowContextMenu(
     OrielMenuItem.RoleItem(OrielMenuRole.Copy),      // 平台标准项
 ]);
 window.ContextMenuItemClicked += id => { /* 自定义项的 Id */ };
-
-app.SetAppMenu(
-[
-    OrielMenuItem.Item("about", "关于"),
-    OrielMenuItem.Separator(),
-    OrielMenuItem.RoleItem(OrielMenuRole.Quit),
-]);
-app.AppMenuItemClicked += id => { /* 自定义项的 Id */ };
 ```
 
 平台差异集中列在这里，免得逐处猜：
 
 | 项 | macOS | Windows | Linux |
 |---|---|---|---|
-| 应用菜单 | ✅ 顶部主菜单栏（`setMainMenu:`） | ✅ 每个窗口的菜单栏；**无边框窗口会跳过**（客户区铺满窗口，系统菜单栏会被盖住，与其"设了看不见"不如明确跳过） | ❌ 不支持：现代 GTK 应用用 header bar，且硬塞菜单栏会与 webview 的布局层级打架。`SetAppMenu` 是空操作，**需要菜单就把入口画在页面里** |
 | 上下文菜单 | ✅ 鼠标位置弹出（异步） | ✅ 同样在鼠标位置，但**调用会阻塞**到用户选择（原生弹出菜单自带模态消息循环） | ✅ 指针位置弹出（异步） |
-| 菜单加速键 | **真快捷键**（系统拦下按键） | 只作显示（按键仍送到页面） | 只作显示（跟在标签后面） |
+| 菜单加速键 | 菜单打开时由 AppKit 匹配（`keyEquivalent`） | 只作显示（按键仍送到页面） | 只作显示（跟在标签后面） |
 | 子菜单 / 勾选 / 禁用 / 分隔线 | ✅ | ✅ | ✅ |
-| role 项 | 全部（`close`/`minimize`/`zoom`/编辑类等） | 窗口类与编辑类；托盘菜单里只有应用级（`quit`）——托盘没有"当前窗口" | 同 Windows（但无应用菜单） |
+| role 项 | 全部（`close`/`minimize`/`zoom`/编辑类等） | 窗口类与编辑类；托盘菜单里只有应用级（`quit`）——托盘没有"当前窗口" | 同 Windows |
 
 > role 的语义由 `OrielMenuRoles` 统一解释（`quit` 退出应用、`copy` 交给页面 `document.execCommand` 等），
 > 三平台后端只负责"把菜单画出来"和"把选择报回来"。编辑类 role 是**尽力而为**：
 > `copy`/`selectAll`/`undo`/`redo` 通常可用，`cut`/`paste` 在多数 webview 里会被安全策略拦下。
-
-### 全局快捷键
-
-```csharp
-app.GlobalShortcutActivated += accelerator => window.Show();   // 参数是注册时给的写法，原样回传
-if (!app.RegisterGlobalShortcut("CmdOrCtrl+Shift+Space"))
-{
-    // 语法不合法、没带修饰键、平台不支持、或已被别的程序占用 —— 提示用户换一个
-}
-app.UnregisterGlobalShortcut("CmdOrCtrl+Shift+Space");
-```
-
-| | macOS | Windows | Linux |
-|---|---|---|---|
-| 全局快捷键 | ✅ Carbon `RegisterEventHotKey`——它是**唯一不需要辅助功能权限**就能注册系统级快捷键的公开接口（`CGEventTap` 那类要用户去系统设置授权） | ✅ `RegisterHotKey`，复用平台的调度窗口收 `WM_HOTKEY`（托盘与通知用的同一个宿主） | ❌ **不实现**：X11 可做（`XGrabKey` + GDK 事件过滤器）但未落地，Wayland 下没有等价物（正路是 xdg-desktop-portal）。注册**如实返回 `false`** |
-
-> 注册失败是**正常返回值而不是异常**：语法不合法、没有修饰键（会吞掉正常打字）、平台不支持、
-> 组合被占用 —— 都返回 `false`，调用方据此提示用户换一个。
-> 快捷键语法与菜单加速键**完全共用**（`OrielAccelerator`），只有"规范化键名 → 原生键码"的映射表是各平台自己的。
 
 ### Shell 集成（打开外链、在文件管理器里显示）
 
@@ -440,6 +454,19 @@ app.DisableAutoStart();
 > 或系统设置里关掉它，也可能手工删了文件，那时应当如实返回 `false`。
 > 三段配置文本由共用的纯函数生成（`AutoStartContent`），因此格式正确性能被单测覆盖——
 > 自启项写错不会当场失败，而是等用户下次开机才发现应用没起来。
+
+### 验证账
+
+本节六项能力的证据与缺口（**放在节末**：其中几项覆盖了本节多个子节，提前出现会让人以为只管前两项）：
+
+| 能力 | 机器断言 | 尚未验证（需人眼或真机） |
+|---|---|---|
+| 托盘 | `--selftest shell`：创建托盘 + 设进一份含分隔线/勾选/禁用/子菜单/role 的菜单，进程不崩；`tools/verify-linux-shell.sh` 采集证据 | **图标是否真的出现在托盘区**、菜单外观、点击行为。Linux 另有平台限制：GNOME Shell 需 AppIndicator 扩展、Wayland 会话多数不显示 |
+| 通知投递 | `tools/verify-linux-shell.sh`：真 `notify-send` → 会话总线 → 假通知服务，断言**标题与正文逐字符正确** | macOS 的通知横幅外观与点击上报；Windows 气球的实际展示 |
+| 通知点击上报 | Windows：气球点击回传 `Id` | Linux（`notify-send` 拿不到点击，要改 libnotify 的 action 回调）、macOS（`osascript` 无回调）——两处都在代码里**显式空实现**，而不是"忘了触发" |
+| 菜单构建 | 托盘菜单与窗口上下文菜单共用一套构建与 role 解释；加速键解析有 41 个单测 | 菜单的外观、上下文菜单的弹出位置与交互——需人眼 |
+| 开机自启 | `--selftest shell`：**启用 → 查得到 → 禁用 → 查不到**的闭环（三平台都成立）；Linux 上还逐项核对写出的 `.desktop` 内容；三段配置文本另有 12 个单测 | 下次**开机/登录时是否真的自动启动**——需要真机重启 |
+| Shell 集成 | 取证脚本用 `xdg-open` 替身断言两件事：URL **真的**交给了系统默认程序，且 `file:`/裸路径/`javascript:` **一次都没调出去**（白名单有效性）；另有 24 个单测覆盖校验与三平台命令翻译 | 真实桌面上弹出的浏览器/文件管理器是否符合预期——需人眼 |
 
 ## 对话框
 
@@ -512,18 +539,12 @@ window.FileDropped += e =>
 | macOS | 自定义 `NSView` 子类（`OrielDropView`）承载 `NSDraggingDestination`，webview 是它的子视图 | 不给 `WKWebView` 加/替换方法：那会动到 WebKit 自带的拖放实现。AppKit 查找拖放目标时会**沿父视图链向上**，容器因此能收到事件 |
 | Linux | `gtk_drag_dest_set(webview, …, "text/uri-list", …)` + `drag-data-received` 信号 | 落点设在 webview 上（它铺满客户区）。载荷经 `gtk_selection_data_get_uris` 取到，再逐项转成本地路径 |
 
-### 拖放的验证账
+### 验证账
 
 | 项 | 机器断言 | 尚未验证 |
 |---|---|---|
 | URI → 本地路径 | **23 个用例**：百分号编码（含非 ASCII）、`+` 不被当空格、Windows 盘符、`localhost` 与远程主机、非 file 协议、批量保持顺序 | — |
 | 落点注册 | `--selftest shell`：窗口创建会走完各平台的注册路径、事件订阅可用、进程不崩（输出 `FILE-DROP-SUBSCRIBED`） | **真实拖拽**：需要真人从文件管理器拖文件进窗口。无头环境造不出 XDND/OLE 会话，因此这一项**整体不声称已验证** |
-
-### 内建右键菜单的验证账
-
-| 项 | 机器断言 | 尚未验证 |
-|---|---|---|
-| 保留名单 | **48 个用例**（在 Linux CI 上跑，**含为 Windows 与 Cocoa 写的那些**）：三平台各自保留的三项、`copyImage`/`copyLink`/`CopyLink` 这类"看着像复制但不是"的陷阱、WebKitGTK 编号 `13`(RELOAD) 与 `17`(DELETE) 的**相邻边界**（错一位就会把「刷新」「删除」留下）、`null`/空串/大小写 | **菜单弹出后实际剩下哪几项**、菜单外观、以及"剪切/复制/粘贴是否真的作用于页面选区"——需人眼。清单见 `docs/ROADMAP.md` |
 
 > 落点坐标**没有**暴露：三平台的坐标系与 y 轴方向各不相同（Cocoa 原点在左下、GTK 的 y 轴向下、
 > Win32 还要算进 DPI 缩放），要一致就得再引入一层换算，而导入文件根本不需要它——
@@ -572,6 +593,12 @@ app.CreateWindow(new OrielWindowOptions().WithContextMenuPolicy(OrielContextMenu
 > 会在换语言时静默失效。这些名单被抽成了平台无关的纯数据比较（`OrielContextMenuSupport`），
 > 于是能在 Linux 的 CI 上被单测覆盖，**包括为 Windows 与 Cocoa 写的那两组**。
 
+### 验证账
+
+| 项 | 机器断言 | 尚未验证 |
+|---|---|---|
+| 保留名单 | **48 个用例**（在 Linux CI 上跑，**含为 Windows 与 Cocoa 写的那些**）：三平台各自保留的三项、`copyImage`/`copyLink`/`CopyLink` 这类"看着像复制但不是"的陷阱、WebKitGTK 编号 `13`(RELOAD) 与 `17`(DELETE) 的**相邻边界**（错一位就会把「刷新」「删除」留下）、`null`/空串/大小写 | **菜单弹出后实际剩下哪几项**、菜单外观、以及"剪切/复制/粘贴是否真的作用于页面选区"——需人眼。清单见 `docs/ROADMAP.md` |
+
 ## 手动验证与无人自检
 
 两类验证各有入口：
@@ -582,14 +609,14 @@ app.CreateWindow(new OrielWindowOptions().WithContextMenuPolicy(OrielContextMenu
   名字缺失或写错时会列出可用值并以退出码 2 结束——不留"静默跑成别的模式"的空间。
 
 ```bash
-OrielDemo.exe --selftest shell   # 托盘、通知、菜单、快捷键、自启、Shell、拖放
+OrielDemo.exe --selftest shell   # 托盘、通知、菜单、自启、Shell、拖放
 OrielDemo.exe --selftest nav     # 跳转 → 后退 → 前进 → 刷新 → 加载失败
 OrielDemo.exe                    # 默认：手动验证操作台
 OrielDemo.exe --todo             # Todo 示例页（"怎么用本库写应用"的示范）
 ```
 
 操作台把每项能力做成一个按钮页面，
-并把**托管侧的回调**（托盘菜单项、通知点击、全局快捷键、拖放路径）回显到页面底部的日志区。
+并把**托管侧的回调**（托盘菜单项、通知点击、拖放路径）回显到页面底部的日志区。
 其中「内建右键菜单」那一栏可以直接切策略（`Editing` / `Native` / `Disabled`），切完在页面任意处右键
 即可对比——那一栏还带一个输入框，用来验证留下的三项**真的能作用在选中内容上**（粘贴要能把系统剪贴板
 内容送进去，这是"过滤没把原生行为弄坏"的关键证据）：
@@ -602,7 +629,6 @@ dotnet run --project samples/OrielDemo -c Release -- --manual-check
 
 | 现象 | 为什么是预期 |
 |---|---|
-| 设置应用菜单后没有菜单栏 | 本窗口是无边框窗口，Windows 上没有菜单栏可挂（客户区铺满会盖住它），按设计跳过 |
 | 点通知不会有回调 | 未打包应用的 toast 激活需要开始菜单快捷方式携带 AUMID + 注册 COM 激活器（打包器的职责）——三平台如实一致 |
 | 上下文菜单开着时窗口不响应 | 原生弹出菜单的模态行为，直到你选择或取消 |
 | 选文件夹时初始目录无效 | Windows 走老 API（`SHBrowseForFolder`），设初值要挂回调，已记为取舍 |
@@ -611,7 +637,22 @@ dotnet run --project samples/OrielDemo -c Release -- --manual-check
 > `ShowNotification` 返回 `bool` 正是为这条分辨而生：「提交失败」才是实现问题，
 > 「已提交但没显示」是系统设置问题。两者混在一起就只能靠猜。
 
-## 构建
+## 构建与发布
+
+仓库里带一个发布脚本，默认把产物放到 `publish/<rid>/`：
+
+```powershell
+pwsh tools/publish.ps1                    # 本机平台，产物在 publish/<当前 rid>/
+pwsh tools/publish.ps1 -Runtime linux-x64 # 指定 RID
+pwsh tools/publish.ps1 -Zip               # 额外打一个 zip 便于分发
+pwsh tools/publish.ps1 -NoClean           # 保留上一次的产物
+```
+
+**按 RID 分子目录不是偏好而是必需**：三个平台/架构的 AOT 产物都是自包含的，混在一个目录里会互相覆盖，
+也判断不出"这份是给谁的"。分开之后多次发布互不干扰，清理也只影响对应那一份。
+
+它只是下面这些命令的封装，多做了三步：产物落到固定位置、发布前清掉旧产物（否则分不清这次产出了什么）、
+发布后校验主产物确实存在：
 
 ```bash
 # Windows
@@ -623,6 +664,14 @@ dotnet publish samples/OrielDemo -c Release -r osx-arm64
 # Linux（需要 libwebkit2gtk-4.1；中文界面另需 CJK 字体，见「Linux 环境依赖与已知限制」）
 dotnet publish samples/OrielDemo -c Release -r linux-x64
 ```
+
+> 不给 `-Runtime` 时脚本按当前平台与架构推断（`win-x64` / `linux-x64` / `osx-arm64` …），
+> 所以在自己机器上发布通常不用带任何参数。
+>
+> **不能跨操作系统发布**：NativeAOT 不支持（ILCompiler 会以
+> `Cross-OS native compilation is not supported` 失败），脚本会在发起编译**之前**挡下并说明原因——
+> 这也是 CI 里每个平台各有一个 runner 的缘故。跨**架构**是另一回事（例如在同一台 Linux 上出 arm64），
+> 能否成功取决于是否装了目标架构的工具链。另外 macOS 的产物必须打包成 `.app` 才能启动 WKWebView（见下）。
 
 ### Windows 发布产物
 
@@ -644,36 +693,10 @@ WebView2 的运行需要微软的 `WebView2Loader.dll`。官方只有两条路�
   可免去 `%TEMP%` 解压。实测可链接成功，但属**应用级**配置（库无法替消费方设置），且需跳过
   `WebView2Utilities.Initialize`，故本库未采用。
 
-#### 应用图标
+## 平台运行要求
 
-任务栏与 Alt-Tab 的按钮图标取自**窗口图标**：窗口完全没有图标时，Windows 退回的是**通用应用图标**，
-而不是 exe 自带的那个（实测确认）。因此本库在建窗口类时会主动把 exe 的图标取来设到窗口上
-（`ExtractIconEx`，走 shell 自身的解析，不依赖图标资源 ID）。
-
-应用侧只需在 csproj 里声明图标即可：
-
-```xml
-<ApplicationIcon>app.ico</ApplicationIcon>
-```
-
-不声明则窗口不带图标，任务栏显示系统通用图标。
-
-## 平台支持
-
-| 平台 | Webview | 状态 |
-|------|---------|------|
-| Windows x64/arm64 | WebView2 (Evergreen) | ✅ 已运行验证（demo IPC 往返、单测、AOT 发布）；仅一套实现，无遗留开关 |
-| Linux x64 | WebKitGTK 4.1 | ✅ 已运行验证（WSL2 + WSLg 真机：窗口创建、页面渲染、IPC 往返均已确认；X11 与 Wayland 双后端各跑通一次） |
-| Linux arm64 | WebKitGTK 4.1 | ⚠️ 编译通过；CI 在 xvfb 下冒烟（进程存活）；未在真机运行 |
-| macOS arm64 | WKWebView | ✅ 已运行验证（GitHub 托管 macOS runner / macOS 26：窗口创建、页面渲染、中文、IPC 往返均已确认） |
-| macOS x64 | WKWebView | ⚠️ 编译通过（CI `compile-macos`）；未在真机运行 |
-
-> 上表只写有证据的结论：Windows / Linux x64 / macOS arm64 均有实际运行验证记录——Windows 与 Linux 为本地
-> 真机，macOS 为 GitHub 托管的 macOS runner；三者的 IPC 往返都由页面徽章人眼确认。其余平台目前只有编译与
-> 冒烟级别的验证。
->
-> Linux x64 与 macOS 的验证过程见 `docs/DECISIONS.md`——其中记录了真机上依次暴露的后端缺陷及修法，
-> 这些缺陷在只有编译验证时完全看不出来。
+> 各平台的支持状态（哪些已运行验证、哪些只有编译）见前面的[平台支持](#平台支持)一节。
+> 这里只讲**跑起来需要什么、有什么已知限制**。
 
 ### Linux 环境依赖与已知限制
 
@@ -735,17 +758,6 @@ WebView2 的运行需要微软的 `WebView2Loader.dll`。官方只有两条路�
     行为 `webviewInstallMode: downloadBootstrapper`——它在**安装器**层下载并运行微软 bootstrapper；
     本项目没有安装器（只有 NuGet 包 + 单文件 exe），因此只能在应用内引导。
 - **运行时过旧**（低于上表下限）走的是另一条路径：环境能创建，但缺少所需接口的调用会失败并给出通用错误提示。
-
-## 命令线程模型
-
-- **命令实例是共享的**：`AddCommands<T>()` 注册的类型只创建一次（惰性单例），所有 invoke 都作用于同一实例。
-  因此**命令方法必须线程安全**——并发 invoke 可能同时进入同一方法。
-- 命令执行发生在**后台线程**（不阻塞 UI 消息循环）；回执由分发器切回 UI 线程后投递。
-- 命令内需要操作 UI 时，请经 `OrielApp.PostToMainThread(...)` 切回主线程。
-- 应用自己的异步流程同理：`await` 之后不在 UI 线程，碰窗口前要经 `WebviewWindow.PostToUiThread(...)`
-  （原因见「导航与页面通信」）。
-- 反例：`samples/OrielDemo` 的 `TodoCommands` 直接读写 `List<T>` 与 `_nextId++`，并发下并不安全；
-  示例为保持简洁如此编写，实际项目请自行加锁或改用线程安全结构。
 
 ## 路线图
 

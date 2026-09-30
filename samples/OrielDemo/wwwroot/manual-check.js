@@ -3,7 +3,7 @@
 // 手动验证操作台。
 //
 // 这一页存在的理由：demo 在 Windows 上是 WinExe（**没有控制台**），自检的 stdout 看不见；
-// 而托管侧的回调（托盘菜单项、通知点击、快捷键、拖放）恰恰都是"点了才知道"的东西。
+// 而托管侧的回调（托盘菜单项、通知点击、拖放）恰恰都是"点了才知道"的东西。
 // 所以把它们统统推回页面显示——看得见的回调才算验证过了。
 
 const logEl = document.getElementById("log");
@@ -56,7 +56,6 @@ document.querySelectorAll("[data-cmd]").forEach((button) => {
             line("托盘", state.trayCreated ? "已创建" : "未创建") +
             line("托盘当前可见", state.trayVisible ? "是" : "否（无头/无托盘宿主时正常）") +
             line("系统通知可用", state.notificationsSupported ? "是" : "否") +
-            line("全局快捷键已注册", state.shortcutRegistered ? "是" : "否") +
             line("开机自启当前", state.autoStartEnabled ? "已启用" : "未启用");
     } catch (error) {
         document.getElementById("state").textContent = `读取环境信息失败：${error}`;

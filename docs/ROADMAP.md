@@ -113,12 +113,9 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 | 系统通知（`ShowNotification`） | ✅ 已实现；Linux 硬断言 | Windows 用**独立的隐藏托盘项**发 `NIF_INFO` 气球（因此不启用托盘也能发）；macOS `osascript`；Linux `notify-send` | Linux：真 `notify-send` → 会话总线 → 假通知服务，断言**标题与正文逐字符正确**（`tools/verify-linux-shell.sh`）。点击上报仅 Windows 支持，另两个平台**显式空实现**（不是"忘触发"） |
 | 对话框（消息框 / 打开 / 保存 / 选文件夹） | ✅ 已实现（扩展版） | 打开可多选、可给结构化过滤器、可指定初始目录；新增文件夹选择。Windows `GetOpenFileNameW`（`OFN_ALLOWMULTISELECT`+`OFN_EXPLORER`）/ `SHBrowseForFolderW`；macOS `NSOpenPanel`（`URLs` 数组）/ `NSSavePanel`；Linux `GtkFileChooserDialog`（多选读 `GSList`）。过滤器在三种平台形状间的转换与 Win32 多选缓冲区的解析都在纯函数里（`OrielFileFilter` / `OrielFileDialogSupport`） | **30 个单测**（在 Linux CI 上跑，含为 Windows 写的用例）：解析旧字符串、Win32 双 null 渲染、GTK 的 `*.*` 归一、Cocoa 扩展名提取、Win32 多选「单段 vs 多段」两种形状、补扩展名。**对话框外观与交互需人眼**（见下） |
 | 内建右键菜单策略 | ✅ 已实现 | 默认 `Editing`（只留剪切/复制/粘贴）、`Native`（平台原样）、`Disabled`。Windows 订阅 `CoreWebView2.ContextMenuRequested` 按项过滤（`ICoreWebView2_11`，由 WebView2Aot 包内部转换）；macOS 新建 `OrielUIDelegate` 走 `webView:willOpenMenu:withEvent:` 改现成 `NSMenu`；Linux 连 `context-menu` 信号改 `WebKitContextMenu` 后**返回 FALSE** 让 WebKit 自己弹（返回 TRUE 会变成"什么都不弹"） | **48 个单测**（在 Linux CI 上跑，含为 Windows/Cocoa 写的那些）：三平台保留名单、`copyImage`/`copyLink` 这类"看着像但不是"的陷阱、WebKitGTK 编号 13/17 的**相邻边界**（错一位就会把「刷新」「删除」留下）。**菜单实际长什么样需人眼**（见下） |
-| 应用菜单 + 窗口上下文菜单 | ✅ 已实现 | 应用菜单：macOS `NSApplication.setMainMenu:`（语义最贴合）、Windows 每个窗口的 `SetMenu`（**无边框窗口跳过**——客户区铺满窗口会盖住菜单栏，与其"设了看不见"不如显式跳过）、Linux **空操作**（现代 GTK 用 header bar，且菜单栏会与 webview 布局层级打架）。上下文菜单三平台都支持（Windows 阻塞、另两个异步）。菜单构建按平台抽成共享类（`Win32Menu`/`GtkMenu`/`MacOSMenu`），role 由 `OrielMenuRoles` 统一解释 | 三平台编译 ✓；Linux `--selftest shell` 断言"设置应用菜单 + 构建各形态菜单不崩"。**菜单外观、上下文菜单交互、macOS 加速键是否生效需人眼**（见下） |
-| 全局快捷键 | ✅ 已实现（Linux 按平台事实不支持） | Windows `RegisterHotKey`（复用调度窗口收 `WM_HOTKEY`）、macOS Carbon `RegisterEventHotKey`（唯一不需要辅助功能权限的公开接口）、Linux **如实返回 false**（X11 未落地、Wayland 无解）。语法与菜单加速键共用 `OrielAccelerator` | Linux 取证断言"如实报告不支持 + 注册成功时查得到/注销得掉"；Windows/macOS 编译验证。**按键真的能触发需真机**（见下） |
-| Linux 全局快捷键（X11） | ⏳ 未开始（可选增强） | `XGrabKey` + GDK 事件过滤器（需 libX11 互操作与 XEvent 解析）。Wayland 无解，只能如实返回 false | 落地后要同步改 `verify-linux-shell.sh` 里"Linux 必须返回 false"那条断言 |
+| 窗口上下文菜单 | ✅ 已实现 | 三平台都支持（Windows 阻塞、另两个异步）。菜单构建按平台抽成共享类（`Win32Menu`/`GtkMenu`/`MacOSMenu`），role 由 `OrielMenuRoles` 统一解释 | 三平台编译 ✓；Linux `--selftest shell` 走一遍菜单构建并断言不崩。**菜单外观与上下文菜单的弹出交互需人眼**（见下） |
 | 开机自启 | ✅ 已实现 | Windows 写 HKCU 的 Run 键、macOS 写 LaunchAgent plist（不调 `launchctl load`，避免立刻再拉起一个实例）、Linux 写 freedesktop 的 autostart `.desktop`。配置文本由共用的纯函数生成 | **B 批里最硬的一条**：取证脚本断言"启用 → 查得到 → 禁用 → 查不到"的闭环，并逐项核对 `.desktop` 的内容（Desktop Entry 头、带引号的 Exec、参数、GNOME 启用标志）；另有 12 个单测覆盖三段文本。**"下次开机真的起来了"仍需真机重启** |
 | Shell（打开外链 / 在文件管理器里显示） | ✅ 已实现 | 用系统默认程序打开 URL 与文件、在文件管理器里显示；**默认拒绝式的 scheme 白名单**（只放 http/https/mailto）。**不含** Ryn 的 `shell.execute`/PTY——那属能力沙箱范畴 | 取证脚本用 `xdg-open` 替身断言两点：URL 真的交出去了、危险目标一次都没调出去；24 个单测覆盖校验与三平台命令翻译 |
-| deep link | ⏳ 未开始 | `myapp://` 的注册与转发；可复用已有的单实例通道做"第二实例把链接转给首实例" | Linux 写 `.desktop` 可断言 |
 
 ### 托盘与通知的待真机清单
 
@@ -132,16 +129,12 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
   Linux `GtkTrayBackend`（GNOME Shell 未装扩展、或 Wayland 会话下本就不显示，属平台事实）、
   macOS `MacOSTrayBackend`（没给图标时会显示占位字符 `●`）。
 
-#### 菜单的外观与交互
+#### 上下文菜单的外观与交互
 - 环境：三平台桌面各一次。
-- 步骤：1) `OrielDemo --selftest shell`；
-  macOS 看顶部菜单栏是否被换成了自检设置的那份（Hello / Copy / Quit）；
-  Windows **预期看不到窗口菜单栏**（demo 是无边框窗口，后端按设计跳过，属正常）；
-  2) 用 devtools 控制台执行 `oriel.invoke('win.contextMenu')` 看上下文菜单。
+- 步骤：用 devtools 控制台执行 `oriel.invoke('win.contextMenu')` 看上下文菜单。
 - 预期：菜单按设置渲染（子菜单可展开、勾选项带勾、禁用项是灰的、分隔线正确）；
-  macOS 上 `Cmd+C` 之类的加速键被系统拦下并触发对应项；`Quit` 项能退出应用。
-- 若不符：macOS 看 `MacOSMenu.Popup` 的"没有当前 NSEvent"日志（后台回调里调用时无法定位菜单）；
-  Windows 看 `Win32WindowHost.ApplyAppMenu` 的跳过日志（无边框）；Linux 本就不实现应用菜单。
+  role 项里的 `Close` 能关掉窗口。
+- 若不符：macOS 看 `MacOSMenu.Popup` 的"没有当前 NSEvent"日志（后台回调里调用时无法定位菜单）。
 
 #### 通知的展示与点击
 - 环境：三平台桌面各一次。
