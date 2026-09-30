@@ -313,6 +313,17 @@ app.NotificationClicked += id => { /* 点了哪条通知（平台差异见下表
 菜单项统一用 `OrielMenuItem`（分隔线、禁用、勾选、子菜单、平台 role 都在其中），
 加速键用 `OrielAccelerator` 语法（如 `"CmdOrCtrl+Shift+A"`——macOS 上是 Command、其它平台是 Ctrl）。
 
+托盘可以临时移除再重建（例如"始终显示托盘图标"这类开关）：
+
+```csharp
+app.RemoveTray();                       // 撤销原生图标（Windows 走 NIM_DELETE）
+OrielTray? tray = app.RestoreTray();    // 按 AddTray 的配置重建；未配置过则返回 null
+tray?.SetMenu(/* … */);                 // 重建出来的是**新对象**：事件与菜单都要重挂
+```
+
+> 这一对 API 值在"原生资源真的被撤销"：Windows 上最难查的不是"图标没出现"，
+> 而是进程退出后图标还留在通知区（幽灵图标）——那正是没调 `NIM_DELETE` 的症状。
+
 ### 托盘与通知的验证账
 
 | 能力 | 机器断言 | 尚未验证（需人眼或真机） |

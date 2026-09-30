@@ -76,6 +76,51 @@ public sealed class OrielApp : IDisposable
     /// <summary>托盘图标；未用 <see cref="OrielAppBuilder.AddTray"/> 启用时为 null。</summary>
     public OrielTray? Tray { get; private set; }
 
+    /// <summary>
+    /// 移除托盘图标（<c>Shell_NotifyIcon(NIM_DELETE)</c> / <c>gtk_status_icon_set_visible(false)</c> /
+    /// <c>NSStatusBar.removeStatusItem:</c>），应用继续运行。之后可用 <see cref="RestoreTray"/> 重建。
+    /// </summary>
+    /// <returns>是否确实移除了一个托盘（本来就没有时返回 <c>false</c>）。</returns>
+    /// <remarks>
+    /// 真值在于**原生资源真的被撤销**：Windows 上"图标消失但进程还在"与"进程没了图标还留着"
+    /// （幽灵图标）是完全不同的两件事，后者只有靠正确调 <c>NIM_DELETE</c> 才不会发生。
+    /// </remarks>
+    public bool RemoveTray()
+    {
+        if (Tray is null)
+        {
+            return false;
+        }
+
+        Tray.Dispose();
+        Tray = null;
+        return true;
+    }
+
+    /// <summary>
+    /// 按构建期 <see cref="OrielAppBuilder.AddTray"/> 的选项重建托盘。
+    /// </summary>
+    /// <returns>重建后的托盘；未配置过托盘或应用未运行时返回 null。</returns>
+    /// <remarks>
+    /// <b>重建出来的是一个新对象</b>：事件订阅与 <c>SetMenu</c> 都**不会**被带过去，
+    /// 调用方需要重新挂上（这是不可避免的——事件处理器属于调用方）。
+    /// </remarks>
+    public OrielTray? RestoreTray()
+    {
+        if (Tray is not null)
+        {
+            return Tray; // 幂等：已经有了就返回现成的
+        }
+
+        if (_backend is null || _builder.TrayOptions is not { } options)
+        {
+            return null;
+        }
+
+        Tray = new OrielTray(_backend.CreateTray(options, this), options);
+        return Tray;
+    }
+
     /// <summary>本平台是否支持系统通知（不支持时 <see cref="ShowNotification(OrielNotificationOptions)"/> 是空操作）。</summary>
     public bool NotificationsSupported => _backend?.NotificationsSupported ?? false;
 
@@ -354,11 +399,9 @@ public sealed class OrielApp : IDisposable
             }
         };
 
-        // 托盘先于窗口创建：托盘是应用的外壳，先就绪才能让"启动即最小化到托盘"这类形态成立
-        if (_builder.TrayOptions is { } trayOptions)
-        {
-            Tray = new OrielTray(_backend.CreateTray(trayOptions, this), trayOptions);
-        }
+        // 托盘先于窗口创建：托盘是应用的外壳，先就绪才能让"启动即最小化到托盘"这类形态成立。
+        // 与 RestoreTray 同一条路径，免得"启动时建"和"重建"两处各写一遍。
+        _ = RestoreTray();
 
         if (_singleInstanceServer is not null)
         {

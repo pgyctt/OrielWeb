@@ -308,7 +308,9 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         }
         if (message == Win32Constants.WM_CONTEXTMENU)
         {
-            // V4 起托盘的右键不再是回调消息，而是宿主窗口收到 WM_CONTEXTMENU
+            // 兼容路径：只有**未**启用 V4 的托盘才会把右键作为窗口消息发过来。
+            // 本库走 V4，右键实际经托盘的 uCallbackMessage 送达
+            //（见 Win32TrayBackend.HandleCallback）——这条留着是为了万一有旧模式，不是主路径。
             s_current?._tray?.ShowMenu();
             return 0;
         }

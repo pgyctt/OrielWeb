@@ -43,22 +43,36 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
 
     // ---- 原生回调入口（由调度窗口的 WndProc 转发）----
 
-    /// <summary>V4 回调：<paramref name="eventType"/> 取 <see cref="Win32Constants.NIN_SELECT"/> 等。</summary>
+    /// <summary>
+    /// V4 回调：<paramref name="eventType"/> 是回调消息 <c>wParam</c> 里的事件类型。
+    /// </summary>
+    /// <remarks>
+    /// <b>右键在这里，不在窗口消息里</b>：V4 起所有托盘事件都经 <c>uCallbackMessage</c> 送达，
+    /// 右键的 <c>wParam</c> 就是 <c>WM_CONTEXTMENU</c>（<c>0x007B</c>）——它**不是**一条发给窗口的
+    /// <c>WM_CONTEXTMENU</c> 消息。早先只在窗口过程里等那条消息，于是右键永远没人处理、菜单弹不出来。
+    /// 另外 V4 的 <c>lParam</c> 低字是图标中心的 x、高字是 y（这里仍用
+    /// <see cref="Win32Menu.Popup"/> 里的 <c>GetCursorPos</c>：右键时指针就在图标上，两者一致，
+    /// 而前者在读坐标的场合更简单）。
+    /// </remarks>
     internal void HandleCallback(nuint eventType)
     {
-        if (eventType != Win32Constants.NIN_SELECT)
+        if (eventType == Win32Constants.NIN_SELECT)
         {
+            Clicked?.Invoke();
+            if (_menuOnClick)
+            {
+                ShowMenu();
+            }
             return;
         }
 
-        Clicked?.Invoke();
-        if (_menuOnClick)
+        if (eventType == Win32Constants.WM_CONTEXTMENU)
         {
             ShowMenu();
         }
     }
 
-    /// <summary>V4 下右键不在回调消息里，而是 <c>WM_CONTEXTMENU</c>。</summary>
+    /// <summary>弹出托盘菜单（右键事件与旧式窗口消息两个入口都调它）。</summary>
     internal void ShowMenu()
     {
         if (_disposed)

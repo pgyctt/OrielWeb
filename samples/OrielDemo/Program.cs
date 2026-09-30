@@ -130,7 +130,13 @@ internal static class Program
         {
             // 托盘是应用级能力，必须在 Run() 之前配置：原生资源在 Run 期间创建。
             // 操作台同样要它——这一批里"看得见"的东西大多挂在托盘上。
-            builder.AddTray(o => o.Tooltip = shellSelfTest ? "OrielWeb self-test" : "OrielWeb 手动验证");
+            builder.AddTray(o =>
+            {
+                o.Tooltip = shellSelfTest ? "OrielWeb self-test" : "OrielWeb 手动验证";
+                // 操作台上让左键也能弹菜单：手动验证时"点了没反应"最难判断，
+                // 而 Windows 的默认语义是左键只回调、右键才弹菜单。
+                o.MenuOnClick = manualCheck;
+            });
         }
 
         app = builder.Build();

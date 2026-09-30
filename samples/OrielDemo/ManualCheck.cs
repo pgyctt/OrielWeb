@@ -54,11 +54,8 @@ internal static class ManualCheck
         // 托盘：这一批里"看得见"的东西大多挂在它上面
         if (app.Tray is { } tray)
         {
-            tray.Tooltip = "OrielWeb 手动验证";
-            tray.Clicked += () => Log("托盘图标被点击");
-            tray.MenuItemClicked += id => Log($"托盘菜单项被点击：{id}");
-            tray.SetMenu(TrayMenu());
-            Log($"托盘已设置菜单（当前可见：{(tray.IsVisible ? "是" : "否")}）");
+            WireTray(tray);
+            Log($"托盘已就绪（当前可见：{(tray.IsVisible ? "是" : "否")}）");
         }
         else
         {
@@ -74,6 +71,21 @@ internal static class ManualCheck
         window.FileDropped += e => Log($"拖入 {e.Paths.Count} 项：{string.Join("  |  ", e.Paths)}");
 
         Log("操作台就绪：点按钮做动作，托管侧的回调都会出现在这里。");
+    }
+
+    /// <summary>
+    /// 订阅托盘事件并设置菜单。
+    /// </summary>
+    /// <remarks>
+    /// 单独抽出来是因为<b>重建托盘会造出一个新对象</b>：事件与菜单都不会跟过去，
+    /// 必须重新挂一遍（<see cref="OrielApp.RestoreTray"/> 的注释里也写了这一点）。
+    /// </remarks>
+    internal static void WireTray(OrielTray tray)
+    {
+        tray.Tooltip = "OrielWeb 手动验证";
+        tray.Clicked += () => Log("托盘图标被点击");
+        tray.MenuItemClicked += id => Log($"托盘菜单项被点击：{id}");
+        tray.SetMenu(TrayMenu());
     }
 
     /// <summary>托盘菜单：把各形态都摆上一份，点每一项都会回到日志里。</summary>
@@ -152,6 +164,40 @@ public sealed partial class ManualCommands
     {
         App.Tray?.SetMenu(ManualCheck.TrayMenu());
         ManualCheck.Log("托盘菜单已重设（应当还能弹出同样的菜单）");
+    }
+
+    /// <summary>
+    /// 移除托盘图标（<c>Shell_NotifyIcon(NIM_DELETE)</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 这一项的看点不是"图标没了"，而是**图标没了而进程还在**——Windows 上真正难查的是反过来的
+    /// 那种：进程退出后图标还留在通知区（幽灵图标），那是没调 <c>NIM_DELETE</c> 的典型症状。
+    /// 点它、再点"重建"，可以来回验证原生资源确实被撤销又建立。
+    /// </remarks>
+    [OrielCommand("manual.trayRemove")]
+    public static bool TrayRemove()
+    {
+        bool removed = App.RemoveTray();
+        ManualCheck.Log(removed
+            ? "托盘已移除：通知区的图标应当立刻消失。若图标还在，那正是要抓的幽灵图标"
+            : "本来就没有托盘可移除");
+        return removed;
+    }
+
+    /// <summary>按构建期选项重建托盘，并重新挂上事件与菜单。</summary>
+    [OrielCommand("manual.trayRestore")]
+    public static bool TrayRestore()
+    {
+        if (App.RestoreTray() is not { } tray)
+        {
+            ManualCheck.Log("重建失败：本次启动没有用 AddTray 配置过托盘");
+            return false;
+        }
+
+        // 重建出来的是新对象，事件与菜单都得重挂
+        ManualCheck.WireTray(tray);
+        ManualCheck.Log($"托盘已重建（可见：{(tray.IsVisible ? "是" : "否")}）：图标应重新出现，菜单也应能弹出");
+        return true;
     }
 
     // ---- 菜单 ----
