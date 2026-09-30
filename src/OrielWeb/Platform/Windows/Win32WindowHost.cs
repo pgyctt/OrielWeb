@@ -100,12 +100,13 @@ internal partial class Win32WindowHost : IWindowBackend
     {
         _window = window;
         _options = options;
-        _app = app;
-        _backend = backend;
+        _app = app; _backend = backend;
         _assetDirectory = assetDirectory;
         // 取自构建器 UseEmbeddedAssets(host)：此前硬编码 "app.oriel" 会使用户自定义 host 失效
         // （虚拟主机映射到自定义 host，导航却指向 app.oriel → 白屏/404）
         _assetHost = app.AssetHost;
+        // 策略是可写属性（运行时能改），所以把 options 里的初值取出来存进属性，而不是每次回头读 options
+        ContextMenuPolicy = options.ContextMenuPolicy;
         _userDataFolder = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "OrielWeb", WebView2UserDataFolderName);
@@ -148,6 +149,84 @@ internal partial class Win32WindowHost : IWindowBackend
 
     private event Action<string>? ContextMenuItemClicked;
     private event Action<OrielFileDropEventArgs>? FileDropped;
+
+    /// <summary>渲染引擎内建右键菜单的策略；见 <see cref="OrielContextMenuPolicy"/>。</summary>
+    public OrielContextMenuPolicy ContextMenuPolicy { get; set; }
+
+    /// <summary>
+    /// WebView2 内建右键菜单弹出前的回调（<c>ContextMenuRequested</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 这是<b>唯一</b>能"改内建菜单"而不是"另起一个菜单"的地方：过滤掉不想要的项之后，
+    /// 菜单仍由 WebView2 自己弹，留下来的剪切/复制/粘贴因此保持着引擎实现的行为
+    /// （能直接作用在页面选区上）。自己用 <see cref="ShowContextMenu"/> 造一个做不到这点——
+    /// 粘贴需要把系统剪贴板送进页面，页面自己无此权限。
+    /// <para>
+    /// 整个回调包在 <c>try</c> 里：过滤菜单失败是小事，让进程倒在这里是大事。
+    /// </para>
+    /// </remarks>
+    private void OnContextMenuRequested(object? sender, ICoreWebView2ContextMenuRequestedEventArgs args)
+    {
+        try
+        {
+            switch (ContextMenuPolicy)
+            {
+                case OrielContextMenuPolicy.Native:
+                    return; // 平台原样
+
+                case OrielContextMenuPolicy.Disabled:
+                    args.Handled = true; // 抑制：右键不弹任何东西
+                    return;
+
+                default:
+                    FilterEditingItems(args);
+                    return;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[OrielWeb] 过滤内建右键菜单失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 只留下剪切 / 复制 / 粘贴。
+    /// </summary>
+    /// <remarks>
+    /// <b>必须从后往前删</b>：集合按下标操作，正序删会让后面的项整体前移一格，
+    /// 于是紧接着那一项被跳过——表现为"删了但不干净"，且只在中段有要删的项时出现。
+    /// <para>
+    /// 判断依据是 <c>Name</c>（<b>未本地化</b>的英文标识，如 <c>"copy"</c>），<b>不是</b>
+    /// <c>Label</c>（那是给用户看的本地化文本，中文环境下是「复制」）——拿 Label 判断会在换语言时
+    /// 静默失效。也**不是** <c>Kind</c>：那个枚举说的是控件种类
+    /// （Command / CheckBox / Radio / Separator / Submenu），与"是不是复制"不是一回事。
+    /// </para>
+    /// </remarks>
+    private static void FilterEditingItems(ICoreWebView2ContextMenuRequestedEventArgs args)
+    {
+        if (args.MenuItems is not { } items)
+        {
+            return;
+        }
+
+        using (items)
+        {
+            for (uint i = items.Count; i > 0; i--)
+            {
+                using IComObject<ICoreWebView2ContextMenuItem>? item = items.GetValueAtIndex(i - 1);
+                if (item is null || !OrielContextMenuSupport.IsEditingWin32Name(item.Name))
+                {
+                    items.RemoveValueAtIndex(i - 1);
+                }
+            }
+
+            // 一项都不剩时把菜单整个吃掉：否则会弹一个空框，看着像界面坏了
+            if (items.Count == 0)
+            {
+                args.Handled = true;
+            }
+        }
+    }
 
     /// <summary>
     /// 处理 <c>WM_DROPFILES</c>：从 HDROP 里逐个取路径，完成后 <c>DragFinish</c> 释放。
@@ -836,6 +915,8 @@ internal partial class Win32WindowHost : IWindowBackend
             _webViewEvents.NavigationStarting += OnNavigationStarting;
             _webViewEvents.NavigationCompleted += OnNavigationCompleted;
             _webViewEvents.DocumentTitleChanged += OnDocumentTitleChanged;
+            // 内建右键菜单：订阅它才有机会过滤（不订阅 = 平台原样弹）
+            _webViewEvents.ContextMenuRequested += OnContextMenuRequested;
 
             await _webView.AddScriptToExecuteOnDocumentCreatedAsync(
                 OrielBridgeJs.Build(_options.ConsoleForwarding)).ConfigureAwait(true);

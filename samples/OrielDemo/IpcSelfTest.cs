@@ -7,7 +7,7 @@ namespace OrielDemo;
 /// 通道变成无人交互也可判定的断言。
 /// </summary>
 /// <remarks>
-/// 由 <c>--ipc-selftest</c> 启用（它会同时打开 <see cref="OrielWindowOptions.ConsoleForwarding"/>）。
+/// 由 <c>--selftest ipc</c> 启用（它会同时打开 <see cref="OrielWindowOptions.ConsoleForwarding"/>）。
 /// 与 <see cref="NavSelfTest"/> 一样写成事件驱动状态机，避免 <c>await</c> 续体落到线程池后调用
 /// 窗口 API（见 NavSelfTest 的说明）。
 ///

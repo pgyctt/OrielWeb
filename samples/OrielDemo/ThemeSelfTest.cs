@@ -6,7 +6,7 @@ namespace OrielDemo;
 /// 主题自检：宿主能否读到系统主题，以及主题能否经 <c>theme.changed</c> 事件送达页面（页面回显确认）。
 /// </summary>
 /// <remarks>
-/// 由 <c>--theme-selftest</c> 启用。
+/// 由 <c>--selftest theme</c> 启用。
 ///
 /// **"造两种值"不靠自检自己造**：同一进程内没法把系统主题改来改去。Linux 上用 <c>GTK_THEME</c>
 /// 环境变量（GTK 认可的入口）分别跑浅色与深色（<c>Adwaita:dark</c>）两次，再由 CI 比对两次的结论

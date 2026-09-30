@@ -58,14 +58,14 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 #### 剪贴板的跨进程互操作（未验证）
 - 状态：自检只验证了**同进程内**写→读回。与其它应用互相粘贴（真实剪贴板互操作）**未验证**。
 - 环境：任意桌面环境。
-- 步骤：1) 用 `--clipboard-selftest` 跑一次（它会写剪贴板）；2) 在别的应用里粘贴，确认拿到文本/富文本；
+- 步骤：1) 用 `--selftest clipboard` 跑一次（它会写剪贴板）；2) 在别的应用里粘贴，确认拿到文本/富文本；
   3) 反过来在别的应用里复制带格式的内容，再用 `window.ClipboardHtml` 读。
 - 预期：文本能互相粘贴；HTML 粘贴到富文本编辑器（Word / LibreOffice）应保留粗体等格式。
 - 若不符：先看 `Win32Clipboard.BuildCfHtml` 的偏移是否正确（CF_HTML 的偏移按**字节**计），
   Linux 侧看 target 列表是否包含对方请求的类型。
 
 #### 主题切换的实时性（未验证）
-- 状态：`--theme-selftest` 验证了"读得到 + 判得对"，但**没验证**"在系统设置里切换后事件是否立刻到达"。
+- 状态：`--selftest theme` 验证了"读得到 + 判得对"，但**没验证**"在系统设置里切换后事件是否立刻到达"。
 - 环境：任意桌面环境（Linux 需要桌面环境而不是 xvfb；macOS / Windows 均可）。
 - 步骤：1) 启动 demo（不带自检参数）；2) 在系统设置里切换深色/浅色；3) 观察页面是否跟随
   （`app.js` 会把主题写到 `<html data-theme>`）。
@@ -92,10 +92,10 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 
 | 项 | 状态 | 做法要点 | 验证结果 |
 |---|---|---|---|
-| 前进 / 后退 / 刷新 + 可用性查询 | ✅ 完成 | 三平台各自的原生历史：Windows `GoBack`/`GoForward`/`Reload` + `CanGoBack`/`CanGoForward`；macOS `goBack:`/`goForward:`/`reload` + `canGoBack`；Linux `webkit_web_view_go_back/forward/reload`（本轮新增 P/Invoke） | `--nav-selftest` 在 **Windows 与 Linux 两台真机**上跑通：跳转 → 后退 → 前进 → 刷新各一步，每一步的 URL 都符合预期 |
+| 前进 / 后退 / 刷新 + 可用性查询 | ✅ 完成 | 三平台各自的原生历史：Windows `GoBack`/`GoForward`/`Reload` + `CanGoBack`/`CanGoForward`；macOS `goBack:`/`goForward:`/`reload` + `canGoBack`；Linux `webkit_web_view_go_back/forward/reload`（本轮新增 P/Invoke） | `--selftest nav` 在 **Windows 与 Linux 两台真机**上跑通：跳转 → 后退 → 前进 → 刷新各一步，每一步的 URL 都符合预期 |
 | 导航事件：开始 / 完成 / 失败（含错误信息） | ✅ 完成 | 公开 C# 事件 `NavigationStarting`/`NavigationCompleted`（带 `Success`/`Url`/`Error`）+ 页面事件 `navigation.starting`/`navigation.completed`。Windows 订阅包装层的 `NavigationStarting`；Linux 新增 `load-failed` 信号（GError.message 按结构偏移取）；macOS 新增 `didStartProvisionalNavigation:` 与 NSError 解析 | 同上；失败分支**逐个尝试多个候选的不可达目标**（同源缺失页 / 环回端口 / 保留 TLD 域名，每个 15 秒），任一真的上报失败即通过——因为三个引擎各自接受的形态不同、且会静默改写不接受的形态（完整对照表见 DECISIONS）。三平台均通过（CI run #18）；并确认 Linux 上错误页那一次 `FINISHED` 不会重复上报"成功" |
-| 页面 console 转发 | ✅ 完成 | **三平台共用一份 hook**：实现写在桥接模板里，注入时由 `__ORIEL_CONSOLE_ENABLED__` 决定是否执行（默认关闭），C# 侧不再抄一份 | bridge 单测（3 平台 × 2 用例：开启时投递且原 console 方法仍被调用 / 未开启时不投递）+ `--ipc-selftest` 真机验证 |
-| 公开的自定义事件发送 API | ✅ 完成 | `EmitEvent(name, jsonPayload)` 与 `EmitEvent<T>(name, payload, JsonTypeInfo<T>)`（后者走源生成上下文，AOT 安全）→ 落到已有的 `_onEvent` | `--ipc-selftest` 的闭环：宿主 EmitEvent → 页面 `oriel.on` 收到 → 页面回 postMessage → 宿主收回 |
+| 页面 console 转发 | ✅ 完成 | **三平台共用一份 hook**：实现写在桥接模板里，注入时由 `__ORIEL_CONSOLE_ENABLED__` 决定是否执行（默认关闭），C# 侧不再抄一份 | bridge 单测（3 平台 × 2 用例：开启时投递且原 console 方法仍被调用 / 未开启时不投递）+ `--selftest ipc` 真机验证 |
+| 公开的自定义事件发送 API | ✅ 完成 | `EmitEvent(name, jsonPayload)` 与 `EmitEvent<T>(name, payload, JsonTypeInfo<T>)`（后者走源生成上下文，AOT 安全）→ 落到已有的 `_onEvent` | `--selftest ipc` 的闭环：宿主 EmitEvent → 页面 `oriel.on` 收到 → 页面回 postMessage → 宿主收回 |
 | 通用「页面 → 宿主」消息 | ✅ 完成 | `oriel.postMessage(name, payload)` + C# `MessageReceived`（payload 以原始 JSON 文本给出，反序列化由调用方决定） | 同上闭环 + bridge 单测（协议形状、未给 payload、空 name 校验） |
 | 跨 `await` 回 UI 线程 | ✅ 完成（实现中发现） | `WebviewWindow.PostToUiThread(Action)`。做自检时踩到：`await` 续体在线程池上调 GTK 会直接 abort，而库此前没有提供回 UI 线程的手段 | 两个自检都依赖它；真实崩溃与修法见 DECISIONS |
 
@@ -105,16 +105,16 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 
 | 项 | 状态 | 做法要点 | 验证结果 |
 |---|---|---|---|
-| 剪贴板（文本 / HTML 读写） | ✅ 完成 | Windows `CF_UNICODETEXT` + `HTML Format`（CF_HTML，偏移按字节）；macOS `NSPasteboard`；Linux `gtk_clipboard_*`（HTML 走自定义 target）。三平台写 HTML 时都带**纯文本回退** | `--clipboard-selftest` 三平台 CI 通过；**跨进程互操作**只在同进程内验证过，见待真机清单 |
+| 剪贴板（文本 / HTML 读写） | ✅ 完成 | Windows `CF_UNICODETEXT` + `HTML Format`（CF_HTML，偏移按字节）；macOS `NSPasteboard`；Linux `gtk_clipboard_*`（HTML 走自定义 target）。三平台写 HTML 时都带**纯文本回退** | `--selftest clipboard` 三平台 CI 通过；**跨进程互操作**只在同进程内验证过，见待真机清单 |
 | 单实例（第二实例激活首实例并退出） | ✅ 完成 | `SingleInstance(id, onActivate)`：**独占文件锁**判定 + 命名管道通知；第二个实例通知后立即以退出码 0 退出 | 三平台 CI 的双进程断言通过（第二个 0 秒退出并通知、第一个收到激活） |
-| 系统主题检测（dark/light + 变更事件） | ✅ 完成 | `OrielApp.Theme` + `ThemeChanged` + 页面 `theme.changed`（每次导航后补推）。检测：注册表 + `WM_SETTINGCHANGE` / GtkSettings + `notify::` / `NSUserDefaults` + 系统通知 | `--theme-selftest` 三平台通过；Linux 另跑两次（`GTK_THEME` 造值）断言深浅结论**不同**；**切换实时性**见待真机清单 |
-| 拖放（文件拖入 → 路径列表 + 事件） | ✅ 已实现 | Windows：窗口加 `WS_EX_ACCEPTFILES` → `WM_DROPFILES` → `DragQueryFileW`（本库是 Composition 宿主，WebView2 **不是子窗口**，拖放会落到本窗口——不必手写 OLE `IDropTarget`、不必 OLE 初始化），并关掉 WebView2 的 `AllowExternalDrop` 以免它截走拖放；macOS：自定义 `NSView` 子类承载 `NSDraggingDestination`，webview 作为其子视图（**不碰 `WKWebView` 的方法表**，AppKit 沿父视图链查找落点）；Linux：`gtk_drag_dest_set(webview, "text/uri-list")` + `drag-data-received` | **23 个用例**覆盖 URI→本地路径（百分号编码含非 ASCII、`+` 不等于空格、Windows 盘符、`localhost` 与远程主机、非 file 协议、批量保序）；`--shell-selftest` 走完注册路径并断言事件订阅可用（`FILE-DROP-SUBSCRIBED`）。**真实拖拽整体未验证**——无头环境造不出 XDND/OLE 会话，见下 |
-| 系统托盘（`AddTray` / `app.Tray`） | ✅ 已实现；Linux 取证通过 | Windows `Shell_NotifyIconW` + `TrackPopupMenuEx`；macOS `NSStatusBar`/`NSMenu`；Linux GTK3 `GtkStatusIcon`/`GtkMenu`（用 GTK 自带而非 AppIndicator，理由见 DECISIONS） | Windows/macOS 编译验证；Linux 由 `--shell-selftest` 断言"托盘创建 + 一份含分隔线/勾选/禁用/子菜单/role 的菜单能设进去、进程不崩"，并由 `tools/verify-linux-shell.sh` 采集证据。**图标可见性需人眼**（见下） |
+| 系统主题检测（dark/light + 变更事件） | ✅ 完成 | `OrielApp.Theme` + `ThemeChanged` + 页面 `theme.changed`（每次导航后补推）。检测：注册表 + `WM_SETTINGCHANGE` / GtkSettings + `notify::` / `NSUserDefaults` + 系统通知 | `--selftest theme` 三平台通过；Linux 另跑两次（`GTK_THEME` 造值）断言深浅结论**不同**；**切换实时性**见待真机清单 |
+| 拖放（文件拖入 → 路径列表 + 事件） | ✅ 已实现 | Windows：窗口加 `WS_EX_ACCEPTFILES` → `WM_DROPFILES` → `DragQueryFileW`（本库是 Composition 宿主，WebView2 **不是子窗口**，拖放会落到本窗口——不必手写 OLE `IDropTarget`、不必 OLE 初始化），并关掉 WebView2 的 `AllowExternalDrop` 以免它截走拖放；macOS：自定义 `NSView` 子类承载 `NSDraggingDestination`，webview 作为其子视图（**不碰 `WKWebView` 的方法表**，AppKit 沿父视图链查找落点）；Linux：`gtk_drag_dest_set(webview, "text/uri-list")` + `drag-data-received` | **23 个用例**覆盖 URI→本地路径（百分号编码含非 ASCII、`+` 不等于空格、Windows 盘符、`localhost` 与远程主机、非 file 协议、批量保序）；`--selftest shell` 走完注册路径并断言事件订阅可用（`FILE-DROP-SUBSCRIBED`）。**真实拖拽整体未验证**——无头环境造不出 XDND/OLE 会话，见下 |
+| 系统托盘（`AddTray` / `app.Tray`） | ✅ 已实现；Linux 取证通过 | Windows `Shell_NotifyIconW` + `TrackPopupMenuEx`；macOS `NSStatusBar`/`NSMenu`；Linux GTK3 `GtkStatusIcon`/`GtkMenu`（用 GTK 自带而非 AppIndicator，理由见 DECISIONS） | Windows/macOS 编译验证；Linux 由 `--selftest shell` 断言"托盘创建 + 一份含分隔线/勾选/禁用/子菜单/role 的菜单能设进去、进程不崩"，并由 `tools/verify-linux-shell.sh` 采集证据。**图标可见性需人眼**（见下） |
 | 系统通知（`ShowNotification`） | ✅ 已实现；Linux 硬断言 | Windows 用**独立的隐藏托盘项**发 `NIF_INFO` 气球（因此不启用托盘也能发）；macOS `osascript`；Linux `notify-send` | Linux：真 `notify-send` → 会话总线 → 假通知服务，断言**标题与正文逐字符正确**（`tools/verify-linux-shell.sh`）。点击上报仅 Windows 支持，另两个平台**显式空实现**（不是"忘触发"） |
 | 对话框（消息框 / 打开 / 保存 / 选文件夹） | ✅ 已实现（扩展版） | 打开可多选、可给结构化过滤器、可指定初始目录；新增文件夹选择。Windows `GetOpenFileNameW`（`OFN_ALLOWMULTISELECT`+`OFN_EXPLORER`）/ `SHBrowseForFolderW`；macOS `NSOpenPanel`（`URLs` 数组）/ `NSSavePanel`；Linux `GtkFileChooserDialog`（多选读 `GSList`）。过滤器在三种平台形状间的转换与 Win32 多选缓冲区的解析都在纯函数里（`OrielFileFilter` / `OrielFileDialogSupport`） | **30 个单测**（在 Linux CI 上跑，含为 Windows 写的用例）：解析旧字符串、Win32 双 null 渲染、GTK 的 `*.*` 归一、Cocoa 扩展名提取、Win32 多选「单段 vs 多段」两种形状、补扩展名。**对话框外观与交互需人眼**（见下） |
-| 应用菜单 + 窗口上下文菜单 | ✅ 已实现 | 应用菜单：macOS `NSApplication.setMainMenu:`（语义最贴合）、Windows 每个窗口的 `SetMenu`（**无边框窗口跳过**——客户区铺满窗口会盖住菜单栏，与其"设了看不见"不如显式跳过）、Linux **空操作**（现代 GTK 用 header bar，且菜单栏会与 webview 布局层级打架）。上下文菜单三平台都支持（Windows 阻塞、另两个异步）。菜单构建按平台抽成共享类（`Win32Menu`/`GtkMenu`/`MacOSMenu`），role 由 `OrielMenuRoles` 统一解释 | 三平台编译 ✓；Linux `--shell-selftest` 断言"设置应用菜单 + 构建各形态菜单不崩"。**菜单外观、上下文菜单交互、macOS 加速键是否生效需人眼**（见下） |
+| 内建右键菜单策略 | ✅ 已实现 | 默认 `Editing`（只留剪切/复制/粘贴）、`Native`（平台原样）、`Disabled`。Windows 订阅 `CoreWebView2.ContextMenuRequested` 按项过滤（`ICoreWebView2_11`，由 WebView2Aot 包内部转换）；macOS 新建 `OrielUIDelegate` 走 `webView:willOpenMenu:withEvent:` 改现成 `NSMenu`；Linux 连 `context-menu` 信号改 `WebKitContextMenu` 后**返回 FALSE** 让 WebKit 自己弹（返回 TRUE 会变成"什么都不弹"） | **48 个单测**（在 Linux CI 上跑，含为 Windows/Cocoa 写的那些）：三平台保留名单、`copyImage`/`copyLink` 这类"看着像但不是"的陷阱、WebKitGTK 编号 13/17 的**相邻边界**（错一位就会把「刷新」「删除」留下）。**菜单实际长什么样需人眼**（见下） |
+| 应用菜单 + 窗口上下文菜单 | ✅ 已实现 | 应用菜单：macOS `NSApplication.setMainMenu:`（语义最贴合）、Windows 每个窗口的 `SetMenu`（**无边框窗口跳过**——客户区铺满窗口会盖住菜单栏，与其"设了看不见"不如显式跳过）、Linux **空操作**（现代 GTK 用 header bar，且菜单栏会与 webview 布局层级打架）。上下文菜单三平台都支持（Windows 阻塞、另两个异步）。菜单构建按平台抽成共享类（`Win32Menu`/`GtkMenu`/`MacOSMenu`），role 由 `OrielMenuRoles` 统一解释 | 三平台编译 ✓；Linux `--selftest shell` 断言"设置应用菜单 + 构建各形态菜单不崩"。**菜单外观、上下文菜单交互、macOS 加速键是否生效需人眼**（见下） |
 | 全局快捷键 | ✅ 已实现（Linux 按平台事实不支持） | Windows `RegisterHotKey`（复用调度窗口收 `WM_HOTKEY`）、macOS Carbon `RegisterEventHotKey`（唯一不需要辅助功能权限的公开接口）、Linux **如实返回 false**（X11 未落地、Wayland 无解）。语法与菜单加速键共用 `OrielAccelerator` | Linux 取证断言"如实报告不支持 + 注册成功时查得到/注销得掉"；Windows/macOS 编译验证。**按键真的能触发需真机**（见下） |
-| 徽章 | ⚠️ 仅 macOS | macOS `dockTile.badgeLabel`；Windows 的等价物 `ITaskbarList3.SetOverlayIcon` 需要自绘 overlay 图标（GDI），未做；Linux 无跨桌面方案 | 调用不抛异常已断言；**外观需人眼** |
 | Linux 全局快捷键（X11） | ⏳ 未开始（可选增强） | `XGrabKey` + GDK 事件过滤器（需 libX11 互操作与 XEvent 解析）。Wayland 无解，只能如实返回 false | 落地后要同步改 `verify-linux-shell.sh` 里"Linux 必须返回 false"那条断言 |
 | 开机自启 | ✅ 已实现 | Windows 写 HKCU 的 Run 键、macOS 写 LaunchAgent plist（不调 `launchctl load`，避免立刻再拉起一个实例）、Linux 写 freedesktop 的 autostart `.desktop`。配置文本由共用的纯函数生成 | **B 批里最硬的一条**：取证脚本断言"启用 → 查得到 → 禁用 → 查不到"的闭环，并逐项核对 `.desktop` 的内容（Desktop Entry 头、带引号的 Exec、参数、GNOME 启用标志）；另有 12 个单测覆盖三段文本。**"下次开机真的起来了"仍需真机重启** |
 | Shell（打开外链 / 在文件管理器里显示） | ✅ 已实现 | 用系统默认程序打开 URL 与文件、在文件管理器里显示；**默认拒绝式的 scheme 白名单**（只放 http/https/mailto）。**不含** Ryn 的 `shell.execute`/PTY——那属能力沙箱范畴 | 取证脚本用 `xdg-open` 替身断言两点：URL 真的交出去了、危险目标一次都没调出去；24 个单测覆盖校验与三平台命令翻译 |
@@ -124,7 +124,7 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 
 #### 托盘图标的可见性
 - 环境：有托盘区的桌面（Windows 任务栏；macOS 菜单栏；Linux 用 Xfce/KDE，或装了 AppIndicator 扩展的 GNOME）。
-- 步骤：1) `OrielDemo --shell-selftest`（会建托盘并设一份含分隔线/勾选/禁用/子菜单的菜单）；
+- 步骤：1) `OrielDemo --selftest shell`（会建托盘并设一份含分隔线/勾选/禁用/子菜单的菜单）；
   2) 在托盘区找到图标，点开菜单。
 - 预期：图标出现、悬停显示 tooltip、菜单按设置渲染（禁用项是灰的、勾选项带勾、子菜单能展开）、
   点 Quit 项应用退出。
@@ -134,7 +134,7 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 
 #### 菜单的外观与交互
 - 环境：三平台桌面各一次。
-- 步骤：1) `OrielDemo --shell-selftest`；
+- 步骤：1) `OrielDemo --selftest shell`；
   macOS 看顶部菜单栏是否被换成了自检设置的那份（Hello / Copy / Quit）；
   Windows **预期看不到窗口菜单栏**（demo 是无边框窗口，后端按设计跳过，属正常）；
   2) 用 devtools 控制台执行 `oriel.invoke('win.contextMenu')` 看上下文菜单。
@@ -145,7 +145,7 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 
 #### 通知的展示与点击
 - 环境：三平台桌面各一次。
-- 步骤：1) `OrielDemo --shell-selftest`；2) 看通知横幅；3) Windows 上点一下横幅本体。
+- 步骤：1) `OrielDemo --selftest shell`；2) 看通知横幅；3) Windows 上点一下横幅本体。
 - 预期：横幅显示标题与正文；Windows 上点击后触发 `NotificationClicked`（回传 `Id`）。
 - 若不符：Windows 看系统"专注助手/通知"设置里的开关；macOS 看"通知"权限
   （未打包运行时 `osascript` 的通知归属于 Script Editor，可能在系统设置里被静音）。
@@ -175,6 +175,19 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
   那时转换会跳过、拖放可能仍被 webview 截走）；macOS 看 `registerForDraggedTypes:` 是否收到了
   `public.file-url`（`performDragOperation:` 没被调用就是落点没命中）；Linux 看 `gtk_drag_dest_get_target_list`
   是否非 0。**URI 解析本身已有单测，若路径错了先怀疑落点而不是解析。**
+
+#### 内建右键菜单的过滤效果
+- 环境：三平台桌面各一次。
+- 步骤：1) 在操作台页面**普通区域**右键（默认策略）→ 看菜单里是否**只剩**剪切/复制/粘贴；
+  2) 在输入框里输入文字、选中、右键 → 这三项应当可用，且**真的能作用在选中内容上**
+  （粘贴要能把系统剪贴板内容送进去）；3) 切到 `平台原样` 再右键 → 应恢复出「后退/刷新/另存为/检查元素」等；
+  4) 切到 `完全不弹` 再右键 → 应当什么都不出现。
+- 预期：四步都符合。第 2 步是关键——它验证的是"过滤没有把原生行为弄坏"。
+- 若不符：先看**策略是否生效**（操作台右上角日志会打印当前策略），再按平台看钩子是否被调用：
+  Windows 看 WebView2 运行时版本是否够新（老运行时没有 `ICoreWebView2_11`，`ContextMenuRequested` 不会来）；
+  macOS 看 `setUIDelegate:` 是否设上（`willOpenMenu:` 未被调用就是委托没生效）、系统是否 ≥ 11；
+  Linux 看 `context-menu` 信号是否连上（可用 `g_signal_lookup` 或直接看菜单是否还是原样的）。
+  **判断名单本身已有单测，若菜单里留下了"刷新"之类先怀疑编号/名称映射之外的东西（策略、钩子）。**
 
 ### C 的验证账规则（必守）
 

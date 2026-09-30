@@ -124,6 +124,21 @@ public sealed class WebviewWindow
         Backend.ShowContextMenu(items);
     }
 
+    /// <summary>
+    /// 渲染引擎**内建**右键菜单的策略，可随时改（**下次右键**即生效，无需重建窗口）。
+    /// 初始值来自 <see cref="OrielWindowOptions.ContextMenuPolicy"/>，默认
+    /// <see cref="OrielContextMenuPolicy.Editing"/>。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="ShowContextMenu"/> 无关：那是宿主自己构造并弹出的菜单，走另一条通道，
+    /// 两者互不干涉（可以同时用）。
+    /// </remarks>
+    public OrielContextMenuPolicy ContextMenuPolicy
+    {
+        get => Backend.ContextMenuPolicy;
+        set => Backend.ContextMenuPolicy = value;
+    }
+
     internal IWindowBackend Backend => _backend ?? throw new InvalidOperationException(
         "窗口后端尚未初始化：请在 OrielAppBuilder.Run() 之后使用窗口能力。");
 

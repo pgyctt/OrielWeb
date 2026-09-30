@@ -11,14 +11,16 @@
 - **无边框窗口**：自绘标题栏 + 流式/原生拖动 + 最大化/全屏/置顶切换
 - **导航与双向通信**：前进/后退/刷新 + 导航事件（开始/完成/失败，带错误信息）、页面 console 转发、
   `EmitEvent(name, payload)` 推事件、`oriel.postMessage` 收消息——三条通道都能在无头环境里机器断言
-  （见 `--nav-selftest` / `--ipc-selftest`）
+  （见 `--selftest nav` / `--selftest ipc`）
 - **平台集成**：剪贴板（文本 + HTML）、系统主题（深/浅 + 变更事件）、单实例、系统托盘、系统通知、
-  **菜单**（应用菜单 + 窗口上下文菜单，含平台 role 与加速键）、**全局快捷键与徽章**——都有无头自检
-  （见 `--clipboard-selftest` / `--theme-selftest` / `--shell-selftest` / 单实例的双进程断言）
+  **菜单**（应用菜单 + 窗口上下文菜单，含平台 role 与加速键）、**全局快捷键**——都有无头自检
+  （见 `--selftest clipboard` / `--selftest theme` / `--selftest shell` / `--selftest single-instance`）
 - **文件对话框**：打开（可多选）/ 保存 / 选文件夹，支持结构化过滤器与初始目录——过滤器的三种平台形状
   转换与 Win32 多选缓冲区解析都是**纯函数**，因此在 Linux 的 CI 上就有单测（含为 Windows 写的那些）
 - **文件拖放**：外部文件拖进窗口 → 本地路径列表（`window.FileDropped`）——URI 解析有单测；
   真实拖拽需要人眼（见下方验证账）
+- **内建右键菜单策略**：默认只留剪切/复制/粘贴（`Editing`），可切 `Native`（平台原样）/ `Disabled`；
+  运行时随时可改——三平台的保留名单转换是纯数据比较，因此有单测
 - **系统 webview**：Windows 用 WebView2、macOS 用 WKWebView、Linux 用 WebKitGTK——不捆绑浏览器内核
 
 ## 快速开始
@@ -216,8 +218,8 @@ window.PostToUiThread(() => window.SetTitle("页面已就绪"));   // 必须回 
 （CI 的三平台冒烟都会跑）：
 
 ```bash
-OrielDemo --nav-selftest    # 跳转 → 后退 → 前进 → 刷新 → 加载失败（含错误信息）
-OrielDemo --ipc-selftest    # console 转发、postMessage、EmitEvent 闭环（推送 → 页面回显 → 收回）
+OrielDemo --selftest nav    # 跳转 → 后退 → 前进 → 刷新 → 加载失败（含错误信息）
+OrielDemo --selftest ipc    # console 转发、postMessage、EmitEvent 闭环（推送 → 页面回显 → 收回）
 ```
 
 ## 剪贴板、系统主题与单实例
@@ -269,8 +271,8 @@ Oriel.CreateBuilder(args)
 
 | 能力 | 机器断言（三平台 CI 都跑） | 尚未验证 |
 |---|---|---|
-| 剪贴板 | `--clipboard-selftest`：文本与 HTML 各自写→读回、两种类型互不干扰 | **跨进程互操作**（与其它应用互相粘贴）——只验证了同进程写读 |
-| 主题 | `--theme-selftest`：宿主读到的值与页面回显一致；Linux 上跑两次（用 `GTK_THEME` 造值）并断言深浅结论**不同** | **切换的实时性**（在系统设置里切换后事件是否立刻到达）需要真实桌面 |
+| 剪贴板 | `--selftest clipboard`：文本与 HTML 各自写→读回、两种类型互不干扰 | **跨进程互操作**（与其它应用互相粘贴）——只验证了同进程写读 |
+| 主题 | `--selftest theme`：宿主读到的值与页面回显一致；Linux 上跑两次（用 `GTK_THEME` 造值）并断言深浅结论**不同** | **切换的实时性**（在系统设置里切换后事件是否立刻到达）需要真实桌面 |
 | 单实例 | 双进程：第二个立即成功退出并通知首实例、第一个收到激活请求 | — |
 
 > 与路线图的约定一致：这里只写有证据的结论；未验证项同样列在 `docs/ROADMAP.md` 的待真机清单里。
@@ -328,13 +330,12 @@ tray?.SetMenu(/* … */);                 // 重建出来的是**新对象**：�
 
 | 能力 | 机器断言 | 尚未验证（需人眼或真机） |
 |---|---|---|
-| 托盘 | `--shell-selftest`：创建托盘 + 设进一份含分隔线/勾选/禁用/子菜单/role 的菜单，进程不崩；`tools/verify-linux-shell.sh` 采集证据 | **图标是否真的出现在托盘区**、菜单外观、点击行为。Linux 另有平台限制：GNOME Shell 需 AppIndicator 扩展、Wayland 会话多数不显示 |
+| 托盘 | `--selftest shell`：创建托盘 + 设进一份含分隔线/勾选/禁用/子菜单/role 的菜单，进程不崩；`tools/verify-linux-shell.sh` 采集证据 | **图标是否真的出现在托盘区**、菜单外观、点击行为。Linux 另有平台限制：GNOME Shell 需 AppIndicator 扩展、Wayland 会话多数不显示 |
 | 通知投递 | `tools/verify-linux-shell.sh`：真 `notify-send` → 会话总线 → 假通知服务，断言**标题与正文逐字符正确** | macOS 的通知横幅外观与点击上报；Windows 气球的实际展示 |
 | 通知点击上报 | Windows：气球点击回传 `Id` | Linux（`notify-send` 拿不到点击，要改 libnotify 的 action 回调）、macOS（`osascript` 无回调）——两处都在代码里**显式空实现**，而不是"忘了触发" |
-| 菜单 | `--shell-selftest` 设置一份含子菜单/自定义项/role 的应用菜单并断言不崩（Linux 上是空操作）；加速键解析有 41 个单测 | 菜单的外观、上下文菜单的弹出位置与交互、macOS 上加速键是否真的生效——需人眼 |
-| 全局快捷键 | `--shell-selftest`：注册结果必须**如实反映平台能力**（Linux 上必须是 `false`），注册成功时还必须查得到、注销得掉 | 按键**真的**能触发（要有人按下去）——macOS / Windows 待真机 |
-| 徽章 | `--shell-selftest` 断言调用不抛异常（Linux/Windows 上是文档化的 no-op） | macOS 的徽章外观；Windows 的 overlay 图标（尚未实现） |
-| 开机自启 | `--shell-selftest`：**启用 → 查得到 → 禁用 → 查不到**的闭环（三平台都成立）；Linux 上还逐项核对写出的 `.desktop` 内容；三段配置文本另有 12 个单测 | 下次**开机/登录时是否真的自动启动**——需要真机重启 |
+| 菜单 | `--selftest shell` 设置一份含子菜单/自定义项/role 的应用菜单并断言不崩（Linux 上是空操作）；加速键解析有 41 个单测 | 菜单的外观、上下文菜单的弹出位置与交互、macOS 上加速键是否真的生效——需人眼 |
+| 全局快捷键 | `--selftest shell`：注册结果必须**如实反映平台能力**（Linux 上必须是 `false`），注册成功时还必须查得到、注销得掉 | 按键**真的**能触发（要有人按下去）——macOS / Windows 待真机 |
+| 开机自启 | `--selftest shell`：**启用 → 查得到 → 禁用 → 查不到**的闭环（三平台都成立）；Linux 上还逐项核对写出的 `.desktop` 内容；三段配置文本另有 12 个单测 | 下次**开机/登录时是否真的自动启动**——需要真机重启 |
 | Shell 集成 | 取证脚本用 `xdg-open` 替身断言两件事：URL **真的**交给了系统默认程序，且 `file:`/裸路径/`javascript:` **一次都没调出去**（白名单有效性）；另有 24 个单测覆盖校验与三平台命令翻译 | 真实桌面上弹出的浏览器/文件管理器是否符合预期——需人眼 |
 
 > 三平台实现：Windows `Shell_NotifyIconW` + 弹出菜单（`TrackPopupMenuEx`）、macOS `NSStatusBar`/`NSMenu`、
@@ -378,7 +379,7 @@ app.AppMenuItemClicked += id => { /* 自定义项的 Id */ };
 > 三平台后端只负责"把菜单画出来"和"把选择报回来"。编辑类 role 是**尽力而为**：
 > `copy`/`selectAll`/`undo`/`redo` 通常可用，`cut`/`paste` 在多数 webview 里会被安全策略拦下。
 
-### 全局快捷键与徽章
+### 全局快捷键
 
 ```csharp
 app.GlobalShortcutActivated += accelerator => window.Show();   // 参数是注册时给的写法，原样回传
@@ -387,15 +388,11 @@ if (!app.RegisterGlobalShortcut("CmdOrCtrl+Shift+Space"))
     // 语法不合法、没带修饰键、平台不支持、或已被别的程序占用 —— 提示用户换一个
 }
 app.UnregisterGlobalShortcut("CmdOrCtrl+Shift+Space");
-
-app.SetBadge("3");     // Dock/任务栏徽章
-app.SetBadge(null);    // 清除
 ```
 
 | | macOS | Windows | Linux |
 |---|---|---|---|
 | 全局快捷键 | ✅ Carbon `RegisterEventHotKey`——它是**唯一不需要辅助功能权限**就能注册系统级快捷键的公开接口（`CGEventTap` 那类要用户去系统设置授权） | ✅ `RegisterHotKey`，复用平台的调度窗口收 `WM_HOTKEY`（托盘与通知用的同一个宿主） | ❌ **不实现**：X11 可做（`XGrabKey` + GDK 事件过滤器）但未落地，Wayland 下没有等价物（正路是 xdg-desktop-portal）。注册**如实返回 `false`** |
-| 徽章 | ✅ Dock 徽章（`dockTile.badgeLabel`，文字或数字） | ⏳ no-op（等价物 `SetOverlayIcon` 要自绘 overlay 图标，已记 ROADMAP） | ❌ 没有跨桌面方案（Unity 的 launcher badge 是桌面专属的） |
 
 > 注册失败是**正常返回值而不是异常**：语法不合法、没有修饰键（会吞掉正常打字）、平台不支持、
 > 组合被占用 —— 都返回 `false`，调用方据此提示用户换一个。
@@ -520,16 +517,82 @@ window.FileDropped += e =>
 | 项 | 机器断言 | 尚未验证 |
 |---|---|---|
 | URI → 本地路径 | **23 个用例**：百分号编码（含非 ASCII）、`+` 不被当空格、Windows 盘符、`localhost` 与远程主机、非 file 协议、批量保持顺序 | — |
-| 落点注册 | `--shell-selftest`：窗口创建会走完各平台的注册路径、事件订阅可用、进程不崩（输出 `FILE-DROP-SUBSCRIBED`） | **真实拖拽**：需要真人从文件管理器拖文件进窗口。无头环境造不出 XDND/OLE 会话，因此这一项**整体不声称已验证** |
+| 落点注册 | `--selftest shell`：窗口创建会走完各平台的注册路径、事件订阅可用、进程不崩（输出 `FILE-DROP-SUBSCRIBED`） | **真实拖拽**：需要真人从文件管理器拖文件进窗口。无头环境造不出 XDND/OLE 会话，因此这一项**整体不声称已验证** |
+
+### 内建右键菜单的验证账
+
+| 项 | 机器断言 | 尚未验证 |
+|---|---|---|
+| 保留名单 | **48 个用例**（在 Linux CI 上跑，**含为 Windows 与 Cocoa 写的那些**）：三平台各自保留的三项、`copyImage`/`copyLink`/`CopyLink` 这类"看着像复制但不是"的陷阱、WebKitGTK 编号 `13`(RELOAD) 与 `17`(DELETE) 的**相邻边界**（错一位就会把「刷新」「删除」留下）、`null`/空串/大小写 | **菜单弹出后实际剩下哪几项**、菜单外观、以及"剪切/复制/粘贴是否真的作用于页面选区"——需人眼。清单见 `docs/ROADMAP.md` |
 
 > 落点坐标**没有**暴露：三平台的坐标系与 y 轴方向各不相同（Cocoa 原点在左下、GTK 的 y 轴向下、
 > Win32 还要算进 DPI 缩放），要一致就得再引入一层换算，而导入文件根本不需要它——
 > 需要落点做反馈时用页面自己的 `dragover` 即可。这条记在 `docs/ROADMAP.md`。
 
-## 手动验证（`--manual-check`）
+## 内建右键菜单
 
-CI 能断言的东西与人眼要确认的东西是两批。`--manual-check` 把每项能力做成一个按钮页面，
-并把**托管侧的回调**（托盘菜单项、通知点击、全局快捷键、拖放路径）回显到页面底部的日志区：
+页面里右键弹出的那个菜单由渲染引擎提供，**默认只保留剪切 / 复制 / 粘贴**：
+
+```csharp
+// 默认就是 Editing：只留剪切/复制/粘贴
+var window = app.CreateWindow(new OrielWindowOptions().WithTitle("我的应用"));
+
+// 需要「检查元素」等原生项时（开发期常用）
+window.ContextMenuPolicy = OrielContextMenuPolicy.Native;
+
+// 或者完全不弹
+window.ContextMenuPolicy = OrielContextMenuPolicy.Disabled;
+
+// 也可以在建窗时指定
+app.CreateWindow(new OrielWindowOptions().WithContextMenuPolicy(OrielContextMenuPolicy.Native));
+```
+
+策略**运行时随时可改**，下次右键就生效（过滤发生在每次弹出时，不缓存）。
+
+被去掉的项里有几个是**会造成实际损失**的，不只是"没用"：「刷新」在单页应用里等于丢掉整页状态
+（用户填了一半的表单），「另存为」存下来的是一份引用了外部脚本/样式的 HTML 外壳，
+「后退」会跑出应用自己的路由。
+
+留下的三项则是**只有原生侧能给**的——粘贴要把系统剪贴板内容送进页面编辑区，而页面自己做不到
+（`document.execCommand('paste')` 在现代浏览器里被禁用）。所以实现方式是**改内建菜单本身**，
+而不是"禁掉它、自己画一个"：另造的菜单没有这三项的真实行为。
+
+> 这与 `ShowContextMenu` 是**两条独立通道**：那个是宿主自己构造并弹出的菜单（项由
+> `OrielMenuItem` 描述、点击回传 `ContextMenuItemClicked`），与渲染引擎的内建菜单互不干涉。
+
+### 三平台的钩子
+
+| 平台 | 钩子 | 关键点 |
+|---|---|---|
+| Windows | `CoreWebView2.ContextMenuRequested` | 事件在 `ICoreWebView2_11` 上，但 **WebView2Aot 包内部已完成接口转换**，不需要自己 QueryInterface。判断用 `Name`（未本地化，如 `"copy"`），**不是** `Label`；集合按下标删，因此**从后往前**遍历 |
+| macOS | `WKUIDelegate` 的 `webView:willOpenMenu:withEvent:` | 拿到现成的 `NSMenu` 直接改；判断用 `identifier`（`WKMenuItemIdentifierCopy`），**不是** `title`（中文环境是「拷贝」）。`willOpenMenu` 是 macOS 11+，旧系统不回调 |
+| Linux | `context-menu` 信号 | 语义**反着**：返回 `TRUE` = 应用自己接管、WebKit 什么也不弹；返回 `FALSE` 才会让 WebKit 用它自己的（已被改过项的）菜单弹出。判断用 `stock action` 编号 |
+
+> 三平台判断"这是哪一项"用的都是**未本地化**的标识——这是本功能最容易写错的地方，拿显示文本判断
+> 会在换语言时静默失效。这些名单被抽成了平台无关的纯数据比较（`OrielContextMenuSupport`），
+> 于是能在 Linux 的 CI 上被单测覆盖，**包括为 Windows 与 Cocoa 写的那两组**。
+
+## 手动验证与无人自检
+
+两类验证各有入口：
+
+- **给人看的**：直接运行 demo（**不带参数**）就是手动验证操作台。
+- **给 CI 的**：`--selftest <名字>` 跑无人自检，跑完打印结论并以退出码表达成败。可用名字：
+  `nav` | `ipc` | `clipboard` | `theme` | `single-instance` | `shell`。
+  名字缺失或写错时会列出可用值并以退出码 2 结束——不留"静默跑成别的模式"的空间。
+
+```bash
+OrielDemo.exe --selftest shell   # 托盘、通知、菜单、快捷键、自启、Shell、拖放
+OrielDemo.exe --selftest nav     # 跳转 → 后退 → 前进 → 刷新 → 加载失败
+OrielDemo.exe                    # 默认：手动验证操作台
+OrielDemo.exe --todo             # Todo 示例页（"怎么用本库写应用"的示范）
+```
+
+操作台把每项能力做成一个按钮页面，
+并把**托管侧的回调**（托盘菜单项、通知点击、全局快捷键、拖放路径）回显到页面底部的日志区。
+其中「内建右键菜单」那一栏可以直接切策略（`Editing` / `Native` / `Disabled`），切完在页面任意处右键
+即可对比——那一栏还带一个输入框，用来验证留下的三项**真的能作用在选中内容上**（粘贴要能把系统剪贴板
+内容送进去，这是"过滤没把原生行为弄坏"的关键证据）：
 
 ```bash
 dotnet run --project samples/OrielDemo -c Release -- --manual-check
@@ -540,7 +603,7 @@ dotnet run --project samples/OrielDemo -c Release -- --manual-check
 | 现象 | 为什么是预期 |
 |---|---|
 | 设置应用菜单后没有菜单栏 | 本窗口是无边框窗口，Windows 上没有菜单栏可挂（客户区铺满会盖住它），按设计跳过 |
-| 设置徽章后任务栏毫无变化 | Windows 的角标需要自绘 overlay 位图，当前是文档化的 no-op（macOS 会改 Dock 徽章） |
+| 点通知不会有回调 | 未打包应用的 toast 激活需要开始菜单快捷方式携带 AUMID + 注册 COM 激活器（打包器的职责）——三平台如实一致 |
 | 上下文菜单开着时窗口不响应 | 原生弹出菜单的模态行为，直到你选择或取消 |
 | 选文件夹时初始目录无效 | Windows 走老 API（`SHBrowseForFolder`），设初值要挂回调，已记为取舍 |
 | 日志写「已提交给系统」但没看到横幅 | 库已把通知交给系统；显不显示由系统的通知设置与专注助手决定（Windows：设置 → 系统 → 通知） |

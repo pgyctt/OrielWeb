@@ -169,7 +169,7 @@
             <h2>托盘与通知</h2>
             <div class="row">
                 <button data-cmd="manual.notify">发一条通知</button>
-                <button data-cmd="manual.notifyId">发一条带 Id 的通知（可点击）</button>
+                <button data-cmd="manual.notifyId">发一条带 Id 的通知</button>
                 <button data-cmd="manual.trayMenu">重设托盘菜单</button>
                 <button data-cmd="manual.trayRemove">移除托盘</button>
                 <button data-cmd="manual.trayRestore">重建托盘</button>
@@ -182,6 +182,10 @@
                 「移除托盘」→ 图标应立刻从通知区消失；「重建托盘」→ 图标重新出现、菜单照常。
                 这两项验的是原生资源真的被撤销又建立——Windows 上"进程没了图标还留着"（幽灵图标）
                 就是这么来的。
+                <br>
+                <strong>点击通知不会有回调</strong>——未打包应用的 toast 激活需要开始菜单快捷方式携带 AUMID
+                并注册 COM 激活器，那是打包器的职责，所以三平台在这一点上如实一致（都不回调），
+                <code>Id</code> 目前只是给通知打标签用。
                 <br>
                 <strong>横幅没出现时先看日志那一行</strong>：写「已提交给系统」说明本库已经交出去了，
                 去<strong>设置 → 系统 → 通知</strong>里看 <code>OrielDemo</code> 是否被关掉、专注助手/免打扰是否开着；
@@ -216,15 +220,25 @@
         </section>
 
         <section class="panel">
-            <h2>徽章</h2>
+            <h2>内建右键菜单</h2>
             <div class="row">
-                <button data-cmd="manual.badgeOn">设置徽章「3」</button>
-                <button data-cmd="manual.badgeOff">清除徽章</button>
+                <button data-cmd="manual.cmEditing">仅剪切/复制/粘贴（默认）</button>
+                <button data-cmd="manual.cmNative">平台原样</button>
+                <button data-cmd="manual.cmDisabled">完全不弹</button>
             </div>
             <p class="hint">
-                <strong>Windows 上任务栏图标不会有任何变化——这是预期行为</strong>，不是坏了：
-                任务栏 overlay 需要自绘位图，尚未实现（明确不支持比"设了但看不见"更可查）；
-                macOS 上会改 Dock 徽章。这里只验证「调用不崩」。
+                默认策略是<strong>只保留剪切 / 复制 / 粘贴</strong>。内建菜单本来还带着「后退 / 前进 / 刷新 /
+                另存为 / 打印 / 检查元素」，对应用窗口来说多数是噪音——「刷新」在单页应用里会丢整页状态，
+                「另存为」存下来的是一份依赖外部资产的 HTML 外壳。
+                留下的这三项是<strong>只有原生侧能给</strong>的：粘贴要把系统剪贴板内容送进页面，
+                页面自己没这个权限。
+            </p>
+            <p class="hint">
+                改完<strong>下次右键即生效</strong>，不用重启窗口。验证最直接的地方是下面这个输入框：
+                输入些文字 → 选中 → 右键。
+            </p>
+            <p class="row">
+                <input id="cmProbe" type="text" value="选中这段文字，然后右键" />
             </p>
         </section>
 

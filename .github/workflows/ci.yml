@@ -144,15 +144,15 @@ jobs:
           demo=samples/OrielDemo/bin/Release/net10.0/linux-x64/publish/OrielDemo
           for mode in nav ipc clipboard; do
             log="$RUNNER_TEMP/selftest-$mode.log"
-            xvfb-run -a "$demo" "--$mode-selftest" > "$log" 2>&1
+            xvfb-run -a "$demo" --selftest "$mode" > "$log" 2>&1
             code=$?
             verdict="$(grep -E '^(NAV|IPC|CLIPBOARD)-SELFTEST: ' "$log" | tail -1 || true)"
-            echo "----- $mode-selftest（退出码 $code）$verdict -----"
+            echo "----- selftest $mode（退出码 $code）$verdict -----"
             sed 's/^/  /' "$log"
             # 判定以日志里的结论行为准（与 macOS 一致）：应用的退出方式各平台不同，
             # 退出码未必可靠地表达自检结果——macOS 上就出现过"结论 FAIL 但退出码 0"。
             if [[ "$verdict" != *PASS* ]]; then
-              echo "::error::$mode-selftest 未通过（结论行：${verdict:-无}）"
+              echo "::error::selftest $mode 未通过（结论行：${verdict:-无}）"
               exit 1
             fi
           done
@@ -167,12 +167,12 @@ jobs:
             label="${pair%%:*}"
             value="${pair#*:}"
             log="$RUNNER_TEMP/theme-$label.log"
-            GTK_THEME="$value" xvfb-run -a "$demo" --theme-selftest > "$log" 2>&1
+            GTK_THEME="$value" xvfb-run -a "$demo" --selftest theme > "$log" 2>&1
             verdict="$(grep -E '^THEME-SELFTEST: ' "$log" | tail -1 || true)"
             echo "----- theme=$label（GTK_THEME='$value'）$verdict -----"
             sed 's/^/  /' "$log"
             if [[ "$verdict" != *PASS* ]]; then
-              echo "::error::theme-selftest 未通过（$label，结论行：${verdict:-无}）"
+              echo "::error::selftest theme 未通过（$label，结论行：${verdict:-无}）"
               exit 1
             fi
             if [ "$label" = "light" ]; then theme_light="$verdict"; else theme_dark="$verdict"; fi
@@ -185,11 +185,11 @@ jobs:
           # 单实例：这一项没法单进程自证，起两个进程——第二个应立即成功退出并通知首实例，
           # 第一个应收到激活请求（首实例自己也带 15 秒看门狗，不会挂住）。
           pkill -x OrielDemo 2>/dev/null || true
-          xvfb-run -a "$demo" --single-instance-selftest > "$RUNNER_TEMP/si-primary.log" 2>&1 &
+          xvfb-run -a "$demo" --selftest single-instance > "$RUNNER_TEMP/si-primary.log" 2>&1 &
           si_primary=$!
           sleep 5
           si_start=$(date +%s)
-          xvfb-run -a "$demo" --single-instance-selftest > "$RUNNER_TEMP/si-secondary.log" 2>&1
+          xvfb-run -a "$demo" --selftest single-instance > "$RUNNER_TEMP/si-secondary.log" 2>&1
           si_secondary_code=$?
           si_elapsed=$(( $(date +%s) - si_start ))
           wait "$si_primary"
@@ -268,9 +268,9 @@ jobs:
           foreach ($mode in @("nav", "ipc", "clipboard", "theme")) {
             $out = "$env:RUNNER_TEMP\selftest-$mode.out.txt"
             $err = "$env:RUNNER_TEMP\selftest-$mode.err.txt"
-            $p = Start-Process -FilePath $demo -ArgumentList "--$mode-selftest" -Wait -PassThru `
+            $p = Start-Process -FilePath $demo -ArgumentList @("--selftest", $mode) -Wait -PassThru `
                  -RedirectStandardOutput $out -RedirectStandardError $err
-            Write-Output "----- $mode-selftest（退出码 $($p.ExitCode)）-----"
+            Write-Output "----- selftest $mode（退出码 $($p.ExitCode)）-----"
             if (Test-Path $out) { Get-Content $out -Encoding UTF8 | Write-Output }
             if (Test-Path $err) { Get-Content $err -Encoding UTF8 | Write-Output }
             # 判定以日志里的结论行为准（与 Linux / macOS 一致），退出码只作为附加信息。
@@ -280,18 +280,18 @@ jobs:
               if ($last) { $verdict = $last.Line }
             }
             if ($verdict -notmatch 'PASS') {
-              throw "$mode-selftest 未通过（结论行：$(if ($verdict) { $verdict } else { '无' })）"
+              throw "selftest $mode 未通过（结论行：$(if ($verdict) { $verdict } else { '无' })）"
             }
           }
 
           # 单实例：起两个进程。第二个应"立即且成功地退出"并通知首实例，第一个应收到激活请求。
           Stop-Process -Name OrielDemo -Force -ErrorAction SilentlyContinue
-          $primary = Start-Process -FilePath $demo -ArgumentList "--single-instance-selftest" -PassThru `
+          $primary = Start-Process -FilePath $demo -ArgumentList @("--selftest", "single-instance") -PassThru `
                      -RedirectStandardOutput "$env:RUNNER_TEMP\si-primary.log" `
                      -RedirectStandardError "$env:RUNNER_TEMP\si-primary.err"
           Start-Sleep -Seconds 5
           $sw = [System.Diagnostics.Stopwatch]::StartNew()
-          $secondary = Start-Process -FilePath $demo -ArgumentList "--single-instance-selftest" -Wait -PassThru `
+          $secondary = Start-Process -FilePath $demo -ArgumentList @("--selftest", "single-instance") -Wait -PassThru `
                        -RedirectStandardOutput "$env:RUNNER_TEMP\si-secondary.log" `
                        -RedirectStandardError "$env:RUNNER_TEMP\si-secondary.err"
           $sw.Stop()

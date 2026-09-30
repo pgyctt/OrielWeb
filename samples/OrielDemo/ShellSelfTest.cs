@@ -152,10 +152,13 @@ internal static class ShellSelfTest
                 }
             }
 
-            // 徽章：macOS 会真的设 Dock 徽章，Windows/Linux 是文档化的 no-op。这里只断言调用不崩。
-            _app.SetBadge("3");
-            _app.SetBadge(null);
-            Console.WriteLine("[shell-selftest] 徽章 API 已调用（macOS 生效 / Windows、Linux no-op）");
+            // 内建右键菜单：能断言的只有"默认策略确实是只留剪切/复制/粘贴"这一条——
+            // 过滤动作发生在渲染引擎内部，无头环境里既弹不出菜单也看不到剩下哪几项。
+            // 但"默认值"本身就是需求的核心（默认过滤），值得钉住：它被谁改成 Native 会立刻显现。
+            string policy = _app.Windows.Count > 0
+                ? _app.Windows[0].ContextMenuPolicy.ToString()
+                : "（无窗口）";
+            Console.WriteLine($"[shell-selftest] CONTEXT-MENU-POLICY: {policy}");
 
             // 开机自启：三平台都能形成"启用 → 查得到 → 禁用 → 查不到"的闭环，因此这是强断言。
             // 自检里立即禁用，不在环境里留下自启项。

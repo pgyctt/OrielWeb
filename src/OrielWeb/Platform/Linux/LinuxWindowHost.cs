@@ -62,6 +62,73 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     private event Action<OrielMessageReceivedEventArgs>? MessageReceived;
     private event Action<string>? ContextMenuItemClicked;
 
+    /// <summary>渲染引擎内建右键菜单的策略；见 <see cref="OrielContextMenuPolicy"/>。</summary>
+    public OrielContextMenuPolicy ContextMenuPolicy { get; set; }
+
+    /// <summary>
+    /// 内建右键菜单即将弹出（由 <c>context-menu</c> 信号的 trampoline 调进来）。
+    /// </summary>
+    /// <remarks>
+    /// 改的是 WebKit 已经构造好的那个菜单对象。WebKitGTK 在这里的约定与另两个平台不同：
+    /// 处理器返回 <c>FALSE</c> 表示"我不接管"，WebKit 会**用它自己的、但已被我们改过的**菜单去弹；
+    /// 返回 <c>TRUE</c> 则表示"我自己弹"，WebKit 什么都不弹。我们要的是前者。
+    /// </remarks>
+    internal void FilterContextMenu(nint menu)
+    {
+        if (menu == 0)
+        {
+            return;
+        }
+
+        switch (ContextMenuPolicy)
+        {
+            case OrielContextMenuPolicy.Native:
+                return; // 平台原样
+
+            case OrielContextMenuPolicy.Disabled:
+                GtkNative.WebkitContextMenuRemoveAll(menu);
+                return;
+
+            default:
+                RemoveNonEditingItems(menu);
+                return;
+        }
+    }
+
+    /// <summary>只留剪切 / 复制 / 粘贴。</summary>
+    /// <remarks>
+    /// 判断依据是菜单项的「标准动作」编号（<c>WebKitContextMenuAction</c>）——它是 WebKit 给的语义标识，
+    /// 与界面语言无关。编号与常量的对应关系（以及为什么它需要一份单测）见
+    /// <see cref="OrielContextMenuSupport"/>。
+    /// </remarks>
+    private static void RemoveNonEditingItems(nint menu)
+    {
+        nint list = GtkNative.WebkitContextMenuGetItems(menu);
+        if (list == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            // GList 节点布局：{ data, next, prev } —— 沿 next 走，data 才是菜单项
+            for (nint node = list; node != 0; node = Marshal.ReadIntPtr(node, IntPtr.Size))
+            {
+                nint item = Marshal.ReadIntPtr(node);
+                if (item != 0 && !OrielContextMenuSupport.IsEditingWebKitAction(
+                        GtkNative.WebkitContextMenuItemGetStockAction(item)))
+                {
+                    GtkNative.WebkitContextMenuRemove(menu, item);
+                }
+            }
+        }
+        finally
+        {
+            // 只释放链表节点：菜单项的所有权仍在菜单上
+            GtkNative.GListFree(list);
+        }
+    }
+
     internal LinuxWindowHost(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, LinuxPlatformBackend backend)
     {
         _window = window;
@@ -70,6 +137,8 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         _backend = backend;
         _assetDirectory = assetDirectory;
         _title = options.Title;
+        // 策略是可写属性（运行时能改），初值取自 options
+        ContextMenuPolicy = options.ContextMenuPolicy;
         if (options.MinWidth is int minWidth) _minWidth = minWidth;
         if (options.MinHeight is int minHeight) _minHeight = minHeight;
         _messageHandler = new LinuxWebMessageHandler(this);

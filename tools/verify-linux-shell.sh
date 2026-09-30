@@ -124,7 +124,7 @@ echo "--- xdg-open：替身（记录参数到 $OUT_DIR/xdg-open.log）"
 
 # ---- 3. 在会话总线里跑自检（通知服务与 demo 同一个 dbus session）----
 if [[ "$HAVE_DBUS_PYTHON" == "1" ]]; then
-    echo "--- 启动假通知服务并运行 --shell-selftest ---"
+    echo "--- 启动假通知服务并运行 --selftest shell ---"
     EXE="$EXE" OUT_APP="$APP_LOG" OUT_SERVICE="$SERVICE_LOG" SERVICE_PY="$REPO_ROOT/tools/fake-notification-service.py" \
         dbus-run-session -- bash -c '
             python3 "$SERVICE_PY" >"$OUT_SERVICE" 2>&1 &
@@ -133,7 +133,7 @@ if [[ "$HAVE_DBUS_PYTHON" == "1" ]]; then
                 grep -q "FAKE-NOTIFICATION-SERVICE-READY" "$OUT_SERVICE" 2>/dev/null && break
                 sleep 0.1
             done
-            timeout 60 "$EXE" --shell-selftest >"$OUT_APP" 2>&1
+            timeout 60 "$EXE" --selftest shell >"$OUT_APP" 2>&1
             echo $? >"$OUT_APP.exit"
             sleep 0.5
             kill "$service_pid" 2>/dev/null
@@ -141,7 +141,7 @@ if [[ "$HAVE_DBUS_PYTHON" == "1" ]]; then
         ' 2>"$OUT_DIR/dbus-run-session.log"
 else
     echo "--- 无 python3-dbus：跳过通知服务，只跑托盘自检 ---"
-    timeout 60 "$EXE" --shell-selftest >"$APP_LOG" 2>&1
+    timeout 60 "$EXE" --selftest shell >"$APP_LOG" 2>&1
     echo $? >"$APP_LOG.exit"
 fi
 
@@ -200,10 +200,12 @@ else
     fail "全局快捷键报告为 true——Linux 实现当前不支持，若已实现 X11 版本请同步更新本断言"
 fi
 
-if grep -q "徽章 API 已调用" "$APP_LOG"; then
-    pass "徽章 API 调用未抛异常（Linux 上是文档化的 no-op）"
+# 内建右键菜单：断言**默认策略**。过滤本身发生在渲染引擎内部（无头环境看不到菜单内容），
+# 但"默认就是只留剪切/复制/粘贴"是需求的核心，也是这里唯一可机器判定的一环。
+if grep -q "CONTEXT-MENU-POLICY: Editing" "$APP_LOG"; then
+    pass "内建右键菜单的默认策略是 Editing（只留剪切/复制/粘贴）"
 else
-    fail "徽章 API 没有被调用到"
+    fail "内建右键菜单的默认策略不是 Editing——默认过滤是需求，被改动必须同步更新本断言"
 fi
 
 # 开机自启：三平台都能形成闭环，所以这里断言的是**四个 true**（不是"看平台而定"）。

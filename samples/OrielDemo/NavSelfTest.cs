@@ -6,7 +6,7 @@ namespace OrielDemo;
 /// 导航自检：把「前进 / 后退 / 刷新 + 导航事件（开始 / 完成 / 失败）」变成无人交互也可判定的断言。
 /// </summary>
 /// <remarks>
-/// 由 <c>--nav-selftest</c> 启用。放在 demo 而不是测试工程，是因为这些行为只在**真实 webview** 里
+/// 由 <c>--selftest nav</c> 启用。放在 demo 而不是测试工程，是因为这些行为只在**真实 webview** 里
 /// 存在——WebView2 / WebKitGTK / WKWebView 的历史与加载失败语义各不相同，单测覆盖不到。
 ///
 /// 刻意写成事件驱动状态机而不是 async/await：窗口 API 必须在其 UI 线程上调用，而 <c>await</c> 之后

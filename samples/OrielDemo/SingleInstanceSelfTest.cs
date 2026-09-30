@@ -6,7 +6,7 @@ namespace OrielDemo;
 /// 单实例自检（**双进程协作**，由脚本驱动）。
 /// </summary>
 /// <remarks>
-/// 由 <c>--single-instance-selftest</c> 启用。这一项没法在单进程里自证，所以契约定成：
+/// 由 <c>--selftest single-instance</c> 启用。这一项没法在单进程里自证，所以契约定成：
 ///   * 首实例：启动后等 15 秒，收到第二实例的通知即打印 <c>SINGLE-INSTANCE: PASS</c>；
 ///   * 第二实例：检测到已有实例 → 打印 <c>SINGLE-INSTANCE-SECONDARY</c> → 立即退出（退出码 0）。
 /// 脚本起两个进程，断言"第二个快速且成功地退出"且"第一个打印 PASS"。

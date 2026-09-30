@@ -249,18 +249,6 @@ public sealed class OrielApp : IDisposable
         _backend?.UnregisterAllGlobalShortcuts();
     }
 
-    // ---- 徽章 ----
-
-    /// <summary>
-    /// 设置任务栏/Dock 徽章（<c>null</c> 或空串清除）。平台支持度见 README 平台矩阵：
-    /// macOS 是 Dock 徽章（文字或数字），Windows 与 Linux 当前是 no-op。
-    /// </summary>
-    public void SetBadge(string? label)
-    {
-        var backend = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
-        backend.SetBadge(label);
-    }
-
     // ---- 开机自启 ----
 
     /// <summary>自启标识：默认可执行文件名，可用 <see cref="OrielAppBuilder.UseAutoStartId"/> 覆盖。</summary>
@@ -435,6 +423,21 @@ public sealed class OrielApp : IDisposable
         }
 
         _backend.RunMessageLoop();
+
+        // 消息循环结束 = 应用正在退出：这里主动释放一次。
+        // 托盘图标尤其关键——它是**系统级**资源，只属于本进程却由 explorer 持有：
+        // 不调 NIM_DELETE 撤销的话，进程没了图标还留在通知区（"幽灵图标"），
+        // 用户只能把鼠标划过去等它自己消失。以前的 Run() 直接返回，于是每次退出都留一个。
+        // Dispose 幂等，调用方之后再 Dispose 一次也无妨。
+        try
+        {
+            Dispose();
+        }
+        catch (Exception ex)
+        {
+            // 退出路径不该因为清理失败而崩：报出来，让进程照常结束
+            System.Diagnostics.Debug.WriteLine($"[OrielWeb] 退出清理时抛出异常：{ex}");
+        }
     }
 
     /// <summary>

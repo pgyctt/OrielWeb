@@ -23,6 +23,17 @@ internal static class Program
         return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
     }
 
+    /// <summary>
+    /// <c>--selftest</c> 认得的名字。加一个自检只需在这里加名字 + 在 Main 里加一行判定。
+    /// </summary>
+    private static readonly string[] SelfTestNames =
+        ["nav", "ipc", "clipboard", "theme", "single-instance", "shell"];
+
+    /// <summary>本次请求的自检名字是否就是 <paramref name="name"/>（忽略大小写与首尾空白）。</summary>
+    private static bool IsSelfTest(string? requested, string name)
+        => requested is not null
+            && string.Equals(requested.Trim(), name, StringComparison.OrdinalIgnoreCase);
+
     [STAThread]
     private static void Main(string[] args)
     {
@@ -31,22 +42,40 @@ internal static class Program
         var hidden = args.Contains("--hidden");
         // --icon <path>：设置窗口图标（Windows/Linux 是窗口图标，macOS 会落到 Dock 图标）
         var icon = GetOptionValue(args, "--icon");
-        // --nav-selftest：无人交互的导航自检（跳转 → 后退 → 前进 → 刷新 → 失败导航），
-        // 打印 NAV-SELFTEST 结论并以退出码表达成败——CI 据此把导航行为变成机器断言。
-        var navSelfTest = args.Contains("--nav-selftest");
-        // --ipc-selftest：无人交互的 IPC 自检（页面 console → 宿主、页面 postMessage → 宿主、
-        // 宿主 EmitEvent → 页面 → 回显宿主）。它会顺带打开 ConsoleForwarding。
-        var ipcSelfTest = args.Contains("--ipc-selftest");
-        // --clipboard-selftest：剪贴板文本与 HTML 的写→读回自检（会覆盖系统剪贴板内容）
-        var clipboardSelfTest = args.Contains("--clipboard-selftest");
-        // --theme-selftest：主题读取与 theme.changed 事件通道（页面回显确认；深浅两条路径由 CI 造值）
-        var themeSelfTest = args.Contains("--theme-selftest");
-        // --single-instance-selftest：单实例自检（双进程协作，脚本起两个实例）
-        var singleInstanceSelfTest = args.Contains("--single-instance-selftest");
-        // --shell-selftest：托盘与通知的自检（建托盘、设菜单、发通知，随后退出）
-        var shellSelfTest = args.Contains("--shell-selftest");
+        // --selftest <名字>：无人交互的自检（CI 用），跑完打印结论并以退出码表达成败。
+        // 可用名字见 SelfTestNames。合并成一个开关是为了让 demo 的入口干净——
+        // 以前是六个独立开关（--nav-selftest 之类），能力没少，只是不再往命令行上摆一排。
+        // 自检的**输出结论格式没变**（NAV-SELFTEST: PASS 等），脚本仍按原来的行去 grep。
+        var selfTest = GetOptionValue(args, "--selftest");
+        if (args.Contains("--selftest") && string.IsNullOrWhiteSpace(selfTest))
+        {
+            Console.Error.WriteLine($"--selftest 需要一个名字。可用：{string.Join(" | ", SelfTestNames)}");
+            Environment.ExitCode = 2;
+            return;
+        }
+
+        if (selfTest is not null && !SelfTestNames.Contains(selfTest.Trim(), StringComparer.OrdinalIgnoreCase))
+        {
+            Console.Error.WriteLine($"未知的自检名字「{selfTest}」。可用：{string.Join(" | ", SelfTestNames)}");
+            Environment.ExitCode = 2;
+            return;
+        }
+
+        // nav：跳转 → 后退 → 前进 → 刷新 → 失败导航，打印 NAV-SELFTEST 结论
+        var navSelfTest = IsSelfTest(selfTest, "nav");
+        // ipc：页面 console → 宿主、页面 postMessage → 宿主、宿主 EmitEvent → 页面 → 回显宿主
+        //（它会顺带打开 ConsoleForwarding）
+        var ipcSelfTest = IsSelfTest(selfTest, "ipc");
+        // clipboard：剪贴板文本与 HTML 的写→读回（会覆盖系统剪贴板内容）
+        var clipboardSelfTest = IsSelfTest(selfTest, "clipboard");
+        // theme：主题读取与 theme.changed 事件通道（页面回显确认；深浅两条路径由 CI 造值）
+        var themeSelfTest = IsSelfTest(selfTest, "theme");
+        // single-instance：双进程协作（脚本起两个实例）
+        var singleInstanceSelfTest = IsSelfTest(selfTest, "single-instance");
+        // shell：托盘、通知、菜单、快捷键、自启、Shell、拖放
+        var shellSelfTest = IsSelfTest(selfTest, "shell");
         // --manual-check：手动验证操作台（停在那里等人点，不自动退出）。
-        // 与 --shell-selftest 的分工：那个是给 CI 的无人断言，这个是给人看的——
+        // 与 --selftest shell 的分工：那个是给 CI 的无人断言，这个是给人看的——
         // 每项做成按钮，托管侧的回调（托盘菜单项、通知点击、快捷键、拖放）回显到页面。
         // 之所以要回显：demo 在 Windows 上是 WinExe，没有控制台，打印的东西看不见。
         //

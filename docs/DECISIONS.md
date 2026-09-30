@@ -404,8 +404,8 @@ WSLg 显示服务的偶发波动（与本次改动无因果关系：那次连"�
 ## 阶段 B：导航与页面通信（2026-09-29 实现并验证）
 
 **结论**：导航（前进 / 后退 / 刷新 + 开始 / 完成 / 失败事件）与三条 IPC 通道（console 转发、页面
-postMessage、宿主 EmitEvent）全部落地；Linux 上以**无人交互的自检**验证通过（`--nav-selftest`、
-`--ipc-selftest`），并接入 CI 的三平台冒烟。
+postMessage、宿主 EmitEvent）全部落地；Linux 上以**无人交互的自检**验证通过（`--selftest nav`、
+`--selftest ipc`），并接入 CI 的三平台冒烟。
 
 ### 自检为什么写成事件驱动状态机，而不是 async/await
 
@@ -476,7 +476,7 @@ location.href = new URL('oriel-selftest-nonexistent-page.html', location.href).h
 
 ## 阶段 C-1/C-2/C-3：剪贴板、系统主题、单实例（2026-09-29 实现并验证）
 
-三项都落地，并有机器断言：`--clipboard-selftest`、`--theme-selftest`、单实例的双进程断言
+三项都落地，并有机器断言：`--selftest clipboard`、`--selftest theme`、单实例的双进程断言
 （三平台 CI 都跑）。实现过程中有三处值得记下。
 
 ### 单实例：判定不能用"命名管道能否创建成功"
@@ -516,7 +516,7 @@ location.href = new URL('oriel-selftest-nonexistent-page.html', location.href).h
 
 ### 主题自检为什么要跑两次
 
-`--theme-selftest` 断言"宿主读到的主题"与"页面回显的主题"一致，这只证明**读得到 + 通道通**。
+`--selftest theme` 断言"宿主读到的主题"与"页面回显的主题"一致，这只证明**读得到 + 通道通**。
 "深浅判得对"是另一回事，所以 Linux 上用 `GTK_THEME` 造值跑两次，并断言两次结论**不同**——
 同一进程内改不了系统主题，只能这样造。
 
@@ -541,9 +541,9 @@ location.href = new URL('oriel-selftest-nonexistent-page.html', location.href).h
 
 ### 验证账（Linux 真机 + CI）
 
-- `--nav-selftest`：跳转 → 后退 → 前进 → 刷新 → 失败，共 6 次导航；每次 `starting`/`completed` 与 URL
+- `--selftest nav`：跳转 → 后退 → 前进 → 刷新 → 失败，共 6 次导航；每次 `starting`/`completed` 与 URL
   都符合预期，失败那条带真实错误信息。
-- `--ipc-selftest`：console(`log`, `from-page 42`)、页面 postMessage(`{"n":1}`)、以及**闭环**——宿主
+- `--selftest ipc`：console(`log`, `from-page 42`)、页面 postMessage(`{"n":1}`)、以及**闭环**——宿主
   `EmitEvent("from-host")` → 页面 `oriel.on` 收到 → 页面 `postMessage('echo')` → 宿主收回 `{"k":1}`。
 - bridge 单测：新增 postMessage 与 console 转发用例（每平台 4 个），并把 console 桩注入脚本沙箱，
   避免包装到 Node 的全局 console 上而污染测试进程。
@@ -728,7 +728,7 @@ Linux 的应用菜单**不实现**：现代 GTK 应用用 header bar，GTK3 的 
 硬塞进 `GtkWindow` 还会与 webview 的布局层级打架（Ryn 在同一处也放弃了 Linux 菜单栏）。
 `SetAppMenu` 因此是空操作、`AppMenuItemClicked` 是显式空实现——刻意如此，不是漏做。
 
-## 全局快捷键与徽章：三个选择的理由（2026-09-30）
+## 全局快捷键：三个选择的理由（2026-09-30）
 
 - **macOS 用 Carbon 的 `RegisterEventHotKey`**：Carbon 早已标称弃用，但它是**唯一不需要辅助功能/输入监控权限**
   就能注册系统级快捷键的公开接口。`CGEventTap` / 全局 `NSEvent` 监听都要用户先去系统设置里授权——
@@ -739,9 +739,28 @@ Linux 的应用菜单**不实现**：现代 GTK 应用用 header bar，GTK3 的 
   但要额外的 libX11 互操作与 XEvent 解析；Wayland 下没有等价物（正路是 xdg-desktop-portal 的
   GlobalShortcuts 接口，会话里拿不到 grab）。关键在**如实**：调用方据此提示用户换一个组合，
   而不是一直等一个永远不会触发的事件（Ryn 在同一处也是 Stub）。
-- **徽章只做 macOS**：Windows 的等价物是 `ITaskbarList3.SetOverlayIcon`，需要自绘 16×16 overlay 图标
-  （GDI 画圆 + 文字），已记入 ROADMAP；Linux 没有跨桌面方案。选择"明确 no-op + 文档"而不是半吊子实现——
-  后者会让调用方以为设置成功了，"设了但看不见"比"明确不支持"难查得多。
+- **徽章已整块移除**。它一度三平台都实现了（macOS `dockTile.badgeLabel`；Windows
+  `ITaskbarList3.SetOverlayIcon` + 自绘 16×16 位图；Linux 无跨桌面方案），后按需求把 API 与实现
+  一并去掉，不留半成品。若将来要恢复，关键结论是：**Windows 上没有现成的"数字角标"**，
+  系统只提供 `SetOverlayIcon(HWND, HICON, LPCWSTR)`，标签必须自己画成图标
+  （GDI 画圆与文字 → `CreateIconIndirect`），而 COM 桩可以用 `[GeneratedComInterface]` 源生成
+  （与 WebView2 的绑定同一路子，AOT 下不必手写 vtable）。这部分实现留在 git 历史里。
+
+## 退出时必须撤销托盘图标（2026-09-30）
+
+真机验证里发现"关掉应用后托盘图标还留在通知区"（幽灵图标）。根因不在托盘实现，而在**生命周期**：
+`OrielApp.Run()` 里消息循环一结束就 `return`，**从来没有清理过**——托盘图标的 `NIM_DELETE` 只在
+调用方显式 `Dispose()` 时才会发生，而 demo（以及任何按文档写的应用）都不会主动调它。
+
+现在 `Run()` 在消息循环结束后自己调一次 `Dispose()`：
+
+- **这是库的责任**：托盘图标是系统级资源，只属于本进程却由 explorer 持有；一旦进程退出而不撤销，
+  它就留在通知区，用户只能把鼠标划过去等它自己消失。"记得 Dispose"不该是调用方的义务。
+- **顺序**：`Dispose()` 里是"先托盘、后后端"——托盘的原生资源要靠后端所在的消息循环/主线程清理；
+  而 Windows 托盘后端的专属消息窗口要等 `NIM_DELETE` 做完才销毁。
+- **异常不外抛**：退出路径不该因为清理失败而崩，所以包了 try/catch 并记调试日志。
+- **强杀仍会留图标**：`Environment.Exit`、崩溃、任务管理器结束进程都跳过了清理路径，
+  这是进程模型的固有限制（除非另外挂 job object 或调试钩子）。这条写进 README 的边界说明。
 
 **复利**：全局快捷键的语法直接复用了第一批就落地的 `OrielAccelerator`（同一套语法、同一份 41 个单测），
 平台侧只多了一张"规范化键名 → 原生键码"的映射表（Windows 是 VK 码、macOS 是 keyCode，两者毫无关系，
@@ -888,6 +907,81 @@ Windows 的原生对话框有 `lpstrDefExt` 会自动补；GTK 与 Cocoa 不会�
   对话框**不进自检**：它弹出后会一直等用户操作，在无头环境里只会把自检挂住。
   清单在 `docs/ROADMAP.md`。
 
+## 内建右键菜单：默认只留剪切/复制/粘贴（2026-09-30）
+
+需求原话是"默认过滤右键菜单，仅保留剪切、复制、粘贴"。
+
+### 为什么是这三项，而不是全留或全禁
+
+内建菜单默认带着「后退 / 前进 / 刷新 / 另存为 / 打印 / 检查元素」。对应用窗口来说多数是噪音，
+而且有几项**会造成真实损失**：
+
+- **刷新**在单页应用里等于丢掉整页状态（用户填了一半的表单、正在编辑的内容）；
+- **另存为**存下来的是一份孤立的 HTML 外壳——它引用的脚本与样式不在里面；
+- **后退**会跑出应用自己的路由（页面路由跟浏览器的会话历史不是一回事）。
+
+留下的三项则是**只有原生侧能给**的能力：粘贴要把系统剪贴板的内容送进页面编辑区，
+而页面自己做不到（`document.execCommand('paste')` 在现代浏览器里被禁用），
+原生菜单项的行为由渲染引擎直接完成。**这决定了实现方式**：不能"禁掉默认菜单、自己画一个"，
+必须**改内建菜单本身**——另造一个菜单就失去了这三项的真实行为。
+
+### 三平台各自的钩子
+
+| 平台 | 钩子 | 关键点 |
+|---|---|---|
+| Windows | `CoreWebView2.ContextMenuRequested` | 事件在 `ICoreWebView2_11` 上，但 **WebView2Aot 包内部已完成接口转换**，不需要自己 QueryInterface。过滤后菜单仍由 WebView2 弹 |
+| macOS | `WKUIDelegate` 的 `webView:willOpenMenu:withEvent:` | 拿到的是现成的 `NSMenu`（`v@:@@@`，**三个**对象参数）。此前项目没有任何 UIDelegate，为此新建了一个类 |
+| Linux | `context-menu` 信号 | 语义与另两个平台**相反**：返回 `TRUE` 表示"应用自己接管"，WebKit 反而什么都不弹。要的是 `FALSE`——让 WebKit 用它自己的、已被我们改过项的菜单去弹 |
+
+三处都没有复用现有的 `Win32Menu`/`GtkMenu`/`MacOSMenu`——那三个类只做"构造并弹出自己的菜单"，
+没有遍历/删除能力，而这里要操作的是**别人构造好的**菜单对象。
+
+macOS 侧同样**不碰 `WKWebView` 的方法表**（与拖放同一个理由）：`class_addMethod` 加不上
+（WebKit 已实现那些 selector），`method_setImplementation` 又会替换掉 WebKit 的全局实现。
+委托才是标准扩展点。
+
+### 判断"这是哪一项"：三平台用的都是**未本地化**的标识
+
+这是本功能最容易写错的地方——三平台各有一套"给代码看的标识"和"给用户看的文本"，
+拿后者做判断就会在换语言时静默失效：
+
+| 平台 | 该用 | 不该用 |
+|---|---|---|
+| Windows | `Name`（如 `"copy"`，未本地化的英文小驼峰） | `Label`（中文环境下是「复制」） |
+| macOS | `identifier`（`WKMenuItemIdentifierCopy`） | `title`（中文环境下是「拷贝」） |
+| Linux | `stock action` 编号（`WebKitContextMenuAction`） | 项的文字 |
+
+顺带纠正一个**我一开始就认错的维度**：Windows 的 `COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND`
+说的是**控件种类**（Command / CheckBox / Radio / Separator / Submenu），不是"是不是复制"。
+拿它做判断会编译通过但语义完全错——这类错误编译器帮不上忙。
+
+### 为什么把名单抽成纯函数
+
+Cocoa 的字符串与 WebKitGTK 的整数在 C# 里都**没有编译期检查**：写错了不报错，
+只表现为"右键菜单里多一项或少一项"，而且要人眼去看。所以它们被集中到
+`OrielContextMenuSupport`，于是这些判断能在 Linux 的 CI 上被单测覆盖，**包括为 Windows 与 Cocoa 写的那两组**。
+
+48 个用例里，最有价值的是两类「相邻/相似」陷阱：
+
+- `copyImage` / `copyLink` / `copyImageUrl`——都以 `copy` 开头，但不是"复制选区"；
+- WebKitGTK 的 `13`（RELOAD）与 `17`（DELETE）——**就贴在** `14/15/16` 两侧，编号数错一位就会把
+  「刷新」或「删除」留在菜单里。两个边界值因此被显式写成用例。
+
+`Name` 的比较保持**大小写敏感**（官方口径是小驼峰）：若平台哪天改成 `"Copy"`，测试会立刻红，
+而不是静默地"看起来也能用"。
+
+### 默认值改了行为，这是有意的
+
+在加这个功能之前，内建菜单是**原样弹出**的（各平台的默认）。改成默认 `Editing` 是一个**行为变更**——
+但正是需求要的"默认过滤"。需要原样的调用方一个属性就能改回去（`Native`），
+运行时也能随时切（过滤发生在每次弹出时，不缓存策略）。
+
+### 这一批能证明什么、不能证明什么
+
+- **能**：三平台保留名单的正确性（含相邻边界与相似名称的陷阱）、三平台编译通过、既有能力无回归。
+- **不能**：菜单弹出后实际剩下哪几项、菜单的样子、以及"剪切/复制/粘贴是否真的作用于页面选区"。
+  这三件事都要人眼在真机上点一次。清单在 `docs/ROADMAP.md`。
+
 ## 文件拖放：三平台各走哪条路，以及为什么这条最省（2026-09-30）
 
 能力面：把外部文件拖进窗口 → 得到**本地路径列表**（`window.FileDropped`）。
@@ -963,7 +1057,7 @@ CI 能断言的东西与人眼要确认的东西是两批。为此 demo 加了�
 自检的 stdout 在那儿根本看不见——而这一批恰好全是"操作了才有回调"的东西，
 看不见回调就等于没验证。
 
-与 `--shell-selftest` 的分工：那个是**无人自检**（跑完即退，给 CI），这个是**给人看的**（停在那里等你点）。
+与 `--selftest shell` 的分工：那个是**无人自检**（跑完即退，给 CI），这个是**给人看的**（停在那里等你点）。
 
 ### 通知：把"提交成功"与"用户看见"分开
 

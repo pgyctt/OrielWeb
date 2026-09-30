@@ -6,7 +6,7 @@ namespace OrielDemo;
 /// 剪贴板自检：文本与 HTML 的写→读回，以及两种类型互不干扰。
 /// </summary>
 /// <remarks>
-/// 由 <c>--clipboard-selftest</c> 启用。剪贴板 API 是同步的，所以断言在 Loaded 回调（UI 线程）里
+/// 由 <c>--selftest clipboard</c> 启用。剪贴板 API 是同步的，所以断言在 Loaded 回调（UI 线程）里
 /// 一次跑完，不需要 NavSelfTest / IpcSelfTest 那种事件驱动状态机。
 ///
 /// 两点要说明：

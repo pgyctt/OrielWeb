@@ -25,6 +25,7 @@ internal static unsafe class MacOSObjCClasses
     private static nint s_navigationDelegateClass;
     private static nint s_pumpHelperClass;
     private static nint s_dropViewClass;
+    private static nint s_uiDelegateClass;
 
     // ---- 状态注册表（实例指针 → 托管状态；实例被 retain，指针稳定）----
     // 仅在 AppKit/WebKit 主线程访问，不跨线程；窗口关闭时经 Remove* 清理，
@@ -34,6 +35,7 @@ internal static unsafe class MacOSObjCClasses
     private static readonly Dictionary<nint, MacOSWindowHost> NavigationDelegateStates = [];
     private static readonly Dictionary<nint, MacOSWebMessageHandler> ScriptHandlerStates = [];
     private static readonly Dictionary<nint, MacOSWindowHost> DropViewStates = [];
+    private static readonly Dictionary<nint, MacOSWindowHost> UIDelegateStates = [];
 
     private static nint AppDelegateClass => Ensure(ref s_appDelegateClass, BuildAppDelegate);
     private static nint WindowDelegateClass => Ensure(ref s_windowDelegateClass, BuildWindowDelegate);
@@ -41,6 +43,7 @@ internal static unsafe class MacOSObjCClasses
     private static nint NavigationDelegateClass => Ensure(ref s_navigationDelegateClass, BuildNavigationDelegate);
     private static nint PumpHelperClass => Ensure(ref s_pumpHelperClass, BuildPumpHelper);
     private static nint DropViewClass => Ensure(ref s_dropViewClass, BuildDropView);
+    private static nint UIDelegateClass => Ensure(ref s_uiDelegateClass, BuildUIDelegate);
 
     private static nint Ensure(ref nint cached, Func<nint> build)
     {
@@ -374,6 +377,56 @@ internal static unsafe class MacOSObjCClasses
         return 0;
     }
 
+    // ---- WKUIDelegate ----
+
+    /// <summary>
+    /// 构建 UI 委托类，目前只为了一件事：<c>webView:willOpenMenu:withEvent:</c>。
+    /// </summary>
+    /// <remarks>
+    /// 这是 macOS 上唯一能在**内建菜单弹出前**动它的钩子：拿到的是现成的 <c>NSMenu</c>，
+    /// 我们删掉不要的项，剩下的仍由 WebKit 自己弹——保留项的行为（真的剪切/复制/粘贴到选区）
+    /// 因此不受影响。
+    /// <para>
+    /// 与拖放同理，<b>不碰 <c>WKWebView</c> 的方法表</b>：那是 WebKit 自己的实现，替换它是全局改动。
+    /// 委托才是标准扩展点。
+    /// </para>
+    /// <para>
+    /// <c>willOpenMenu</c> 是 macOS 11+ 的可选方法，旧系统根本不回调它——那时菜单是原样的，
+    /// 属于"过滤没生效但不出错"的降级。可以接受：它不会让任何东西坏掉。
+    /// </para>
+    /// </remarks>
+    private static nint BuildUIDelegate()
+    {
+        var cls = ObjCRuntime.objc_allocateClassPair(ObjCRuntime.GetClass("NSObject"), "OrielUIDelegate", 0);
+        // (WKWebView *, NSMenu *, NSEvent *) → void：三个对象参数，所以是 v@:@@@
+        AddMethod(cls, "webView:willOpenMenu:withEvent:", &WillOpenMenu, "v@:@@@");
+        ObjCRuntime.objc_registerClassPair(cls);
+        return cls;
+    }
+
+    /// <remarks>
+    /// 返回类型写成 <c>nint</c> 而 ObjC 声明是 <c>void</c>：本文件的 trampoline 一律用 <c>nint</c>
+    /// （调用方不读返回值，因此无害），这样只需维护有限几个 <c>AddMethod</c> 重载。
+    /// </remarks>
+    [UnmanagedCallersOnly]
+    private static nint WillOpenMenu(nint self, nint sel, nint webview, nint menu, nint nsEvent)
+    {
+        try
+        {
+            if (UIDelegateStates.TryGetValue(self, out var host))
+            {
+                host.FilterContextMenu(menu);
+            }
+        }
+        catch (Exception ex)
+        {
+            // 过滤失败就让菜单原样弹出；异常不得穿越 ObjC 边界
+            System.Diagnostics.Debug.WriteLine($"[OrielWeb] willOpenMenu: 过滤失败：{ex}");
+        }
+
+        return 0;
+    }
+
     // ---- 拖放视图 ----
 
     /// <summary>
@@ -496,6 +549,7 @@ internal static unsafe class MacOSObjCClasses
     // ------------------------------------------------------------------
 
     internal static void RemoveDropView(nint instance) => DropViewStates.Remove(instance);
+    internal static void RemoveUIDelegate(nint instance) => UIDelegateStates.Remove(instance);
     internal static void RemoveWindowDelegate(nint instance) => WindowDelegateStates.Remove(instance);
     internal static void RemoveNavigationDelegate(nint instance) => NavigationDelegateStates.Remove(instance);
     internal static void RemoveScriptHandler(nint instance) => ScriptHandlerStates.Remove(instance);
@@ -537,6 +591,13 @@ internal static unsafe class MacOSObjCClasses
     {
         var instance = AllocInit(DropViewClass);
         DropViewStates[instance] = host;
+        return instance;
+    }
+
+    internal static nint CreateUIDelegate(MacOSWindowHost host)
+    {
+        var instance = AllocInit(UIDelegateClass);
+        UIDelegateStates[instance] = host;
         return instance;
     }
 }

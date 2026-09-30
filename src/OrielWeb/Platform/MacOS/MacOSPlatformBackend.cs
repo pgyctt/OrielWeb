@@ -140,7 +140,7 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
         MacOSMenu.ClearMainMenu();
     }
 
-    // ---- 全局快捷键 / 徽章 ----
+    // ---- 全局快捷键 ----
 
     private MacOSGlobalShortcuts? _shortcuts;
 
@@ -167,22 +167,6 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
 
     public void UnregisterAllGlobalShortcuts() => _shortcuts?.UnregisterAll();
 
-    /// <summary>Dock 徽章：<c>NSApplication.dockTile.badgeLabel</c>（文字或数字；null/空清除）。</summary>
-    public void SetBadge(string? label)
-    {
-        nint app = ObjCRuntime.SendId(
-            ObjCRuntime.GetClassOrThrow("NSApplication"), ObjCRuntime.Sel("sharedApplication"));
-        nint dockTile = ObjCRuntime.SendId(app, ObjCRuntime.Sel("dockTile"));
-        if (dockTile == 0)
-        {
-            return;
-        }
-
-        ObjCRuntime.SendVoidObj(
-            dockTile,
-            ObjCRuntime.Sel("setBadgeLabel:"),
-            string.IsNullOrEmpty(label) ? 0 : ObjCRuntime.MakeNSString(label));
-    }
 
     /// <summary>
     /// 应用菜单里的 role 有明确的作用目标（不像托盘那样无窗口可用）：取第一个窗口。

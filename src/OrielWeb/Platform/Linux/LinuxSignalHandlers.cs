@@ -95,6 +95,9 @@ internal static unsafe class LinuxSignalHandlers
         // 拖放载荷：只在 webview 上接（落点也设在 webview 上，见 LinuxWindowHost.Create）
         GtkNative.GSignalConnectData(webview, "drag-data-received",
             (delegate* unmanaged<nint, nint, int, int, nint, uint, uint, nint, void>)&OnDragDataReceivedTrampoline, 0, 0, 0);
+        // 内建右键菜单：签名 (WebKitWebView*, WebKitContextMenu*, GdkEvent*, WebKitHitTestResult*, gpointer) → gboolean
+        GtkNative.GSignalConnectData(webview, "context-menu",
+            (delegate* unmanaged<nint, nint, nint, nint, nint, int>)&OnContextMenuTrampoline, 0, 0, 0);
     }
 
     // ------------------------------------------------------------------
@@ -232,6 +235,33 @@ internal static unsafe class LinuxSignalHandlers
         {
             GtkNative.GtkDragFinish(context, paths.Count > 0, false, time);
         }
+    }
+
+    /// <summary>
+    /// WebKitGTK 的 <c>context-menu</c>（内建右键菜单即将弹出）。
+    /// 信号签名：<c>(WebKitWebView*, WebKitContextMenu*, GdkEvent*, WebKitHitTestResult*, gpointer) → gboolean</c>。
+    /// </summary>
+    /// <remarks>
+    /// 返回 <c>FALSE</c> 是**故意的**：这个信号的约定是「返回 TRUE = 应用自己接管、WebKit 什么也不弹」。
+    /// 我们要的恰恰相反——让 WebKit 用它自己的（已被我们改过项的）菜单去弹，
+    /// 这样留下来的剪切/复制/粘贴仍是引擎实现，真的能作用到页面选区上。
+    /// </remarks>
+    [UnmanagedCallersOnly]
+    internal static int OnContextMenuTrampoline(nint webview, nint menu, nint gdkEvent, nint hitTestResult, nint data)
+    {
+        try
+        {
+            if (WebviewStates.TryGetValue(webview, out var host))
+            {
+                host.FilterContextMenu(menu);
+            }
+        }
+        catch
+        {
+            // 过滤失败就让菜单原样弹出，不影响右键本身
+        }
+
+        return 0;
     }
 
     /// <summary>

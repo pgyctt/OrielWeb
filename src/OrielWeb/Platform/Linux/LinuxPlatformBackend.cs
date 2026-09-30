@@ -184,12 +184,6 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
         remove { }
     }
 
-    /// <summary>
-    /// 徽章：Linux 没有跨桌面的方案（Unity 的 launcher badge 是桌面专属的），因此是 no-op。
-    /// </summary>
-    public void SetBadge(string? label)
-    {
-    }
 
     // ---- 开机自启（freedesktop 的 autostart 目录）----
 

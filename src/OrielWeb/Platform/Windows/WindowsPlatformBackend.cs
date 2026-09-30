@@ -146,7 +146,7 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         }
     }
 
-    // ---- 全局快捷键 / 徽章 ----
+    // ---- 全局快捷键 ----
 
     private Win32GlobalShortcuts? _shortcuts;
 
@@ -172,15 +172,6 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
     public bool UnregisterGlobalShortcut(string id) => _shortcuts?.Unregister(id) ?? false;
 
     public void UnregisterAllGlobalShortcuts() => _shortcuts?.UnregisterAll();
-
-    /// <summary>
-    /// 徽章在 Windows 上需要自绘 overlay 图标（<c>ITaskbarList3.SetOverlayIcon</c> + GDI 画位图），
-    /// 当前是 **no-op**（已记入 ROADMAP）。不做半吊子实现的理由：调用方会以为设置成功了，
-    /// 而"设了但看不见"比"明确不支持"更难查。
-    /// </summary>
-    public void SetBadge(string? label)
-    {
-    }
 
     // ---- 开机自启（HKCU 的 Run 键）----
 

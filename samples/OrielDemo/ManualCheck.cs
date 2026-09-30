@@ -85,9 +85,9 @@ internal static class ManualCheck
         tray.Tooltip = "OrielWeb 手动验证";
         tray.Clicked += () => Log("托盘图标被点击");
         tray.MenuItemClicked += id => Log($"托盘菜单项被点击：{id}");
-        // 原始事件：排查"点了没反应"时全靠它——有事件说明送达正常，一个都没有说明通道有问题
-        tray.RawEvent += text => Log($"托盘原始事件：{text}");
         tray.SetMenu(TrayMenu());
+        // 不再订阅 RawEvent：它一次点击会刷好几行（鼠标移动也回调），把真正的结果淹掉。
+        // 库里的这个事件保留着——排查"点了完全没反应"时它仍然是最快的手段。
     }
 
     /// <summary>托盘菜单：把各形态都摆上一份，点每一项都会回到日志里。</summary>
@@ -260,17 +260,26 @@ public sealed partial class ManualCommands
     [OrielCommand("manual.shortcutOff")]
     public static bool ShortcutOff() => App.UnregisterGlobalShortcut(Shortcut);
 
-    // ---- 徽章 ----
+    // ---- 内建右键菜单（渲染引擎自己弹的那个，不是 ShowContextMenu）----
 
-    [OrielCommand("manual.badgeOn")]
-    public static void BadgeOn()
+    [OrielCommand("manual.cmEditing")]
+    public static void ContextMenuEditing() => SetContextMenuPolicy(OrielContextMenuPolicy.Editing);
+
+    [OrielCommand("manual.cmNative")]
+    public static void ContextMenuNative() => SetContextMenuPolicy(OrielContextMenuPolicy.Native);
+
+    [OrielCommand("manual.cmDisabled")]
+    public static void ContextMenuDisabled() => SetContextMenuPolicy(OrielContextMenuPolicy.Disabled);
+
+    private static void SetContextMenuPolicy(OrielContextMenuPolicy policy)
     {
-        App.SetBadge("3");
-        ManualCheck.Log("徽章 API 已调用（Windows 上是文档化的 no-op；macOS 会改 Dock 徽章）");
-    }
+        foreach (WebviewWindow window in App.Windows)
+        {
+            window.ContextMenuPolicy = policy;
+        }
 
-    [OrielCommand("manual.badgeOff")]
-    public static void BadgeOff() => App.SetBadge(null);
+        ManualCheck.Log($"内建右键菜单策略 → {policy}：在页面任意处（或下面那个输入框里）右键看效果");
+    }
 
     // ---- 对话框 ----
 

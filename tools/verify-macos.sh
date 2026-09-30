@@ -183,7 +183,8 @@ section "机器断言自检：导航 / IPC / 剪贴板"
 SELFTEST_FAILED=0
 for mode in nav ipc clipboard theme; do
     selftest_log="$OUT/selftest-$mode.log"
-    "$APP_EXE" "--$mode-selftest" >"$selftest_log" 2>&1 &
+    # 自检开关已合并：--selftest <名字>；输出结论行格式未变（NAV-SELFTEST: PASS 等）
+    "$APP_EXE" --selftest "$mode" >"$selftest_log" 2>&1 &
     selftest_pid=$!
     waited=0
     while kill -0 "$selftest_pid" 2>/dev/null && (( waited < 150 )); do
@@ -218,11 +219,11 @@ done
 section "单实例：双进程（机器断言）"
 # 单实例没法单进程自证：起两个进程，第二个应"立即且成功地退出"并通知首实例，
 # 第一个应收到激活请求（首实例自带 15 秒看门狗，不会挂住）。
-"$APP_EXE" --single-instance-selftest >"$OUT/si-primary.log" 2>&1 &
+"$APP_EXE" --selftest single-instance >"$OUT/si-primary.log" 2>&1 &
 si_primary_pid=$!
 sleep 5
 si_start=$(date +%s)
-"$APP_EXE" --single-instance-selftest >"$OUT/si-secondary.log" 2>&1
+"$APP_EXE" --selftest single-instance >"$OUT/si-secondary.log" 2>&1
 si_secondary_code=$?
 si_elapsed=$(( $(date +%s) - si_start ))
 wait "$si_primary_pid" 2>/dev/null

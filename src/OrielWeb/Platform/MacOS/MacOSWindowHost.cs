@@ -40,6 +40,8 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     private nint _scriptHandler;
     /// <summary>承载拖放的容器视图（webview 是它的子视图）。</summary>
     private nint _dropView;
+    /// <summary>UI 委托：目前只为 <c>willOpenMenu:</c>（过滤内建右键菜单）而存在。</summary>
+    private nint _uiDelegate;
     private volatile bool _loadedRaised;
 
     // 无边框/窗口几何跟踪（点；cocoa 坐标原点在左下）
@@ -73,6 +75,79 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     private event Action<string>? ContextMenuItemClicked;
     private event Action<OrielFileDropEventArgs>? FileDropped;
 
+    /// <summary>渲染引擎内建右键菜单的策略；见 <see cref="OrielContextMenuPolicy"/>。</summary>
+    public OrielContextMenuPolicy ContextMenuPolicy { get; set; }
+
+    /// <summary>
+    /// 内建右键菜单即将弹出（由 <c>OrielUIDelegate</c> 的 <c>willOpenMenu:</c> 调进来）。
+    /// </summary>
+    /// <remarks>
+    /// 直接修改传进来的 <c>NSMenu</c>：它由 WebKit 构造、即将由 WebKit 弹出，删掉几项之后
+    /// 保留项的 action 仍是 WebKit 的实现，所以剪切/复制/粘贴照旧作用于页面选区。
+    /// </remarks>
+    internal void FilterContextMenu(nint menu)
+    {
+        if (menu == 0)
+        {
+            return;
+        }
+
+        switch (ContextMenuPolicy)
+        {
+            case OrielContextMenuPolicy.Native:
+                return; // 平台原样
+
+            case OrielContextMenuPolicy.Disabled:
+                ObjCRuntime.SendVoid(menu, ObjCRuntime.Sel("removeAllItems"));
+                return;
+
+            default:
+                RemoveNonEditingItems(menu);
+                return;
+        }
+    }
+
+    /// <summary>只留剪切 / 复制 / 粘贴。</summary>
+    /// <remarks>
+    /// 判断依据是菜单项的 <c>identifier</c>（WebKit 公开的 <c>WKMenuItemIdentifier</c> 常量），
+    /// <b>不是</b> <c>title</c>——标题是本地化文本（中文系统上是「拷贝」、英文是 <c>Copy</c>），
+    /// 拿它判断会在换语言时静默失效。
+    /// <para>
+    /// 先取 <c>itemArray</c> 快照再删：它是不可变副本，边遍历边 <c>removeItem:</c> 不会打乱遍历。
+    /// </para>
+    /// </remarks>
+    private static void RemoveNonEditingItems(nint menu)
+    {
+        nint items = ObjCRuntime.SendId(menu, ObjCRuntime.Sel("itemArray"));
+        if (items == 0)
+        {
+            return;
+        }
+
+        int count = (int)ObjCRuntime.SendId(items, ObjCRuntime.Sel("count"));
+        for (int i = 0; i < count; i++)
+        {
+            nint item = ObjCRuntime.SendIdNint(items, ObjCRuntime.Sel("objectAtIndex:"), i);
+            if (item != 0 && !OrielContextMenuSupport.IsEditingCocoaIdentifier(ReadMenuIdentifier(item)))
+            {
+                ObjCRuntime.SendVoidObj(menu, ObjCRuntime.Sel("removeItem:"), item);
+            }
+        }
+    }
+
+    /// <summary>取菜单项的 <c>identifier</c>；旧系统没有该属性，探测后再读。</summary>
+    private static string? ReadMenuIdentifier(nint item)
+    {
+        if (!ObjCRuntime.SendBoolRetObj(
+                item, ObjCRuntime.Sel("respondsToSelector:"), ObjCRuntime.Sel("identifier")))
+        {
+            return null;
+        }
+
+        nint identifier = ObjCRuntime.SendId(item, ObjCRuntime.Sel("identifier"));
+        return identifier == 0 ? null : ObjCRuntime.ToManagedString(identifier);
+    }
+
     internal MacOSWindowHost(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, MacOSPlatformBackend backend)
     {
         _window = window;
@@ -81,6 +156,8 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         _backend = backend;
         _assetDirectory = assetDirectory;
         _title = options.Title;
+        // 策略是可写属性（运行时能改），初值取自 options
+        ContextMenuPolicy = options.ContextMenuPolicy;
         if (options.MinWidth is int minWidth) _minWidth = minWidth;
         if (options.MinHeight is int minHeight) _minHeight = minHeight;
         _messageHandler = new MacOSWebMessageHandler(this);
@@ -272,6 +349,10 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         _navigationDelegate = MacOSObjCClasses.CreateNavigationDelegate(this);
         ObjCRuntime.SendVoidObj(_webview, ObjCRuntime.Sel("setNavigationDelegate:"), _navigationDelegate);
 
+        // UI 委托：唯一用途是 willOpenMenu:（内建右键菜单弹出前过滤）
+        _uiDelegate = MacOSObjCClasses.CreateUIDelegate(this);
+        ObjCRuntime.SendVoidObj(_webview, ObjCRuntime.Sel("setUIDelegate:"), _uiDelegate);
+
         // 视图层级：contentView → OrielDropView（收拖放）→ WKWebView（渲染页面）。
         // 中间这层是拖放所必需的：协议方法得由"注册了 dragged types 的 view"实现，
         // 而 AppKit 会沿父视图链找到它（见 MacOSObjCClasses.BuildDropView 的说明）。
@@ -406,10 +487,12 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         MacOSObjCClasses.RemoveNavigationDelegate(_navigationDelegate);
         MacOSObjCClasses.RemoveScriptHandler(_scriptHandler);
         MacOSObjCClasses.RemoveDropView(_dropView);
+        MacOSObjCClasses.RemoveUIDelegate(_uiDelegate);
         _nsWindowDelegate = 0;
         _navigationDelegate = 0;
         _scriptHandler = 0;
         _dropView = 0;
+        _uiDelegate = 0;
 
         Closed?.Invoke();
         _backend.OnWindowDestroyed();

@@ -428,4 +428,38 @@ internal static unsafe partial class GtkNative
     /// <summary>释放以 null 结尾的字符串数组（<c>g_strfreev</c>：元素与数组一起释放）。</summary>
     [LibraryImport(Glib, EntryPoint = "g_strfreev")]
     internal static partial void GStrfreev(nint strv);
+
+    // ---- 内建右键菜单的过滤（webkit_context_menu_*）----
+    // 在 context-menu 信号的处理器里直接改 WebKit 构造好的菜单对象；
+    // 保留项的动作仍由 WebKit 实现，所以剪切/复制/粘贴照旧作用于页面选区。
+
+    /// <summary>
+    /// 取菜单项列表（<c>GList*</c>，节点是 <c>WebKitContextMenuItem*</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 链表**必须**用 <see cref="GListFree"/> 释放，但其中的菜单项**不归调用方**——
+    /// 它们的所有权仍在菜单上，不能逐个 unref。
+    /// </remarks>
+    [LibraryImport(WebKit, EntryPoint = "webkit_context_menu_get_items")]
+    internal static partial nint WebkitContextMenuGetItems(nint menu);
+
+    /// <summary>从菜单里移除一项（不影响其它项的所有权）。</summary>
+    [LibraryImport(WebKit, EntryPoint = "webkit_context_menu_remove")]
+    internal static partial void WebkitContextMenuRemove(nint menu, nint item);
+
+    /// <summary>移除全部项。</summary>
+    [LibraryImport(WebKit, EntryPoint = "webkit_context_menu_remove_all")]
+    internal static partial void WebkitContextMenuRemoveAll(nint menu);
+
+    /// <summary>
+    /// 取菜单项的「标准动作」编号（<c>WebKitContextMenuAction</c>）；
+    /// 应用自己插进去的项返回 <c>WEBKIT_CONTEXT_MENU_ACTION_CUSTOM</c>。
+    /// 编号与常量的对应见 <see cref="OrielContextMenuSupport"/>。
+    /// </summary>
+    [LibraryImport(WebKit, EntryPoint = "webkit_context_menu_item_get_stock_action")]
+    internal static partial int WebkitContextMenuItemGetStockAction(nint item);
+
+    /// <summary>释放 <c>GList</c> 的节点（与 <see cref="GSListFree"/> 不同：GList 是双向链表）。</summary>
+    [LibraryImport(Glib, EntryPoint = "g_list_free")]
+    internal static partial void GListFree(nint list);
 }

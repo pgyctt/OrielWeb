@@ -38,6 +38,19 @@ public sealed class OrielWindowOptions
     /// </summary>
     public bool ConsoleForwarding { get; set; }
 
+    /// <summary>
+    /// webview **内建**右键菜单的策略；默认 <see cref="OrielContextMenuPolicy.Editing"/>（只留剪切/复制/粘贴）。
+    /// </summary>
+    /// <remarks>
+    /// 只作用于渲染引擎自己弹的菜单。宿主用 <see cref="WebviewWindow.ShowContextMenu"/> 弹的自建菜单
+    /// 走的是另一条通道，不受影响。
+    /// <para>
+    /// 这是**初始值**；运行时可以改（下次右键就生效，无需重建窗口），见
+    /// <see cref="WebviewWindow.ContextMenuPolicy"/>。
+    /// </para>
+    /// </remarks>
+    public OrielContextMenuPolicy ContextMenuPolicy { get; set; } = OrielContextMenuPolicy.Editing;
+
     public OrielWindowOptions WithTitle(string title) { Title = title; return this; }
     public OrielWindowOptions WithSize(int width, int height) { Width = width; Height = height; return this; }
     public OrielWindowOptions WithMinSize(int width, int height) { MinWidth = width; MinHeight = height; return this; }
@@ -57,4 +70,7 @@ public sealed class OrielWindowOptions
 
     /// <summary>开启/关闭 console 转发；见 <see cref="ConsoleForwarding"/>。</summary>
     public OrielWindowOptions WithConsoleForwarding(bool enabled = true) { ConsoleForwarding = enabled; return this; }
+
+    /// <summary>设置内建右键菜单策略；见 <see cref="ContextMenuPolicy"/>。</summary>
+    public OrielWindowOptions WithContextMenuPolicy(OrielContextMenuPolicy policy) { ContextMenuPolicy = policy; return this; }
 }

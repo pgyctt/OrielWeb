@@ -99,6 +99,15 @@ internal interface IWindowBackend
     /// <summary>上下文菜单里的自定义项被点击，参数是该项的 <see cref="OrielMenuItem.Id"/>。</summary>
     event Action<string>? ContextMenuItemClicked;
 
+    /// <summary>
+    /// 渲染引擎**内建**右键菜单的策略（与 <see cref="ShowContextMenu"/> 是两条独立通道）。
+    /// </summary>
+    /// <remarks>
+    /// 做成可写属性而不是只走构造参数：过滤发生在**每次弹出时**，所以改完立刻生效，
+    /// 不需要重建窗口。三平台实现都只在弹出回调里读它，不缓存。
+    /// </remarks>
+    OrielContextMenuPolicy ContextMenuPolicy { get; set; }
+
     /// <summary>外部文件被拖进窗口。</summary>
     event Action<OrielFileDropEventArgs>? FileDropped;
 
@@ -179,12 +188,6 @@ internal interface IPlatformBackend : IDisposable
 
     /// <summary>某个已注册的快捷键被按下；参数是注册时的 <c>id</c>（规范化串）。</summary>
     event Action<string>? GlobalShortcutActivated;
-
-    /// <summary>
-    /// 设置任务栏/Dock 徽章（<c>null</c> 或空串表示清除）。平台差异见 README：
-    /// macOS 是 Dock 徽章，Windows 需要自绘 overlay 图标、当前为 no-op，Linux 没有跨桌面方案。
-    /// </summary>
-    void SetBadge(string? label);
 
     /// <summary>
     /// 启用开机自启。<paramref name="id"/> 是应用标识（注册表值名 / .desktop 文件名 / LaunchAgent Label），
