@@ -210,6 +210,9 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         LinuxSignalHandlers.RegisterManager(_userContentManager, _messageHandler);
         LinuxSignalHandlers.ConnectSignals(_gtkWindow, _webview, _userContentManager);
 
+        // 拖放落点：注册在 webview 上（信号连接在上一条里，载荷解析在 trampoline 里）
+        EnableFileDrop(_webview);
+
         GtkNative.GtkContainerAdd(_gtkWindow, _webview);
 
         // 窗口图标：X11 下写入 _NET_WM_ICON（可用 xprop 验证）；Wayland 下由合成器决定，通常忽略。

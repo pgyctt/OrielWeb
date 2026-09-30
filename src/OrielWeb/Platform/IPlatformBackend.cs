@@ -99,6 +99,9 @@ internal interface IWindowBackend
     /// <summary>上下文菜单里的自定义项被点击，参数是该项的 <see cref="OrielMenuItem.Id"/>。</summary>
     event Action<string>? ContextMenuItemClicked;
 
+    /// <summary>外部文件被拖进窗口。</summary>
+    event Action<OrielFileDropEventArgs>? FileDropped;
+
     Task<string> ExecuteScriptAsync(string script);
     void PostMessageAsJson(string json);
 

@@ -38,6 +38,8 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     private nint _webview;
     private nint _navigationDelegate;
     private nint _scriptHandler;
+    /// <summary>承载拖放的容器视图（webview 是它的子视图）。</summary>
+    private nint _dropView;
     private volatile bool _loadedRaised;
 
     // 无边框/窗口几何跟踪（点；cocoa 坐标原点在左下）
@@ -69,6 +71,7 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     private event Action<OrielConsoleMessageEventArgs>? ConsoleMessage;
     private event Action<OrielMessageReceivedEventArgs>? MessageReceived;
     private event Action<string>? ContextMenuItemClicked;
+    private event Action<OrielFileDropEventArgs>? FileDropped;
 
     internal MacOSWindowHost(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, MacOSPlatformBackend backend)
     {
@@ -99,6 +102,7 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     event Action<OrielConsoleMessageEventArgs>? IWindowBackend.ConsoleMessage { add => ConsoleMessage += value; remove => ConsoleMessage -= value; }
     event Action<OrielMessageReceivedEventArgs>? IWindowBackend.MessageReceived { add => MessageReceived += value; remove => MessageReceived -= value; }
     event Action<string>? IWindowBackend.ContextMenuItemClicked { add => ContextMenuItemClicked += value; remove => ContextMenuItemClicked -= value; }
+    event Action<OrielFileDropEventArgs>? IWindowBackend.FileDropped { add => FileDropped += value; remove => FileDropped -= value; }
 
     public bool IsMaximized => ObjCRuntime.SendBoolRet(_nsWindow, ObjCRuntime.Sel("isZoomed"));
 
@@ -176,6 +180,10 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
             ContextMenuItemClicked?.Invoke(id);
         }
     }
+
+    /// <summary>拖放视图解析出的本地路径（由 <c>MacOSObjCClasses</c> 的 trampoline 调用）。</summary>
+    internal void OnFilesDropped(IReadOnlyList<string> paths)
+        => FileDropped?.Invoke(new OrielFileDropEventArgs(paths));
 
     // ------------------------------------------------------------------
     // 创建
@@ -264,10 +272,25 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         _navigationDelegate = MacOSObjCClasses.CreateNavigationDelegate(this);
         ObjCRuntime.SendVoidObj(_webview, ObjCRuntime.Sel("setNavigationDelegate:"), _navigationDelegate);
 
-        // WebView 填满窗口内容区，并随窗口尺寸自动调整
+        // 视图层级：contentView → OrielDropView（收拖放）→ WKWebView（渲染页面）。
+        // 中间这层是拖放所必需的：协议方法得由"注册了 dragged types 的 view"实现，
+        // 而 AppKit 会沿父视图链找到它（见 MacOSObjCClasses.BuildDropView 的说明）。
         var contentView = ObjCRuntime.SendId(_nsWindow, ObjCRuntime.Sel("contentView"));
+
+        _dropView = MacOSObjCClasses.CreateDropView(this);
+        ObjCRuntime.SendVoidDouble4(_dropView, ObjCRuntime.Sel("setFrame:"), 0, 0, width, height);
+        ObjCRuntime.SendVoidObj(contentView, ObjCRuntime.Sel("addSubview:"), _dropView);
+        ObjCRuntime.SendVoidNint(_dropView, ObjCRuntime.Sel("setAutoresizingMask:"), NSViewWidthSizable | NSViewHeightSizable);
+
+        // 只受理文件 URL："public.file-url" 是 NSPasteboardTypeFileURL 的底层值
+        ObjCRuntime.SendVoidObj(
+            _dropView,
+            ObjCRuntime.Sel("registerForDraggedTypes:"),
+            MakeStringArray(["public.file-url"]));
+
+        // WebView 填满容器，并随容器尺寸自动调整
         ObjCRuntime.SendVoidDouble4(_webview, ObjCRuntime.Sel("setFrame:"), 0, 0, width, height);
-        ObjCRuntime.SendVoidObj(contentView, ObjCRuntime.Sel("addSubview:"), _webview);
+        ObjCRuntime.SendVoidObj(_dropView, ObjCRuntime.Sel("addSubview:"), _webview);
         ObjCRuntime.SendVoidNint(_webview, ObjCRuntime.Sel("setAutoresizingMask:"), NSViewWidthSizable | NSViewHeightSizable);
 
         // 最小尺寸
@@ -382,9 +405,11 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         MacOSObjCClasses.RemoveWindowDelegate(_nsWindowDelegate);
         MacOSObjCClasses.RemoveNavigationDelegate(_navigationDelegate);
         MacOSObjCClasses.RemoveScriptHandler(_scriptHandler);
+        MacOSObjCClasses.RemoveDropView(_dropView);
         _nsWindowDelegate = 0;
         _navigationDelegate = 0;
         _scriptHandler = 0;
+        _dropView = 0;
 
         Closed?.Invoke();
         _backend.OnWindowDestroyed();

@@ -126,6 +126,7 @@ internal partial class Win32WindowHost : IWindowBackend
     event Action<OrielConsoleMessageEventArgs>? IWindowBackend.ConsoleMessage { add => ConsoleMessage += value; remove => ConsoleMessage -= value; }
     event Action<OrielMessageReceivedEventArgs>? IWindowBackend.MessageReceived { add => MessageReceived += value; remove => MessageReceived -= value; }
     event Action<string>? IWindowBackend.ContextMenuItemClicked { add => ContextMenuItemClicked += value; remove => ContextMenuItemClicked -= value; }
+    event Action<OrielFileDropEventArgs>? IWindowBackend.FileDropped { add => FileDropped += value; remove => FileDropped -= value; }
 
     public bool IsMaximized => Win32.IsZoomed(_hwnd);
 
@@ -146,6 +147,62 @@ internal partial class Win32WindowHost : IWindowBackend
     // ------------------------------------------------------------------
 
     private event Action<string>? ContextMenuItemClicked;
+    private event Action<OrielFileDropEventArgs>? FileDropped;
+
+    /// <summary>
+    /// 处理 <c>WM_DROPFILES</c>：从 HDROP 里逐个取路径，完成后 <c>DragFinish</c> 释放。
+    /// </summary>
+    /// <remarks>
+    /// 取路径要**问两次**：第一次传 0 拿长度，第二次才把字符串读进缓冲区。
+    /// 少一次就会得到一个截断的路径（或用固定大小缓冲区去猜）。HDROP 的生命周期由我们负责，
+    /// 所以放在 <c>finally</c> 里释放——中途抛异常也不能漏。
+    /// </remarks>
+    private void HandleFileDrop(nint hDrop)
+    {
+        if (hDrop == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            uint count = Win32.DragQueryFileW(hDrop, 0xFFFFFFFF, 0, 0);
+            var paths = new List<string>((int)count);
+
+            for (uint i = 0; i < count; i++)
+            {
+                uint length = Win32.DragQueryFileW(hDrop, i, 0, 0);
+                if (length == 0)
+                {
+                    continue;
+                }
+
+                nint buffer = Marshal.AllocHGlobal((int)(length + 1) * sizeof(char));
+                try
+                {
+                    Marshal.WriteInt16(buffer, 0);
+                    if (Win32.DragQueryFileW(hDrop, i, buffer, length + 1) > 0
+                        && Marshal.PtrToStringUni(buffer) is { Length: > 0 } path)
+                    {
+                        paths.Add(path);
+                    }
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(buffer);
+                }
+            }
+
+            if (paths.Count > 0)
+            {
+                FileDropped?.Invoke(new OrielFileDropEventArgs(paths));
+            }
+        }
+        finally
+        {
+            Win32.DragFinish(hDrop);
+        }
+    }
 
     /// <summary>
     /// 上下文菜单：构建 → 在鼠标位置弹出（**阻塞**）→ 释放。
@@ -249,7 +306,9 @@ internal partial class Win32WindowHost : IWindowBackend
             // 无重定向表面：窗口内容完全由 DirectComposition 提供，WebView2 作为视觉合成进来。
             // 这是 Composition 宿主的前提，也让 WebView2 不再是子窗口——边缘的 WM_NCHITTEST
             // 因此能到达本窗口，系统原生的边缘调整大小随之可用。
-            Win32Constants.WS_EX_NOREDIRECTIONBITMAP,
+            // 接受文件拖放：Composition 宿主下 WebView2 不是子窗口（没有自己的 HWND），
+            // 所以拖到窗口任意位置都会落到本窗口的 WM_DROPFILES，不会被 webview 截走。
+            Win32Constants.WS_EX_NOREDIRECTIONBITMAP | Win32Constants.WS_EX_ACCEPTFILES,
             s_windowClassNamePtr,
             windowNamePtr,
             style,
@@ -630,6 +689,10 @@ internal partial class Win32WindowHost : IWindowBackend
                 Win32.DestroyWindow(hwnd);
                 return 0;
 
+            case Win32Constants.WM_DROPFILES:
+                HandleFileDrop((nint)wParam);
+                return 0;
+
             case Win32Constants.WM_DESTROY:
                 OnWindowDestroyedCore();
                 return 0;
@@ -734,6 +797,15 @@ internal partial class Win32WindowHost : IWindowBackend
             // 组合控制器同时实现 ICoreWebView2Controller（bounds / visible / focus 等）
             _controller = _compositionController.Object as ICoreWebView2Controller
                 ?? throw new InvalidOperationException("组合控制器未实现 ICoreWebView2Controller。");
+
+            // 关掉 WebView2 自带的拖放：它默认会把外部文件拖放接管过去（转成页面的 drag 事件），
+            // 而页面拿不到文件路径。关掉之后拖放落到窗口的 WM_DROPFILES，路径由原生侧给出。
+            // 成员在 ICoreWebView2Controller4 上：老运行时没有这个接口，因此是可选增强（转换失败即跳过），
+            // 这也避免"运行时版本决定行为"变成静默失败——跳过时下面的 WM_DROPFILES 路径仍然可用。
+            if (_controller is ICoreWebView2Controller4 controller4)
+            {
+                controller4.AllowExternalDrop = false;
+            }
 
             _compositionEvents = new CoreWebView2CompositionControllerEvents(_compositionController);
             _compositionEvents.CursorChanged += OnCursorChanged;

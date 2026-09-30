@@ -108,7 +108,7 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 | 剪贴板（文本 / HTML 读写） | ✅ 完成 | Windows `CF_UNICODETEXT` + `HTML Format`（CF_HTML，偏移按字节）；macOS `NSPasteboard`；Linux `gtk_clipboard_*`（HTML 走自定义 target）。三平台写 HTML 时都带**纯文本回退** | `--clipboard-selftest` 三平台 CI 通过；**跨进程互操作**只在同进程内验证过，见待真机清单 |
 | 单实例（第二实例激活首实例并退出） | ✅ 完成 | `SingleInstance(id, onActivate)`：**独占文件锁**判定 + 命名管道通知；第二个实例通知后立即以退出码 0 退出 | 三平台 CI 的双进程断言通过（第二个 0 秒退出并通知、第一个收到激活） |
 | 系统主题检测（dark/light + 变更事件） | ✅ 完成 | `OrielApp.Theme` + `ThemeChanged` + 页面 `theme.changed`（每次导航后补推）。检测：注册表 + `WM_SETTINGCHANGE` / GtkSettings + `notify::` / `NSUserDefaults` + 系统通知 | `--theme-selftest` 三平台通过；Linux 另跑两次（`GTK_THEME` 造值）断言深浅结论**不同**；**切换实时性**见待真机清单 |
-| 拖放（文件拖入 → 路径列表 + 事件） | ⏳ 未开始 | — | 逻辑可注入事件测，真实拖拽需真机 |
+| 拖放（文件拖入 → 路径列表 + 事件） | ✅ 已实现 | Windows：窗口加 `WS_EX_ACCEPTFILES` → `WM_DROPFILES` → `DragQueryFileW`（本库是 Composition 宿主，WebView2 **不是子窗口**，拖放会落到本窗口——不必手写 OLE `IDropTarget`、不必 OLE 初始化），并关掉 WebView2 的 `AllowExternalDrop` 以免它截走拖放；macOS：自定义 `NSView` 子类承载 `NSDraggingDestination`，webview 作为其子视图（**不碰 `WKWebView` 的方法表**，AppKit 沿父视图链查找落点）；Linux：`gtk_drag_dest_set(webview, "text/uri-list")` + `drag-data-received` | **23 个用例**覆盖 URI→本地路径（百分号编码含非 ASCII、`+` 不等于空格、Windows 盘符、`localhost` 与远程主机、非 file 协议、批量保序）；`--shell-selftest` 走完注册路径并断言事件订阅可用（`FILE-DROP-SUBSCRIBED`）。**真实拖拽整体未验证**——无头环境造不出 XDND/OLE 会话，见下 |
 | 系统托盘（`AddTray` / `app.Tray`） | ✅ 已实现；Linux 取证通过 | Windows `Shell_NotifyIconW` + `TrackPopupMenuEx`；macOS `NSStatusBar`/`NSMenu`；Linux GTK3 `GtkStatusIcon`/`GtkMenu`（用 GTK 自带而非 AppIndicator，理由见 DECISIONS） | Windows/macOS 编译验证；Linux 由 `--shell-selftest` 断言"托盘创建 + 一份含分隔线/勾选/禁用/子菜单/role 的菜单能设进去、进程不崩"，并由 `tools/verify-linux-shell.sh` 采集证据。**图标可见性需人眼**（见下） |
 | 系统通知（`ShowNotification`） | ✅ 已实现；Linux 硬断言 | Windows 用**独立的隐藏托盘项**发 `NIF_INFO` 气球（因此不启用托盘也能发）；macOS `osascript`；Linux `notify-send` | Linux：真 `notify-send` → 会话总线 → 假通知服务，断言**标题与正文逐字符正确**（`tools/verify-linux-shell.sh`）。点击上报仅 Windows 支持，另两个平台**显式空实现**（不是"忘触发"） |
 | 对话框（消息框 / 打开 / 保存 / 选文件夹） | ✅ 已实现（扩展版） | 打开可多选、可给结构化过滤器、可指定初始目录；新增文件夹选择。Windows `GetOpenFileNameW`（`OFN_ALLOWMULTISELECT`+`OFN_EXPLORER`）/ `SHBrowseForFolderW`；macOS `NSOpenPanel`（`URLs` 数组）/ `NSSavePanel`；Linux `GtkFileChooserDialog`（多选读 `GSList`）。过滤器在三种平台形状间的转换与 Win32 多选缓冲区的解析都在纯函数里（`OrielFileFilter` / `OrielFileDialogSupport`） | **30 个单测**（在 Linux CI 上跑，含为 Windows 写的用例）：解析旧字符串、Win32 双 null 渲染、GTK 的 `*.*` 归一、Cocoa 扩展名提取、Win32 多选「单段 vs 多段」两种形状、补扩展名。**对话框外观与交互需人眼**（见下） |
@@ -160,6 +160,21 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
   `OrielFileDialogSupport.ParseWin32MultiSelect`，那里的单段/多段分支有单测；
   文件夹选择器**不支持初始目录**，属已知取舍）、Linux `LinuxWindowHost.ReadSelectedPaths`
   （`GSList` 遍历）、macOS `MacOSWindowHost.RunPanel`（读 `URLs` 数组；`allowedFileTypes` 已废弃但仍可用）。
+
+#### 文件拖放（整体未验证）
+- 状态：**落点注册路径已被自检走到**（窗口创建时不崩、事件可订阅），但"把文件真的拖进去"**完全未验证**。
+  无头环境造不出拖放会话：Linux 侧是 XDND 协议交互、Windows 侧是 OLE 拖放会话，都不是"注入一个事件"能模拟的。
+- 环境：三平台桌面各一次（Linux 需要真实桌面；xvfb 里没有可发起拖拽的文件管理器）。
+- 步骤：1) 从文件管理器拖 **1 个文件**进窗口 → 看 `FileDropped` 是否触发、路径是否正确；
+  2) 拖 **多个文件** → 看 `Paths` 是否齐全、顺序是否与拖入一致；
+  3) 拖 **一个文件夹** → 看路径是否是目录本身（按设计目录也会出现在列表里）；
+  4) 拖**一段选中的文本** → 应**不触发**（只受理文件 URL）。
+- 预期：前 3 步都触发事件且路径逐字符正确；第 4 步不触发。
+- 若不符：按平台但别急着改解析——先确认**落点是否被接管**：
+  Windows 看 `AllowExternalDrop` 是否真的被设为 false（老 WebView2 运行时没有 `ICoreWebView2Controller4`，
+  那时转换会跳过、拖放可能仍被 webview 截走）；macOS 看 `registerForDraggedTypes:` 是否收到了
+  `public.file-url`（`performDragOperation:` 没被调用就是落点没命中）；Linux 看 `gtk_drag_dest_get_target_list`
+  是否非 0。**URI 解析本身已有单测，若路径错了先怀疑落点而不是解析。**
 
 ### C 的验证账规则（必守）
 

@@ -94,6 +94,16 @@ public sealed class WebviewWindow
     public event Action<string>? ContextMenuItemClicked;
 
     /// <summary>
+    /// 外部文件被拖进窗口；<see cref="OrielFileDropEventArgs.Paths"/> 是本地路径（不是 URI）。
+    /// </summary>
+    /// <remarks>
+    /// 路径必须由原生侧给：页面自己的 <c>drop</c> 事件拿不到文件路径（浏览器的安全模型如此），
+    /// 所以页面若想自己处理拖放外观（高亮、预览），仍应订阅 <c>dragover</c>/<c>drop</c> 做视觉反馈，
+    /// 真正的路径从这里来。
+    /// </remarks>
+    public event Action<OrielFileDropEventArgs>? FileDropped;
+
+    /// <summary>
     /// 在鼠标位置弹出上下文菜单（项里的 <see cref="OrielMenuItem.Role"/> 走平台语义，
     /// 自定义项在用户选择后触发 <see cref="ContextMenuItemClicked"/>）。
     /// </summary>
@@ -143,6 +153,7 @@ public sealed class WebviewWindow
         backend.ConsoleMessage += args => ConsoleMessage?.Invoke(args);
         backend.MessageReceived += args => MessageReceived?.Invoke(args);
         backend.ContextMenuItemClicked += id => ContextMenuItemClicked?.Invoke(id);
+        backend.FileDropped += args => FileDropped?.Invoke(args);
     }
 
     // ---- 显示状态 ----

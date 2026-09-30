@@ -15,6 +15,10 @@
 - **平台集成**：剪贴板（文本 + HTML）、系统主题（深/浅 + 变更事件）、单实例、系统托盘、系统通知、
   **菜单**（应用菜单 + 窗口上下文菜单，含平台 role 与加速键）、**全局快捷键与徽章**——都有无头自检
   （见 `--clipboard-selftest` / `--theme-selftest` / `--shell-selftest` / 单实例的双进程断言）
+- **文件对话框**：打开（可多选）/ 保存 / 选文件夹，支持结构化过滤器与初始目录——过滤器的三种平台形状
+  转换与 Win32 多选缓冲区解析都是**纯函数**，因此在 Linux 的 CI 上就有单测（含为 Windows 写的那些）
+- **文件拖放**：外部文件拖进窗口 → 本地路径列表（`window.FileDropped`）——URI 解析有单测；
+  真实拖拽需要人眼（见下方验证账）
 - **系统 webview**：Windows 用 WebView2、macOS 用 WKWebView、Linux 用 WebKitGTK——不捆绑浏览器内核
 
 ## 快速开始
@@ -476,6 +480,40 @@ string? single = window.ShowOpenFileDialog("打开", "文本文件|*.txt;*.md|�
 > 过滤器与返回值的转换全是纯函数（`OrielFileFilter` 的三个平台渲染 + `OrielFileDialogSupport` 的
 > Win32 多选解析），所以它们有单测、在 Linux 的 CI 上就能跑——**包括为 Windows 写的那两个**。
 > 对话框本身弹出后没法在无头环境断言（README 的验证账里如实标着），仍需人眼。
+
+## 文件拖放
+
+```csharp
+window.FileDropped += e =>
+{
+    foreach (string path in e.Paths)
+    {
+        Console.WriteLine($"拖入：{path}");   // 本地路径，不是 file:// URI
+    }
+};
+```
+
+路径只能由原生侧给：页面自己的 `drop` 事件**拿不到文件路径**（浏览器的安全模型如此）。
+需要拖放视觉反馈（高亮、预览）时，页面仍应订阅 `dragover`/`drop` 画效果，真正的路径从这里来。
+
+### 三平台的接入方式
+
+| 平台 | 机制 | 关键点 |
+|---|---|---|
+| Windows | 窗口加 `WS_EX_ACCEPTFILES` → 收 `WM_DROPFILES` → `DragQueryFileW` 逐项取 | 本库用 **Composition 宿主**（`WS_EX_NOREDIRECTIONBITMAP`），WebView2 **不是子窗口**，所以拖放会落到本窗口——不必手写 OLE `IDropTarget`、也不必做 OLE 初始化。同时把 WebView2 的 `AllowExternalDrop` 关掉，避免它把拖放截走 |
+| macOS | 自定义 `NSView` 子类（`OrielDropView`）承载 `NSDraggingDestination`，webview 是它的子视图 | 不给 `WKWebView` 加/替换方法：那会动到 WebKit 自带的拖放实现。AppKit 查找拖放目标时会**沿父视图链向上**，容器因此能收到事件 |
+| Linux | `gtk_drag_dest_set(webview, …, "text/uri-list", …)` + `drag-data-received` 信号 | 落点设在 webview 上（它铺满客户区）。载荷经 `gtk_selection_data_get_uris` 取到，再逐项转成本地路径 |
+
+### 拖放的验证账
+
+| 项 | 机器断言 | 尚未验证 |
+|---|---|---|
+| URI → 本地路径 | **23 个用例**：百分号编码（含非 ASCII）、`+` 不被当空格、Windows 盘符、`localhost` 与远程主机、非 file 协议、批量保持顺序 | — |
+| 落点注册 | `--shell-selftest`：窗口创建会走完各平台的注册路径、事件订阅可用、进程不崩（输出 `FILE-DROP-SUBSCRIBED`） | **真实拖拽**：需要真人从文件管理器拖文件进窗口。无头环境造不出 XDND/OLE 会话，因此这一项**整体不声称已验证** |
+
+> 落点坐标**没有**暴露：三平台的坐标系与 y 轴方向各不相同（Cocoa 原点在左下、GTK 的 y 轴向下、
+> Win32 还要算进 DPI 缩放），要一致就得再引入一层换算，而导入文件根本不需要它——
+> 需要落点做反馈时用页面自己的 `dragover` 即可。这条记在 `docs/ROADMAP.md`。
 
 ## 构建
 

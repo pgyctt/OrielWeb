@@ -68,6 +68,10 @@ internal static unsafe partial class ObjCRuntime
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial void SendVoidObjObj(nint self, nint sel, nint a, nint b);
 
+    /// <summary>两个对象参数、返回对象（如 <c>readObjectsForClasses:options:</c>）。</summary>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendIdObjObj(nint self, nint sel, nint a, nint b);
+
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial void SendVoidBool(nint self, nint sel, [MarshalAs(UnmanagedType.Bool)] bool arg);
 

@@ -24,6 +24,7 @@ internal static unsafe class MacOSObjCClasses
     private static nint s_scriptHandlerClass;
     private static nint s_navigationDelegateClass;
     private static nint s_pumpHelperClass;
+    private static nint s_dropViewClass;
 
     // ---- 状态注册表（实例指针 → 托管状态；实例被 retain，指针稳定）----
     // 仅在 AppKit/WebKit 主线程访问，不跨线程；窗口关闭时经 Remove* 清理，
@@ -32,12 +33,14 @@ internal static unsafe class MacOSObjCClasses
     private static readonly Dictionary<nint, MacOSWindowHost> WindowDelegateStates = [];
     private static readonly Dictionary<nint, MacOSWindowHost> NavigationDelegateStates = [];
     private static readonly Dictionary<nint, MacOSWebMessageHandler> ScriptHandlerStates = [];
+    private static readonly Dictionary<nint, MacOSWindowHost> DropViewStates = [];
 
     private static nint AppDelegateClass => Ensure(ref s_appDelegateClass, BuildAppDelegate);
     private static nint WindowDelegateClass => Ensure(ref s_windowDelegateClass, BuildWindowDelegate);
     private static nint ScriptHandlerClass => Ensure(ref s_scriptHandlerClass, BuildScriptHandler);
     private static nint NavigationDelegateClass => Ensure(ref s_navigationDelegateClass, BuildNavigationDelegate);
     private static nint PumpHelperClass => Ensure(ref s_pumpHelperClass, BuildPumpHelper);
+    private static nint DropViewClass => Ensure(ref s_dropViewClass, BuildDropView);
 
     private static nint Ensure(ref nint cached, Func<nint> build)
     {
@@ -371,10 +374,128 @@ internal static unsafe class MacOSObjCClasses
         return 0;
     }
 
+    // ---- 拖放视图 ----
+
+    /// <summary>
+    /// 构建承载 <c>NSDraggingDestination</c> 的视图类。
+    /// </summary>
+    /// <remarks>
+    /// 为什么是一个**容器视图**而不是给 WKWebView 加方法：
+    /// 拖放协议方法必须由"注册了 dragged types 的那个 view"实现，而给 WKWebView 加/替换方法会
+    /// 动到 WebKit 自己的拖放实现（它内建处理拖放，且不会把文件路径交给页面）。
+    /// AppKit 查找拖放目标时会**沿父视图链向上**，因此把 webview 放进一个注册过类型的容器里，
+    /// 容器就能收到事件——webview 的类完全不必被碰。
+    /// <para>
+    /// 继承 <c>NSView</c>（而不是 NSObject）：它要作为真正的视图插进视图层级。
+    /// </para>
+    /// </remarks>
+    private static nint BuildDropView()
+    {
+        var cls = ObjCRuntime.objc_allocateClassPair(ObjCRuntime.GetClass("NSView"), "OrielDropView", 0);
+        // NSDragOperation 是 NSUInteger；返回 NSDragOperationCopy 才是"受理"，
+        // 返回 0 会让系统显示禁止光标（拖不进来）。
+        AddMethod(cls, "draggingEntered:", &DraggingEntered, "L@:@");
+        AddMethod(cls, "performDragOperation:", &PerformDragOperation, "c@:@");
+        ObjCRuntime.objc_registerClassPair(cls);
+        return cls;
+    }
+
+    /// <summary>NSDragOperationCopy：只受理复制语义。</summary>
+    private const int NSDragOperationCopy = 1;
+
+    [UnmanagedCallersOnly]
+    private static nint DraggingEntered(nint self, nint sel, nint sender)
+    {
+        try
+        {
+            return DropViewStates.ContainsKey(self) ? NSDragOperationCopy : 0;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    [UnmanagedCallersOnly]
+    private static nint PerformDragOperation(nint self, nint sel, nint sender)
+    {
+        try
+        {
+            if (!DropViewStates.TryGetValue(self, out var host))
+            {
+                return 0;
+            }
+
+            IReadOnlyList<string> paths = ReadDraggedPaths(sender);
+            if (paths.Count == 0)
+            {
+                return 0;
+            }
+
+            host.OnFilesDropped(paths);
+            return 1;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// 从拖动会话的粘贴板取文件路径。
+    /// </summary>
+    /// <remarks>
+    /// 走 <c>readObjectsForClasses:options:</c> 而不是老的
+    /// <c>propertyListForType:@"NSFilenamesPboardType"</c>：后者已废弃，且新系统里
+    /// 提供方（Finder）不保证再写那个类型。取到的是 NSURL，用 <c>path</c> 拿本地路径
+    /// （不是 <c>absoluteString</c>——那会带 <c>file://</c> 前缀与百分号编码）。
+    /// </remarks>
+    private static IReadOnlyList<string> ReadDraggedPaths(nint sender)
+    {
+        nint pasteboard = ObjCRuntime.SendId(sender, ObjCRuntime.Sel("draggingPasteboard"));
+        if (pasteboard == 0)
+        {
+            return [];
+        }
+
+        nint classes = ObjCRuntime.SendIdObj(
+            ObjCRuntime.GetClass("NSArray"),
+            ObjCRuntime.Sel("arrayWithObject:"),
+            ObjCRuntime.GetClass("NSURL"));
+        nint options = ObjCRuntime.SendId(ObjCRuntime.GetClass("NSDictionary"), ObjCRuntime.Sel("dictionary"));
+
+        nint urls = ObjCRuntime.SendIdObjObj(
+            pasteboard, ObjCRuntime.Sel("readObjectsForClasses:options:"), classes, options);
+        if (urls == 0)
+        {
+            return [];
+        }
+
+        int count = (int)ObjCRuntime.SendId(urls, ObjCRuntime.Sel("count"));
+        var paths = new List<string>(count);
+        for (int i = 0; i < count; i++)
+        {
+            nint url = ObjCRuntime.SendIdNint(urls, ObjCRuntime.Sel("objectAtIndex:"), i);
+            if (url == 0)
+            {
+                continue;
+            }
+
+            nint nsPath = ObjCRuntime.SendId(url, ObjCRuntime.Sel("path"));
+            if (nsPath != 0 && ObjCRuntime.ToManagedString(nsPath) is { Length: > 0 } path)
+            {
+                paths.Add(path);
+            }
+        }
+
+        return paths;
+    }
+
     // ------------------------------------------------------------------
     // 状态清理（窗口关闭时调用；避免注册表只增不减导致泄漏与 ABA 指针复用风险）
     // ------------------------------------------------------------------
 
+    internal static void RemoveDropView(nint instance) => DropViewStates.Remove(instance);
     internal static void RemoveWindowDelegate(nint instance) => WindowDelegateStates.Remove(instance);
     internal static void RemoveNavigationDelegate(nint instance) => NavigationDelegateStates.Remove(instance);
     internal static void RemoveScriptHandler(nint instance) => ScriptHandlerStates.Remove(instance);
@@ -411,4 +532,11 @@ internal static unsafe class MacOSObjCClasses
     }
 
     internal static nint CreatePumpHelper() => AllocInit(PumpHelperClass);
+
+    internal static nint CreateDropView(MacOSWindowHost host)
+    {
+        var instance = AllocInit(DropViewClass);
+        DropViewStates[instance] = host;
+        return instance;
+    }
 }

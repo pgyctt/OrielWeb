@@ -92,6 +92,9 @@ internal static unsafe class LinuxSignalHandlers
             (delegate* unmanaged<nint, nint, nint, void>)&OnTitleNotifyTrampoline, 0, 0, 0);
         GtkNative.GSignalConnectData(userContentManager, "script-message-received::oriel",
             (delegate* unmanaged<nint, nint, nint, void>)&OnScriptMessageTrampoline, 0, 0, 0);
+        // 拖放载荷：只在 webview 上接（落点也设在 webview 上，见 LinuxWindowHost.Create）
+        GtkNative.GSignalConnectData(webview, "drag-data-received",
+            (delegate* unmanaged<nint, nint, int, int, nint, uint, uint, nint, void>)&OnDragDataReceivedTrampoline, 0, 0, 0);
     }
 
     // ------------------------------------------------------------------
@@ -175,6 +178,59 @@ internal static unsafe class LinuxSignalHandlers
         catch
         {
             // 异常不外泄
+        }
+    }
+
+    /// <summary>
+    /// GTK 的 <c>drag-data-received</c>。信号签名：
+    /// <c>(GtkWidget*, GdkDragContext*, gint x, gint y, GtkSelectionData*, guint info, guint time, gpointer)</c>。
+    /// </summary>
+    /// <remarks>
+    /// 无论成败都要调 <c>gtk_drag_finish</c>：不调的话源端（文件管理器）会一直等结果，
+    /// 表现为"拖完卡住、源窗口不恢复"。载荷里也可能没有 uri（拖的是纯文本之类），
+    /// 那时如实上报空列表、并把 success 传 false。
+    /// </remarks>
+    [UnmanagedCallersOnly]
+    internal static void OnDragDataReceivedTrampoline(nint widget, nint context, int x, int y, nint selection, uint info, uint time, nint data)
+    {
+        List<string> paths = [];
+
+        try
+        {
+            nint uris = GtkNative.GtkSelectionDataGetUris(selection);
+            if (uris != 0)
+            {
+                try
+                {
+                    // gchar**：以 null 结尾的字符串数组，逐个取到 null 为止
+                    for (nint item = uris; Marshal.ReadIntPtr(item) != 0; item += IntPtr.Size)
+                    {
+                        string? uri = Marshal.PtrToStringUTF8(Marshal.ReadIntPtr(item));
+                        // 非 file:// 的项（http、data: 等）在这里被丢掉——拖放进来的应该是文件
+                        if (OrielFileDropSupport.UriToPath(uri) is { } path)
+                        {
+                            paths.Add(path);
+                        }
+                    }
+                }
+                finally
+                {
+                    GtkNative.GStrfreev(uris);
+                }
+            }
+
+            if (paths.Count > 0 && WebviewStates.TryGetValue(widget, out var host))
+            {
+                host.OnFilesDropped(paths);
+            }
+        }
+        catch
+        {
+            // 异常不外泄
+        }
+        finally
+        {
+            GtkNative.GtkDragFinish(context, paths.Count > 0, false, time);
         }
     }
 

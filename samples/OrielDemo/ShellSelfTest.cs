@@ -198,6 +198,17 @@ internal static class ShellSelfTest
                 return;
             }
 
+            // 拖放：这里只做两件机器能判定的事——订阅事件不抛（API 通路形状可用），
+            // 以及把边界如实打出来。真实拖拽是 XDND/OLE 会话，无头环境造不出来（不是"没做"），
+            // 所以这一项**整体不声称已验证**，见 docs/ROADMAP.md 的待真机清单。
+            int subscribed = 0;
+            foreach (WebviewWindow window in _app.Windows)
+            {
+                window.FileDropped += _ => { };
+                subscribed++;
+            }
+            Console.WriteLine($"[shell-selftest] FILE-DROP-SUBSCRIBED: {subscribed}（落点已随窗口创建注册，真实拖拽需人眼）");
+
             Console.WriteLine("SHELL-SELFTEST: PASS");
         }
         catch (Exception ex)

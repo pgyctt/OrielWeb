@@ -37,6 +37,12 @@ internal static class Win32Constants
     public const uint WM_CONTEXTMENU = 0x007B;
     /// <summary>菜单栏与加速键发来的命令消息；LOWORD(wParam) 是命令 id。</summary>
     public const uint WM_COMMAND = 0x0111;
+
+    /// <summary>有文件被拖到窗口上；wParam 是 HDROP，用完必须 DragFinish。</summary>
+    public const uint WM_DROPFILES = 0x0233;
+
+    /// <summary>窗口扩展样式：接收文件拖放。</summary>
+    public const uint WS_EX_ACCEPTFILES = 0x00000010;
     /// <summary>已注册的系统级快捷键被按下；wParam 是注册时给的 id。</summary>
     public const uint WM_HOTKEY = 0x0312;
 
@@ -645,6 +651,27 @@ internal static unsafe partial class Win32
 
     [LibraryImport("ole32")]
     internal static partial void CoTaskMemFree(nint ptr);
+
+    // ---- 文件拖放（shell32）----
+    // 走 WM_DROPFILES 而不是自建 OLE IDropTarget：本窗口用 Composition 宿主
+    //（WS_EX_NOREDIRECTIONBITMAP，WebView2 **不是子窗口**），所以没有子窗口抢走拖放，
+    // 父窗口自己收 WM_DROPFILES 即可——不必引入 OLE 初始化与手写 COM 接口。
+
+    /// <summary>显式开关窗口接收文件拖放（等价写法是给窗口加 <c>WS_EX_ACCEPTFILES</c>）。</summary>
+    [LibraryImport("shell32")]
+    internal static partial void DragAcceptFiles(nint hwnd, [MarshalAs(UnmanagedType.Bool)] bool accept);
+
+    /// <summary>
+    /// 查 HDROP 里的文件：<paramref name="fileIndex"/> 传 <c>0xFFFFFFFF</c> 时返回**文件个数**；
+    /// 否则返回第 i 项的路径长度（<paramref name="fileName"/> 传 0 且 <paramref name="cch"/> 传 0），
+    /// 或把路径写进缓冲区（返回实际写入的字符数，不含结尾 null）。
+    /// </summary>
+    [LibraryImport("shell32", EntryPoint = "DragQueryFileW")]
+    internal static partial uint DragQueryFileW(nint hDrop, uint fileIndex, nint fileName, uint cch);
+
+    /// <summary>释放 HDROP（由系统在消息处理结束后仍然有效，但必须由我们释放）。</summary>
+    [LibraryImport("shell32")]
+    internal static partial void DragFinish(nint hDrop);
 
     // ---- 弹出菜单（user32）----
 

@@ -396,4 +396,36 @@ internal static unsafe partial class GtkNative
 
     [LibraryImport(Gtk, EntryPoint = "gtk_selection_data_free")]
     internal static partial void GtkSelectionDataFree(nint selection);
+
+    // ---- 文件拖放（gtk_drag_dest_*）----
+    // 在 webview 上注册 URIs 类型作为落点；载荷由 GTK 解析成 uri 列表，我们只负责把
+    // file:// 转成本地路径（OrielFileDropSupport.UriToPath，纯函数、有单测）。
+
+    /// <summary><c>GTK_DEST_DEFAULT_ALL</c>：高亮、跟踪与释放都交给 GTK 处理。</summary>
+    public const int GtkDestDefaultAll = 0x07;
+
+    /// <summary><c>GDK_ACTION_COPY</c>：只接受复制语义（拖放不改动来源）。</summary>
+    public const uint GdkActionCopy = 1 << 1;
+
+    /// <summary>把 widget 注册为拖放目标（targets 的内存只需存活到本调用返回）。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_drag_dest_set")]
+    internal static partial void GtkDragDestSet(nint widget, int flags, nint targets, int targetCount, uint actions);
+
+    /// <summary>已注册的落点类型；返回 0 表示没注册上（自检用它断言"真的设进去了"）。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_drag_dest_get_target_list")]
+    internal static partial nint GtkDragDestGetTargetList(nint widget);
+
+    /// <summary>
+    /// 取拖放载荷里的 uri 列表（已按行拆好，需 <see cref="GStrfreev"/> 释放）；没有 uris 时返回 0。
+    /// </summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_selection_data_get_uris")]
+    internal static partial nint GtkSelectionDataGetUris(nint selection);
+
+    /// <summary>通知拖放源已完成；<paramref name="deleteData"/> 表示是否要求源端删除原数据。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_drag_finish")]
+    internal static partial void GtkDragFinish(nint context, [MarshalAs(UnmanagedType.Bool)] bool success, [MarshalAs(UnmanagedType.Bool)] bool deleteData, uint time);
+
+    /// <summary>释放以 null 结尾的字符串数组（<c>g_strfreev</c>：元素与数组一起释放）。</summary>
+    [LibraryImport(Glib, EntryPoint = "g_strfreev")]
+    internal static partial void GStrfreev(nint strv);
 }

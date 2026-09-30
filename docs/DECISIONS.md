@@ -887,3 +887,70 @@ Windows 的原生对话框有 `lpstrDefExt` 会自动补；GTK 与 Cocoa 不会�
 - **不能**：对话框的样子、多选交互、过滤器下拉的内容——都要人眼。
   对话框**不进自检**：它弹出后会一直等用户操作，在无头环境里只会把自检挂住。
   清单在 `docs/ROADMAP.md`。
+
+## 文件拖放：三平台各走哪条路，以及为什么这条最省（2026-09-30）
+
+能力面：把外部文件拖进窗口 → 得到**本地路径列表**（`window.FileDropped`）。
+参照对象是 Tauri 的 `onDragDropEvent`；Ryn 没有拖放插件，所以没有可抄的实现。
+
+### Windows：`WS_EX_ACCEPTFILES` + `WM_DROPFILES`，而不是自建 OLE `IDropTarget`
+
+这是既有决策（**Composition 宿主**）带来的红利。因为窗口用 `WS_EX_NOREDIRECTIONBITMAP` 创建、
+WebView2 通过 DirectComposition 合成进来（**不是子窗口**），所以没有子 HWND 抢走拖放——
+父窗口自己收 `WM_DROPFILES` 就够了。对比之下：
+
+- 自建 `IDropTarget` + `RegisterDragDrop`：要 `OleInitialize`、要手写 COM 接口（本库没有 COM 互操作基础），
+  而且**同一 HWND 只能注册一个 drop target**，与 WebView2 可能的内建注册相争。
+- WebView2 的拖放事件（`CoreWebView2CompositionController` 上的那些）：能拿到拖放数据，
+  但数据形状意味着还要再解析一层，而且它把外部拖放**默认接管**过去。
+
+**代价与配套**：必须把 WebView2 的 `AllowExternalDrop` 设为 `false`，否则拖放会被它接走、而且页面
+拿不到路径。这个成员在 `ICoreWebView2Controller4` 上，老运行时没有——因此写成可选增强（转换失败即跳过），
+跳过时 `WM_DROPFILES` 这条路仍然可用（不搞"运行时版本决定行为"的静默降级）。
+
+### macOS：自定义容器视图承载 `NSDraggingDestination`
+
+拖放协议方法必须由**注册了 dragged types 的那个 view** 实现。给 `WKWebView` 加方法有两种写法，
+都不可取：`class_addMethod` 会失败（WebKit 已经实现了这些 selector），`method_setImplementation`
+则会**替换掉 WebKit 自己的拖放实现**——那是全局的、影响所有实例的改动。
+
+于是插一层自己的 `NSView` 子类：`contentView → OrielDropView → WKWebView`，
+`registerForDraggedTypes:@["public.file-url"]` 设在容器上。AppKit 查找拖放目标时会**沿父视图链向上**
+找第一个注册过类型的 view，所以拖到页面区域（命中 webview）也能被容器收到。webview 的类完全没被碰。
+
+取路径用 `draggingPasteboard.readObjectsForClasses:@[NSURL.class]` 而不是废弃的
+`propertyListForType:@"NSFilenamesPboardType"`（后者在新系统里不保证还有提供方写出）。
+拿的是 NSURL 的 `path` 而不是 `absoluteString`——后者带 `file://` 前缀与百分号编码。
+
+### Linux：落点设在 webview 上
+
+`gtk_drag_dest_set(webview, GTK_DEST_DEFAULT_ALL, targets("text/uri-list"), 1, GDK_ACTION_COPY)`
+配 `drag-data-received` 信号。设在 webview（而不是窗口）上：它铺满客户区，两处都设会产生两份事件。
+无论成败都要调 `gtk_drag_finish`——不调的话源端（文件管理器）会一直等结果，表现为"拖完卡住"。
+
+### URI → 本地路径：手写解析，不用 `System.Uri.LocalPath`
+
+同一个 `file:///C:/x.txt` 在 Windows 上给 `C:\x.txt`、在 Linux 上给 `/C:/x.txt`。
+于是"为 Windows 写的解析"没法在 Linux 的 CI 上验证——这已经是本仓库第三次踩同一个坑
+（前两次是 `OrielShellPolicy.ParentDirectory` 与对话框的 `ParseWin32MultiSelect`）。
+手写解析虽然啰嗦，但结果与运行平台无关，因此 **23 个用例全都能在 Linux CI 上跑**。
+
+顺带钉住的两个细节：百分号解码**不**把 `+` 当空格（那是 form-urlencoded 的规则，混了会得到
+"文件名里明明有加号、读出来却没有"的怪现象）；`file://server/share` 是网络路径，如实返回 null
+而不是拼出一个看着像本地路径的串。
+
+### 为什么不暴露落点坐标
+
+三平台的坐标系与 y 轴方向都不同（Cocoa 原点在左下、GTK 的 y 轴向下、Win32 还要算进 DPI 缩放），
+要一致就得再引入一层换算并逐平台验证。而拖放最常见的用途是"导入文件"，用不到落点；
+需要视觉反馈的场合，页面自己的 `dragover` 就能拿到位置——**路径才必须来自原生侧**（浏览器的安全模型
+不给页面文件路径）。所以落点坐标留在 ROADMAP，先把能确定的部分交付。
+
+### 这一批能证明什么、不能证明什么
+
+- **能**：URI → 本地路径的全部边界（23 个用例，跨平台可跑）、窗口创建时的落点注册不崩、
+  事件订阅通路可用。
+- **不能**：**真实拖拽**。它在 Linux 是 XDND 协议交互、在 Windows 是 OLE 拖放会话，
+  都不是"注入一个事件"能模拟的——`xdotool` 能模拟鼠标，但造不出一个带 FileList 的拖放源。
+  所以这一项**整体不声称已验证**，如实列进 ROADMAP 的待真机清单；自检里也只打印
+  `FILE-DROP-SUBSCRIBED` 这一条能确定的事实。
