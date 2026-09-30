@@ -17,6 +17,12 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
     private readonly nint _messageHwnd;
     private int _aliveWindows;
 
+    private Win32TrayBackend? _tray;
+    private Win32BalloonIcon? _balloon;
+
+    /// <summary>调度窗口句柄。托盘与通知都用它做回调宿主（见 <see cref="Win32TrayBackend"/> 的说明）。</summary>
+    internal nint MessageWindowHandle => _messageHwnd;
+
     public WindowsPlatformBackend()
     {
         EnsureDpiAwareness();
@@ -106,6 +112,34 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         }
     }
 
+    public ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app)
+    {
+        _tray = new Win32TrayBackend(this, app, options);
+        return _tray;
+    }
+
+    // ---- 通知 ----
+
+    /// <summary>Windows 的通知始终可用：载体是一个独立的隐藏托盘项（见 <see cref="Win32BalloonIcon"/>）。</summary>
+    public bool NotificationsSupported => true;
+
+    public event Action<string>? NotificationClicked;
+
+    public void ShowNotification(OrielNotificationOptions notification) => Balloon.Show(notification);
+
+    private Win32BalloonIcon Balloon
+    {
+        get
+        {
+            if (_balloon is null)
+            {
+                _balloon = new Win32BalloonIcon(_messageHwnd);
+                _balloon.Clicked += id => NotificationClicked?.Invoke(id);
+            }
+            return _balloon;
+        }
+    }
+
     public void Quit() => Win32.PostQuitMessage(0);
 
     public bool IsOnUiThread() => Win32.GetCurrentThreadId() == _uiThreadId;
@@ -128,9 +162,11 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         }
     }
 
-    /// <summary>调度窗口随消息循环结束销毁，当前无进程级非托管资源需要释放。</summary>
+    /// <summary>释放托盘与通知载体；调度窗口随消息循环结束销毁。</summary>
     public void Dispose()
     {
+        _tray?.Dispose();
+        _balloon?.Dispose();
     }
 
     // ---- 消息窗口 ----
@@ -162,6 +198,23 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
                 // （外泄 = 进程 fail-fast，不可捕获）
                 System.Diagnostics.Debug.WriteLine($"[OrielWeb] PostToMainThread 回调抛出异常：{ex}");
             }
+            return 0;
+        }
+        if (message == Win32Constants.WM_APP_TRAY)
+        {
+            // V4 起回调的 wParam 才是事件类型（NIN_SELECT 等），坐标在 lParam
+            s_current?._tray?.HandleCallback(wParam);
+            return 0;
+        }
+        if (message == Win32Constants.WM_APP_NOTIFY)
+        {
+            s_current?._balloon?.HandleCallback(wParam);
+            return 0;
+        }
+        if (message == Win32Constants.WM_CONTEXTMENU)
+        {
+            // V4 起托盘的右键不再是回调消息，而是宿主窗口收到 WM_CONTEXTMENU
+            s_current?._tray?.ShowMenu();
             return 0;
         }
         if (message == Win32Constants.WM_SETTINGCHANGE)

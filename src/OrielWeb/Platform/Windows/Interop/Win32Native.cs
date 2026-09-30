@@ -28,6 +28,55 @@ internal static class Win32Constants
     public static readonly nint HTBOTTOMRIGHT = 17;
     public const uint WM_APP = 0x8000;
     public const uint WM_APP_DISPATCH = WM_APP + 1;
+    /// <summary>托盘图标回调消息（用不同的 WM_APP 消息区分回调来源，V4 下回调不传 uID）。</summary>
+    public const uint WM_APP_TRAY = WM_APP + 2;
+    /// <summary>通知气球（独立于用户托盘的隐藏托盘项）的回调消息。</summary>
+    public const uint WM_APP_NOTIFY = WM_APP + 3;
+
+    public const uint WM_NULL = 0x0000;
+    public const uint WM_CONTEXTMENU = 0x007B;
+
+    // ---- 托盘（Shell_NotifyIcon）----
+
+    public const uint NIM_ADD = 0x00000000;
+    public const uint NIM_MODIFY = 0x00000001;
+    public const uint NIM_DELETE = 0x00000002;
+    public const uint NIM_SETVERSION = 0x00000004;
+
+    public const uint NIF_MESSAGE = 0x00000001;
+    public const uint NIF_ICON = 0x00000002;
+    public const uint NIF_TIP = 0x00000004;
+    public const uint NIF_STATE = 0x00000008;
+    public const uint NIF_INFO = 0x00000010;
+    public const uint NIF_SHOWTIP = 0x00000080;
+
+    /// <summary>隐藏状态（配 NIF_STATE 用）：占位但不在托盘区画图标，只用来发气球。</summary>
+    public const uint NIS_HIDDEN = 0x00000001;
+
+    /// <summary>V4 行为：回调 wParam 是事件类型、坐标在 lParam 里，右键走 WM_CONTEXTMENU。</summary>
+    public const uint NOTIFYICON_VERSION_4 = 4;
+
+    /// <summary>V4 下左键单击（WM_USER + 0）。</summary>
+    public const uint NIN_SELECT = 0x0400;
+    public const uint NIN_BALLOONTIMEOUT = 0x0404;
+    /// <summary>用户点了气球本体（WM_USER + 5）。</summary>
+    public const uint NIN_BALLOONUSERCLICK = 0x0405;
+
+    public const uint NIIF_INFO = 0x00000001;
+    public const uint NIIF_ERROR = 0x00000003;
+
+    // ---- 弹出菜单 ----
+
+    public const uint MF_STRING = 0x00000000;
+    public const uint MF_SEPARATOR = 0x00000800;
+    public const uint MF_GRAYED = 0x00000001;
+    public const uint MF_CHECKED = 0x00000008;
+    /// <summary>子菜单：此时 itemId 位置传的是子菜单句柄而不是命令 id。</summary>
+    public const uint MF_POPUP = 0x00000010;
+    /// <summary>右键也能选（托盘菜单必须带，否则鼠标按键一松菜单就关了）。</summary>
+    public const uint TPM_RIGHTBUTTON = 0x0002;
+    /// <summary>返回选中项 id 而不是发 WM_COMMAND；0 表示用户没选任何项。</summary>
+    public const uint TPM_RETURNCMD = 0x0100;
 
     /// <summary>WM_NCLBUTTONDOWN 的命中值：令窗口进入标题栏拖动的模态循环（见 BeginDrag）。</summary>
     public static readonly nint HTCAPTION = 2;
@@ -530,4 +579,62 @@ internal static unsafe partial class Win32
 
     [LibraryImport("comdlg32")]
     internal static partial uint CommDlgExtendedError();
+
+    // ---- 托盘（shell32）----
+
+    /// <summary>增删改托盘图标；data.cbSize 必须是本结构体的实际大小。</summary>
+    [LibraryImport("shell32", EntryPoint = "Shell_NotifyIconW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool Shell_NotifyIconW(uint message, ref NOTIFYICONDATAW data);
+
+    // ---- 弹出菜单（user32）----
+
+    [LibraryImport("user32")]
+    internal static partial nint CreatePopupMenu();
+
+    /// <summary>追加菜单项。<paramref name="itemId"/> 是 WM_COMMAND/TrackPopupMenu 回传的标识；
+    /// 子菜单用 <c>MF_POPUP</c> 时该参数收子菜单句柄。</summary>
+    [LibraryImport("user32", EntryPoint = "AppendMenuW", StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool AppendMenuW(nint menu, uint flags, nuint itemId, string? itemText);
+
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool DestroyMenu(nint menu);
+
+    /// <summary>弹出并跟踪菜单；带 TPM_RETURNCMD 时返回选中项 id（0 = 未选择）。</summary>
+    [LibraryImport("user32", EntryPoint = "TrackPopupMenuEx")]
+    internal static partial uint TrackPopupMenuEx(nint menu, uint flags, int x, int y, nint hwnd, nint tpmParams);
+
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool GetCursorPos(out POINT point);
+}
+
+/// <summary>
+/// 托盘图标数据（V4 布局，64 位下 cbSize = 976）。
+/// </summary>
+/// <remarks>
+/// 定长字符数组用 fixed buffer 而不是 <c>ByValTStr</c>：后者会把字符串 marshal 在托管侧
+/// 临时分配，而这个结构体在 AOT 下要能直接往原生调用递——句柄与数组都必须是纯值。
+/// 字段顺序与 Windows SDK 完全一致（V4 布局里 uTimeout 与 uVersion 是同一个联合体位置）。
+/// </remarks>
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+internal unsafe struct NOTIFYICONDATAW
+{
+    public uint cbSize;
+    public nint hWnd;
+    public uint uID;
+    public uint uFlags;
+    public uint uCallbackMessage;
+    public nint hIcon;
+    public fixed char szTip[128];
+    public uint dwState;
+    public uint dwStateMask;
+    public fixed char szInfo[256];
+    public uint uVersionOrTimeout;
+    public fixed char szInfoTitle[64];
+    public uint dwInfoFlags;
+    public Guid guidItem;
+    public nint hBalloonIcon;
 }

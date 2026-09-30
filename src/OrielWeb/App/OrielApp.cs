@@ -60,6 +60,41 @@ public sealed class OrielApp : IDisposable
         backend.PostToMainThread(action);
     }
 
+    /// <summary>
+    /// 请求退出应用：结束消息循环、让 <see cref="Run"/> 返回。
+    /// 它不等于 <c>Environment.Exit</c>——<see cref="Run"/> 返回后该做的清理仍会执行，
+    /// 这既让退出可测（进程真的走完流程），也让"退出前保存状态"有地方放。
+    /// </summary>
+    public void Quit()
+    {
+        var backend = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
+        backend.Quit();
+    }
+
+    // ---- 托盘与通知（应用级；详见 README 平台矩阵）----
+
+    /// <summary>托盘图标；未用 <see cref="OrielAppBuilder.AddTray"/> 启用时为 null。</summary>
+    public OrielTray? Tray { get; private set; }
+
+    /// <summary>本平台是否支持系统通知（不支持时 <see cref="ShowNotification(OrielNotificationOptions)"/> 是空操作）。</summary>
+    public bool NotificationsSupported => _backend?.NotificationsSupported ?? false;
+
+    /// <summary>用户点击了某条通知；参数是 <see cref="OrielNotificationOptions.Id"/>（见其平台差异说明）。</summary>
+    public event Action<string>? NotificationClicked;
+
+    /// <summary>发送一条系统通知。</summary>
+    public void ShowNotification(OrielNotificationOptions notification)
+    {
+        ArgumentNullException.ThrowIfNull(notification);
+        ArgumentException.ThrowIfNullOrWhiteSpace(notification.Title);
+        var backend = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
+        backend.ShowNotification(notification);
+    }
+
+    /// <summary>发送一条系统通知（便捷重载）。</summary>
+    public void ShowNotification(string title, string? body = null)
+        => ShowNotification(new OrielNotificationOptions { Title = title, Body = body });
+
     /// <summary>创建窗口、进入消息循环；阻塞直到所有窗口关闭。</summary>
     public void Run()
     {
@@ -83,6 +118,13 @@ public sealed class OrielApp : IDisposable
 
         _backend = PlatformBackendFactory.Create();
         _backend.ThemeChanged += OnThemeChanged;
+        _backend.NotificationClicked += id => NotificationClicked?.Invoke(id);
+
+        // 托盘先于窗口创建：托盘是应用的外壳，先就绪才能让"启动即最小化到托盘"这类形态成立
+        if (_builder.TrayOptions is { } trayOptions)
+        {
+            Tray = new OrielTray(_backend.CreateTray(trayOptions, this), trayOptions);
+        }
 
         if (_singleInstanceServer is not null)
         {
@@ -180,6 +222,8 @@ public sealed class OrielApp : IDisposable
     {
         _singleInstanceServer?.Dispose();
         _singleInstanceLock?.Dispose();
+        // 托盘先于后端释放：它的原生资源要靠后端所在的消息循环/主线程清理
+        Tray?.Dispose();
         _backend?.Dispose();
     }
 }

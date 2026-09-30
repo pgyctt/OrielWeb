@@ -109,7 +109,29 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 | 单实例（第二实例激活首实例并退出） | ✅ 完成 | `SingleInstance(id, onActivate)`：**独占文件锁**判定 + 命名管道通知；第二个实例通知后立即以退出码 0 退出 | 三平台 CI 的双进程断言通过（第二个 0 秒退出并通知、第一个收到激活） |
 | 系统主题检测（dark/light + 变更事件） | ✅ 完成 | `OrielApp.Theme` + `ThemeChanged` + 页面 `theme.changed`（每次导航后补推）。检测：注册表 + `WM_SETTINGCHANGE` / GtkSettings + `notify::` / `NSUserDefaults` + 系统通知 | `--theme-selftest` 三平台通过；Linux 另跑两次（`GTK_THEME` 造值）断言深浅结论**不同**；**切换实时性**见待真机清单 |
 | 拖放（文件拖入 → 路径列表 + 事件） | ⏳ 未开始 | — | 逻辑可注入事件测，真实拖拽需真机 |
-| 托盘 / 应用菜单 / 上下文菜单 / 全局快捷键 / 通知 / deep link / 开机自启 | ❌ 无头环境不可测 | — | 只做实现并在 README 标注「未验证（无真机环境）」 |
+| 系统托盘（`AddTray` / `app.Tray`） | ✅ 已实现；Linux 取证通过 | Windows `Shell_NotifyIconW` + `TrackPopupMenuEx`；macOS `NSStatusBar`/`NSMenu`；Linux GTK3 `GtkStatusIcon`/`GtkMenu`（用 GTK 自带而非 AppIndicator，理由见 DECISIONS） | Windows/macOS 编译验证；Linux 由 `--shell-selftest` 断言"托盘创建 + 一份含分隔线/勾选/禁用/子菜单/role 的菜单能设进去、进程不崩"，并由 `tools/verify-linux-shell.sh` 采集证据。**图标可见性需人眼**（见下） |
+| 系统通知（`ShowNotification`） | ✅ 已实现；Linux 硬断言 | Windows 用**独立的隐藏托盘项**发 `NIF_INFO` 气球（因此不启用托盘也能发）；macOS `osascript`；Linux `notify-send` | Linux：真 `notify-send` → 会话总线 → 假通知服务，断言**标题与正文逐字符正确**（`tools/verify-linux-shell.sh`）。点击上报仅 Windows 支持，另两个平台**显式空实现**（不是"忘触发"） |
+| 应用菜单 / 上下文菜单 / 全局快捷键 / 徽章 | ⏳ 未开始 | 参照 Ryn 的 MenuBar/GlobalShortcut/Badge 插件能力面，做成主包内的应用级 API（菜单类型 `OrielMenuItem` 与加速键 `OrielAccelerator` 已就位，正是为这一批准备的） | — |
+| deep link / 开机自启 | ⏳ 未开始（B 批） | — | 写注册表/.desktop/LaunchAgent 的内容可机器断言 |
+
+### 托盘与通知的待真机清单
+
+#### 托盘图标的可见性
+- 环境：有托盘区的桌面（Windows 任务栏；macOS 菜单栏；Linux 用 Xfce/KDE，或装了 AppIndicator 扩展的 GNOME）。
+- 步骤：1) `OrielDemo --shell-selftest`（会建托盘并设一份含分隔线/勾选/禁用/子菜单的菜单）；
+  2) 在托盘区找到图标，点开菜单。
+- 预期：图标出现、悬停显示 tooltip、菜单按设置渲染（禁用项是灰的、勾选项带勾、子菜单能展开）、
+  点 Quit 项应用退出。
+- 若不符：按平台看后端——Windows `Win32TrayBackend.Add()`（`Shell_NotifyIconW` 失败时只写调试输出）、
+  Linux `GtkTrayBackend`（GNOME Shell 未装扩展、或 Wayland 会话下本就不显示，属平台事实）、
+  macOS `MacOSTrayBackend`（没给图标时会显示占位字符 `●`）。
+
+#### 通知的展示与点击
+- 环境：三平台桌面各一次。
+- 步骤：1) `OrielDemo --shell-selftest`；2) 看通知横幅；3) Windows 上点一下横幅本体。
+- 预期：横幅显示标题与正文；Windows 上点击后触发 `NotificationClicked`（回传 `Id`）。
+- 若不符：Windows 看系统"专注助手/通知"设置里的开关；macOS 看"通知"权限
+  （未打包运行时 `osascript` 的通知归属于 Script Editor，可能在系统设置里被静音）。
 
 ### C 的验证账规则（必守）
 

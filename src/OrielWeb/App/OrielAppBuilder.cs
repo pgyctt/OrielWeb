@@ -125,6 +125,20 @@ public sealed class OrielAppBuilder
         return this;
     }
 
+    internal OrielTrayOptions? TrayOptions { get; private set; }
+
+    /// <summary>
+    /// 启用系统托盘图标（应用级，最多一个）。运行期经 <see cref="OrielApp.Tray"/> 取得，
+    /// 用它设置菜单、订阅点击。平台差异见 <see cref="OrielTray"/> 的说明。
+    /// </summary>
+    public OrielAppBuilder AddTray(Action<OrielTrayOptions>? configure = null)
+    {
+        var options = new OrielTrayOptions();
+        configure?.Invoke(options);
+        TrayOptions = options;
+        return this;
+    }
+
     public OrielApp Build() => new(this);
 
     /// <summary>构建并阻塞运行，直到所有窗口关闭。</summary>

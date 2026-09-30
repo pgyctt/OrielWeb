@@ -139,6 +139,32 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
         GtkNative.GtkMain();
     }
 
+    public ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app) => new GtkTrayBackend(app, options);
+
+    // ---- 通知 ----
+    // Linux 的通知交给 freedesktop 通知守护（经 notify-send 子进程）。
+
+    /// <summary>有 notify-send 就认为通知可用（没有守护进程时它也只是静默失败，不会带崩进程）。</summary>
+    public bool NotificationsSupported => LinuxNotificationSender.IsAvailable;
+
+    /// <summary>
+    /// 声明但**永不触发**：当前实现（notify-send）拿不到点击事件。
+    /// 之所以保留而不是"Linux 上不实现该成员"：接口形态要跨平台一致，
+    /// 平台差异写在文档里（<see cref="OrielNotificationOptions.Id"/>），而不是让 API 面随平台变。
+    /// 要点击回传需改用 libnotify 的 action 回调，已记入 ROADMAP。
+    /// </summary>
+    /// <remarks>
+    /// 写成显式空 add/remove，而不是留一个自动事件：这样"这里确实没有触发源"在代码里是可见的，
+    /// 而不是看起来像"忘了触发"（编译器对从未触发的事件报警，正好把这个决定逼出来）。
+    /// </remarks>
+    public event Action<string>? NotificationClicked
+    {
+        add { }
+        remove { }
+    }
+
+    public void ShowNotification(OrielNotificationOptions notification) => LinuxNotificationSender.Send(notification);
+
     public void Quit() => GtkNative.GtkMainQuit();
 
     public bool IsOnUiThread() => Environment.CurrentManagedThreadId == _mainManagedThreadId;

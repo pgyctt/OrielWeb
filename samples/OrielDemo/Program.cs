@@ -37,6 +37,8 @@ internal static class Program
         var themeSelfTest = args.Contains("--theme-selftest");
         // --single-instance-selftest：单实例自检（双进程协作，脚本起两个实例）
         var singleInstanceSelfTest = args.Contains("--single-instance-selftest");
+        // --shell-selftest：托盘与通知的自检（建托盘、设菜单、发通知，随后退出）
+        var shellSelfTest = args.Contains("--shell-selftest");
 
         // 主题自检需要 OrielApp（主题是应用级的），所以这里显式 Build 再 Run；
         // app 变量先声明、后赋值，闭包在 onCreated 里读它（onCreated 发生在 Run 内部，那时已赋值）。
@@ -101,11 +103,22 @@ internal static class Program
                 SingleInstanceSelfTest.OnActivatedBySecondInstance);
         }
 
+        if (shellSelfTest)
+        {
+            // 托盘是应用级能力，必须在 Run() 之前配置：原生资源在 Run 期间创建
+            builder.AddTray(o => o.Tooltip = "OrielWeb self-test");
+        }
+
         app = builder.Build();
 
         if (singleInstanceSelfTest)
         {
             SingleInstanceSelfTest.StartWatchdog();
+        }
+
+        if (shellSelfTest)
+        {
+            ShellSelfTest.Start(app);
         }
 
         app.Run();
@@ -115,7 +128,8 @@ internal static class Program
             || (ipcSelfTest && IpcSelfTest.Failed)
             || (clipboardSelfTest && ClipboardSelfTest.Failed)
             || (themeSelfTest && ThemeSelfTest.Failed)
-            || (singleInstanceSelfTest && SingleInstanceSelfTest.Failed))
+            || (singleInstanceSelfTest && SingleInstanceSelfTest.Failed)
+            || (shellSelfTest && ShellSelfTest.Failed))
         {
             Environment.ExitCode = 1;
         }

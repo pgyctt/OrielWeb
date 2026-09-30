@@ -115,6 +115,26 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
         return host;
     }
 
+    public ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app) => new MacOSTrayBackend(app, options);
+
+    // ---- 通知 ----
+
+    /// <summary>macOS 自带 osascript，因此通知总是可用（未打包运行时的唯一可行路径）。</summary>
+    public bool NotificationsSupported => MacOSNotificationSender.IsAvailable;
+
+    /// <summary>
+    /// 声明但**永不触发**：osascript 投递拿不到点击回调。要在 macOS 上报点击得进 .app bundle
+    /// 后用 <c>UNUserNotificationCenter</c>（已记入 ROADMAP）。
+    /// </summary>
+    /// <remarks>显式空实现：与 Linux 侧同一理由——让"没有触发源"这件事在代码里看得见。</remarks>
+    public event Action<string>? NotificationClicked
+    {
+        add { }
+        remove { }
+    }
+
+    public void ShowNotification(OrielNotificationOptions notification) => MacOSNotificationSender.Send(notification);
+
     public void RunMessageLoop()
     {
         if (Interlocked.Exchange(ref _ran, 1) == 1)

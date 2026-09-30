@@ -112,4 +112,19 @@ internal interface IPlatformBackend : IDisposable
     /// <summary>把动作切回 UI 线程执行（已在 UI 线程则直接执行）。</summary>
     void PostToMainThread(Action action);
     IWindowBackend CreateWindow(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory);
+
+    /// <summary>创建托盘图标（应用级，最多一个）。</summary>
+    ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app);
+
+    /// <summary>
+    /// 本平台是否支持系统通知。用于让调用方决定"要不要退回到应用内提示"，
+    /// 而不是发出一条永远不出现的通知。各平台的实际支持度见 README 平台矩阵。
+    /// </summary>
+    bool NotificationsSupported { get; }
+
+    /// <summary>用户点击了某条通知；参数是 <see cref="OrielNotificationOptions.Id"/>。</summary>
+    event Action<string>? NotificationClicked;
+
+    /// <summary>发送系统通知；平台不支持时静默忽略（不抛异常——通知失败不该影响业务）。</summary>
+    void ShowNotification(OrielNotificationOptions notification);
 }

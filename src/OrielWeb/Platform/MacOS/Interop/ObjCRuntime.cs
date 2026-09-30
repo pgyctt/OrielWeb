@@ -77,6 +77,14 @@ internal static unsafe partial class ObjCRuntime
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial nint SendIdObj(nint self, nint sel, nint arg);
 
+    /// <summary>一个 double 参数的调用（如 <c>NSStatusBar.statusItemWithLength:</c>）。</summary>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendIdDouble(nint self, nint sel, double arg);
+
+    /// <summary>三个对象参数的调用（如 <c>NSMenuItem initWithTitle:action:keyEquivalent:</c>）。</summary>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendIdObjObjObj(nint self, nint sel, nint a, nint b, nint c);
+
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial nint SendIdObjBool(nint self, nint sel, nint arg, [MarshalAs(UnmanagedType.Bool)] bool flag);
 

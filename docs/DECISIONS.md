@@ -624,3 +624,77 @@ AppKit 先给出线索：`Cannot index window tabs due to missing main bundle id
   `${VAR}`**（`verify-linux.sh` 也潜伏过 4 处，已一并修掉）。
 - **Apple Silicon 上任何可执行文件都至少要 ad-hoc 签名**，否则内核直接 `Killed: 9`；dotnet 的 AOT 产物
   通常已带，但脚本仍做一次幂等补签，避免把签名问题误读成代码缺陷。
+
+## 托盘与通知：能力面、平台选择与验证法（2026-09-30）
+
+参照 Ryn 0.38.0 的 `Ryn.Plugins.Tray` / `Ryn.Plugins.Notification` 补齐这批能力。**借它的能力面，
+不借它的分发形态**：Ryn 是 DI 容器 + 12 个独立插件包；本库按既定决策保持单包、无 DI，
+能力挂在 `OrielAppBuilder`（配置）与 `OrielApp` / `OrielTray`（运行期）上，
+将来真要拆包时，这些扩展方法可以整体搬到 `OrielWeb.Plugins.*` 而调用方代码不变。
+
+### 为什么菜单项类型只有一个、加速键解析也只有一个
+
+托盘菜单、应用菜单、上下文菜单的表达能力本来就相同（自定义项 / 平台 role / 分隔线 / 子菜单 / 勾选 / 禁用），
+拆成三个类型只会把相同字段与校验抄三遍，所以共用 `OrielMenuItem`。
+`OrielAccelerator` 同理：菜单加速键与全局快捷键是同一套语法（`"CmdOrCtrl+Shift+A"`），
+没有理由写两个解析器——它也是第一批就落地并带 41 个单测的原因。
+
+### Linux 托盘：用 GTK3 自带的 `GtkStatusIcon`，而不是 AppIndicator 或纯 D-Bus
+
+- **AppIndicator**：额外原生依赖，且会与 GTK 的进程级类型注册表打架（Ryn 正是因此放弃它）。
+- **纯 D-Bus（`org.kde.StatusNotifierItem`）**：Ryn 走的路，但它依赖 `Tmds.DBus.Protocol` 这类客户端库或手写协议，
+  与"零额外依赖"的定位冲突。
+- **`GtkStatusIcon`**：libgtk-3 自带（在 GTK3 里标 deprecated 但可用），代价是**显示与否取决于宿主桌面**——
+  GNOME Shell 默认不显示（需 AppIndicator 扩展）、Wayland 会话下多数合成器也不显示。
+  这个代价不藏着：`OrielTray.IsVisible` 把"当前到底可不可见"暴露成可读状态
+  （Linux 上是 `gtk_status_icon_is_embedded`；WSLg 取证里它是 `false`，属平台事实而非缺陷）。
+
+### Windows 通知：托盘气球，而不是 WinRT Toast
+
+- NativeAOT 下**没有 WinRT 投影**（Ryn 在同一处得出同一结论，并因此改走 PowerShell 子进程发 Toast）。
+- "未打包应用的可点击 Toast"还要求开始菜单快捷方式携带 AUMID 并注册 COM 激活器——那是**打包器**的职责，
+  不是库该做的（本库尚无打包器）。
+- 托盘气球（`NIF_INFO`）只需一个图标句柄，且点击能可靠回调。
+- 载体是**独立的隐藏托盘项**（`NIS_HIDDEN`），不是用户的托盘：否则"没启用托盘就发不了通知"会成为隐藏前提。
+
+### Linux 通知：`notify-send` 子进程；macOS 通知：`osascript`
+
+- libnotify 的 P/Invoke 能拿到点击/关闭回调，但要连引用计数与 GLib 信号一起管。这一批先交付"发得出去"，
+  代价是拿不到点击——于是 `NotificationClicked` 在 Linux/macOS 上**显式空实现**（`add {} remove {}`），
+  而不是留一个看起来"忘了触发"的自动事件（编译器 CS0067 正好把这个决定逼了出来）。
+  改用 libnotify action 回补点击已记入 ROADMAP。
+- macOS 未打包运行时没有 `CFBundleIdentifier`，`UNUserNotificationCenter` 直接拒绝，`osascript` 是唯一可行路径
+  （Ryn 同样分了"打包 / 未打包"两条路）。**转义是安全关键**：标题与正文来自应用（可能是页面数据），
+  会拼进一段 AppleScript 源码——必须转义反斜杠与双引号，且用 argv 传参不经 shell。
+- Linux 侧 `notify-send` 同理用 `ArgumentList` 逐项传参，标题里的分号、引号都不会变成命令注入。
+
+### macOS：设了菜单之后 `Clicked` 不再触发
+
+`statusItem.setMenu:` 之后系统不再派发按钮 action——这是 macOS 的惯例（左键点击即弹菜单），
+不是实现遗漏。`OrielTrayOptions.MenuOnClick` 因此只在 Windows 上有意义（Linux 的 `popup-menu` 与 `activate`
+是两个独立信号，两者都能收到）。
+
+### 验证法：假通知服务 + `notify-send` 替身
+
+无头 CI 里没有通知守护，通知"发出去了没有"本来无法断言。我们注册一个最小的
+`org.freedesktop.Notifications` 服务（`tools/fake-notification-service.py`）顶替守护进程，
+于是**真 `notify-send` → 会话总线 → 假服务**这条路能把"标题与正文逐字符正确"变成机器判定
+（`tools/verify-linux-shell.sh`）。缺 libnotify 的环境再用 `tools/fake-notify-send.py` 补上最后那一步
+D-Bus 调用（只补这一步，参数解析与真品对齐）。
+
+两处实测踩到的坑，记下来省下一次：
+
+- **`dbus.service.BusName` 必须保存引用**：不保存会被 GC，name 随之从总线上消失，
+  调用方拿到的是 `ServiceUnknown: ... was not provided by any .service files`——
+  看起来像"服务没起来"，实际是"name 被回收了"。现场查了 name owner 才定位到。
+- **工作区里的 `.py` 可能是 CRLF**：shebang 变成 `#!/usr/bin/env python3\r`，内核找不到解释器
+  （execve 返回 ENOENT）→ bash 回退去解释该文件 → 报出与真实原因毫不相干的语法错误。
+  `.gitattributes` 的 `* text=auto eol=lf` 只在**提交往返**时规范化，工作区文件仍是写入时的行尾，
+  所以本地直接执行会失败（`.sh` 没踩到是因为一律用 `bash x.sh` 调用，不看 shebang）。
+
+### 这批能证明什么、不能证明什么
+
+- **能**：托盘与通知的 API 通路可用、菜单能按各形态构建、通知投递的**内容**正确、缺客户端时如实报告"不支持"、
+  三平台编译通过。
+- **不能**：图标是否真的出现在托盘区、菜单的外观、通知横幅的展示与点击——都需要人眼。
+  清单在 `docs/ROADMAP.md`，`tools/verify-linux-shell.sh` 的结论里也把这条边界写明。

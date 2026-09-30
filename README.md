@@ -12,8 +12,8 @@
 - **导航与双向通信**：前进/后退/刷新 + 导航事件（开始/完成/失败，带错误信息）、页面 console 转发、
   `EmitEvent(name, payload)` 推事件、`oriel.postMessage` 收消息——三条通道都能在无头环境里机器断言
   （见 `--nav-selftest` / `--ipc-selftest`）
-- **平台集成**：剪贴板（文本 + HTML）、系统主题（深/浅 + 变更事件）、单实例——同样都有无头自检
-  （见 `--clipboard-selftest` / `--theme-selftest` / 单实例的双进程断言）
+- **平台集成**：剪贴板（文本 + HTML）、系统主题（深/浅 + 变更事件）、单实例、**系统托盘与系统通知**——
+  同样都有无头自检（见 `--clipboard-selftest` / `--theme-selftest` / `--shell-selftest` / 单实例的双进程断言）
 - **系统 webview**：Windows 用 WebView2、macOS 用 WKWebView、Linux 用 WebKitGTK——不捆绑浏览器内核
 
 ## 快速开始
@@ -269,6 +269,56 @@ Oriel.CreateBuilder(args)
 | 单实例 | 双进程：第二个立即成功退出并通知首实例、第一个收到激活请求 | — |
 
 > 与路线图的约定一致：这里只写有证据的结论；未验证项同样列在 `docs/ROADMAP.md` 的待真机清单里。
+
+## 托盘与通知
+
+两者都是**应用级**能力（不属于任何窗口）。托盘经 `AddTray` 配置、运行期从 `app.Tray` 取：
+
+```csharp
+Oriel.CreateBuilder(args)
+    .AddTray(o => { o.IconPath = "assets/tray.png"; o.Tooltip = "Todo"; })
+    .AddWindow(w => w.WithTitle("Todo"))
+    .Run();
+```
+
+```csharp
+var tray = app.Tray!;
+tray.Clicked += () => window.Show();
+tray.MenuItemClicked += id => { if (id == "quit") app.Quit(); };
+tray.SetMenu(
+[
+    OrielMenuItem.Item("show", "显示窗口"),
+    OrielMenuItem.Separator(),
+    new OrielMenuItem { Id = "mute", Label = "静音", Checked = true },
+    OrielMenuItem.RoleItem(OrielMenuRole.Quit),   // 平台标准项（行为由平台给，如退出应用）
+]);
+```
+
+通知是应用级入口，与是否启用托盘无关（Windows 上它的载体恰好是托盘气球，但那是实现细节）：
+
+```csharp
+app.ShowNotification("下载完成", "文件已保存到「下载」");   // 便捷重载
+app.ShowNotification(new OrielNotificationOptions
+{
+    Title = "构建失败", Body = "见控制台", IconPath = "assets/error.png", Id = "build-failed",
+});
+app.NotificationClicked += id => { /* 点了哪条通知（平台差异见下表） */ };
+```
+
+菜单项统一用 `OrielMenuItem`（分隔线、禁用、勾选、子菜单、平台 role 都在其中），
+加速键用 `OrielAccelerator` 语法（如 `"CmdOrCtrl+Shift+A"`——macOS 上是 Command、其它平台是 Ctrl）。
+
+### 托盘与通知的验证账
+
+| 能力 | 机器断言 | 尚未验证（需人眼或真机） |
+|---|---|---|
+| 托盘 | `--shell-selftest`：创建托盘 + 设进一份含分隔线/勾选/禁用/子菜单/role 的菜单，进程不崩；`tools/verify-linux-shell.sh` 采集证据 | **图标是否真的出现在托盘区**、菜单外观、点击行为。Linux 另有平台限制：GNOME Shell 需 AppIndicator 扩展、Wayland 会话多数不显示 |
+| 通知投递 | `tools/verify-linux-shell.sh`：真 `notify-send` → 会话总线 → 假通知服务，断言**标题与正文逐字符正确** | macOS 的通知横幅外观与点击上报；Windows 气球的实际展示 |
+| 通知点击上报 | Windows：气球点击回传 `Id` | Linux（`notify-send` 拿不到点击，要改 libnotify 的 action 回调）、macOS（`osascript` 无回调）——两处都在代码里**显式空实现**，而不是"忘了触发" |
+
+> 三平台实现：Windows `Shell_NotifyIconW` + 弹出菜单（`TrackPopupMenuEx`）、macOS `NSStatusBar`/`NSMenu`、
+> Linux GTK3 `GtkStatusIcon`/`GtkMenu`。通知：Windows 用独立的隐藏托盘项发气球（因此不启用托盘也能发）、
+> macOS 走 `osascript`、Linux 走 `notify-send`。
 
 ## 构建
 

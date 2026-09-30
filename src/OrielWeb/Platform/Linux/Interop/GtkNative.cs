@@ -59,6 +59,57 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gtk, EntryPoint = "gtk_widget_destroy")]
     internal static partial void GtkWidgetDestroy(nint widget);
 
+    // ---- 托盘图标（GtkStatusIcon）----
+    // GtkStatusIcon 在 GTK3 里已标 deprecated，但仍是本库唯一"零额外依赖"的方案：
+    // 引入 AppIndicator 会拖进 GTK2 时代的库，与进程级类型注册表冲突（Ryn 因此改走纯 D-Bus）。
+    // 现代桌面的实际限制（GNOME 需扩展、Wayland 多数不显示）记在 OrielTray 的文档里。
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_status_icon_new")]
+    internal static partial nint GtkStatusIconNew();
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_status_icon_set_from_file", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial void GtkStatusIconSetFromFile(nint statusIcon, string filename);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_status_icon_set_tooltip_text", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial void GtkStatusIconSetTooltipText(nint statusIcon, string text);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_status_icon_set_visible")]
+    internal static partial void GtkStatusIconSetVisible(nint statusIcon, int visible);
+
+    /// <summary>图标是否真的进了托盘区（0 = 没有宿主：纯 Wayland 会话、或未装扩展的 GNOME）。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_status_icon_is_embedded")]
+    internal static partial int GtkStatusIconIsEmbedded(nint statusIcon);
+
+    // ---- 菜单（GtkMenu）----
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_menu_new")]
+    internal static partial nint GtkMenuNew();
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_menu_item_new_with_label", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial nint GtkMenuItemNewWithLabel(string label);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_check_menu_item_new_with_label", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial nint GtkCheckMenuItemNewWithLabel(string label);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_check_menu_item_set_active")]
+    internal static partial void GtkCheckMenuItemSetActive(nint menuItem, int isActive);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_separator_menu_item_new")]
+    internal static partial nint GtkSeparatorMenuItemNew();
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_menu_shell_append")]
+    internal static partial void GtkMenuShellAppend(nint menuShell, nint child);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_menu_item_set_submenu")]
+    internal static partial void GtkMenuItemSetSubmenu(nint menuItem, nint submenu);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_widget_set_sensitive")]
+    internal static partial void GtkWidgetSetSensitive(nint widget, int sensitive);
+
+    /// <summary>在指针位置弹出菜单；triggerEvent 传 0 表示用当前指针位置（GTK 3.22+）。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_menu_popup_at_pointer")]
+    internal static partial void GtkMenuPopupAtPointer(nint menu, nint triggerEvent);
+
     [LibraryImport(Gtk, EntryPoint = "gtk_window_close")]
     internal static partial void GtkWindowClose(nint window);
 

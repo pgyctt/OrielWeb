@@ -114,8 +114,10 @@ jobs:
         run: |
           sudo apt-get update
           # x11-utils 提供 xwininfo（窗口断言）、imagemagick 提供 import（截图）；
-          # zlib1g-dev/clang 是 Native AOT 的前置（runner 通常已带，显式列出以免依赖镜像）
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev xvfb x11-utils imagemagick zlib1g-dev clang
+          # zlib1g-dev/clang 是 Native AOT 的前置（runner 通常已带，显式列出以免依赖镜像）；
+          # libnotify-bin 提供真的 notify-send（通知投递路径），python3-dbus/python3-gi 供
+          # tools/fake-notification-service.py 顶替无头环境里缺席的通知守护。
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev xvfb x11-utils imagemagick zlib1g-dev clang libnotify-bin python3-dbus python3-gi
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
@@ -202,12 +204,24 @@ jobs:
           grep -q 'SINGLE-INSTANCE: PASS' "$RUNNER_TEMP/si-primary.log" \
             || { echo "::error::首实例没有收到激活请求"; exit 1; }
 
+      - name: Shell integration (tray + notification) with evidence
+        # 托盘与通知的取证（tools/verify-linux-shell.sh）：
+        #  · 托盘：建托盘 + 设一份覆盖各形态的菜单（分隔线/勾选/禁用/子菜单/quit role），
+        #    断言进程不崩——图标是否真的出现需要人眼，脚本会把这条边界明确写进结论。
+        #  · 通知：真 notify-send → 会话总线 → 假通知服务（tools/fake-notification-service.py，
+        #    无头环境没有通知守护），断言标题与正文**逐字符正确**。
+        #    这样"通知确实发出去了、内容没在传参路上被改写"是机器可判定的，而不是"没报错"。
+        # 复用上面已发布的产物（--no-publish），与 Self-tests 同一份二进制。
+        run: bash tools/verify-linux-shell.sh --no-publish --out "$RUNNER_TEMP/linux-shell-out"
+
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: linux-smoke-evidence
-          path: ${{ runner.temp }}/linux-verify-out
+          path: |
+            ${{ runner.temp }}/linux-verify-out
+            ${{ runner.temp }}/linux-shell-out
           if-no-files-found: warn
           retention-days: 14
 
