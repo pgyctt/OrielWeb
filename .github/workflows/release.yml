@@ -64,5 +64,16 @@ jobs:
             dist/OrielWeb-demo-win-x64.zip
 
       - name: Push to nuget.org
+        # 通配符必须由 shell 展开：PowerShell 不会给原生命令展开参数里的 *，
+        # 而 dotnet nuget push 自己也不展开——"dist/nuget/*.nupkg" 会被当成一个文件名，
+        # 于是报 "File does not exist"。这里显式列出文件，顺带在没有产物时
+        # 给出比"文件不存在"更清楚的错误。
         # --skip-duplicate：重复推送同一版本不再报错（幂等）
-        run: dotnet nuget push "dist/nuget/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key "${{ secrets.NUGET_API_KEY }}" --skip-duplicate
+        shell: pwsh
+        run: |
+          $packages = @(Get-ChildItem -Path dist/nuget -Filter *.nupkg)
+          if ($packages.Count -eq 0) {
+            throw "dist/nuget 里没有 nupkg——先确认上一步 Pack 的产物"
+          }
+          Write-Output "推送 $($packages.Count) 个包：$($packages.Name -join ', ')"
+          dotnet nuget push $packages.FullName --source https://api.nuget.org/v3/index.json --api-key "${{ secrets.NUGET_API_KEY }}" --skip-duplicate
