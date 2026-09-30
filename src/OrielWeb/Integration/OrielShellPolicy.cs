@@ -104,8 +104,20 @@ internal static class OrielShellCommand
         // Linux 的 xdg-open 只能"打开"：显示文件就退一步打开它所在的目录
         // （freedesktop 没有等价的"选中"入口；要走精确选中得用 FileManager1 的 D-Bus 接口）
         return action == OrielShellAction.RevealPath
-            ? ("xdg-open", [Path.GetDirectoryName(target) ?? target])
+            ? ("xdg-open", [ParentDirectory(target)])
             : ("xdg-open", [target]);
+    }
+
+    /// <summary>
+    /// 取父目录。刻意用字符串处理而不用 <see cref="Path.GetDirectoryName"/>：
+    /// "Linux 分支收到 POSIX 路径"这个行为要在 **Windows 上也能被测试断言**，
+    /// 而 Path API 在 Windows 上会把不带盘符的 POSIX 路径按相对路径解析（<c>/home/x</code> 变成
+    /// 当前盘符下的 <c>\home\x</c>）——纯函数一旦调了平台相关 API，就不再纯。
+    /// </summary>
+    private static string ParentDirectory(string path)
+    {
+        int cut = path.LastIndexOfAny(['/', '\\']);
+        return cut > 0 ? path[..cut] : path;
     }
 }
 
