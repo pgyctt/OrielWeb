@@ -101,6 +101,34 @@ internal static class ShellSelfTest
             ]);
             Console.WriteLine("[shell-selftest] 应用菜单已设置（macOS 生效 / Windows 无边框窗口跳过 / Linux 空操作）");
 
+            // 全局快捷键：Linux 上按平台事实返回 false（X11 可做但未实现、Wayland 无解）。
+            // 这里断言的是"如实报告"而不是"注册成功"——两种结果都能 PASS，但输出不同，
+            // 取证脚本据平台断言具体取值。
+            bool shortcutRegistered = _app.RegisterGlobalShortcut("CmdOrCtrl+Shift+F12");
+            Console.WriteLine($"[shell-selftest] GLOBAL-SHORTCUT-REGISTERED: {(shortcutRegistered ? "true" : "false")}");
+
+            if (shortcutRegistered)
+            {
+                // 注册成功时必须查得到（写法不同但等价也算同一个），且注销要成功——
+                // 这两条在三平台都能机器断言，与"按键能否真的触发"无关。
+                bool found = _app.IsGlobalShortcutRegistered("ctrl+shift+f12");
+                bool unregistered = _app.UnregisterGlobalShortcut("CmdOrCtrl+Shift+F12");
+                Console.WriteLine($"[shell-selftest] GLOBAL-SHORTCUT-LOOKUP: {(found ? "true" : "false")}");
+                Console.WriteLine($"[shell-selftest] GLOBAL-SHORTCUT-UNREGISTERED: {(unregistered ? "true" : "false")}");
+
+                if (!found || !unregistered)
+                {
+                    Failed = true;
+                    Console.WriteLine("SHELL-SELFTEST: FAIL —— 注册成功但查不到或注销失败");
+                    return;
+                }
+            }
+
+            // 徽章：macOS 会真的设 Dock 徽章，Windows/Linux 是文档化的 no-op。这里只断言调用不崩。
+            _app.SetBadge("3");
+            _app.SetBadge(null);
+            Console.WriteLine("[shell-selftest] 徽章 API 已调用（macOS 生效 / Windows、Linux no-op）");
+
             Console.WriteLine("SHELL-SELFTEST: PASS");
         }
         catch (Exception ex)

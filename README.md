@@ -13,7 +13,7 @@
   `EmitEvent(name, payload)` 推事件、`oriel.postMessage` 收消息——三条通道都能在无头环境里机器断言
   （见 `--nav-selftest` / `--ipc-selftest`）
 - **平台集成**：剪贴板（文本 + HTML）、系统主题（深/浅 + 变更事件）、单实例、系统托盘、系统通知、
-  **菜单**（应用菜单 + 窗口上下文菜单，含平台 role 与加速键）——都有无头自检
+  **菜单**（应用菜单 + 窗口上下文菜单，含平台 role 与加速键）、**全局快捷键与徽章**——都有无头自检
   （见 `--clipboard-selftest` / `--theme-selftest` / `--shell-selftest` / 单实例的双进程断言）
 - **系统 webview**：Windows 用 WebView2、macOS 用 WKWebView、Linux 用 WebKitGTK——不捆绑浏览器内核
 
@@ -317,6 +317,8 @@ app.NotificationClicked += id => { /* 点了哪条通知（平台差异见下表
 | 通知投递 | `tools/verify-linux-shell.sh`：真 `notify-send` → 会话总线 → 假通知服务，断言**标题与正文逐字符正确** | macOS 的通知横幅外观与点击上报；Windows 气球的实际展示 |
 | 通知点击上报 | Windows：气球点击回传 `Id` | Linux（`notify-send` 拿不到点击，要改 libnotify 的 action 回调）、macOS（`osascript` 无回调）——两处都在代码里**显式空实现**，而不是"忘了触发" |
 | 菜单 | `--shell-selftest` 设置一份含子菜单/自定义项/role 的应用菜单并断言不崩（Linux 上是空操作）；加速键解析有 41 个单测 | 菜单的外观、上下文菜单的弹出位置与交互、macOS 上加速键是否真的生效——需人眼 |
+| 全局快捷键 | `--shell-selftest`：注册结果必须**如实反映平台能力**（Linux 上必须是 `false`），注册成功时还必须查得到、注销得掉 | 按键**真的**能触发（要有人按下去）——macOS / Windows 待真机 |
+| 徽章 | `--shell-selftest` 断言调用不抛异常（Linux/Windows 上是文档化的 no-op） | macOS 的徽章外观；Windows 的 overlay 图标（尚未实现） |
 
 > 三平台实现：Windows `Shell_NotifyIconW` + 弹出菜单（`TrackPopupMenuEx`）、macOS `NSStatusBar`/`NSMenu`、
 > Linux GTK3 `GtkStatusIcon`/`GtkMenu`。通知：Windows 用独立的隐藏托盘项发气球（因此不启用托盘也能发）、
@@ -358,6 +360,29 @@ app.AppMenuItemClicked += id => { /* 自定义项的 Id */ };
 > role 的语义由 `OrielMenuRoles` 统一解释（`quit` 退出应用、`copy` 交给页面 `document.execCommand` 等），
 > 三平台后端只负责"把菜单画出来"和"把选择报回来"。编辑类 role 是**尽力而为**：
 > `copy`/`selectAll`/`undo`/`redo` 通常可用，`cut`/`paste` 在多数 webview 里会被安全策略拦下。
+
+### 全局快捷键与徽章
+
+```csharp
+app.GlobalShortcutActivated += accelerator => window.Show();   // 参数是注册时给的写法，原样回传
+if (!app.RegisterGlobalShortcut("CmdOrCtrl+Shift+Space"))
+{
+    // 语法不合法、没带修饰键、平台不支持、或已被别的程序占用 —— 提示用户换一个
+}
+app.UnregisterGlobalShortcut("CmdOrCtrl+Shift+Space");
+
+app.SetBadge("3");     // Dock/任务栏徽章
+app.SetBadge(null);    // 清除
+```
+
+| | macOS | Windows | Linux |
+|---|---|---|---|
+| 全局快捷键 | ✅ Carbon `RegisterEventHotKey`——它是**唯一不需要辅助功能权限**就能注册系统级快捷键的公开接口（`CGEventTap` 那类要用户去系统设置授权） | ✅ `RegisterHotKey`，复用平台的调度窗口收 `WM_HOTKEY`（托盘与通知用的同一个宿主） | ❌ **不实现**：X11 可做（`XGrabKey` + GDK 事件过滤器）但未落地，Wayland 下没有等价物（正路是 xdg-desktop-portal）。注册**如实返回 `false`** |
+| 徽章 | ✅ Dock 徽章（`dockTile.badgeLabel`，文字或数字） | ⏳ no-op（等价物 `SetOverlayIcon` 要自绘 overlay 图标，已记 ROADMAP） | ❌ 没有跨桌面方案（Unity 的 launcher badge 是桌面专属的） |
+
+> 注册失败是**正常返回值而不是异常**：语法不合法、没有修饰键（会吞掉正常打字）、平台不支持、
+> 组合被占用 —— 都返回 `false`，调用方据此提示用户换一个。
+> 快捷键语法与菜单加速键**完全共用**（`OrielAccelerator`），只有"规范化键名 → 原生键码"的映射表是各平台自己的。
 
 ## 构建
 

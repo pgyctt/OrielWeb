@@ -112,7 +112,9 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 | 系统托盘（`AddTray` / `app.Tray`） | ✅ 已实现；Linux 取证通过 | Windows `Shell_NotifyIconW` + `TrackPopupMenuEx`；macOS `NSStatusBar`/`NSMenu`；Linux GTK3 `GtkStatusIcon`/`GtkMenu`（用 GTK 自带而非 AppIndicator，理由见 DECISIONS） | Windows/macOS 编译验证；Linux 由 `--shell-selftest` 断言"托盘创建 + 一份含分隔线/勾选/禁用/子菜单/role 的菜单能设进去、进程不崩"，并由 `tools/verify-linux-shell.sh` 采集证据。**图标可见性需人眼**（见下） |
 | 系统通知（`ShowNotification`） | ✅ 已实现；Linux 硬断言 | Windows 用**独立的隐藏托盘项**发 `NIF_INFO` 气球（因此不启用托盘也能发）；macOS `osascript`；Linux `notify-send` | Linux：真 `notify-send` → 会话总线 → 假通知服务，断言**标题与正文逐字符正确**（`tools/verify-linux-shell.sh`）。点击上报仅 Windows 支持，另两个平台**显式空实现**（不是"忘触发"） |
 | 应用菜单 + 窗口上下文菜单 | ✅ 已实现 | 应用菜单：macOS `NSApplication.setMainMenu:`（语义最贴合）、Windows 每个窗口的 `SetMenu`（**无边框窗口跳过**——客户区铺满窗口会盖住菜单栏，与其"设了看不见"不如显式跳过）、Linux **空操作**（现代 GTK 用 header bar，且菜单栏会与 webview 布局层级打架）。上下文菜单三平台都支持（Windows 阻塞、另两个异步）。菜单构建按平台抽成共享类（`Win32Menu`/`GtkMenu`/`MacOSMenu`），role 由 `OrielMenuRoles` 统一解释 | 三平台编译 ✓；Linux `--shell-selftest` 断言"设置应用菜单 + 构建各形态菜单不崩"。**菜单外观、上下文菜单交互、macOS 加速键是否生效需人眼**（见下） |
-| 全局快捷键 / 徽章 | ⏳ 未开始 | 参照 Ryn 的 GlobalShortcut/Badge 插件；注意 Linux 上两者都没有标准 API（Ryn 也是 Stub）：快捷键要 X11 的 `XGrabKey`（Wayland 无解），徽章无跨桌面方案 | — |
+| 全局快捷键 | ✅ 已实现（Linux 按平台事实不支持） | Windows `RegisterHotKey`（复用调度窗口收 `WM_HOTKEY`）、macOS Carbon `RegisterEventHotKey`（唯一不需要辅助功能权限的公开接口）、Linux **如实返回 false**（X11 未落地、Wayland 无解）。语法与菜单加速键共用 `OrielAccelerator` | Linux 取证断言"如实报告不支持 + 注册成功时查得到/注销得掉"；Windows/macOS 编译验证。**按键真的能触发需真机**（见下） |
+| 徽章 | ⚠️ 仅 macOS | macOS `dockTile.badgeLabel`；Windows 的等价物 `ITaskbarList3.SetOverlayIcon` 需要自绘 overlay 图标（GDI），未做；Linux 无跨桌面方案 | 调用不抛异常已断言；**外观需人眼** |
+| Linux 全局快捷键（X11） | ⏳ 未开始（可选增强） | `XGrabKey` + GDK 事件过滤器（需 libX11 互操作与 XEvent 解析）。Wayland 无解，只能如实返回 false | 落地后要同步改 `verify-linux-shell.sh` 里"Linux 必须返回 false"那条断言 |
 | deep link / 开机自启 | ⏳ 未开始（B 批） | — | 写注册表/.desktop/LaunchAgent 的内容可机器断言 |
 
 ### 托盘与通知的待真机清单

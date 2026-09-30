@@ -146,6 +146,42 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         }
     }
 
+    // ---- 全局快捷键 / 徽章 ----
+
+    private Win32GlobalShortcuts? _shortcuts;
+
+    public event Action<string>? GlobalShortcutActivated;
+
+    private Win32GlobalShortcuts Shortcuts
+    {
+        get
+        {
+            if (_shortcuts is null)
+            {
+                _shortcuts = new Win32GlobalShortcuts(_messageHwnd);
+                _shortcuts.Activated += id => GlobalShortcutActivated?.Invoke(id);
+            }
+
+            return _shortcuts;
+        }
+    }
+
+    public bool RegisterGlobalShortcut(OrielAccelerator accelerator, string id)
+        => Shortcuts.Register(accelerator, id);
+
+    public bool UnregisterGlobalShortcut(string id) => _shortcuts?.Unregister(id) ?? false;
+
+    public void UnregisterAllGlobalShortcuts() => _shortcuts?.UnregisterAll();
+
+    /// <summary>
+    /// 徽章在 Windows 上需要自绘 overlay 图标（<c>ITaskbarList3.SetOverlayIcon</c> + GDI 画位图），
+    /// 当前是 **no-op**（已记入 ROADMAP）。不做半吊子实现的理由：调用方会以为设置成功了，
+    /// 而"设了但看不见"比"明确不支持"更难查。
+    /// </summary>
+    public void SetBadge(string? label)
+    {
+    }
+
     public void RunMessageLoop()
     {
         while (Win32.GetMessageW(out var message, 0, 0, 0) > 0)
@@ -205,11 +241,13 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         }
     }
 
-    /// <summary>释放托盘与通知载体；调度窗口随消息循环结束销毁。</summary>
+    /// <summary>释放托盘、通知载体与已注册的全局快捷键；调度窗口随消息循环结束销毁。</summary>
     public void Dispose()
     {
         _tray?.Dispose();
         _balloon?.Dispose();
+        // 热键注册属于进程级资源：不显式注销，系统会一直占着这个组合
+        _shortcuts?.UnregisterAll();
     }
 
     // ---- 消息窗口 ----
@@ -252,6 +290,12 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         if (message == Win32Constants.WM_APP_NOTIFY)
         {
             s_current?._balloon?.HandleCallback(wParam);
+            return 0;
+        }
+        if (message == Win32Constants.WM_HOTKEY)
+        {
+            // wParam 是注册时给的热键 id（见 Win32GlobalShortcuts.Register）
+            s_current?._shortcuts?.HandleHotKey(wParam);
             return 0;
         }
         if (message == Win32Constants.WM_CONTEXTMENU)

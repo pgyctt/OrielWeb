@@ -727,3 +727,22 @@ D-Bus 调用（只补这一步，参数解析与真品对齐）。
 Linux 的应用菜单**不实现**：现代 GTK 应用用 header bar，GTK3 的 `GtkMenuBar` 在主stream桌面上已不惯用，
 硬塞进 `GtkWindow` 还会与 webview 的布局层级打架（Ryn 在同一处也放弃了 Linux 菜单栏）。
 `SetAppMenu` 因此是空操作、`AppMenuItemClicked` 是显式空实现——刻意如此，不是漏做。
+
+## 全局快捷键与徽章：三个选择的理由（2026-09-30）
+
+- **macOS 用 Carbon 的 `RegisterEventHotKey`**：Carbon 早已标称弃用，但它是**唯一不需要辅助功能/输入监控权限**
+  就能注册系统级快捷键的公开接口。`CGEventTap` / 全局 `NSEvent` 监听都要用户先去系统设置里授权——
+  对一个"注册个快捷键"的诉求来说代价过高（Ryn 在同一处也选了 Carbon）。
+- **Windows 复用平台的调度窗口**：`RegisterHotKey` 需要一个 HWND 来收 `WM_HOTKEY`，而调度窗口
+  （托盘与通知的宿主，见 `WindowsPlatformBackend.MessageWindowHandle`）正好就在，因此不需要额外线程或消息循环。
+- **Linux 如实返回 `false` 而不是假装成功**：X11 下技术上可行（`XGrabKey` + GDK 事件过滤器），
+  但要额外的 libX11 互操作与 XEvent 解析；Wayland 下没有等价物（正路是 xdg-desktop-portal 的
+  GlobalShortcuts 接口，会话里拿不到 grab）。关键在**如实**：调用方据此提示用户换一个组合，
+  而不是一直等一个永远不会触发的事件（Ryn 在同一处也是 Stub）。
+- **徽章只做 macOS**：Windows 的等价物是 `ITaskbarList3.SetOverlayIcon`，需要自绘 16×16 overlay 图标
+  （GDI 画圆 + 文字），已记入 ROADMAP；Linux 没有跨桌面方案。选择"明确 no-op + 文档"而不是半吊子实现——
+  后者会让调用方以为设置成功了，"设了但看不见"比"明确不支持"难查得多。
+
+**复利**：全局快捷键的语法直接复用了第一批就落地的 `OrielAccelerator`（同一套语法、同一份 41 个单测），
+平台侧只多了一张"规范化键名 → 原生键码"的映射表（Windows 是 VK 码、macOS 是 keyCode，两者毫无关系，
+各自一张）。这也是当初把解析器与平台映射分开的原因。

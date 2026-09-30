@@ -147,6 +147,27 @@ internal interface IPlatformBackend : IDisposable
     /// <summary>用户点击了某条通知；参数是 <see cref="OrielNotificationOptions.Id"/>。</summary>
     event Action<string>? NotificationClicked;
 
+    /// <summary>
+    /// 注册一个系统级快捷键。<paramref name="id"/> 是平台无关的规范化串（<see cref="OrielAccelerator"/>），
+    /// 回调与注销都用它。返回 false 表示平台侧拒绝（不支持、或该组合已被别的程序占用）。
+    /// </summary>
+    bool RegisterGlobalShortcut(OrielAccelerator accelerator, string id);
+
+    /// <summary>注销一个已注册的快捷键；未注册时返回 false。</summary>
+    bool UnregisterGlobalShortcut(string id);
+
+    /// <summary>注销本应用注册的全部快捷键（应用退出前的清理入口）。</summary>
+    void UnregisterAllGlobalShortcuts();
+
+    /// <summary>某个已注册的快捷键被按下；参数是注册时的 <c>id</c>（规范化串）。</summary>
+    event Action<string>? GlobalShortcutActivated;
+
+    /// <summary>
+    /// 设置任务栏/Dock 徽章（<c>null</c> 或空串表示清除）。平台差异见 README：
+    /// macOS 是 Dock 徽章，Windows 需要自绘 overlay 图标、当前为 no-op，Linux 没有跨桌面方案。
+    /// </summary>
+    void SetBadge(string? label);
+
     /// <summary>发送系统通知；平台不支持时静默忽略（不抛异常——通知失败不该影响业务）。</summary>
     void ShowNotification(OrielNotificationOptions notification);
 }

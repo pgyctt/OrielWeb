@@ -140,6 +140,50 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
         MacOSMenu.ClearMainMenu();
     }
 
+    // ---- 全局快捷键 / 徽章 ----
+
+    private MacOSGlobalShortcuts? _shortcuts;
+
+    public event Action<string>? GlobalShortcutActivated;
+
+    private MacOSGlobalShortcuts Shortcuts
+    {
+        get
+        {
+            if (_shortcuts is null)
+            {
+                _shortcuts = new MacOSGlobalShortcuts();
+                _shortcuts.Activated += id => GlobalShortcutActivated?.Invoke(id);
+            }
+
+            return _shortcuts;
+        }
+    }
+
+    public bool RegisterGlobalShortcut(OrielAccelerator accelerator, string id)
+        => Shortcuts.Register(accelerator, id);
+
+    public bool UnregisterGlobalShortcut(string id) => _shortcuts?.Unregister(id) ?? false;
+
+    public void UnregisterAllGlobalShortcuts() => _shortcuts?.UnregisterAll();
+
+    /// <summary>Dock 徽章：<c>NSApplication.dockTile.badgeLabel</c>（文字或数字；null/空清除）。</summary>
+    public void SetBadge(string? label)
+    {
+        nint app = ObjCRuntime.SendId(
+            ObjCRuntime.GetClassOrThrow("NSApplication"), ObjCRuntime.Sel("sharedApplication"));
+        nint dockTile = ObjCRuntime.SendId(app, ObjCRuntime.Sel("dockTile"));
+        if (dockTile == 0)
+        {
+            return;
+        }
+
+        ObjCRuntime.SendVoidObj(
+            dockTile,
+            ObjCRuntime.Sel("setBadgeLabel:"),
+            string.IsNullOrEmpty(label) ? 0 : ObjCRuntime.MakeNSString(label));
+    }
+
     /// <summary>
     /// 应用菜单里的 role 有明确的作用目标（不像托盘那样无窗口可用）：取第一个窗口。
     /// 多窗口场景下"关闭/最小化哪个窗口"本就没有通用答案，取首个是明确且可预期的选择。
@@ -218,5 +262,7 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
 
     public void Dispose()
     {
+        // 热键注册属于进程级资源：不显式注销，系统会一直占着这个组合
+        _shortcuts?.UnregisterAll();
     }
 }

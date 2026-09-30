@@ -162,6 +162,35 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
         remove { }
     }
 
+    // ---- 全局快捷键 ----
+    // Linux 上**不实现**，注册一律如实返回 false：
+    //  · X11 下技术上可行（XGrabKey + GDK 事件过滤器），但要额外的 libX11 互操作与 XEvent 解析；
+    //  · Wayland 下没有等价物——正路是 xdg-desktop-portal 的 GlobalShortcuts 接口，会话里拿不到 grab。
+    // Ryn 在同一处也是 Stub，理由相同。
+    // 关键在于**如实返回 false 而不是假装注册成功**：调用方据此提示用户换一个组合，
+    // 而不是一直等一个永远不会触发的事件。
+
+    public bool RegisterGlobalShortcut(OrielAccelerator accelerator, string id) => false;
+
+    public bool UnregisterGlobalShortcut(string id) => false;
+
+    public void UnregisterAllGlobalShortcuts()
+    {
+    }
+
+    public event Action<string>? GlobalShortcutActivated
+    {
+        add { }
+        remove { }
+    }
+
+    /// <summary>
+    /// 徽章：Linux 没有跨桌面的方案（Unity 的 launcher badge 是桌面专属的），因此是 no-op。
+    /// </summary>
+    public void SetBadge(string? label)
+    {
+    }
+
     // ---- 通知 ----
     // Linux 的通知交给 freedesktop 通知守护（经 notify-send 子进程）。
 
