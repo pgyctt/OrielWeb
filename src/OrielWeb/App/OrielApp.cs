@@ -259,6 +259,60 @@ public sealed class OrielApp : IDisposable
         return backend.DisableAutoStart(AutoStartId);
     }
 
+    // ---- Shell（交给系统默认程序）----
+
+    private static readonly OrielShellOptions s_defaultShellOptions = new();
+
+    private OrielShellOptions ShellOptions => _builder.ShellOptions ?? s_defaultShellOptions;
+
+    /// <summary>
+    /// 用系统默认程序打开一个外部链接。
+    /// </summary>
+    /// <remarks>
+    /// **只放行白名单内的 scheme**（默认 <c>http</c>/<c>https</c>/<c>mailto</c>，
+    /// 见 <see cref="OrielShellOptions.AllowedSchemes"/>）：<c>file:</c>、<c>javascript:</c>、
+    /// 裸路径与含控制字符的目标一律拒绝并返回 <c>false</c>。
+    /// 这类 API 的风险不在"自己执行了什么"，而在"它决定让别的程序去打开什么"。
+    /// </remarks>
+    public bool OpenExternal(string url)
+    {
+        if (!OrielShellPolicy.IsAllowedUrl(url, ShellOptions.AllowedSchemes))
+        {
+            System.Diagnostics.Debug.WriteLine($"[OrielWeb] OpenExternal 拒绝了不在白名单内的目标：{url}");
+            return false;
+        }
+
+        return OrielShellLauncher.Launch(OrielShellAction.OpenUrl, url);
+    }
+
+    /// <summary>
+    /// 在系统文件管理器里显示一个文件：Windows 选中它、macOS 用 Finder 显示、
+    /// Linux 打开它所在的目录（<c>xdg-open</c> 没有"选中"这个入口）。
+    /// 路径不存在或不是绝对路径时返回 <c>false</c>，并且**不做任何调用**。
+    /// </summary>
+    public bool RevealInFileManager(string path)
+    {
+        if (!OrielShellPolicy.IsUsablePath(path))
+        {
+            System.Diagnostics.Debug.WriteLine($"[OrielWeb] RevealInFileManager 拒绝了不可用路径：{path}");
+            return false;
+        }
+
+        return OrielShellLauncher.Launch(OrielShellAction.RevealPath, path);
+    }
+
+    /// <summary>用系统默认程序打开一个文件（路径必须存在且为绝对路径）。</summary>
+    public bool OpenWithDefaultApp(string path)
+    {
+        if (!OrielShellPolicy.IsUsablePath(path))
+        {
+            System.Diagnostics.Debug.WriteLine($"[OrielWeb] OpenWithDefaultApp 拒绝了不可用路径：{path}");
+            return false;
+        }
+
+        return OrielShellLauncher.Launch(OrielShellAction.OpenPath, path);
+    }
+
     /// <summary>创建窗口、进入消息循环；阻塞直到所有窗口关闭。</summary>
     public void Run()
     {

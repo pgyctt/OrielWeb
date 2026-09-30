@@ -108,6 +108,20 @@ fi
 echo "--- 通知客户端：$CLIENT_DESC"
 echo "--- 期望 NOTIFICATIONS-SUPPORTED：$EXPECT_SUPPORTED"
 
+# xdg-open 替身：把"打开了什么"记进文件，让"确实调用了系统默认程序"成为可断言的事实。
+# 无头环境里真 xdg-open 会尝试拉起浏览器并失败，替身反而更干净（与通知那条同一手法）。
+if [[ -z "$FAKE_BIN" ]]; then
+    FAKE_BIN="$(mktemp -d /tmp/oriel-fakebin-XXXXXX)"
+fi
+cat > "$FAKE_BIN/xdg-open" <<EOF
+#!/bin/sh
+echo "XDG-OPEN \$@" >> "$OUT_DIR/xdg-open.log"
+exit 0
+EOF
+chmod +x "$FAKE_BIN/xdg-open"
+export PATH="$FAKE_BIN:$PATH"
+echo "--- xdg-open：替身（记录参数到 $OUT_DIR/xdg-open.log）"
+
 # ---- 3. 在会话总线里跑自检（通知服务与 demo 同一个 dbus session）----
 if [[ "$HAVE_DBUS_PYTHON" == "1" ]]; then
     echo "--- 启动假通知服务并运行 --shell-selftest ---"
@@ -204,6 +218,25 @@ if grep -q "AUTOSTART-DESKTOP-OK: true" "$APP_LOG"; then
     pass "写出的 .desktop 内容逐项正确（Desktop Entry 头、带引号的 Exec、参数、X-GNOME-Autostart-enabled）"
 else
     fail "autostart 文件内容不符合预期"
+fi
+
+# Shell：既要"真的调用了系统默认程序"，也要"危险目标一次都没调出去"
+if grep -q "SHELL-OPEN-EXTERNAL: true" "$APP_LOG" && grep -q "SHELL-REJECTED-DANGEROUS: true" "$APP_LOG"; then
+    pass "Shell 自检：外部打开成功，且 file:/裸路径/javascript: 都被拒绝"
+else
+    fail "Shell 自检未通过（外部打开或白名单拒绝不符合预期）"
+fi
+
+if grep -q "https://example.com/oriel-selftest" "$OUT_DIR/xdg-open.log" 2>/dev/null; then
+    pass "OpenExternal 真的把 URL 交给了系统默认程序（替身 xdg-open 收到了它）"
+else
+    fail "OpenExternal 没有把 URL 交给系统默认程序"
+fi
+
+if grep -qE "file://|/etc/passwd|javascript:" "$OUT_DIR/xdg-open.log" 2>/dev/null; then
+    fail "危险目标被交给了系统默认程序——白名单没拦住"
+else
+    pass "白名单是有效的：替身一次都没收到 file:、裸路径或 javascript:"
 fi
 
 # ---- 5. 结论 ----

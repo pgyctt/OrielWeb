@@ -125,6 +125,20 @@ public sealed class OrielAppBuilder
         return this;
     }
 
+    internal OrielShellOptions? ShellOptions { get; private set; }
+
+    /// <summary>
+    /// 配置 Shell 集成（<see cref="OrielApp.OpenExternal"/> 的 scheme 白名单）。
+    /// 默认只放行 <c>http</c>/<c>https</c>/<c>mailto</c>；需要自定义协议时在这里追加。
+    /// </summary>
+    public OrielAppBuilder UseShell(Action<OrielShellOptions>? configure = null)
+    {
+        var options = new OrielShellOptions();
+        configure?.Invoke(options);
+        ShellOptions = options;
+        return this;
+    }
+
     internal string? AutoStartId { get; private set; }
 
     /// <summary>

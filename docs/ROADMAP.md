@@ -116,6 +116,7 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 | 徽章 | ⚠️ 仅 macOS | macOS `dockTile.badgeLabel`；Windows 的等价物 `ITaskbarList3.SetOverlayIcon` 需要自绘 overlay 图标（GDI），未做；Linux 无跨桌面方案 | 调用不抛异常已断言；**外观需人眼** |
 | Linux 全局快捷键（X11） | ⏳ 未开始（可选增强） | `XGrabKey` + GDK 事件过滤器（需 libX11 互操作与 XEvent 解析）。Wayland 无解，只能如实返回 false | 落地后要同步改 `verify-linux-shell.sh` 里"Linux 必须返回 false"那条断言 |
 | 开机自启 | ✅ 已实现 | Windows 写 HKCU 的 Run 键、macOS 写 LaunchAgent plist（不调 `launchctl load`，避免立刻再拉起一个实例）、Linux 写 freedesktop 的 autostart `.desktop`。配置文本由共用的纯函数生成 | **B 批里最硬的一条**：取证脚本断言"启用 → 查得到 → 禁用 → 查不到"的闭环，并逐项核对 `.desktop` 的内容（Desktop Entry 头、带引号的 Exec、参数、GNOME 启用标志）；另有 12 个单测覆盖三段文本。**"下次开机真的起来了"仍需真机重启** |
+| Shell（打开外链 / 在文件管理器里显示） | ✅ 已实现 | 用系统默认程序打开 URL 与文件、在文件管理器里显示；**默认拒绝式的 scheme 白名单**（只放 http/https/mailto）。**不含** Ryn 的 `shell.execute`/PTY——那属能力沙箱范畴 | 取证脚本用 `xdg-open` 替身断言两点：URL 真的交出去了、危险目标一次都没调出去；24 个单测覆盖校验与三平台命令翻译 |
 | deep link | ⏳ 未开始 | `myapp://` 的注册与转发；可复用已有的单实例通道做"第二实例把链接转给首实例" | Linux 写 `.desktop` 可断言 |
 
 ### 托盘与通知的待真机清单

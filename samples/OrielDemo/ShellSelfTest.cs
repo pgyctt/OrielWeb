@@ -182,6 +182,22 @@ internal static class ShellSelfTest
                 return;
             }
 
+            // Shell：真调一次"打开外部链接"（CI 里 PATH 上的 xdg-open 是取证脚本放的替身，参数会被记下来），
+            // 再确认危险目标被白名单挡在门外——**安全边界也要有断言**，不能只断言"能用"。
+            bool openOk = _app.OpenExternal("https://example.com/oriel-selftest");
+            bool rejected = !_app.OpenExternal("file:///etc/passwd")
+                && !_app.OpenExternal("/etc/passwd")
+                && !_app.OpenExternal("javascript:alert(1)");
+            Console.WriteLine($"[shell-selftest] SHELL-OPEN-EXTERNAL: {(openOk ? "true" : "false")}");
+            Console.WriteLine($"[shell-selftest] SHELL-REJECTED-DANGEROUS: {(rejected ? "true" : "false")}");
+
+            if (!openOk || !rejected)
+            {
+                Failed = true;
+                Console.WriteLine("SHELL-SELFTEST: FAIL —— 外部打开失败，或白名单没有拦住危险目标");
+                return;
+            }
+
             Console.WriteLine("SHELL-SELFTEST: PASS");
         }
         catch (Exception ex)

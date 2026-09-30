@@ -320,6 +320,7 @@ app.NotificationClicked += id => { /* 点了哪条通知（平台差异见下表
 | 全局快捷键 | `--shell-selftest`：注册结果必须**如实反映平台能力**（Linux 上必须是 `false`），注册成功时还必须查得到、注销得掉 | 按键**真的**能触发（要有人按下去）——macOS / Windows 待真机 |
 | 徽章 | `--shell-selftest` 断言调用不抛异常（Linux/Windows 上是文档化的 no-op） | macOS 的徽章外观；Windows 的 overlay 图标（尚未实现） |
 | 开机自启 | `--shell-selftest`：**启用 → 查得到 → 禁用 → 查不到**的闭环（三平台都成立）；Linux 上还逐项核对写出的 `.desktop` 内容；三段配置文本另有 12 个单测 | 下次**开机/登录时是否真的自动启动**——需要真机重启 |
+| Shell 集成 | 取证脚本用 `xdg-open` 替身断言两件事：URL **真的**交给了系统默认程序，且 `file:`/裸路径/`javascript:` **一次都没调出去**（白名单有效性）；另有 24 个单测覆盖校验与三平台命令翻译 | 真实桌面上弹出的浏览器/文件管理器是否符合预期——需人眼 |
 
 > 三平台实现：Windows `Shell_NotifyIconW` + 弹出菜单（`TrackPopupMenuEx`）、macOS `NSStatusBar`/`NSMenu`、
 > Linux GTK3 `GtkStatusIcon`/`GtkMenu`。通知：Windows 用独立的隐藏托盘项发气球（因此不启用托盘也能发）、
@@ -384,6 +385,29 @@ app.SetBadge(null);    // 清除
 > 注册失败是**正常返回值而不是异常**：语法不合法、没有修饰键（会吞掉正常打字）、平台不支持、
 > 组合被占用 —— 都返回 `false`，调用方据此提示用户换一个。
 > 快捷键语法与菜单加速键**完全共用**（`OrielAccelerator`），只有"规范化键名 → 原生键码"的映射表是各平台自己的。
+
+### Shell 集成（打开外链、在文件管理器里显示）
+
+```csharp
+app.OpenExternal("https://example.com");        // 白名单内的 scheme 才放行
+app.RevealInFileManager("/path/to/file.txt");   // Windows 选中它、macOS 用 Finder 显示、Linux 打开所在目录
+app.OpenWithDefaultApp("/path/to/file.pdf");
+```
+
+**白名单是默认拒绝式的**：默认只放行 `http`/`https`/`mailto`，`file:`、`javascript:`、裸路径
+与含控制字符的目标一律拒绝并返回 `false`（`UseShell` 可追加自定义协议）。
+这类 API 的风险不在"自己执行了什么"，而在**"它决定让别的程序去打开什么"**——
+未经校验的 `file:` 会被系统默认处理器以它自己的权限打开。
+
+| 动作 | Windows | macOS | Linux |
+|---|---|---|---|
+| 打开链接 / 文件 | `UseShellExecute`（系统默认处理） | `open <target>` | `xdg-open <target>` |
+| 在文件管理器里显示 | `explorer /select,<path>`（逗号后**不能有空格**） | `open -R <path>` | `xdg-open <父目录>`——`xdg-open` 没有"选中"这个入口 |
+
+> 参数一律经 `ArgumentList` 逐项传递、**不经 shell**：目标里的空格、引号、分号都不会变成第二个命令。
+> 路径不存在或不是绝对路径时直接返回 `false`，并且不做任何调用。
+> 库**不提供"执行任意命令"**（Ryn 的 `shell.execute`/PTY 那一层）：那属于能力沙箱的范畴，
+> 与"跨平台 webview 核心库"的定位无关。
 
 ### 开机自启
 
