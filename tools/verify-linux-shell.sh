@@ -192,6 +192,20 @@ else
     fail "徽章 API 没有被调用到"
 fi
 
+# 开机自启：三平台都能形成闭环，所以这里断言的是**四个 true**（不是"看平台而定"）。
+autostart="$(grep -oE "AUTOSTART: enable=\w+ seen=\w+ disable=\w+ gone=\w+" "$APP_LOG" | tail -1)"
+if [[ "$autostart" == "AUTOSTART: enable=True seen=True disable=True gone=True" ]]; then
+    pass "开机自启形成闭环：启用 → 查得到 → 禁用 → 查不到（自检已清理，不留自启项）"
+else
+    fail "开机自启闭环不成立（实际：${autostart:-无输出}）"
+fi
+
+if grep -q "AUTOSTART-DESKTOP-OK: true" "$APP_LOG"; then
+    pass "写出的 .desktop 内容逐项正确（Desktop Entry 头、带引号的 Exec、参数、X-GNOME-Autostart-enabled）"
+else
+    fail "autostart 文件内容不符合预期"
+fi
+
 # ---- 5. 结论 ----
 echo
 if [[ "$failures" == "0" ]]; then

@@ -78,6 +78,17 @@ internal static class Win32Constants
     public const uint NIIF_INFO = 0x00000001;
     public const uint NIIF_ERROR = 0x00000003;
 
+    // ---- 注册表（advapi32）----
+
+    /// <summary>注册表值类型：以 NUL 结尾的字符串。</summary>
+    public const uint REG_SZ = 1;
+
+    /// <summary>RegGetValueW 的 flags：只接受 REG_SZ（用于"值存在与否"的探测）。</summary>
+    public const uint RRF_RT_REG_SZ = 0x00000002;
+
+    /// <summary>RegGetValueW 的返回码：缓冲区太小（我们只探大小，这个码说明值确实存在）。</summary>
+    public const int ERROR_MORE_DATA = 234;
+
     // ---- 弹出菜单 ----
 
     public const uint MF_STRING = 0x00000000;
@@ -641,6 +652,24 @@ internal static unsafe partial class Win32
     [LibraryImport("user32", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool UnregisterHotKey(nint hwnd, int id);
+
+    // ---- 注册表写（advapi32）----
+
+    /// <summary>
+    /// 写注册表值。HKCU 下的写入不需要管理员权限；<paramref name="dataSize"/> 是字节数（字符串含结尾 NUL）。
+    /// </summary>
+    [LibraryImport("advapi32", EntryPoint = "RegSetValueExW", StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int RegSetValueExW(
+        nint hkey,
+        string? subKey,
+        uint reserved,
+        uint type,
+        nint data,
+        uint dataSize);
+
+    /// <summary>删注册表值；值本来就不存在时返回 ERROR_FILE_NOT_FOUND(2)。</summary>
+    [LibraryImport("advapi32", EntryPoint = "RegDeleteValueW", StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int RegDeleteValueW(nint hkey, string? subKey, string valueName);
 }
 
 /// <summary>

@@ -191,6 +191,14 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
     {
     }
 
+    // ---- 开机自启（freedesktop 的 autostart 目录）----
+
+    public bool EnableAutoStart(string id, IReadOnlyList<string>? arguments) => LinuxAutoStart.Enable(id, arguments);
+
+    public bool DisableAutoStart(string id) => LinuxAutoStart.Disable(id);
+
+    public bool IsAutoStartEnabled(string id) => LinuxAutoStart.IsEnabled(id);
+
     // ---- 通知 ----
     // Linux 的通知交给 freedesktop 通知守护（经 notify-send 子进程）。
 

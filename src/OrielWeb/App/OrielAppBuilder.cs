@@ -125,6 +125,19 @@ public sealed class OrielAppBuilder
         return this;
     }
 
+    internal string? AutoStartId { get; private set; }
+
+    /// <summary>
+    /// 覆盖开机自启的标识（默认取可执行文件名）。可执行文件名不适合当标识（多实例共存、名字带中文等）
+    /// 或需要与单实例的 id 对齐时用它。
+    /// </summary>
+    public OrielAppBuilder UseAutoStartId(string id)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        AutoStartId = id;
+        return this;
+    }
+
     internal OrielTrayOptions? TrayOptions { get; private set; }
 
     /// <summary>

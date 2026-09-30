@@ -115,7 +115,8 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 | 全局快捷键 | ✅ 已实现（Linux 按平台事实不支持） | Windows `RegisterHotKey`（复用调度窗口收 `WM_HOTKEY`）、macOS Carbon `RegisterEventHotKey`（唯一不需要辅助功能权限的公开接口）、Linux **如实返回 false**（X11 未落地、Wayland 无解）。语法与菜单加速键共用 `OrielAccelerator` | Linux 取证断言"如实报告不支持 + 注册成功时查得到/注销得掉"；Windows/macOS 编译验证。**按键真的能触发需真机**（见下） |
 | 徽章 | ⚠️ 仅 macOS | macOS `dockTile.badgeLabel`；Windows 的等价物 `ITaskbarList3.SetOverlayIcon` 需要自绘 overlay 图标（GDI），未做；Linux 无跨桌面方案 | 调用不抛异常已断言；**外观需人眼** |
 | Linux 全局快捷键（X11） | ⏳ 未开始（可选增强） | `XGrabKey` + GDK 事件过滤器（需 libX11 互操作与 XEvent 解析）。Wayland 无解，只能如实返回 false | 落地后要同步改 `verify-linux-shell.sh` 里"Linux 必须返回 false"那条断言 |
-| deep link / 开机自启 | ⏳ 未开始（B 批） | — | 写注册表/.desktop/LaunchAgent 的内容可机器断言 |
+| 开机自启 | ✅ 已实现 | Windows 写 HKCU 的 Run 键、macOS 写 LaunchAgent plist（不调 `launchctl load`，避免立刻再拉起一个实例）、Linux 写 freedesktop 的 autostart `.desktop`。配置文本由共用的纯函数生成 | **B 批里最硬的一条**：取证脚本断言"启用 → 查得到 → 禁用 → 查不到"的闭环，并逐项核对 `.desktop` 的内容（Desktop Entry 头、带引号的 Exec、参数、GNOME 启用标志）；另有 12 个单测覆盖三段文本。**"下次开机真的起来了"仍需真机重启** |
+| deep link | ⏳ 未开始 | `myapp://` 的注册与转发；可复用已有的单实例通道做"第二实例把链接转给首实例" | Linux 写 `.desktop` 可断言 |
 
 ### 托盘与通知的待真机清单
 

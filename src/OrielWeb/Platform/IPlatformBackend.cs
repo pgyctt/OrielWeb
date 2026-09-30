@@ -168,6 +168,18 @@ internal interface IPlatformBackend : IDisposable
     /// </summary>
     void SetBadge(string? label);
 
+    /// <summary>
+    /// 启用开机自启。<paramref name="id"/> 是应用标识（注册表值名 / .desktop 文件名 / LaunchAgent Label），
+    /// <paramref name="arguments"/> 是随自启一起传入的参数。返回是否写入成功。
+    /// </summary>
+    bool EnableAutoStart(string id, IReadOnlyList<string>? arguments);
+
+    /// <summary>关闭开机自启。返回是否执行成功（本来就没启用也算成功）。</summary>
+    bool DisableAutoStart(string id);
+
+    /// <summary>当前是否已设为开机自启（读平台里实际存在的配置，不是内存里的标记）。</summary>
+    bool IsAutoStartEnabled(string id);
+
     /// <summary>发送系统通知；平台不支持时静默忽略（不抛异常——通知失败不该影响业务）。</summary>
     void ShowNotification(OrielNotificationOptions notification);
 }

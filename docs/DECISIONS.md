@@ -764,3 +764,22 @@ the next time Git touches it"），CI 检出的从来就是 LF，**`ENDOFLINE` �
 
 教训：**门禁工具的输出要按"哪些能在 CI 复现"过一遍**，而不是看到红字就动手。
 工作区与索引的行尾差异属于"只在本地成立"的那一类——它会稳定地制造一次假诊断。
+
+## 开机自启：落点选择与"延迟失败"的应对（2026-09-30）
+
+- **三平台的落点**：Windows 写 `HKCU\...\Run` 的一个值（不需要管理员权限，而且"开机自启"本就是当前用户的
+  偏好；不走"启动"文件夹的 `.lnk`——那要 COM 的 `IShellLink`，而这条只需一次 `RegSetValueExW`）；
+  macOS 写 `~/Library/LaunchAgents/<id>.plist`；Linux 写 `$XDG_CONFIG_HOME/autostart/<id>.desktop`
+  （freedesktop 约定，各主流桌面都遵守）。
+- **macOS 只写 plist，不调用 `launchctl load`**：手动 load 会立刻把应用再拉起一遍（当前这个进程还在跑），
+  那是用户没要求的副作用；位于 LaunchAgents 的 plist 会在下次登录时被 launchd 自动拾取。
+  代价是"启用后要等下次登录才生效"，已写进 README。
+- **`IsAutoStartEnabled` 读平台而不是内存标记**：用户可能在"任务管理器 → 启动"或系统设置里关掉它，
+  也可能手工删了文件；标记留在内存里就会说谎。
+- **配置文本抽成纯函数（`AutoStartContent`）**：自启项写错**不会当场失败**——它要等用户下次开机
+  才发现应用没起来。这种"延迟失败"的格式只能靠逐字符断言，所以三段文本（desktop entry / plist /
+  Run 命令行）都由可单测的纯函数生成，12 个单测覆盖引号、参数、XML 转义与 desktop 转义。
+  这也是这批里唯一能做**硬断言**的项：Linux 侧读回文件逐项核对内容，加上三平台都成立的
+  "启用 → 查得到 → 禁用 → 查不到"闭环。
+- 顺带修掉一个自检里的顺序错误：第一版先 `DisableAutoStart()` 再去读文件内容，读到的自然是空——
+  "读回"必须在"删除"之前，这条写进了自检的注释以免下次再犯。

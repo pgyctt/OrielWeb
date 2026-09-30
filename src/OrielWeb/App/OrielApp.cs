@@ -209,6 +209,56 @@ public sealed class OrielApp : IDisposable
         backend.SetBadge(label);
     }
 
+    // ---- 开机自启 ----
+
+    /// <summary>自启标识：默认可执行文件名，可用 <see cref="OrielAppBuilder.UseAutoStartId"/> 覆盖。</summary>
+    private string AutoStartId => _builder.AutoStartId ?? DefaultAutoStartId();
+
+    /// <summary>默认自启标识 = 可执行文件名（不含扩展名）；取不到路径时退回 "OrielWeb"。</summary>
+    internal static string DefaultAutoStartId()
+    {
+        string? executable = Environment.ProcessPath;
+        return string.IsNullOrEmpty(executable)
+            ? "OrielWeb"
+            : Path.GetFileNameWithoutExtension(executable);
+    }
+
+    /// <summary>
+    /// 本应用当前是否已设为开机自启。
+    /// </summary>
+    /// <remarks>
+    /// 读的是**平台里实际存在的配置**，不是内存标记：用户可能自己在系统设置里关掉它
+    /// （或手工删了 .desktop 文件），那时这里应当如实反映 false。
+    /// </remarks>
+    public bool IsAutoStartEnabled
+    {
+        get
+        {
+            var backend = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
+            return backend.IsAutoStartEnabled(AutoStartId);
+        }
+    }
+
+    /// <summary>
+    /// 启用开机自启（把配置写进平台的自启位置）。
+    /// </summary>
+    /// <param name="arguments">
+    /// 随自启一起传入的命令行参数。典型用途是"开机静默启动到托盘"：<c>app.EnableAutoStart(["--minimized"])</c>。
+    /// </param>
+    /// <returns>是否写入成功（例如沙箱/权限受限时会失败）。</returns>
+    public bool EnableAutoStart(IReadOnlyList<string>? arguments = null)
+    {
+        var backend = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
+        return backend.EnableAutoStart(AutoStartId, arguments);
+    }
+
+    /// <summary>关闭开机自启。返回是否执行成功（本来就没启用也算成功）。</summary>
+    public bool DisableAutoStart()
+    {
+        var backend = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
+        return backend.DisableAutoStart(AutoStartId);
+    }
+
     /// <summary>创建窗口、进入消息循环；阻塞直到所有窗口关闭。</summary>
     public void Run()
     {

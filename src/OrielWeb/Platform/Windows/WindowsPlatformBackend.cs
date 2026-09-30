@@ -182,6 +182,14 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
     {
     }
 
+    // ---- 开机自启（HKCU 的 Run 键）----
+
+    public bool EnableAutoStart(string id, IReadOnlyList<string>? arguments) => Win32AutoStart.Enable(id, arguments);
+
+    public bool DisableAutoStart(string id) => Win32AutoStart.Disable(id);
+
+    public bool IsAutoStartEnabled(string id) => Win32AutoStart.IsEnabled(id);
+
     public void RunMessageLoop()
     {
         while (Win32.GetMessageW(out var message, 0, 0, 0) > 0)

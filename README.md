@@ -319,6 +319,7 @@ app.NotificationClicked += id => { /* 点了哪条通知（平台差异见下表
 | 菜单 | `--shell-selftest` 设置一份含子菜单/自定义项/role 的应用菜单并断言不崩（Linux 上是空操作）；加速键解析有 41 个单测 | 菜单的外观、上下文菜单的弹出位置与交互、macOS 上加速键是否真的生效——需人眼 |
 | 全局快捷键 | `--shell-selftest`：注册结果必须**如实反映平台能力**（Linux 上必须是 `false`），注册成功时还必须查得到、注销得掉 | 按键**真的**能触发（要有人按下去）——macOS / Windows 待真机 |
 | 徽章 | `--shell-selftest` 断言调用不抛异常（Linux/Windows 上是文档化的 no-op） | macOS 的徽章外观；Windows 的 overlay 图标（尚未实现） |
+| 开机自启 | `--shell-selftest`：**启用 → 查得到 → 禁用 → 查不到**的闭环（三平台都成立）；Linux 上还逐项核对写出的 `.desktop` 内容；三段配置文本另有 12 个单测 | 下次**开机/登录时是否真的自动启动**——需要真机重启 |
 
 > 三平台实现：Windows `Shell_NotifyIconW` + 弹出菜单（`TrackPopupMenuEx`）、macOS `NSStatusBar`/`NSMenu`、
 > Linux GTK3 `GtkStatusIcon`/`GtkMenu`。通知：Windows 用独立的隐藏托盘项发气球（因此不启用托盘也能发）、
@@ -383,6 +384,26 @@ app.SetBadge(null);    // 清除
 > 注册失败是**正常返回值而不是异常**：语法不合法、没有修饰键（会吞掉正常打字）、平台不支持、
 > 组合被占用 —— 都返回 `false`，调用方据此提示用户换一个。
 > 快捷键语法与菜单加速键**完全共用**（`OrielAccelerator`），只有"规范化键名 → 原生键码"的映射表是各平台自己的。
+
+### 开机自启
+
+```csharp
+app.EnableAutoStart(["--minimized"]);   // 典型用法：开机静默启动到托盘
+app.IsAutoStartEnabled;                 // 读平台里的实际配置
+app.DisableAutoStart();
+```
+
+| 平台 | 写到哪里 |
+|---|---|
+| Windows | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下的一个值（HKCU 不需要管理员权限，而且"开机自启"本就是当前用户的偏好） |
+| macOS | `~/Library/LaunchAgents/<id>.plist`（**不调用 `launchctl load`**：那会立刻把应用再拉起一遍，可当前进程还在跑；代价是下次登录才生效） |
+| Linux | `$XDG_CONFIG_HOME/autostart/<id>.desktop`（freedesktop 的约定，各主流桌面都遵守） |
+
+> 标识默认取可执行文件名，可用 `UseAutoStartId` 覆盖。
+> `IsAutoStartEnabled` **读的是平台里实际存在的配置**而不是内存标记——用户可能在"任务管理器 → 启动"
+> 或系统设置里关掉它，也可能手工删了文件，那时应当如实返回 `false`。
+> 三段配置文本由共用的纯函数生成（`AutoStartContent`），因此格式正确性能被单测覆盖——
+> 自启项写错不会当场失败，而是等用户下次开机才发现应用没起来。
 
 ## 构建
 

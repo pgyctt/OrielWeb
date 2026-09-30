@@ -260,6 +260,14 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
         }
     }
 
+    // ---- 开机自启（LaunchAgents 目录）----
+
+    public bool EnableAutoStart(string id, IReadOnlyList<string>? arguments) => MacOSAutoStart.Enable(id, arguments);
+
+    public bool DisableAutoStart(string id) => MacOSAutoStart.Disable(id);
+
+    public bool IsAutoStartEnabled(string id) => MacOSAutoStart.IsEnabled(id);
+
     public void Dispose()
     {
         // 热键注册属于进程级资源：不显式注销，系统会一直占着这个组合

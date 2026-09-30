@@ -35,6 +35,34 @@ internal static class ShellSelfTest
             Timeout.InfiniteTimeSpan);
     }
 
+    /// <summary>
+    /// 读回 Linux 的 autostart 项，逐项核对它写对了没有。
+    /// </summary>
+    /// <remarks>
+    /// 这条断言是这批里最"硬"的：自启项写错不会当场失败，而是等用户下次开机才发现应用没起来——
+    /// 所以这里不满足于"文件存在"，而是核到具体键（Exec 带引号的可执行路径 + 参数 + GNOME 的启用标志）。
+    /// </remarks>
+    private static bool CheckLinuxAutoStartFile()
+    {
+        string id = Path.GetFileNameWithoutExtension(Environment.ProcessPath) ?? "OrielWeb";
+        string configHome = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME") is { Length: > 0 } xdg
+            ? xdg
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config");
+        string desktopFile = Path.Combine(configHome, "autostart", id + ".desktop");
+
+        if (!File.Exists(desktopFile))
+        {
+            Console.WriteLine($"[shell-selftest] 找不到 autostart 文件：{desktopFile}");
+            return false;
+        }
+
+        string content = File.ReadAllText(desktopFile);
+        return content.StartsWith("[Desktop Entry]", StringComparison.Ordinal)
+            && content.Contains("Exec=\"", StringComparison.Ordinal)
+            && content.Contains("--minimized", StringComparison.Ordinal)
+            && content.Contains("X-GNOME-Autostart-enabled=true", StringComparison.Ordinal);
+    }
+
     private static void Run()
     {
         try
@@ -128,6 +156,31 @@ internal static class ShellSelfTest
             _app.SetBadge("3");
             _app.SetBadge(null);
             Console.WriteLine("[shell-selftest] 徽章 API 已调用（macOS 生效 / Windows、Linux no-op）");
+
+            // 开机自启：三平台都能形成"启用 → 查得到 → 禁用 → 查不到"的闭环，因此这是强断言。
+            // 自检里立即禁用，不在环境里留下自启项。
+            bool autoStartOn = _app.EnableAutoStart(["--minimized"]);
+            bool autoStartSeen = _app.IsAutoStartEnabled;
+
+            // 读回内容必须在禁用**之前**：禁用会把文件删掉（第一版就是在这里读空的）
+            bool desktopOk = true;
+            if (OperatingSystem.IsLinux() && autoStartOn)
+            {
+                desktopOk = CheckLinuxAutoStartFile();
+                Console.WriteLine($"[shell-selftest] AUTOSTART-DESKTOP-OK: {(desktopOk ? "true" : "false")}");
+            }
+
+            bool autoStartOff = _app.DisableAutoStart();
+            bool autoStartGone = !_app.IsAutoStartEnabled;
+            Console.WriteLine(
+                $"[shell-selftest] AUTOSTART: enable={autoStartOn} seen={autoStartSeen} disable={autoStartOff} gone={autoStartGone}");
+
+            if (!(autoStartOn && autoStartSeen && autoStartOff && autoStartGone && desktopOk))
+            {
+                Failed = true;
+                Console.WriteLine("SHELL-SELFTEST: FAIL —— 开机自启的启用/查询/禁用没有形成闭环");
+                return;
+            }
 
             Console.WriteLine("SHELL-SELFTEST: PASS");
         }
