@@ -53,7 +53,8 @@ public sealed class ShellPolicyTests
     public void WithSchemeIsIdempotentAndTrimsColon()
     {
         var options = new OrielShellOptions().WithScheme("HTTPS:").WithScheme("https");
-        Assert.Single(options.AllowedSchemes.Where(s => s.Equals("https", StringComparison.OrdinalIgnoreCase)));
+        // xUnit2031：用带谓词的 Assert.Single 重载，而不是先 Where 再断言
+        Assert.Single(options.AllowedSchemes, s => s.Equals("https", StringComparison.OrdinalIgnoreCase));
     }
 
     // ---- 路径校验 ----
