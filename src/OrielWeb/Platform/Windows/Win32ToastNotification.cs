@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 
 namespace OrielWeb.Platform.Windows;
 
@@ -70,12 +71,23 @@ internal static class Win32ToastNotification
                 : $"$toast.Tag = '{EscapeForXmlAndScript(notification.Id)}'; ";
 
             string script = string.Concat(
+                // 两行限定符引用**缺一不可**：WinRT 类型投影要先被"带 ContentType 限定符的类型引用"
+                // 加载，之后的 New-Object 才解析得到。只加载 ToastNotificationManager 而不加载
+                // XmlDocument 时，下一行的 New-Object 会报
+                // "Cannot find type [Windows.Data.Xml.Dom.XmlDocument]"，整条通知静默失败
+                //（真机实测：三种传参方式一起失败，错误都指向这一行）。
                 "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; ",
+                "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null; ",
                 "$xml = New-Object Windows.Data.Xml.Dom.XmlDocument; ",
                 "$xml.LoadXml('", toastXml, "'); ",
                 "$toast = New-Object Windows.UI.Notifications.ToastNotification $xml; ",
                 tagPart,
                 "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('", AppUserModelId, "').Show($toast)");
+
+            // 用 -EncodedCommand（UTF-16LE 的 Base64）而不是 -Command：脚本里带着应用给的标题与正文，
+            // 走命令行参数时非 ASCII 内容会按本地代码页解释而乱码（实测中文标题直接变成乱码，
+            // 通知随之失败）。编码后整条命令只剩 ASCII，彻底绕开这一层。
+            string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
 
             var startInfo = new ProcessStartInfo(s_powerShell.Value)
             {
@@ -86,8 +98,8 @@ internal static class Win32ToastNotification
             };
             startInfo.ArgumentList.Add("-NoProfile");
             startInfo.ArgumentList.Add("-NonInteractive");
-            startInfo.ArgumentList.Add("-Command");
-            startInfo.ArgumentList.Add(script);
+            startInfo.ArgumentList.Add("-EncodedCommand");
+            startInfo.ArgumentList.Add(encoded);
 
             using Process? process = Process.Start(startInfo);
             if (process is null)

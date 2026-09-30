@@ -17,35 +17,51 @@
         html, body { height: 100%; }
         body { min-height: 0; }
 
-        /* 布局：标题栏下面分两块——上面是操作区（可滚动），下面是日志区（固定可见）。
-           上一版把日志放在最底下随整页滚动，结果是"点了按钮看不到回调"——
-           验证工具的第一要求就是反馈始终在视野里。 */
-        .app {
+        /* 刻意**不沿用** styles.css 的 .app：那是"居中的卡片"样式
+           （720px 宽、圆角、背景、margin auto），而操作台要的是铺满窗口的分区布局。
+           混用会把两套语义搅在一起——之前"已连接"徽章贴到顶端、卡片圆角被裁，
+           就是只覆盖了 .app 的一半属性造成的。这里用自己的容器，完全掌控。 */
+        .console {
+            flex: 1 1 auto;
+            min-height: 0;
             display: flex;
             flex-direction: column;
-            overflow: hidden;
-            padding: 0 24px;
             gap: 12px;
+            padding: 14px 20px 16px;
+            overflow: hidden;
         }
 
+        .chead {
+            flex: 0 0 auto;
+            display: flex;
+            align-items: center;          /* 徽章与标题同一行居中：不再贴顶 */
+            justify-content: space-between;
+            gap: 16px;
+        }
+
+        .chead h1 { margin: 0; font-size: 20px; }
+        .chead .subtitle { margin: 4px 0 0; }
+
+        /* 操作区：basis 用 0，不用 auto 也不用百分比——这两者都会退回"内容高度"，
+           内容一长就把容器撑开（上一版 `flex: 0 0 34%` 正是这么失效的：
+           实测日志区被撑到 1627px，操作区只剩 12px）。basis 0 + grow 才是纯按比例分。 */
         .scroll {
-            /* basis 用 0，不用 auto 也不用百分比：这两者都会退回"内容高度"，
-               内容一长就把容器撑开（上一版 `flex: 0 0 34%` 正是这么失效的——
-               实测日志区被撑到 1627px，操作区只剩 12px）。basis 0 + grow 才是纯按比例分。 */
             flex: 3 1 0;
             min-height: 0;
             overflow-y: auto;
-            padding-top: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
         }
 
+        /* 日志区固定可见：验证工具的第一要求是反馈始终在视野里。
+           显式 min-height: 0 是必须的——flex 子项默认 min-height: auto 表示"不小于内容"，
+           于是日志越多、日志区越高，最终把操作区挤没。 */
         .logpanel {
             flex: 2 1 0;
-            /* 必须显式归零：flex 子项默认 min-height: auto 表示"不小于内容"，
-               于是日志越多、日志区越高，最终把上面的操作区挤没 */
             min-height: 0;
             display: flex;
             flex-direction: column;
-            margin-bottom: 12px;
         }
 
         /* 日志列表自身也要能收缩（basis 0 + min-height 0），否则它照样撑开父容器 */
@@ -134,8 +150,8 @@
         </div>
     </header>
 
-    <main class="app">
-        <div class="header">
+    <main class="console">
+        <div class="chead">
             <div>
                 <h1>手动验证操作台</h1>
                 <p class="subtitle">点按钮做动作，宿主侧的回调以<strong>蓝色</strong>出现在日志里</p>

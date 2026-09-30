@@ -49,7 +49,13 @@ internal static class Program
         // 与 --shell-selftest 的分工：那个是给 CI 的无人断言，这个是给人看的——
         // 每项做成按钮，托管侧的回调（托盘菜单项、通知点击、快捷键、拖放）回显到页面。
         // 之所以要回显：demo 在 Windows 上是 WinExe，没有控制台，打印的东西看不见。
-        var manualCheck = args.Contains("--manual-check");
+        //
+        // **它是 demo 的默认页面**：直接运行 exe 看到的就是操作台。
+        // 想看 Todo 示例页（"怎么用本库写应用"的示范）加 --todo；跑无人自检时也不用它，
+        // 免得两种模式去争同一个托盘。
+        bool anySelfTest = navSelfTest || ipcSelfTest || clipboardSelfTest || themeSelfTest
+            || singleInstanceSelfTest || shellSelfTest;
+        var manualCheck = !anySelfTest && !args.Contains("--todo");
 
         // 主题自检需要 OrielApp（主题是应用级的），所以这里显式 Build 再 Run；
         // app 变量先声明、后赋值，闭包在 onCreated 里读它（onCreated 发生在 Run 内部，那时已赋值）。

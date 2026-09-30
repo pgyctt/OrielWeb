@@ -53,7 +53,6 @@ document.querySelectorAll("[data-cmd]").forEach((button) => {
         const line = (label, value) => `<div>${label}：<b>${value}</b></div>`;
         document.getElementById("state").innerHTML =
             line("平台", window.oriel.platform) +
-            line("窗口图标支持", state.iconSupported ? "是" : "否") +
             line("托盘", state.trayCreated ? "已创建" : "未创建") +
             line("托盘当前可见", state.trayVisible ? "是" : "否（无头/无托盘宿主时正常）") +
             line("系统通知可用", state.notificationsSupported ? "是" : "否") +
