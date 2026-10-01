@@ -7,14 +7,15 @@
 | 项 | 为什么 |
 |---|---|
 | `dotnet new` 模板 | 包内 `buildTransitive/OrielWeb.targets` 已经让"手写 csproj"这件事没有坑；模板的维护成本（每个 SDK 版本都要跟）与收益不成比例 |
-| updater | 需要密钥管理、清单托管、下载与替换流程，以及"验签失败"与"防降级"两个负例测试——是一整块独立工程 |
+| updater（自己做） | 需要密钥管理、清单托管、下载与替换流程，是一整块独立工程。**改用 Velopack**：它自带安装器与自更新，我们只负责把产物打出来（见 API.md §12）；应用侧接入（`Main` 首行 `VelopackApp.Build().Run()`）尚未做 |
+| `oriel doctor` | 曾有一版独立 CLI 做本机体检 / 项目体检 /"人眼验证清单"指引，随打包链路改造被**整体撤掉**（2026-10-01：CLI 项目删除，打包改用 Velopack）。它的检查项仍散落在 README 的平台要求、API.md 与 `tools/verify-*.sh` 里；是否以别的形式做回来待定 |
 | `shell.execute` / PTY | 属于能力沙箱范畴，与"跨平台 webview 核心库"的定位无关 |
 | 移动端 | 三个后端都是桌面系统 webview；移动端（Android WebView / WKWebView-iOS）是另一套抽象与生命周期 |
 
 ## 待真机验证清单
 
 这些项**只能在有桌面会话的真机上、靠人眼**判定（无头环境造不出它们要的输入或显示）。
-`oriel doctor` 会把当前平台相关的项连同命令与预期一起列出来。
+每一项都写了命令与预期——照着做即可，没有工具会替你判定它们。
 
 #### DevTools 开关（macOS / Linux）
 - 环境：有图形会话的 macOS（Safari 的「开发」菜单）或带桌面的 Linux（WebKitGTK 右键菜单）。
@@ -38,7 +39,7 @@
 - 环境：三平台桌面各一次。
 - 步骤：直接运行 demo（不传 `--icon`）——Linux 看任务栏、macOS 看 Dock、Windows 看任务栏与 Alt-Tab；GNOME 上再装一份 `.desktop`（`StartupWMClass` 必须等于 `xprop WM_CLASS` 的 res_class）。
 - 预期：任务栏/Dock 显示项目图标；`xprop -id <窗口id> _NET_WM_ICON` 有图标数据。
-- 若不符：先确认产物是**新构建的**（`publish/<rid>/app.png` 在不在）；GNOME 上 `StartupWMClass` 是否与 `WM_CLASS` 逐字符相同。
+- 若不符：先确认产物是**新构建的**（`dist/<rid>/app.png` 在不在）；GNOME 上 `StartupWMClass` 是否与 `WM_CLASS` 逐字符相同。
 
 #### macOS 隐藏启动
 - 环境：macOS 桌面。
@@ -68,7 +69,7 @@
 - 步骤：按住标题栏拖动；双击标题栏；单击标题栏上的最小化/关闭按钮；在标题栏里的输入框上拖选文字。
 - 预期：拖动跟手、双击切换最大化/还原、按钮照常可点、可交互元素不被当成拖动区域。
 - 若不符：先确认标题栏元素带了 `data-oriel-drag-region`（`oriel.dragRegion()` 返回的区域数应 ≥ 1），
-  再看库的拖动实现与 `win.*` 命令是否注册（`oriel doctor` 的项目体检会提示能力声明，但不检查命令是否注册）。
+  再看库的拖动实现与 `win.*` 命令是否注册（缺 `AddCommands` 时页面那句 invoke 会以"未知命令"被拒，控制台里看得到）。
 
 #### 托盘图标的可见性
 - 环境：有托盘区的桌面（Windows 任务栏；macOS 菜单栏；Linux 用 Xfce/KDE，或装了 AppIndicator 扩展的 GNOME）。
@@ -108,10 +109,18 @@
 - 预期：默认只出现剪切/复制/粘贴且真的作用于选中内容；另两种策略符合设置；连点不崩。
 - 若不符：先看策略是否生效（操作台右上角日志会打印当前策略），再按平台看钩子是否被调用（Windows 需要较新的 WebView2 运行时才有 `ContextMenuRequested`）。
 
-#### 打包产物（.dmg / .AppImage）
-- 状态：路径已实现、自验已写进 release 工作流，但**一次都没跑过**（`.msi` 已在 Windows 真机上验过：装 → 查 exe 与快捷方式 → 卸 → 目录已删）。
-- 环境：macOS 与 Linux 各一次。
-- 步骤：`oriel bundle --dir <发布目录> --rid <rid> --name … --id … --version …`；
-  macOS 挂载 `.dmg` 并核对 `CFBundleIdentifier`；Linux 用 `--appimage-extract` 解包核对 `AppRun` 与 `.desktop`。
-- 预期：产物能挂载/解包，`.app` 能启动，`.desktop` 的 `Exec` 与 `Icon` 与包内文件名一致。
-- 若不符：先看 `oriel bundle` 的输出（缺外部工具时它会说清缺什么、怎么装）。
+#### 打包产物与安装（三平台各一套）
+- 状态：打包已从"自研打包器"换成 **Velopack**（`vpk`）。Windows 侧**打包**跑过
+  （`publish.ps1 -Bundle` → Setup.exe / .msi / Portable.zip，版本取自
+  `Directory.Build.props`）；Linux 侧**打包与运行都跑过**（`wsl_publish.ps1 -Bundle` → `OrielDemo.AppImage`，
+  且在 WSLg 里运行该 AppImage 跑通了 `--selftest nav`）。产物只留"能装的东西"——更新包与更新清单
+  打包后即删（本仓库不发更新源）。
+  但**安装与卸载没有验过**——原先那条"MSI 静默装卸 + 查快捷方式"的机器断言随自研打包器一起去掉了；
+  macOS 侧只写进了 release 工作流，**一次都没跑过**。
+- 环境：三平台各自一次（与 AOT 一样，`vpk` 只能产出所在平台的产物）。
+- 步骤：`pwsh tools/publish.ps1 -Bundle`；然后**真装一次**——跑 `Setup.exe`（或 `.msi`），
+  确认装得上、开始菜单有快捷方式、能启动、卸得干净。macOS 先
+  `bash tools/make-macos-app.sh dist/demo/OrielDemo dist <版本>` 再 `vpk pack --packDir dist/OrielDemo.app`，
+  最后打开 `.app`；Linux 跑那份 `.AppImage`。
+- 预期：安装后能启动且页面正常；卸载后安装目录消失。
+- 若不符：先看 `vpk` 的输出（未签名时它会明确警告），再按平台看系统事件日志。

@@ -132,7 +132,7 @@ OrielWeb: 已自动内嵌 12 个 wwwroot 资源（LogicalName 用显式 '/' 分�
 
 > **为什么还认旧写法**：那是本库早期文档教的写法，直接不认会让已有项目升级后白屏。但它有上面那个含点文件名的坑，
 > 所以新项目请走零配置（示例 `samples/OrielMinimal` 就是零配置；`samples/OrielDemo` 刻意保留旧写法当回归案例，
-> `oriel doctor --project` 体检它时会因此报一条 WARN，那是预期的）。
+> `tools/verify-pack.ps1` 的"场景 B"钉住它保持旧行为）。
 
 ### C# 侧的开关
 
@@ -232,25 +232,55 @@ MIME 类型由各引擎按扩展名自行推断，库不做映射表。
 | 文件拖放 | 拖入文件/文件夹 → 本地路径列表 + 事件 |
 | 内建右键菜单 | 默认只留剪切/复制/粘贴，可切平台原样或完全禁用 |
 | 多窗口 | `app.CreateWindow(...)` 运行时新建窗口；关掉一个窗口应用不退出，`app.Windows` 自动摘除已关闭的窗口 |
-| 命令行工具 | `oriel doctor`（环境与项目体检）、`oriel bundle`（.msi / .dmg / .AppImage） |
+| 打包与更新 | 交给 **Velopack**（`vpk`）：Setup.exe / .msi / Portable.zip / nupkg / RELEASES，并支持应用自更新；`pwsh tools/publish.ps1 -Bundle` 一条命令出全套 |
 
 各项的用法、平台差异与**为什么这么设计**见 [docs/API.md](docs/API.md)。
 
-## 命令行工具
+## 打包与分发（Velopack）
+
+安装包与自动更新交给 [Velopack](https://velopack.io)：本库**不再自带打包器**，只把 `dotnet publish`
+的产物交给 `vpk`。发布仍然只由 `dotnet publish` 决定（各项目的 AOT 属性不同，库没有立场替你决定）。
 
 ```bash
-dotnet tool install --global OrielWeb.Cli
+dotnet tool install --global vpk
 
-oriel doctor                            # 体检本机（引擎、显示环境、SDK、打包工具）
-oriel doctor --project src/MyApp        # 再体检项目配置（资源内嵌、能力声明、图标……）
-oriel doctor --json                     # 机器可读
+# 发布 + 打包一条命令（版本号从根 Directory.Build.props 的 <Version> 读）
+pwsh tools/publish.ps1 -Bundle
 
-# 把一个已发布的目录打成该平台的安装产物
-oriel bundle --dir dist/demo --rid win-x64 --name "My App" --id com.example.myapp
+# 也可以分开：先发布，再让 vpk 消费产物
+pwsh tools/publish.ps1
+vpk pack --packId OrielDemo --packVersion 0.1.3 --packDir dist/win-x64 \
+  --packTitle "Oriel Demo" --mainExe OrielDemo.exe --icon samples/OrielDemo/app.ico --msi
 ```
 
-`doctor` 会把还需要**人眼**验证的项连同命令与预期一起列出来——它不假装能判定那些。
-`bundle` 只消费 `dotnet publish` 的产物，不替调用方决定发布参数。
+产物落在 `dist/<rid>-releases/`。Windows 上的实际清单（Linux 见下）:
+
+| 产物 | 用途 |
+|---|---|
+| `OrielDemo-win-Setup.exe` | 安装程序（Velopack 在 Windows 上的主形态） |
+| `OrielDemo-win.msi` | machine-wide 的**引导包**（`vpk --msi`）——它只是 Setup.exe 的外壳，不是"per-user 安装" |
+| `OrielDemo-win-Portable.zip` | 免安装的便携版 |
+
+Linux 上（`pwsh tools/wsl_publish.ps1 -Bundle`，打包在 WSL 里跑）出的是另一套：
+
+| 产物 | 用途 |
+|---|---|
+| `OrielDemo.AppImage` | **自更新的 AppImage**——Linux 上没有独立的安装器，这就是分发形态 |
+
+AppImage 不需要外部 `appimagetool`（`vpk` 自带 appimagekit runtime），也不需要 FUSE 就能自解包运行。
+
+- **只留"能装的东西"**：更新包 `*-full.nupkg`（Velopack 的"release"）与更新清单
+  （`releases.*.json` / `assets.*.json` / `RELEASES*`）在打包后**即被删除**——本仓库不发更新源，
+  前者与我们的 NuGet 包同名同扩展、后者会指向一个已被删掉的包，留着都只会让人以为有更新可用。
+  `vpk` 没有"不产这些"的开关（`--noInst` / `--noPortable` 只管安装器与便携版），所以这一步在打包之后做。
+- **不需要外部打包工具**：`vpk` 自带它们（`--msi` 那一步它内部就用 WiX 模板编译，机器上不必装 WiX）。
+- **版本号只接受三段 semver2**：`1.2.3.4` 会被拒；`publish.ps1 -Bundle` 会自动把四段截成三段并说明。
+- **签名**：本地打包不需要，但分发给用户前应当签名（`--signParams` / `--signTemplate`），macOS 还要公证；
+  没有它们的包在别人机器上会被 SmartScreen / Gatekeeper 拦下。
+- **每个平台各跑一次**：`vpk` 在哪个平台上就跑出那个平台的产物（与 AOT 一样不能跨平台）。
+- **自动更新是应用侧的事**：需要在 `Main` 的第一行调用 `VelopackApp.Build().Run()`，更新源可以是任何
+  静态托管。本仓库目前**只做打包、还没接更新**——没接时 `vpk` 会警告"入口点没有 `VelopackApp.Run()`"，
+  那是预期内的（见 Velopack 文档）。
 
 ## 构建与发布
 
@@ -259,8 +289,8 @@ dotnet build OrielWeb.slnx
 dotnet test tests/OrielWeb.Tests
 node --test tests/bridge/bridge.test.mjs        # 桥接脚本的三平台一致性
 
-dotnet publish samples/OrielDemo -c Release -r win-x64 -p:DebugType=none -o dist/demo
-oriel bundle --dir dist/demo --rid win-x64 --name "Oriel Demo" --id com.orielweb.demo
+pwsh tools/publish.ps1 -Bundle                  # AOT 发布 + Velopack 打包
+pwsh tools/wsl_publish.ps1 -Bundle              # 在 WSL 里发 Linux 产物（同上）
 ```
 
 `tools/` 下是验证与取证脚本（Linux/macOS 的窗口、托盘、通知、拖放等），由 CI 调用；
@@ -272,7 +302,7 @@ oriel bundle --dir dist/demo --rid win-x64 --name "Oriel Demo" --id com.orielweb
 |---|---|
 | Windows | WebView2 运行时（Win10+ 常已预装；未装时库会引导，或由 `OnWebView2RuntimeMissing` 自定义提示）。开发/发布需要 .NET 10 SDK 与 MSVC 工具链（AOT） |
 | Linux | `libwebkit2gtk-4.1`、`libgtk-3`；中文界面另需 CJK 字体（否则渲染成方框）。AOT 发布需要 `clang` 与 `zlib1g-dev` |
-| macOS | 系统 ≥ 11；产物必须打成 `.app` 才能运行（WKWebView 需要 bundle identifier）。`oriel bundle` 会做这件事 |
+| macOS | 系统 ≥ 11；产物必须打成 `.app` 才能运行（WKWebView 需要 bundle identifier）。`tools/make-macos-app.sh` 会做这件事，`vpk pack` 再消费它 |
 
 三平台的详细依赖、已知限制与排查入口见 [docs/API.md](docs/API.md#13-运行要求)。
 

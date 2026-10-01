@@ -76,84 +76,81 @@ jobs:
           $value = @($props.Project.PropertyGroup.Version)[0].Trim()
           "value=$value" >> $env:GITHUB_OUTPUT
 
-      - name: Install appimagetool (Linux)
-        if: runner.os == 'Linux'
-        # .AppImage 需要一个外部工具，而它本身是 AppImage；CI 里没有 FUSE，
-        # 所以调用时靠 APPIMAGE_EXTRACT_AND_RUN=1（见下面 bundle 步骤的 env）。
-        run: |
-          curl -sSL -o "$RUNNER_TEMP/appimagetool" \
-            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x "$RUNNER_TEMP/appimagetool"
-          echo "$RUNNER_TEMP" >> $GITHUB_PATH
+      - name: Assemble the macOS app bundle
+        # Velopack 在 macOS 上消费的是 .app（入口点来自它的 Info.plist），而 dotnet publish 只给一个
+        # 裸可执行文件——组装仍由 tools/make-macos-app.sh 做（CLI 里那份实现随 CLI 一起撤掉了）。
+        if: runner.os == 'macOS'
+        run: bash tools/make-macos-app.sh dist/demo/OrielDemo dist "${{ steps.version.outputs.value }}"
 
-      - name: Bundle the installer
-        # 本仓库自己吃自己的工具：三平台各出该平台的安装产物（.msi / .dmg / .AppImage）。
-        # 发布只交给 dotnet publish、打包只交给 oriel bundle —— 也就是使用者要走的那条路径
-        # （macOS 的 .app 组装也从 oriel bundle 搬进了 CLI，一个实现者）。
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: '1'
+      - name: Pack with Velopack
+        # 打包交给 vpk：三平台各出自己的那一套（Windows 的 Setup.exe / Portable.zip / RELEASES，外加
+        # --msi 的引导包）。发布仍然只交给 dotnet publish，vpk 只消费它的产物——
+        # 与使用者要走的那条路径一致。
         shell: pwsh
         run: |
-          dotnet run --project src/OrielWeb.Cli -c Release -- bundle `
-            --dir dist/demo --rid ${{ matrix.rid }} --name "Oriel Demo" --id com.orielweb.demo `
-            --icon samples/OrielDemo/app.png --version ${{ steps.version.outputs.value }} --out dist/bundle
+          # 与 ci.yml 同一个钉法：vpk 的产物形态随版本变，升级要显式做
+          dotnet tool install --global vpk --version 1.2.*
+          $env:PATH = "$env:PATH;$env:USERPROFILE\.dotnet\tools"
 
-      - name: Verify the MSI (Windows)
-        # 产物自验：这条路径以前从来没被跑过——"能不能装、装完文件在不在、卸得干净吗"
-        # 恰好都是机器可判定的，而它们也是发布产物最容易悄悄坏掉的地方。
-        if: runner.os == 'Windows'
+          $packDir = 'dist/demo'
+          $extra = @()
+          if ('${{ runner.os }}' -eq 'macOS') { $packDir = 'dist/OrielDemo.app' }
+          if ('${{ runner.os }}' -eq 'Windows') { $extra += @('--mainExe', 'OrielDemo.exe', '--msi') }
+          $icon = if ('${{ runner.os }}' -eq 'Windows') { 'samples/OrielDemo/app.ico' } else { 'samples/OrielDemo/app.png' }
+
+          vpk pack --packId OrielDemo --packVersion "${{ steps.version.outputs.value }}" `
+            --packTitle "Oriel Demo" --packAuthors "OrielWeb Contributors" `
+            --packDir $packDir --outputDir dist/releases --icon $icon `
+            --skip-updates -x -y @extra
+          if ($LASTEXITCODE -ne 0) { throw "vpk pack 失败（退出码 $LASTEXITCODE）" }
+
+          # 更新包（*.nupkg）与更新清单（releases.*.json / assets.*.json / RELEASES*）都不要：
+          # 本仓库不发更新源，清单还会指向一个已被删掉的包
+          Get-ChildItem dist/releases -File | Where-Object {
+            $_.Extension -in '.nupkg', '.json' -or $_.Name -like 'RELEASES*'
+          } | Remove-Item -Force
+
+      - name: Show the release artifacts
+        # 这一版打包链首次上线，各平台的产物名不尽相同——先把**实际产出了什么**打进日志。
+        # 断言只钉"该有的在、不该有的不在"：Windows 与 Linux 的产物名已实测过，macOS 的还没跑过，
+        # 所以那里只要求目录非空（第一次跑完就能从日志里看到它究竟出什么）。
         shell: pwsh
         run: |
-          $msi = Get-ChildItem dist/bundle -Filter *.msi | Select-Object -First 1
-          if (-not $msi) { throw "没有产出 .msi" }
-          $install = Start-Process msiexec -ArgumentList "/i", "`"$($msi.FullName)`"", "/qn", "/norestart" -Wait -PassThru
-          if ($install.ExitCode -ne 0) { throw "MSI 安装失败（退出码 $($install.ExitCode)）" }
-
-          $installed = "$env:LOCALAPPDATA\Programs\Oriel Demo"
-          if (-not (Test-Path "$installed\OrielDemo.exe")) { throw "安装后找不到 $installed\OrielDemo.exe" }
-          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Oriel Demo\Oriel Demo.lnk")) {
-            throw "安装后没有开始菜单快捷方式"
+          if (-not (Test-Path dist/releases)) { throw "vpk 什么都没产出" }
+          $files = Get-ChildItem dist/releases -Recurse -File
+          if ($files.Count -eq 0) { throw "dist/releases 是空的" }
+          foreach ($file in $files) {
+            Write-Output ("  {0}（{1} KB）" -f $file.Name, [Math]::Round($file.Length/1KB, 0))
           }
-          Write-Output "OK：MSI 装得上"
 
-          Start-Process msiexec -ArgumentList "/x", "`"$($msi.FullName)`"", "/qn", "/norestart" -Wait | Out-Null
-          if (Test-Path $installed) { throw "卸载后安装目录仍然存在" }
-          Write-Output "OK：卸得干净"
+          # 不该有的：更新包与更新清单（上一步已删，这里把它变成约定）
+          $leftover = $files | Where-Object {
+            $_.Extension -in '.nupkg', '.json' -or $_.Name -like 'RELEASES*'
+          }
+          if ($leftover) { throw "不该有更新包/清单：$($leftover.Name -join ', ')" }
 
-      - name: Verify the dmg (macOS)
+          # 该有的：本平台至少要有一份"能装的东西"
+          if ('${{ runner.os }}' -eq 'Windows' -and -not (Get-ChildItem dist/releases -Filter '*-Setup.exe')) {
+            throw "缺少 Setup.exe"
+          }
+          if ('${{ runner.os }}' -eq 'Linux' -and -not (Get-ChildItem dist/releases -Filter '*.AppImage')) {
+            throw "缺少 AppImage"
+          }
+          Write-Output "OK：$($files.Count) 个产物（更新包与清单已按约定清除）"
+
+      - name: Verify the macOS app bundle
+        # .app 是我们自己组装的（Velopack 消费它），所以它仍然归我们验证：
+        # CFBundleIdentifier 缺失时 WKWebView 会直接 __builtin_trap（退出码 133），
+        # 所以这里不是"文件在不在"，而是把它读出来核对。
         if: runner.os == 'macOS'
         run: |
-          dmg=$(ls dist/bundle/*.dmg | head -1)
-          [ -n "$dmg" ] || { echo "没有产出 .dmg"; exit 1; }
-          mount=/tmp/oriel-dmg
-          rm -rf "$mount"; mkdir -p "$mount"
-          hdiutil attach "$dmg" -nobrowse -mountpoint "$mount"
-          app="$mount/Oriel Demo.app"
-          test -x "$app/Contents/MacOS/OrielDemo" || { echo "挂载后缺少可执行文件"; exit 1; }
-          test -f "$app/Contents/Info.plist" || { echo "挂载后缺少 Info.plist"; exit 1; }
-          # CFBundleIdentifier 缺失时 WKWebView 会直接 __builtin_trap（退出码 133），
-          # 所以这里不是"文件在不在"，而是把它读出来核对。
+          app="dist/OrielDemo.app"
+          test -x "$app/Contents/MacOS/OrielDemo" || { echo "缺少可执行文件"; exit 1; }
+          test -f "$app/Contents/Info.plist" || { echo "缺少 Info.plist"; exit 1; }
           bundle_id=$(plutil -extract CFBundleIdentifier raw "$app/Contents/Info.plist")
           [ "$bundle_id" = "com.orielweb.demo" ] || { echo "CFBundleIdentifier 不对：$bundle_id"; exit 1; }
           codesign -dv "$app" 2>&1 | head -3
-          hdiutil detach "$mount"
-          echo "OK：dmg 挂得上，.app 与 bundle identifier 都正确"
-
-      - name: Verify the AppImage (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          appimage=$(ls dist/bundle/*.AppImage | head -1)
-          [ -n "$appimage" ] || { echo "没有产出 .AppImage"; exit 1; }
-          chmod +x "$appimage"
-          rm -rf /tmp/squashfs-root
-          # --appimage-extract 是自解包，不需要 FUSE（CI 里也没有）
-          (cd /tmp && "$GITHUB_WORKSPACE/$appimage" --appimage-extract > /dev/null)
-          test -x /tmp/squashfs-root/AppRun || { echo "解包后缺少 AppRun"; exit 1; }
-          test -x /tmp/squashfs-root/usr/bin/OrielDemo || { echo "解包后找不到可执行文件"; exit 1; }
-          test -f /tmp/squashfs-root/*.desktop || { echo "解包后缺少 .desktop"; exit 1; }
-          grep -q '^Exec=OrielDemo$' /tmp/squashfs-root/*.desktop || { echo ".desktop 的 Exec 不对"; exit 1; }
-          grep -q '^X-AppImage-Version=' /tmp/squashfs-root/*.desktop || { echo ".desktop 缺少版本"; exit 1; }
-          echo "OK：AppImage 解包后 AppRun、可执行文件与 .desktop 都在"
+          echo "OK：.app 装得上、bundle identifier 正确"
 
       - name: Zip (Windows)
         if: runner.os == 'Windows'
@@ -171,10 +168,10 @@ jobs:
       - name: Zip (macOS)
         if: runner.os == 'macOS'
         # 只打包 .app：裸可执行文件在 macOS 上跑不起来，放进去只会让人以为有两条路。
-        # .app 现在由 oriel bundle 组装（原先的 oriel bundle 已删除，一个实现者）。
+        # .app 由 tools/make-macos-app.sh 组装（Velopack 的产物是另一条路，两个都给）。
         run: |
-          cd dist/bundle
-          zip -r "../OrielWeb-demo-${{ matrix.rid }}.zip" "Oriel Demo.app"
+          cd dist
+          zip -r "OrielWeb-demo-${{ matrix.rid }}.zip" "OrielDemo.app"
 
       - name: Upload demo
         uses: actions/upload-artifact@v4
@@ -182,7 +179,7 @@ jobs:
           name: demo-${{ matrix.rid }}
           path: |
             dist/OrielWeb-demo-${{ matrix.rid }}.zip
-            dist/bundle/*
+            dist/releases/*
           # 这里没找到 zip 就是构建出了问题，不能静默跳过
           if-no-files-found: error
           # artifact 只是中转，最终资产挂在 Release 上（永久保留）
@@ -236,9 +233,7 @@ jobs:
             dist/nuget/*.nupkg
             dist/nuget/*.snupkg
             dist/*.zip
-            dist/bundle/*.msi
-            dist/bundle/*.dmg
-            dist/bundle/*.AppImage
+            dist/releases/*
 
       - name: Push to nuget.org
         # 通配符必须由 shell 展开：PowerShell 不会给原生命令展开参数里的 *，

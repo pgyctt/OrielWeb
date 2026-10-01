@@ -12,8 +12,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\OrielWeb\OrielWeb.csproj" />
-    <!-- oriel CLI：它的纯函数（参数解析、项目体检判定、产物文本生成）都在这里测 -->
-    <ProjectReference Include="..\..\src\OrielWeb.Cli\OrielWeb.Cli.csproj" />
     <!-- 源生成器不随 ProjectReference 传递：测试程序集要生成自己的命令路由 -->
     <ProjectReference Include="..\..\src\OrielWeb.Generators\OrielWeb.Generators.csproj"
                       OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />

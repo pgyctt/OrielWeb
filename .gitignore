@@ -62,5 +62,6 @@ TestResult.xml
 ## 本地交付包（tools 脚本或 git archive 产物，可随时重新生成）
 dist/
 
-## 发布产物（tools/publish.ps1，可随时重新生成）
+## 发布产物（tools/publish.ps1 与 wsl_publish.ps1，可随时重新生成）
+## publish/ 是它们早先的默认目录，保留忽略以免旧产物污染 git status
 publish/

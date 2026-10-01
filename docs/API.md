@@ -398,54 +398,42 @@ window.ContextMenuPolicy = OrielContextMenuPolicy.Editing;  // Editing（默认�
 `orielready` 事件也保留（兼容用），但它在 `DOMContentLoaded` 才派发——`DOMContentLoaded` 之后才注册的监听器收不到，
 所以文档主推 `await oriel.ready`。
 
-## 12. 命令行工具 oriel
+## 12. 打包与分发（Velopack）
+
+安装包与自动更新交给 [Velopack](https://velopack.io)（`vpk`）。**本库不自带打包器**：打包不是 webview
+能力，产物形态（Setup.exe / nupkg / RELEASES / 可选 .msi）由 Velopack 决定，我们只把参数喂进去。
 
 ```bash
-dotnet tool install --global OrielWeb.Cli
+dotnet tool install --global vpk
+pwsh tools/publish.ps1 -Bundle        # 发布 + 打包（版本号取自根 Directory.Build.props 的 <Version>）
 ```
 
-### `oriel doctor`
+`-Bundle` 做的事：`dotnet publish` → `vpk pack --packId OrielDemo --packVersion <版本>
+--packDir <发布目录> --mainExe OrielDemo.exe --icon … [--msi]`，产物落在 `dist/<rid>-releases/`。
 
-```bash
-oriel doctor [--project <目录>] [--json]
-```
+| 产物（Windows 上的实测清单） | 用途 |
+|---|---|
+| `OrielDemo-win-Setup.exe` | 安装程序（Velopack 在 Windows 上的主形态） |
+| `OrielDemo-win.msi` | machine-wide 引导包（`vpk --msi`）——Setup.exe 的外壳，与"per-user 安装"无关 |
+| `OrielDemo-win-Portable.zip` | 免安装的便携版 |
 
-体检本机并按三级给结论：**能跑**（引擎 + 显示环境）缺失是 FAIL，**能开发**（SDK、clang）与
-**能打包**（WiX、appimagetool、hdiutil）缺失只是 WARN——混成一种等级会让"这台机器能不能跑我的应用"
-被无关的工具链问题淹没。
+Linux 走 `pwsh tools/wsl_publish.ps1 -Bundle`（打包必须在 WSL 里跑），产物落在
+`dist/<rid>-releases/`：`OrielDemo.AppImage`（**自更新的 AppImage**——Linux 上没有独立安装器，
+这就是分发形态）。不需要外部 `appimagetool`（`vpk` 自带 appimagekit runtime）。
 
-`--project` 体检应用配置里那些**发布后才暴露、症状是"白屏"或"点了没反应"**的项：手写的 wwwroot 资源
-缺 `LogicalName`（已含点文件名 = FAIL，否则 WARN）、没有 `UseCapabilities`（Release 下全部会被拒）、
-没有图标文件、目标框架不是 `net10.0`、csproj 本身解析不了。
-
-报告末尾列**需要人眼验证**的项（命令 + 预期），工具不假装能判定它们。
-
-退出码：`0` 无阻断项 / `1` 有阻断项 / `2` 用法错误。
-
-### `oriel bundle`
-
-```bash
-oriel bundle --dir <发布目录> --rid <RID> --name <应用名> --id <反向域名标识> \
-             [--version <版本>] [--icon <图标>] [--out <目录>] [--manifest <bundle.json>]
-```
-
-| RID | 产物 | 外部工具 |
-|---|---|---|
-| `win-*` | `.msi`（per-user，装到 `%LocalAppData%\Programs\<名字>`，带开始菜单快捷方式） | WiX **v5** |
-| `osx-*` | `<名字>.app`（ad-hoc 签名）+ `.dmg` | `codesign` / `hdiutil`（macOS 自带） |
-| `linux-*` | `.AppImage`（缺 `appimagetool` 时退化成 AppDir） | `appimagetool` |
-
-- **只消费已发布的目录**：AOT 与发布属性各项目差别很大，库没有立场替调用方决定；
-  不跨平台打包（`.dmg` 只能在 macOS 上打、`.AppImage` 只能在 Linux 上打——它们需要各自平台上才有的工具）。
-- `--version` 缺省时从主可执行文件读**文件版本**，**只在 Windows 上有效**（Linux/macOS 的 AOT 产物是 ELF/Mach-O）。
-
-> **为什么 MSI 是 per-user**：与"AOT 单文件、解压即用"的分发方式一致、不需要 UAC；
-> 装到 Program Files 之后"应用自己更新"就必须提权（updater 还没做，选 per-machine 等于把那个问题提前埋下）。
->
-> **为什么把 WiX 锁在 v5**：WiX v6 起要求接受 OSMF 的付费条款（`error WIX7015`）。
-> `oriel doctor` 会检查主版本并在 ≥ 6 时给出降级命令。
->
-> **为什么 updater 不做**：它需要密钥管理、清单托管与替换流程，是一整块独立的工程。
+- **只留"能装的东西"**：更新包 `*-full.nupkg`（Velopack 的"release"）与更新清单
+  （`releases.*.json` / `assets.*.json` / `RELEASES*`）打包后即被删除——本仓库不发更新源，
+  前者与我们的 NuGet 包同名同扩展、后者会指向一个已被删掉的包。`vpk` 没有"不产这些"的开关
+  （`--noInst` / `--noPortable` 只管安装器与便携版），所以在打包之后删（脚本与 CI 都这么做）。
+- **不需要外部工具**：`vpk` 自带（`--msi` 那一步它内部就用 WiX 模板编译，机器上不必装 WiX）。
+  因此原先"把 WiX 锁在 v5 以免碰上 OSMF 付费条款"那条约束不复存在。
+- **版本号只接受三段 semver2**：四段（`1.2.3.4`）会被拒；`-Bundle` 会自动截断并说明。
+- **每个平台各跑一次**：与 Native AOT 同理，`vpk` 只能产出所在平台的产物。macOS 上它消费的是
+  `tools/make-macos-app.sh` 组装好的 `.app`（Velopack 的入口点取自那个 `.app` 的 `Info.plist`）。
+- **签名**：本地打包不需要；分发给用户前应当签名（`--signParams` / `--signTemplate`），macOS 还要公证——
+  没有它们的包在别人机器上会被 SmartScreen / Gatekeeper 拦下。
+- **自动更新（尚未接入）**：应用侧要在 `Main` 的第一行调用 `VelopackApp.Build().Run()`，更新源可以是
+  任何静态托管。本仓库目前只做打包，所以 `vpk` 会警告"入口点没有 `VelopackApp.Run()`"——那是预期的。
 
 ## 13. 运行要求
 
@@ -471,7 +459,8 @@ sudo apt-get install -y fonts-noto-cjk   # 中文界面必需，否则渲染成�
 
 - 系统 ≥ 11；产物**必须打成 `.app`**：WKWebView 是多进程架构，宿主进程要凭 main bundle 的
   `CFBundleIdentifier` 才能与 WebContent/Networking 这些 XPC 服务通信；裸可执行文件会走到 WebKit
-  的内部断言（`SIGTRAP`，退出码 133），而且不产生崩溃报告。`oriel bundle` 就是干这件事的。
+  的内部断言（`SIGTRAP`，退出码 133），而且不产生崩溃报告。`tools/make-macos-app.sh` 干的就是这件事，
+  `vpk pack` 再消费它（见 §12）。
 - Apple Silicon 要求可执行代码有签名（**ad-hoc 即可**）。没有 Developer ID 与公证的包从网上下载后会被
   Gatekeeper 拦下，用户需要去掉 quarantine 属性。
 - DevTools：`WKWebView.isInspectable` 是 13.3+ 的公开 API（更低版本上库会跳过设置，DevTools 依赖 Safari 的默认行为）。
@@ -480,11 +469,11 @@ sudo apt-get install -y fonts-noto-cjk   # 中文界面必需，否则渲染成�
 
 | 手段 | 覆盖 |
 |---|---|
-| 单测（`tests/OrielWeb.Tests`） | 分发器与回执协议、能力模型、文件/Shell/对话框的纯函数、快照回退与数值格式化、CLI 的参数解析与产物文本 |
+| 单测（`tests/OrielWeb.Tests`） | 分发器与回执协议、能力模型、内建窗口命令表、资源 URL 解析、文件/Shell/对话框的纯函数、快照回退与数值格式化 |
 | 桥接测试（`tests/bridge/bridge.test.mjs`） | 三平台共用脚本的行为一致性：就绪、事件、往返、回执、超时、不可信来源不安装、每条出站消息带令牌 |
 | 无人自检（`OrielDemo --selftest <名字>`） | `nav` `ipc` `clipboard` `theme` `single-instance` `shell` `capability` `multiwindow`——自己驱动页面、打印结论行、以退出码表达成败 |
 | 手动验证操作台（直接运行 demo） | 托盘、通知、对话框、拖放、右键菜单、图标等**只能人眼**判定项，每项都写了预期 |
-| `oriel doctor` | 环境与项目配置，并列出该平台还需要人眼验证什么 |
+| Velopack 打包（CI 每 push 跑） | `vpk pack` 成功、产物齐备（含 `--msi`）、更新清单能被解析且版本正确 |
 
 `--selftest ipc` 还会断言注入脚本里的**拖动接管就位**（`oriel.dragRegion` 是函数、标题栏被登记成
 拖动区域）与**内建窗口命令往返**（页面调两次 `win.toggleOnTop`，而 demo 没有注册任何 `win.*`）
