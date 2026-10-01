@@ -115,17 +115,48 @@ jobs:
   smoke-linux:
     runs-on: ubuntu-latest
     needs: [compile-linux]
+    # 为什么要有上限：2026-10-02 那次这一步卡在 azure.archive.ubuntu.com 的镜像重试上，
+    # 一直挂到 6 小时才被取消（结论是 cancelled，日志末尾 "Error: The operation was canceled."）。
+    # 没有上限时，一次镜像抖动就能吃掉几小时跑者配额，而且"卡住"与"在干活"在日志里看不出区别。
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
+      - name: Guard against a shell trap that only bites macOS
+        # 2026-10-02：tools/make-macos-app.sh 里 `echo "已生成 $APP（版本 ...）"` 在 release 的
+        # macOS job 上炸出 "line 68: APP: unbound variable"，而同一个变量在上一行展开得好好的。
+        # 原因：macOS 的 BSD libc 把 ≥0x80 的字节也算作字母数字，bash 3.2 于是把
+        # 「$变量 + 紧跟的中文」整段当成变量名。Linux 的 glibc 不会，所以这条在 Linux 上
+        # 永远看不到，`bash -n` 也查不出来（语法完全合法）——只有一条 grep 能挡。
+        # 规则：变量后面紧跟非 ASCII 时必须写成 ${VAR} 分开。注释行不算。
+        # .ps1 另有一条更窄的：PowerShell 只吞「紧跟中文字符」，全角标点（（、：、。）能正确
+        # 终止变量名——上面那条实测出来的差别，所以两边的正则不一样。
+        shell: bash
+        run: |
+          status=0
+          if git grep -nP '\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]' -- '*.sh' \
+              | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#'; then
+            echo "::error::（.sh）变量后紧跟非 ASCII：macOS 上会被当成变量名的一部分，请写成 \${VAR}"
+            status=1
+          fi
+          if git grep -nP '\$[A-Za-z_][A-Za-z0-9_]*[\x{4e00}-\x{9fff}]' -- '*.ps1' \
+              | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#'; then
+            echo "::error::（.ps1）变量后紧跟中文字符：PowerShell 会把它并入变量名，请写成 \${VAR}"
+            status=1
+          fi
+          [[ $status -eq 0 ]] && echo "OK：没有「变量紧跟非 ASCII」的写法"
+          exit $status
+
       - name: Install dependencies
         run: |
-          sudo apt-get update
+          # apt 自带超时与重试：上面那次挂起就发生在本步
+          APT_OPTS="-o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=2"
+          sudo apt-get update $APT_OPTS
           # x11-utils 提供 xwininfo（窗口断言）、imagemagick 提供 import（截图）；
           # zlib1g-dev/clang 是 Native AOT 的前置（runner 通常已带，显式列出以免依赖镜像）；
           # libnotify-bin 提供真的 notify-send（通知投递路径），python3-dbus/python3-gi 供
           # tools/fake-notification-service.py 顶替无头环境里缺席的通知守护。
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev xvfb x11-utils imagemagick zlib1g-dev clang libnotify-bin python3-dbus python3-gi
+          sudo apt-get install -y $APT_OPTS libwebkit2gtk-4.1-dev libgtk-3-dev xvfb x11-utils imagemagick zlib1g-dev clang libnotify-bin python3-dbus python3-gi
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
@@ -238,6 +269,8 @@ jobs:
   smoke-windows:
     runs-on: windows-latest
     needs: [compile-windows]
+    # 与 smoke-linux 同理：有上限，才不会一次环境抖动就吃掉几个小时配额
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 

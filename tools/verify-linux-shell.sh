@@ -71,7 +71,7 @@ PUBLISH_DIR="$REPO_ROOT/samples/OrielDemo/bin/$CONFIG/net10.0/$RID/publish"
 EXE="$PUBLISH_DIR/OrielDemo"
 
 if [[ "$DO_PUBLISH" == "1" ]]; then
-    echo "--- 发布 demo（$RID / $CONFIG）---"
+    echo "--- 发布 demo（$RID / ${CONFIG}）---"
     if ! "$DOTNET" publish "$REPO_ROOT/samples/OrielDemo/OrielDemo.csproj" -c "$CONFIG" -r "$RID" -v minimal >"$OUT_DIR/publish.log" 2>&1; then
         echo "发布失败，日志见 $OUT_DIR/publish.log" >&2
         exit 1
@@ -79,7 +79,7 @@ if [[ "$DO_PUBLISH" == "1" ]]; then
 fi
 
 if [[ ! -x "$EXE" ]]; then
-    echo "找不到可执行文件：$EXE（去掉 --no-publish 试一次）" >&2
+    echo "找不到可执行文件：${EXE}（去掉 --no-publish 试一次）" >&2
     exit 1
 fi
 
@@ -155,7 +155,7 @@ grep -E "shell-selftest|SHELL-SELFTEST" "$APP_LOG" || echo "（无自检输出�
 if [[ "$EXIT_CODE" == "0" ]]; then
     pass "进程以退出码 0 结束（托盘创建 + 菜单构建 + 通知投递都没把进程带崩）"
 else
-    fail "进程退出码为 $EXIT_CODE（应为 0）"
+    fail "进程退出码为 ${EXIT_CODE}（应为 0）"
 fi
 
 if grep -q "SHELL-SELFTEST: PASS" "$APP_LOG"; then
@@ -170,7 +170,7 @@ if [[ "$EXPECT_SUPPORTED" == "1" && "$reported" == "true" ]]; then
 elif [[ "$EXPECT_SUPPORTED" == "0" && "$reported" == "false" ]]; then
     pass "通知能力报告为 false（环境确实没有客户端——如实报告，而不是假装成功）"
 else
-    fail "通知能力报告为 '$reported'，与环境预期（$EXPECT_SUPPORTED）不符"
+    fail "通知能力报告为 '$reported'，与环境预期（${EXPECT_SUPPORTED}）不符"
 fi
 
 if [[ "$reported" == "true" ]]; then

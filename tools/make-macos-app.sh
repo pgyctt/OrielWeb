@@ -65,4 +65,9 @@ codesign --force --sign - "$APP/Contents/MacOS/$NAME"
 codesign --force --deep --sign - "$APP"
 codesign -dv "$APP" 2>&1 | grep -m1 -E 'Signature|Identifier' || true
 
-echo "已生成 $APP（版本 $VERSION）"
+# 用 printf + 参数，而不是把变量直接插进中文里：
+# macOS 的 BSD libc 把 ≥0x80 的字节也算作字母数字，于是 bash 3.2 把「$APP 紧跟全角括号」
+# 整段当成变量名去查，报 "line 68: APP: unbound variable"——而变量在第 64 行明明展开成功。
+# Linux 的 glibc 不这样，所以同一句话在 Linux 上跑得好好的，`bash -n` 也查不出来（语法合法）。
+# 全仓的 .sh 都别让变量紧跟中文；ci.yml 有一条 grep 断言把这类写法挡在门外。
+printf '已生成 %s（版本 %s）\n' "$APP" "$VERSION"
