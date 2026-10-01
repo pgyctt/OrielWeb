@@ -110,7 +110,7 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
         _aliveWindows++;
         // 构造函数只装配宿主，真正的 NSWindow 创建（initWithContentRect → 挂 delegate/webview → orderFront）在这里完成。
         // Windows 后端的建窗在静态工厂内完成，Linux/macOS 后端是实例方法，必须显式调用。
-        // 未真机验证：本修复与 Linux 侧同源（见 docs/DECISIONS.md「Linux 首次真机运行验证」），待有 Mac 环境时复验。
+        // 未真机验证：本修复与 Linux 侧同源（见 API.md「Linux 首次真机运行验证」），待有 Mac 环境时复验。
         host.Create();
         return host;
     }

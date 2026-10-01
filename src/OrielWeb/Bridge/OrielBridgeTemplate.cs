@@ -5,7 +5,7 @@ namespace OrielWeb;
 
 /// <summary>
 /// 三平台共用桥接脚本模板（<c>Bridge/oriel-bridge.js</c>，EmbeddedResource）。
-/// 模板在首次使用时读取一次，之后每个平台只做三次字符串替换（建窗口时一次，
+/// 模板在首次使用时读取一次，之后每个平台只做几次字符串替换（建窗口时一次，
 /// 成本可忽略），从而彻底消除"三份手抄脚本"带来的缺陷同步传播。
 /// </summary>
 internal static class OrielBridgeTemplate
@@ -18,7 +18,8 @@ internal static class OrielBridgeTemplate
     private const string SecurityToken = "__ORIEL_TOKEN__";
     private const string TrustedToken = "__ORIEL_TRUSTED__";
     private const string DoubleClickToken = "__ORIEL_DOUBLE_CLICK_MS__";
-    private const string ScaleToken = "__ORIEL_SCALE__";
+    private const string DragThresholdToken = "__ORIEL_DRAG_THRESHOLD_PX__";
+    private const string DragSelectorToken = "__ORIEL_DRAG_SELECTOR__";
 
     private static readonly string s_source = LoadSource();
 
@@ -30,9 +31,10 @@ internal static class OrielBridgeTemplate
     /// <param name="forwardConsole">是否启用 console 转发（见 <see cref="OrielWindowOptions.ConsoleForwarding"/>）。</param>
     /// <param name="token">本次进程运行的 IPC 令牌（见 <see cref="Ipc.OrielIpcToken"/>）。</param>
     /// <param name="trustedPrefixes">可信来源的 URL 前缀（脚本据此决定要不要安装）。</param>
-    /// <param name="system">宿主事实快照（页面同步可读，见 <see cref="OrielSystemSnapshot"/>）。</param>
+    /// <param name="system">拖动实现需要的宿主事实（见 <see cref="OrielSystemSnapshot"/>）。</param>
+    /// <param name="dragSelector">宿主指定的拖动区域选择器；null/空表示只认 <c>data-oriel-drag-region</c> 属性。</param>
     /// <remarks>
-    /// console 转发的实现只存在于模板里（未启用时代码保留但不执行），C# 侧不再抄一份：
+    /// console 转发与拖动实现都只存在于模板里，C# 侧不再抄一份：
     /// 三份手抄脚本互相漂移正是这个模板要消灭的问题。
     /// </remarks>
     internal static string Create(
@@ -41,7 +43,8 @@ internal static class OrielBridgeTemplate
         bool forwardConsole,
         string token,
         IReadOnlyList<string> trustedPrefixes,
-        OrielSystemSnapshot system)
+        OrielSystemSnapshot system,
+        string? dragSelector)
         => s_source
             .Replace(PlatformToken, platformLiteral, StringComparison.Ordinal)
             .Replace(PostToken, postExpression, StringComparison.Ordinal)
@@ -50,24 +53,8 @@ internal static class OrielBridgeTemplate
             .Replace(SecurityToken, token, StringComparison.Ordinal)
             .Replace(TrustedToken, TrustedLiteral(trustedPrefixes), StringComparison.Ordinal)
             .Replace(DoubleClickToken, NumberLiteral(system.DoubleClickTimeMs), StringComparison.Ordinal)
-            .Replace(ScaleToken, NumberLiteral(system.Scale), StringComparison.Ordinal);
-
-    /// <summary>数值 → JS 数值字面量。</summary>
-    /// <remarks>
-    /// 必须显式用 <see cref="CultureInfo.InvariantCulture"/>：按当前文化格式化会把小数点写成逗号
-    /// （德语、法语等），生成的脚本就成了 <c>scale: 1,5</c>——在 JS 里那是逗号表达式，
-    /// 要么语法错误要么静默变成 1，"注入脚本坏了"的表现还是"页面功能全无"。
-    /// <para>
-    /// 用 "R"（往返格式）而不是 "0.###"：后者会把极大/极小的值四舍五入掉，而这个方法的入参
-    /// 已经是规整过的（见 <see cref="OrielSystemSnapshot.Normalize"/>），格式化只负责不引入新的失真。
-    /// 非有限值（NaN/Infinity）理论上到不了这里，真到了就回退成 1——写进脚本的 NaN 是语法错误，
-    /// 而那会让整个桥接脚本加载失败。
-    /// </para>
-    /// </remarks>
-    internal static string NumberLiteral(double value)
-        => double.IsFinite(value)
-            ? value.ToString("R", CultureInfo.InvariantCulture)
-            : "1";
+            .Replace(DragThresholdToken, NumberLiteral(OrielSystemSnapshot.DragThresholdPx), StringComparison.Ordinal)
+            .Replace(DragSelectorToken, SelectorLiteral(dragSelector), StringComparison.Ordinal);
 
     /// <summary>
     /// 可信来源前缀 → JS 数组字面量。
@@ -91,6 +78,30 @@ internal static class OrielBridgeTemplate
         }
 
         return builder.Append(']').ToString();
+    }
+
+    /// <summary>拖动区域选择器 → JS 字符串字面量（空选择器写作空串，脚本按"只认属性"处理）。</summary>
+    private static string SelectorLiteral(string? selector)
+        => string.IsNullOrWhiteSpace(selector) ? "''" : JsonText.EncodeString(selector);
+
+    /// <summary>
+    /// 数值 → JS 数字字面量。
+    /// </summary>
+    /// <remarks>
+    /// **必须用 InvariantCulture**：按当前文化格式化会在逗号做小数点的区域写出别的形态，
+    /// 而注入脚本里出现一个语法错误的表现是"页面功能全无、控制台只有一句 SyntaxError"。
+    /// NaN/Infinity 在 JS 里不是字面量，这里显式挡住（调用方本不该传，这是最后一道）。
+    /// </remarks>
+    internal static string NumberLiteral(double value)
+    {
+        if (!double.IsFinite(value))
+        {
+            return "1";
+        }
+
+        return value == Math.Floor(value) && Math.Abs(value) < 1e15
+            ? ((long)value).ToString(CultureInfo.InvariantCulture)
+            : value.ToString("0.####", CultureInfo.InvariantCulture);
     }
 
     /// <summary>

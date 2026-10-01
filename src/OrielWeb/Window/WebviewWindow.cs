@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using OrielWeb.Ipc;
 
 namespace OrielWeb;
 
@@ -67,7 +68,11 @@ public sealed class OrielMessageReceivedEventArgs
 /// 窗口公共门面。生命周期事件必须在 <c>OrielAppBuilder.Run()</c> 之前订阅。
 /// 窗口方法（全屏/置顶/移动/对话框等）对齐 pywebview 基本面。
 /// </summary>
-public sealed class WebviewWindow
+/// <remarks>
+/// 实现 <see cref="IOrielWindowControl"/> 是为了让内建的 <c>win.*</c> 命令能作用到窗口上
+/// （见 <see cref="OrielBuiltInWindowCommands"/>）——那是库内部用的窄接口，不是给应用实现的。
+/// </remarks>
+public sealed class WebviewWindow : IOrielWindowControl
 {
     private IWindowBackend? _backend;
     private readonly object _gate = new();
@@ -152,6 +157,12 @@ public sealed class WebviewWindow
     /// </remarks>
     public OrielApp App => Backend.App;
 
+    /// <summary>
+    /// 关闭时的簿记：由 <see cref="OrielApp"/> 设置（把本窗口从应用窗口列表里摘掉），
+    /// 在公共 <see cref="Closed"/> 事件**之前**执行。
+    /// </summary>
+    internal Action? ClosedBookkeeping { get; set; }
+
     internal void Attach(IWindowBackend backend)
     {
         lock (_gate)
@@ -160,7 +171,13 @@ public sealed class WebviewWindow
         }
         backend.Loaded += () => Loaded?.Invoke();
         backend.Closing += args => Closing?.Invoke(args);
-        backend.Closed += () => Closed?.Invoke();
+        backend.Closed += () =>
+        {
+            // 簿记在公共事件**之前**：否则用户在处理 Closed 时遍历 Windows，
+            // 还会看到这个刚关闭的窗口（"关掉所有窗口"这类代码会因此重复关一个死窗口）。
+            ClosedBookkeeping?.Invoke();
+            Closed?.Invoke();
+        };
         backend.TitleChanged += title => TitleChanged?.Invoke(title);
         backend.MaximizedChanged += maximized => MaximizedChanged?.Invoke(maximized);
         backend.NavigationStarting += url => NavigationStarting?.Invoke(url);

@@ -46,7 +46,7 @@ internal enum GdkCursorType
 /// <remarks>
 /// <para>
 /// 为什么需要它：窗口一旦 <c>gtk_window_set_decorated(false)</c>，窗口管理器就**不再提供 resize 边框**，
-/// 于是"拖边缘改大小"整个失效（Ubuntu 22.04 实测确认，见 ROADMAP 的「已确认的缺陷」）。
+/// 于是"拖边缘改大小"整个失效（Ubuntu 22.04 实测确认）。
 /// 系统不会白送这份能力，只能自己判命中再把 resize 交回给 WM/合成器。
 /// </para>
 /// <para>

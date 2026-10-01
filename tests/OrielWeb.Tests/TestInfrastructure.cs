@@ -129,7 +129,7 @@ internal static class TestHarness
         "AOT", "IL3050", Justification = "测试专用反射序列化，测试程序集不参与 AOT 发布。")]
     public static async Task<(JsonDocument Reply, TestSink Sink)> DispatchAsync(
         OrielCommandDispatcher dispatcher, string name, object? args, int id = 1,
-        string? token = null, string? documentUrl = null)
+        string? token = null, string? documentUrl = null, IOrielWindowControl? window = null)
     {
         var sink = new TestSink();
         var argsJson = args is null ? "null" : JsonSerializer.Serialize(args);
@@ -139,7 +139,7 @@ internal static class TestHarness
             """;
         using var doc = JsonDocument.Parse(message);
         await dispatcher.HandleInvokeAsync(
-            doc.RootElement.Clone(), sink, documentUrl ?? TrustedUrl);
+            doc.RootElement.Clone(), sink, documentUrl ?? TrustedUrl, window);
         Assert.Single(sink.Replies);
         return (JsonDocument.Parse(sink.Replies[0]), sink);
     }

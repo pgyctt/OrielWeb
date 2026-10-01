@@ -29,6 +29,12 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     private readonly WebviewWindow _window;
     private readonly OrielWindowOptions _options;
     private readonly OrielApp _app;
+
+    /// <summary>
+    /// 本窗口的门面对象。内建 <c>win.*</c> 命令要靠它作用到**发起调用的那个窗口**上
+    /// （多窗口下不能用一个全局的"当前窗口"代替）。
+    /// </summary>
+    internal WebviewWindow Window => _window;
     private readonly MacOSPlatformBackend _backend;
     private readonly string? _assetDirectory;
     private readonly MacOSWebMessageHandler _messageHandler;
@@ -370,7 +376,7 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
                     _options.ConsoleForwarding,
                     App.Guard.Token,
                     App.Guard.TrustedPrefixes,
-                    ReadSystemSnapshot())),
+                    ReadSystemSnapshot(), _options.DragRegionSelector)),
             0, // WKUserScriptInjectionTimeAtDocumentStart
             true);
         ObjCRuntime.SendVoidObj(userContentController, ObjCRuntime.Sel("addUserScript:"), userScript);
@@ -763,15 +769,7 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
             ? 0
             : ObjCRuntime.SendDouble(nsEventClass, ObjCRuntime.Sel("doubleClickInterval"));
 
-        nint screenClass = ObjCRuntime.GetClass("NSScreen");
-        nint screen = screenClass == 0 ? 0 : ObjCRuntime.SendId(screenClass, ObjCRuntime.Sel("mainScreen"));
-        double scale = screen == 0
-            ? 0
-            : ObjCRuntime.SendDouble(screen, ObjCRuntime.Sel("backingScaleFactor"));
-
-        return OrielSystemSnapshot.Normalize(
-            (int)Math.Round(intervalSeconds * 1000),
-            scale);
+        return OrielSystemSnapshot.Normalize((int)Math.Round(intervalSeconds * 1000));
     }
 
     public void BeginDrag()

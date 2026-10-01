@@ -47,7 +47,6 @@ internal partial class Win32WindowHost : IWindowBackend
     internal readonly WindowsPlatformBackend _backend;
     internal readonly string? _assetDirectory;
     internal readonly string _assetHost;
-    internal readonly string _userDataFolder;
 
     private GCHandle _selfHandle;
     internal nint _hwnd;
@@ -107,9 +106,6 @@ internal partial class Win32WindowHost : IWindowBackend
         _assetHost = app.AssetHost;
         // 策略是可写属性（运行时能改），所以把 options 里的初值取出来存进属性，而不是每次回头读 options
         ContextMenuPolicy = options.ContextMenuPolicy;
-        _userDataFolder = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "OrielWeb", WebView2UserDataFolderName);
         _title = options.Title;
         if (options.MinWidth is int minWidth) _minWidth = minWidth;
         if (options.MinHeight is int minHeight) _minHeight = minHeight;
@@ -611,7 +607,7 @@ internal partial class Win32WindowHost : IWindowBackend
             case Win32Constants.WM_NCCALCSIZE:
             {
                 // 无边框窗口：客户区等于整个窗口，四周不留任何系统边框。
-                // 之所以不再需要"让出边框换热区"（见 docs/DECISIONS.md 的历史记录）：窗口是
+                // 之所以不再需要"让出边框换热区"（见 API.md 的历史记录）：窗口是
                 // WS_EX_NOREDIRECTIONBITMAP + DirectComposition 宿主，WebView2 是合成树里的视觉
                 // 而非子窗口，因此这条消息与 WM_NCHITTEST 都能真正到达本窗口，边缘命中由下面的
                 // WM_NCHITTEST 分支显式给出。
@@ -683,7 +679,7 @@ internal partial class Win32WindowHost : IWindowBackend
             case Win32Constants.WM_MOVE:
                 // 注意：此处理论上应调用 controller.NotifyParentWindowPositionChanged()（槽 23），
                 // 但实测在窗口最大化等场景该调用会触发 AV（疑似本机运行时 ComWrappers/互操作问题），
-                // 且窗口位置变化由 WM_SIZE 的 put_Bounds 兜底，MVP 先跳过（见 docs/DECISIONS.md）。
+                // 且窗口位置变化由 WM_SIZE 的 put_Bounds 兜底，MVP 先跳过（见 API.md）。
                 return 0;
 
             case Win32Constants.WM_GETMINMAXINFO:
@@ -753,7 +749,9 @@ internal partial class Win32WindowHost : IWindowBackend
 
         Interlocked.Exchange(ref _compositionController, null)?.Dispose();
         Interlocked.Exchange(ref _webView, null)?.Dispose();
-        Interlocked.Exchange(ref _environment, null)?.Dispose();
+        // **不能**释放环境：它是全进程共享的（由 WindowsPlatformBackend 持有并释放），
+        // 本窗口销毁后，同进程里其它窗口还要用它。
+        Interlocked.Exchange(ref _environment, null);
 
         // DirectComposition 的对象本是窗口的合成树，HWND 销毁后即失去作用，
         // 随进程/窗口生命周期自然回收（本项目一个进程通常只活一个窗口）。
@@ -806,8 +804,10 @@ internal partial class Win32WindowHost : IWindowBackend
                 return;
             }
 
-            _environment = await Functions.CreateCoreWebView2EnvironmentWithOptionsAsync(
-                browserFolder, _userDataFolder, null).ConfigureAwait(true)
+            // 环境是**全进程共享**的（见 WindowsPlatformBackend.GetEnvironmentAsync）：
+            // 每个窗口各建一个会撞在同一个 user data folder 上，而 WebView2 不允许同目录两个环境，
+            // 第二个窗口会直接装配失败——"运行时再开一个窗口"因此在 Windows 上起不来。
+            _environment = await _backend.GetEnvironmentAsync(browserFolder).ConfigureAwait(true)
                 ?? throw new InvalidOperationException("创建 WebView2 环境失败（返回 null）。");
 
             _compositionController = await _environment.CreateCoreWebView2CompositionControllerAsync(_hwnd).ConfigureAwait(true)
@@ -871,7 +871,7 @@ internal partial class Win32WindowHost : IWindowBackend
                     _options.ConsoleForwarding,
                     App.Guard.Token,
                     App.Guard.TrustedPrefixes,
-                    ReadSystemSnapshot()))
+                    ReadSystemSnapshot(), _options.DragRegionSelector))
                 .ConfigureAwait(true);
 
             _controller.IsVisible = true;
@@ -979,7 +979,7 @@ internal partial class Win32WindowHost : IWindowBackend
         try
         {
             await App.Dispatcher
-                .HandleInvokeAsync(message, new UiThreadReplySink(this), CurrentUrl)
+                .HandleInvokeAsync(message, new UiThreadReplySink(this), CurrentUrl, _window)
                 .ConfigureAwait(true);
         }
         catch (Exception ex)
@@ -1117,10 +1117,8 @@ internal partial class Win32WindowHost : IWindowBackend
     /// 缩放取的是**窗口所在显示器**的 DPI（<c>GetDpiForWindow</c>）而不是主屏——多屏不同缩放下，
     /// 窗口在哪个屏上就该按哪个屏算。句柄无效时它返回 0，由 <see cref="OrielSystemSnapshot.Normalize"/> 兜底。
     /// </remarks>
-    private OrielSystemSnapshot ReadSystemSnapshot()
-        => OrielSystemSnapshot.Normalize(
-            (int)Win32.GetDoubleClickTime(),
-            Win32.GetDpiForWindow(_hwnd) / 96.0);
+    private static OrielSystemSnapshot ReadSystemSnapshot()
+        => OrielSystemSnapshot.Normalize((int)Win32.GetDoubleClickTime());
 
     internal void RaiseNavigationCompleted(OrielNavigationCompletedEventArgs args)
     {

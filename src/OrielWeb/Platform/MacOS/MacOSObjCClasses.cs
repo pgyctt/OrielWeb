@@ -12,7 +12,7 @@ namespace OrielWeb.Platform.MacOS;
 // 实例在创建时 objc_retain，随进程生命周期存活。
 //
 // 约定：所有 [UnmanagedCallersOnly] trampoline 必须全身 try/catch——托管异常
-// 穿越 ObjC 运行时边界会导致进程 fail-fast 且不可捕获（见 docs/DECISIONS.md）。
+// 穿越 ObjC 运行时边界会导致进程 fail-fast 且不可捕获（见 API.md）。
 // ============================================================================
 
 internal static unsafe class MacOSObjCClasses

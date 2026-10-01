@@ -11,12 +11,13 @@ internal static class OrielBridgeJs
         bool forwardConsole,
         string token,
         IReadOnlyList<string> trustedPrefixes,
-        OrielSystemSnapshot system)
+        OrielSystemSnapshot system, string? dragSelector)
         => OrielBridgeTemplate.Create(
             "'windows'",
             "window.chrome.webview.postMessage(obj)",
             forwardConsole,
             token,
             trustedPrefixes,
-            system);
+            system,
+            dragSelector);
 }

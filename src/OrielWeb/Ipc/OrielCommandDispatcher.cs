@@ -53,7 +53,12 @@ internal sealed class OrielCommandDispatcher
     /// 发起调用的文档 URL（由窗口后端在导航时记录）。**没有它就没法做来源校验**——
     /// 消息本身不带来源，而"这个页面是不是应用自己的"是能力模型的第一道门。
     /// </param>
-    public async ValueTask HandleInvokeAsync(JsonElement message, IIpcReplySink sink, string? documentUrl)
+    /// <param name="window">
+    /// 发起这次调用的窗口，供内建的 <c>win.*</c> 命令使用；没有来源窗口时传 null。
+    /// **多窗口下必须由后端各传自己那一个**——否则"最小化"会作用到别的窗口上。
+    /// </param>
+    public async ValueTask HandleInvokeAsync(
+        JsonElement message, IIpcReplySink sink, string? documentUrl, IOrielWindowControl? window = null)
     {
         if (message.ValueKind != JsonValueKind.Object)
         {
@@ -93,6 +98,27 @@ internal sealed class OrielCommandDispatcher
         }
 
         JsonElement args = message.TryGetProperty("args", out var argsElement) ? argsElement : default;
+
+        // 内建窗口命令（win.*）**先于**应用路由：它们是库自己实现的，应用不需要注册。
+        // 代价是应用自定义的同名命令会被遮蔽——win. 本来就是保留前缀（见 OrielBuiltInWindowCommands）。
+        if (OrielBuiltInWindowCommands.TryGet(name, out var builtIn))
+        {
+            if (window is null)
+            {
+                ReplyError(sink, id, $"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。");
+                return;
+            }
+
+            try
+            {
+                ReplyOk(sink, id, builtIn(window, args));
+            }
+            catch (Exception ex)
+            {
+                ReplyError(sink, id, ex.Message);
+            }
+            return;
+        }
 
         if (!_routes.TryGetValue(name, out var route))
         {

@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using System.Globalization;
+
 using System.Text.Json.Serialization;
 using OrielWeb;
 using OrielDemo;
@@ -52,7 +52,7 @@ internal static class Program
     /// <c>--selftest</c> 认得的名字。加一个自检只需在这里加名字 + 在 Main 里加一行判定。
     /// </summary>
     private static readonly string[] SelfTestNames =
-        ["nav", "ipc", "clipboard", "theme", "single-instance", "shell", "capability"];
+        ["nav", "ipc", "clipboard", "theme", "single-instance", "shell", "capability", "multiwindow"];
 
     /// <summary>本次请求的自检名字是否就是 <paramref name="name"/>（忽略大小写与首尾空白）。</summary>
     private static bool IsSelfTest(string? requested, string name)
@@ -75,16 +75,6 @@ internal static class Program
         // 以前是六个独立开关（--nav-selftest 之类），能力没少，只是不再往命令行上摆一排。
         // 自检的**输出结论格式没变**（NAV-SELFTEST: PASS 等），脚本仍按原来的行去 grep。
         var selfTest = GetOptionValue(args, "--selftest");
-        // --expect-scale <n>：配合 --selftest ipc 断言"注入给页面的缩放就是这个值"。
-        // 给 CI 造值用：Linux 上必须同时设 GDK_BACKEND=x11 + GDK_SCALE=2
-        // （Wayland 后端下 GDK_SCALE 不生效，实测见 DECISIONS 的 HiDPI 一节）。
-        var expectScale = double.TryParse(
-            GetOptionValue(args, "--expect-scale"),
-            NumberStyles.Float,
-            CultureInfo.InvariantCulture,
-            out double parsedScale)
-            ? parsedScale
-            : (double?)null;
         if (args.Contains("--selftest") && string.IsNullOrWhiteSpace(selfTest))
         {
             Console.Error.WriteLine($"--selftest 需要一个名字。可用：{string.Join(" | ", SelfTestNames)}");
@@ -114,6 +104,8 @@ internal static class Program
         var shellSelfTest = IsSelfTest(selfTest, "shell");
         // capability：能力模型的放行 / 拒绝两条路径（页面真实 invoke 各一次）
         var capabilitySelfTest = IsSelfTest(selfTest, "capability");
+        // multiwindow：运行时新建窗口 → 每个窗口各一套会话 → 关掉一个不退出 → win.close 只关发起者
+        var multiWindowSelfTest = IsSelfTest(selfTest, "multiwindow");
         // --manual-check：手动验证操作台（停在那里等人点，不自动退出）。
         // 与 --selftest shell 的分工：那个是给 CI 的无人断言，这个是给人看的——
         // 每项做成按钮，托管侧的回调（托盘菜单项、通知点击、快捷键、拖放）回显到页面。
@@ -123,7 +115,7 @@ internal static class Program
         // 想看 Todo 示例页（"怎么用本库写应用"的示范）加 --todo；跑无人自检时也不用它，
         // 免得两种模式去争同一个托盘。
         bool anySelfTest = navSelfTest || ipcSelfTest || clipboardSelfTest || themeSelfTest
-            || singleInstanceSelfTest || shellSelfTest || capabilitySelfTest;
+            || singleInstanceSelfTest || shellSelfTest || capabilitySelfTest || multiWindowSelfTest;
         var manualCheck = !anySelfTest && !args.Contains("--todo");
 
         // 主题自检需要 OrielApp（主题是应用级的），所以这里显式 Build 再 Run；
@@ -134,7 +126,6 @@ internal static class Program
             .UseEmbeddedAssets(AssetHost)
             .UseJsonContext(AppJsonContext.Default)
             .AddCommands<TodoCommands>()
-            .AddCommands<WindowCommands>()
             .AddCommands<ManualCommands>()
             // 能力模型：声明页面真正会调用的命令（都写在这里的用途是当示范——Release 下
             // 不声明的话一律拒绝，见 README「能力模型」）。win.* 是库保留前缀，始终放行，不必列。
@@ -188,7 +179,7 @@ internal static class Program
                 }
                 if (ipcSelfTest)
                 {
-                    IpcSelfTest.Attach(win, expectScale);
+                    IpcSelfTest.Attach(win);
                 }
                 if (clipboardSelfTest)
                 {
@@ -197,6 +188,10 @@ internal static class Program
                 if (capabilitySelfTest)
                 {
                     CapabilitySelfTest.Attach(win);
+                }
+                if (multiWindowSelfTest)
+                {
+                    MultiWindowSelfTest.Attach(win);
                 }
             });
 
@@ -249,7 +244,8 @@ internal static class Program
             || (themeSelfTest && ThemeSelfTest.Failed)
             || (singleInstanceSelfTest && SingleInstanceSelfTest.Failed)
             || (shellSelfTest && ShellSelfTest.Failed)
-            || (capabilitySelfTest && CapabilitySelfTest.Failed))
+            || (capabilitySelfTest && CapabilitySelfTest.Failed)
+            || (multiWindowSelfTest && MultiWindowSelfTest.Failed))
         {
             Environment.ExitCode = 1;
         }
@@ -277,66 +273,10 @@ internal static class Program
     }
 }
 
-/// <summary>无边框窗口控制命令：由页面自绘标题栏调用（按平台分支拖动模式）。</summary>
-public sealed partial class WindowCommands
-{
-    [OrielCommand("win.minimize")]
-    public static void Minimize() => Program.Window?.Minimize();
-
-    /// <summary>最大化/还原切换，返回切换后是否最大化（页面据此更新按钮图标）。</summary>
-    [OrielCommand("win.toggleMaximize")]
-    public static bool ToggleMaximize() => Program.Window?.ToggleMaximize() ?? false;
-
-    [OrielCommand("win.close")]
-    public static void Close() => Program.Window?.Close();
-
-    /// <summary>Windows：进入原生模态拖动（参数忽略）；macOS：无操作（用 dragStart/dragTo）。</summary>
-    [OrielCommand("win.drag")]
-    public static void Drag() => Program.Window?.BeginDrag();
-
-    /// <summary>macOS 流式拖动起点。px/py = 指针屏幕坐标（CSS 点）；wx/wy/ww/wh = 窗口几何；sh = 屏高。</summary>
-    [OrielCommand("win.dragStart")]
-    public static void DragStart(double px, double py, double wx, double wy, double ww, double wh, double sh)
-        => Program.Window?.BeginDragStreaming(px, py, wx, wy, ww, wh, sh);
-
-    /// <summary>macOS 流式拖动增量（CSS 点，y 向下为正）；Windows 上为 no-op。</summary>
-    [OrielCommand("win.dragTo")]
-    public static void DragTo(double dx, double dy) => Program.Window?.DragTo(dx, dy);
-
-    [OrielCommand("win.dragEnd")]
-    public static void DragEnd() => Program.Window?.EndDrag();
-
-    [OrielCommand("win.toggleFullscreen")]
-    public static bool ToggleFullscreen() => Program.Window?.ToggleFullscreen() ?? false;
-
-    [OrielCommand("win.toggleOnTop")]
-    public static bool ToggleOnTop() => Program.Window?.ToggleOnTop() ?? false;
-
-    [OrielCommand("win.pickFile")]
-    public static string? PickFile() => Program.Window?.ShowOpenFileDialog("选择文件", "所有文件|*.*");
-
-    /// <summary>
-    /// 弹出一个覆盖各形态的上下文菜单——真机验证用的入口（页面里用
-    /// <c>oriel.invoke('win.contextMenu')</c> 或 devtools 控制台触发）。
-    /// 无人自检**不**调它：上下文菜单要等用户选择，Windows 上还会阻塞。
-    /// </summary>
-    [OrielCommand("win.contextMenu")]
-    public static void ShowContextMenu() => Program.Window?.ShowContextMenu(
-    [
-        OrielMenuItem.Item("ctx-hello", "Hello from context menu"),
-        OrielMenuItem.Separator(),
-        new OrielMenuItem { Id = "ctx-pin", Label = "置顶（勾选示例）", Checked = true },
-        new OrielMenuItem { Id = "ctx-disabled", Label = "禁用项", Enabled = false },
-        new OrielMenuItem
-        {
-            Label = "子菜单",
-            Items = [OrielMenuItem.Item("ctx-sub", "子项")],
-        },
-        OrielMenuItem.Separator(),
-        OrielMenuItem.RoleItem(OrielMenuRole.Copy),
-        OrielMenuItem.RoleItem(OrielMenuRole.Close),
-    ]);
-}
+// 无边框窗口的 win.* 命令（最小化 / 最大化 / 关闭 / 拖动 / 全屏 / 置顶 / 选文件 / 上下文菜单）
+// **由库内建**，应用不再注册——见 OrielBuiltInWindowCommands 与 API.md 第 2 节。
+// 应用自定义的 win.* 会被内建遮蔽（win. 是保留前缀），所以自己那点菜单内容请用别的名字
+// （例如下面 ManualCheck 里的 manual.contextMenu）。
 
 /// <summary>DTO：STJ 源生成上下文（AOT 安全序列化的唯一入口）。</summary>
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]

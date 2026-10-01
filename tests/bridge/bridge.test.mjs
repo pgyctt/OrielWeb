@@ -6,6 +6,10 @@
 // 占位符替换后注入最小 window/document 桩执行，断言"就绪 / 事件 / 往返 / 回执 /
 // 错误 / 超时"六类行为，并参数化跑全部三个平台。
 //
+// 桩里还有一个小 DOM 模型（元素、选择器、事件、window 上的监听），用来覆盖
+// **标题栏拖动接管**：库在注入脚本里处理"移动超阈值才拖动""双击的第二下不进入拖动"
+// "让开按钮与 data-oriel-no-drag"这些判断，而它们全是页面侧逻辑，只能在这里断言。
+//
 // 运行：node --test tests/bridge/bridge.test.mjs
 
 import { test } from 'node:test';
@@ -38,9 +42,9 @@ const injectedToken = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
 /** 测试用的可信来源前缀（对应 OrielIpcGuard 自动加入的内嵌资源虚拟主机）。 */
 const trustedPrefixes = ['https://app.oriel/'];
 
-/** 测试用的宿主事实快照（对应 C# 侧 OrielSystemSnapshot；scale 刻意用非整数）。 */
+/** 测试用的注入值（对应 C# 侧 OrielSystemSnapshot 与拖动默认值）。 */
 const injectedDoubleClickMs = 477;
-const injectedScale = 1.5;
+const injectedDragThresholdPx = 3;
 
 /**
  * 复现 C# 侧的占位符替换，得到该平台真正被注入的脚本。
@@ -53,7 +57,8 @@ function buildScript(
         token = injectedToken,
         trusted = trustedPrefixes,
         doubleClickMs = injectedDoubleClickMs,
-        scale = injectedScale,
+        dragThresholdPx = injectedDragThresholdPx,
+        dragSelector = '',
     } = {},
 ) {
     const script = template
@@ -63,9 +68,11 @@ function buildScript(
         .replaceAll('__ORIEL_VERSION__', injectedVersion)
         .replaceAll('__ORIEL_TOKEN__', token)
         .replaceAll('__ORIEL_TRUSTED__', JSON.stringify(trusted))
-        // C# 侧用 InvariantCulture 格式化（见 OrielBridgeTemplate.NumberLiteral）
+        // 数值走 InvariantCulture（见 OrielBridgeTemplate.NumberLiteral），
+        // 选择器走 JsonText.EncodeString（空选择器写作 ''）
         .replaceAll('__ORIEL_DOUBLE_CLICK_MS__', String(doubleClickMs))
-        .replaceAll('__ORIEL_SCALE__', String(scale));
+        .replaceAll('__ORIEL_DRAG_THRESHOLD_PX__', String(dragThresholdPx))
+        .replaceAll('__ORIEL_DRAG_SELECTOR__', dragSelector === '' ? "''" : JSON.stringify(dragSelector));
     assert.ok(!script.includes('__ORIEL_'), `${bridge.platform}：生成的脚本仍残留占位符`);
     return script;
 }
@@ -95,6 +102,69 @@ function createEnvironment(channel) {
         };
     }
 
+    // 拖动接管那段逻辑要碰 DOM，所以桩里得有一个够用的元素模型：
+    // 属性/标签/类/ id 选择器、事件、closest，以及 window 上的监听（拖动期间挂 mousemove/mouseup）。
+    const elements = [];
+    const windowListeners = new Map();
+
+    function matchesSelector(element, selector) {
+        return selector.split(',').some((raw) => {
+            const part = raw.trim();
+            if (!part) return false;
+            if (part.startsWith('[') && part.endsWith(']')) return element.hasAttribute(part.slice(1, -1));
+            if (part.startsWith('#')) return element.getAttribute('id') === part.slice(1);
+            if (part.startsWith('.')) return (element.getAttribute('class') ?? '').split(/\s+/).includes(part.slice(1));
+            return element.tagName === part.toUpperCase();
+        });
+    }
+
+    class StubElement {
+        constructor(tagName, attributes = {}) {
+            this.tagName = tagName.toUpperCase();
+            this.attributes = { ...attributes };
+            this.listeners = new Map();
+            this.parentElement = null;
+            elements.push(this);
+        }
+
+        getAttribute(name) {
+            return Object.hasOwn(this.attributes, name) ? this.attributes[name] : null;
+        }
+
+        hasAttribute(name) {
+            return Object.hasOwn(this.attributes, name);
+        }
+
+        addEventListener(type, listener) {
+            const list = this.listeners.get(type) ?? [];
+            list.push(listener);
+            this.listeners.set(type, list);
+        }
+
+        closest(selector) {
+            for (let node = this; node; node = node.parentElement) {
+                if (matchesSelector(node, selector)) return node;
+            }
+            return null;
+        }
+
+        /** 触发一个事件；缺省字段按"鼠标左键单击"补齐，用例只写自己关心的那些。 */
+        fire(type, overrides = {}) {
+            const event = {
+                type,
+                target: this,
+                button: 0,
+                detail: 1,
+                timeStamp: 0,
+                screenX: 0,
+                screenY: 0,
+                preventDefault() { },
+                ...overrides,
+            };
+            for (const listener of this.listeners.get(type) ?? []) listener(event);
+        }
+    }
+
     const documentStub = {
         readyState: 'loading',
         addEventListener: (type, listener) => {
@@ -106,7 +176,24 @@ function createEnvironment(channel) {
             for (const listener of domListeners.get(event.type) ?? []) listener(event);
             return true;
         },
+        querySelectorAll: (selector) => elements.filter((element) => matchesSelector(element, selector)),
     };
+
+    windowStub.addEventListener = (type, listener) => {
+        const list = windowListeners.get(type) ?? [];
+        list.push(listener);
+        windowListeners.set(type, list);
+    };
+    windowStub.removeEventListener = (type, listener) => {
+        const list = windowListeners.get(type) ?? [];
+        windowListeners.set(type, list.filter((candidate) => candidate !== listener));
+    };
+    // 拖动时页面会把这些坐标交给宿主（真实浏览器里都有）
+    windowStub.screenX = 100;
+    windowStub.screenY = 60;
+    windowStub.outerWidth = 1024;
+    windowStub.outerHeight = 768;
+    windowStub.screen = { height: 1080 };
 
     // console 桩：console 转发 hook 会包装它，因此不能让它落到 Node 的全局 console 上
     // （否则会污染测试进程，且多平台用例会互相叠加包装）。记录调用以便断言"原行为保留"。
@@ -116,7 +203,36 @@ function createEnvironment(channel) {
         consoleStub[level] = (...args) => consoleCalls.push({ level, args });
     }
 
-    return { window: windowStub, document: documentStub, console: consoleStub, consoleCalls, posted, messageListeners, domListeners };
+    return {
+        window: windowStub,
+        document: documentStub,
+        console: consoleStub,
+        consoleCalls,
+        posted,
+        messageListeners,
+        domListeners,
+        StubElement,
+        elements,
+        addElement: (tagName, attributes) => new StubElement(tagName, attributes),
+        addChild: (parent, tagName, attributes) => {
+            const child = new StubElement(tagName, attributes);
+            child.parentElement = parent;
+            return child;
+        },
+        fireWindow: (type, overrides = {}) => {
+            const event = {
+                type,
+                button: 0,
+                detail: 1,
+                timeStamp: 0,
+                screenX: 0,
+                screenY: 0,
+                preventDefault() { },
+                ...overrides,
+            };
+            for (const listener of windowListeners.get(type) ?? []) listener(event);
+        },
+    };
 }
 
 /**
@@ -129,8 +245,8 @@ function loadBridge(script, channel, { href = `${trustedPrefixes[0]}index.html` 
     env.location = { href };
     const EventStub = class { constructor(type) { this.type = type; } };
     try {
-        new Function('window', 'document', 'Event', 'console', 'location', script)(
-            env.window, env.document, EventStub, env.console, env.location);
+        new Function('window', 'document', 'Event', 'console', 'location', 'Element', script)(
+            env.window, env.document, EventStub, env.console, env.location, env.StubElement);
     } catch (error) {
         env.loadError = error;
     }
@@ -187,7 +303,8 @@ test('模板：占位符齐备', () => {
     assert.ok(template.includes('__ORIEL_TOKEN__'), '模板缺少 __ORIEL_TOKEN__');
     assert.ok(template.includes('__ORIEL_TRUSTED__'), '模板缺少 __ORIEL_TRUSTED__');
     assert.ok(template.includes('__ORIEL_DOUBLE_CLICK_MS__'), '模板缺少 __ORIEL_DOUBLE_CLICK_MS__');
-    assert.ok(template.includes('__ORIEL_SCALE__'), '模板缺少 __ORIEL_SCALE__');
+    assert.ok(template.includes('__ORIEL_DRAG_THRESHOLD_PX__'), '模板缺少 __ORIEL_DRAG_THRESHOLD_PX__');
+    assert.ok(template.includes('__ORIEL_DRAG_SELECTOR__'), '模板缺少 __ORIEL_DRAG_SELECTOR__');
     assert.ok(template.includes('window.__orielBridgeInstalled'), '模板缺少重复注入防护');
 });
 
@@ -303,23 +420,125 @@ for (const bridge of bridges) {
         await env.window.oriel.ready;
     });
 
-    test(`${label} 宿主事实快照：oriel.system 同步可读`, () => {
-        // 这几个值必须**同步**可读——无边框拖动要在 mousedown 里判断"这是不是双击的第二下"，
-        // await 回来时那次按下已经过去。所以它们是注入时写死的，不是任何 Promise 的结果。
-        const env = loadBridge(buildScript(bridge), bridge.channel);
-        const system = env.window.oriel.system;
+    // ---- 标题栏拖动接管（库实现，页面只标区域）----
 
-        assert.equal(typeof system, 'object', 'oriel.system 不存在');
-        assert.equal(system.doubleClickTimeMs, injectedDoubleClickMs);
-        assert.equal(system.scale, injectedScale);
-        assert.equal(typeof system.doubleClickTimeMs, 'number');
-        assert.equal(typeof system.scale, 'number');
+    const dragCommand = bridge.platform === 'windows' ? 'win.drag' : 'win.dragStart';
+
+    test(`${label} 拖动区域：DOMContentLoaded 时按属性扫描`, () => {
+        // 页面只写一个属性（data-oriel-drag-region），拖动逻辑全在库里
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        env.addElement('div', { 'data-oriel-drag-region': '' });
+        fireDomEvent(env, 'DOMContentLoaded');
+
+        assert.equal(env.window.oriel.dragRegion(), 1, '应当扫描到 1 个拖动区域');
     });
 
-    test(`${label} 宿主事实快照：小数不被截断`, () => {
-        // 1.5 若被当成整数格式化就会变成 1，页面的缩放判断随之错一倍
-        const env = loadBridge(buildScript(bridge, { scale: 1.25 }), bridge.channel);
-        assert.equal(env.window.oriel.system.scale, 1.25);
+    test(`${label} 拖动区域：也可由宿主指定选择器`, () => {
+        const env = loadBridge(buildScript(bridge, { dragSelector: '#titlebar' }), bridge.channel);
+        env.addElement('div', { id: 'titlebar' });
+
+        assert.equal(env.window.oriel.dragRegion(), 1);
+    });
+
+    test(`${label} 拖动区域：重复登记不重复绑定`, () => {
+        // SPA 里重新扫描是常事，重复绑定会让一次按下发起两次拖动
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const bar = env.addElement('div', {});
+        env.window.oriel.dragRegion(bar);
+        env.window.oriel.dragRegion(bar);
+
+        assert.equal(bar.listeners.get('mousedown').length, 1, '同一个元素不应重复绑定');
+    });
+
+    test(`${label} 拖动区域：移动超过阈值才发起拖动`, () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const bar = env.addElement('div', { 'data-oriel-drag-region': '' });
+        env.window.oriel.dragRegion();
+        env.posted.length = 0;
+
+        bar.fire('mousedown', { screenX: 10, screenY: 10 });
+        // 阈值内的抖动不算拖动——否则"点一下标题栏"也会移动窗口
+        env.fireWindow('mousemove', { screenX: 12, screenY: 11 });
+        assert.equal(env.posted.length, 0, '阈值内不应发起拖动');
+
+        env.fireWindow('mousemove', { screenX: 40, screenY: 10 });
+        assert.equal(env.posted.at(-1).name, dragCommand);
+
+        if (bridge.platform === 'windows') {
+            return;
+        }
+
+        // 起点用**按下时**的位置而不是当前位置，否则窗口会在开始拖动那一刻跳一下
+        assert.deepEqual(env.posted.at(-1).args, {
+            px: 10, py: 10, wx: 100, wy: 60, ww: 1024, wh: 768, sh: 1080,
+        });
+
+        env.fireWindow('mousemove', { screenX: 60, screenY: 20 });
+        const moved = env.posted.at(-1);
+        assert.equal(moved.name, 'win.dragTo');
+        assert.deepEqual(moved.args, { dx: 50, dy: 10 });
+
+        env.fireWindow('mouseup', {});
+        assert.equal(env.posted.at(-1).name, 'win.dragEnd');
+    });
+
+    test(`${label} 拖动区域：双击的第二下不进入拖动，双击触发最大化`, () => {
+        // 这正是"必须同步判定"的那个场景：拖动一旦开始，第二次点击就到不了页面
+        // （Windows 的模态循环吞掉它 / Wayland 下指针被合成器 grab）
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const bar = env.addElement('div', { 'data-oriel-drag-region': '' });
+        env.window.oriel.dragRegion();
+        env.posted.length = 0;
+
+        bar.fire('mousedown', { screenX: 10, screenY: 10, timeStamp: 0 });
+        bar.fire('mousedown', { screenX: 11, screenY: 10, timeStamp: 120, detail: 2 });
+        env.fireWindow('mousemove', { screenX: 300, screenY: 300 });
+        assert.equal(env.posted.length, 0, '双击的第二下不应发起拖动');
+
+        bar.fire('dblclick', { screenX: 10, screenY: 10 });
+        assert.equal(env.posted.at(-1).name, 'win.toggleMaximize');
+    });
+
+    test(`${label} 拖动区域：间隔之外的第二下仍算新的拖动`, () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const bar = env.addElement('div', { 'data-oriel-drag-region': '' });
+        env.window.oriel.dragRegion();
+        env.posted.length = 0;
+
+        bar.fire('mousedown', { screenX: 10, screenY: 10, timeStamp: 0 });
+        bar.fire('mousedown', { screenX: 10, screenY: 10, timeStamp: injectedDoubleClickMs + 1 });
+        env.fireWindow('mousemove', { screenX: 60, screenY: 10 });
+
+        assert.equal(env.posted.at(-1).name, dragCommand);
+    });
+
+    test(`${label} 拖动区域：按钮与 no-drag 上的按下不接管`, () => {
+        // 标题栏上的最小化/关闭按钮要能正常点击——否则按钮会变成"点不动"
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const bar = env.addElement('div', { 'data-oriel-drag-region': '' });
+        env.window.oriel.dragRegion();
+        const button = env.addChild(bar, 'button', {});
+        const panel = env.addChild(bar, 'div', { 'data-oriel-no-drag': '' });
+        env.posted.length = 0;
+
+        button.fire('mousedown', { screenX: 10, screenY: 10 });
+        panel.fire('mousedown', { screenX: 20, screenY: 20 });
+        env.fireWindow('mousemove', { screenX: 300, screenY: 300 });
+
+        assert.equal(env.posted.length, 0, '按钮与 no-drag 区域内的按下不应发起拖动');
+    });
+
+    test(`${label} 拖动区域：右键与中键不接管`, () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const bar = env.addElement('div', { 'data-oriel-drag-region': '' });
+        env.window.oriel.dragRegion();
+        env.posted.length = 0;
+
+        bar.fire('mousedown', { button: 2, screenX: 10, screenY: 10 });
+        bar.fire('mousedown', { button: 1, screenX: 10, screenY: 10 });
+        env.fireWindow('mousemove', { screenX: 300, screenY: 300 });
+
+        assert.equal(env.posted.length, 0);
     });
 
     test(`${label} 事件：DOMContentLoaded 之后注册的 orielready 监听器能被触发`, () => {

@@ -181,7 +181,7 @@ section "机器断言自检：导航 / IPC / 剪贴板"
 # 这里不用 timeout：macOS 自带的是 BSD 用户态，没有 GNU coreutils 的 timeout。
 # 自检自身有看门狗（nav 90s / ipc 30s），下面的等待循环只是兜底。
 SELFTEST_FAILED=0
-for mode in nav ipc clipboard theme capability; do
+for mode in nav ipc clipboard theme capability multiwindow; do
     selftest_log="$OUT/selftest-$mode.log"
     # 自检开关已合并：--selftest <名字>；输出结论行格式未变（NAV-SELFTEST: PASS 等）
     "$APP_EXE" --selftest "$mode" >"$selftest_log" 2>&1 &
@@ -199,7 +199,7 @@ for mode in nav ipc clipboard theme capability; do
         selftest_code=$?
     fi
 
-    selftest_verdict="$(grep -E '^(NAV|IPC|CLIPBOARD|THEME|CAPABILITY)-SELFTEST: ' "$selftest_log" | tail -1 || true)"
+    selftest_verdict="$(grep -E '^(NAV|IPC|CLIPBOARD|THEME|CAPABILITY|MULTIWINDOW)-SELFTEST: ' "$selftest_log" | tail -1 || true)"
     echo "  [$mode] 退出码=${selftest_code} 结论=${selftest_verdict:-无}"
     # 明细总是回显到 CI 日志：artifact 里有完整文件，但日志能直接看
     sed 's/^/    /' "$selftest_log" || true

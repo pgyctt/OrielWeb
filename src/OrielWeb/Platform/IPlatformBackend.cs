@@ -147,6 +147,15 @@ internal interface IPlatformBackend : IDisposable
     void Quit();
     /// <summary>把动作切回 UI 线程执行（已在 UI 线程则直接执行）。</summary>
     void PostToMainThread(Action action);
+
+    /// <summary>
+    /// 当前线程是不是本平台的 UI 线程（GTK/AppKit/Win32 的窗口 API 都只能在它上面调用）。
+    /// </summary>
+    /// <remarks>
+    /// 用于在**运行时新建窗口**这类"只能在 UI 线程做"的公开 API 入口给出明确报错，
+    /// 而不是让它以原生崩溃或静默无效的形式暴露（见 <see cref="OrielApp.CreateWindow"/>）。
+    /// </remarks>
+    bool IsOnUiThread();
     IWindowBackend CreateWindow(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory);
 
     /// <summary>创建托盘图标（应用级，最多一个）。</summary>
@@ -158,7 +167,7 @@ internal interface IPlatformBackend : IDisposable
     /// </summary>
     bool NotificationsSupported { get; }
 
-    // 通知点击上报已从接口中移除：三平台都拿不到（见 OrielApp 里同处的说明与 DECISIONS）。
+    // 通知点击上报已从接口中移除：三平台都拿不到（见 OrielApp 里同处的说明与 API.md）。
 
     /// <summary>
     /// 启用开机自启。<paramref name="id"/> 是应用标识（注册表值名 / .desktop 文件名 / LaunchAgent Label），

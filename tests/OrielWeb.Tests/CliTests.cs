@@ -204,6 +204,7 @@ public sealed class CliDoctorTests
         [
             ManualChecks.WindowIcon, ManualChecks.ClipboardInterop, ManualChecks.ThemeRealtime,
             ManualChecks.DevTools, ManualChecks.MacHiddenStart, ManualChecks.LinuxHiDpiDrag,
+            ManualChecks.DragBehavior, ManualChecks.MultiWindow,
             ManualChecks.TrayIcon, ManualChecks.Notifications, ManualChecks.ContextMenu,
             ManualChecks.Dialogs, ManualChecks.FileDrop, ManualChecks.BuiltInContextMenu,
         ];
@@ -363,7 +364,7 @@ public sealed class CliBundleTests
     [Fact]
     public void InfoPlistCarriesTheBundleIdentifier()
     {
-        // CFBundleIdentifier 缺失时 WKWebView 会直接 __builtin_trap（见 make-macos-app.sh 头部的记录）
+        // CFBundleIdentifier 缺失时 WKWebView 会直接 __builtin_trap（见 oriel bundle 头部的记录）
         XDocument document = ParseXml(Packagers.InfoPlist(SampleOptions(), "OrielDemo", hasIcon: false));
 
         Assert.Contains("com.orielweb.demo", document.ToString());

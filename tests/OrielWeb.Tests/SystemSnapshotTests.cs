@@ -5,52 +5,36 @@ using Xunit;
 namespace OrielWeb.Tests;
 
 /// <summary>
-/// 注入给页面的宿主事实快照（<c>window.oriel.system</c>）的单测：取值回退与数值格式化。
+/// 拖动实现所需宿主事实（双击间隔）的单测：取值回退与数值格式化。
 /// </summary>
 /// <remarks>
-/// 这三件事都必须能离线断言：回退值决定"取不到系统设置时页面看到什么"，
-/// 而数值格式化一旦按当前文化写出逗号，整个注入脚本就是坏的（`scale: 1,5` 在 JS 里是逗号表达式）。
+/// 两者都必须能离线断言：回退值决定"取不到系统设置时用什么"；而数值格式化一旦按当前文化
+/// 写出逗号，整个注入脚本就是坏的（语法错误的表现是"页面功能全无"）。
 /// </remarks>
 public sealed class SystemSnapshotTests
 {
     [Fact]
     public void NormalizeKeepsUsableValues()
-    {
-        var snapshot = OrielSystemSnapshot.Normalize(400, 2.0);
-
-        Assert.Equal(400, snapshot.DoubleClickTimeMs);
-        Assert.Equal(2.0, snapshot.Scale);
-    }
-
-    [Fact]
-    public void ScaleBelowOneIsAllowed()
-    {
-        // GDK_DPI_SCALE=0.5 这类环境真的存在；只要为正就不是"取不到"
-        Assert.Equal(0.5, OrielSystemSnapshot.Normalize(500, 0.5).Scale);
-    }
+        => Assert.Equal(400, OrielSystemSnapshot.Normalize(400).DoubleClickTimeMs);
 
     [Theory]
-    // 三平台各自的"取不到"：Windows 句柄无效时 GetDpiForWindow 返回 0、
-    // GTK 没有 GtkSettings、macOS 没有显示器时 mainScreen 是 nil。
-    [InlineData(0, 0.0)]
-    [InlineData(-1, -2.0)]
-    [InlineData(500, double.NaN)]
-    [InlineData(500, double.PositiveInfinity)]
-    public void NormalizeFallsBack(int rawMs, double rawScale)
+    // 三平台各自的"取不到"：Windows 句柄无效、GTK 没有 GtkSettings、macOS 查不到 NSEvent 类
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(int.MinValue)]
+    public void NormalizeFallsBack(int rawMilliseconds)
     {
-        var snapshot = OrielSystemSnapshot.Normalize(rawMs, rawScale);
+        var settings = OrielSystemSnapshot.Normalize(rawMilliseconds);
 
-        Assert.True(snapshot.DoubleClickTimeMs > 0);
-        Assert.True(double.IsFinite(snapshot.Scale) && snapshot.Scale > 0);
+        Assert.Equal(OrielSystemSnapshot.DefaultDoubleClickTimeMs, settings.DoubleClickTimeMs);
     }
 
     [Fact]
-    public void NormalizeUsesDocumentedDefaults()
+    public void DragThresholdIsSmallButNotZero()
     {
-        var snapshot = OrielSystemSnapshot.Normalize(0, 0);
-
-        Assert.Equal(OrielSystemSnapshot.DefaultDoubleClickTimeMs, snapshot.DoubleClickTimeMs);
-        Assert.Equal(OrielSystemSnapshot.DefaultScale, snapshot.Scale);
+        // 阈值是"这一次按下算不算拖动"的判据：0 会让最轻微的抖动都开始拖动，
+        // 太大则拖动要等很久才响应。
+        Assert.InRange(OrielSystemSnapshot.DragThresholdPx, 1, 8);
     }
 }
 
@@ -70,7 +54,7 @@ public sealed class BridgeTemplateNumberTests
         CultureInfo original = CultureInfo.CurrentCulture;
         try
         {
-            // 逗号是小数点的文化：按当前文化格式化会写出 scale: 1,5
+            // 逗号是小数点的文化：按当前文化格式化会写出 1,5
             CultureInfo.CurrentCulture = new CultureInfo("de-DE");
 
             Assert.Equal("1.5", OrielBridgeTemplate.NumberLiteral(1.5));

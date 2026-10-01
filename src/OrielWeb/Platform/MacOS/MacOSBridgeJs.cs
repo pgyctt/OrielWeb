@@ -13,12 +13,13 @@ internal static class MacOSBridgeJs
         bool forwardConsole,
         string token,
         IReadOnlyList<string> trustedPrefixes,
-        OrielSystemSnapshot system)
+        OrielSystemSnapshot system, string? dragSelector)
         => OrielBridgeTemplate.Create(
             "'macos'",
             "window.webkit.messageHandlers.oriel.postMessage(JSON.stringify(obj))",
             forwardConsole,
             token,
             trustedPrefixes,
-            system);
+            system,
+            dragSelector);
 }

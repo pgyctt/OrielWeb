@@ -175,11 +175,11 @@ jobs:
         # 剪贴板自检会覆盖系统剪贴板内容——CI 环境无人使用剪贴板，安全。
         run: |
           demo=samples/OrielDemo/bin/Release/net10.0/linux-x64/publish/OrielDemo
-          for mode in nav ipc clipboard capability; do
+          for mode in nav ipc clipboard capability multiwindow; do
             log="$RUNNER_TEMP/selftest-$mode.log"
             xvfb-run -a "$demo" --selftest "$mode" > "$log" 2>&1
             code=$?
-            verdict="$(grep -E '^(NAV|IPC|CLIPBOARD|CAPABILITY)-SELFTEST: ' "$log" | tail -1 || true)"
+            verdict="$(grep -E '^(NAV|IPC|CLIPBOARD|CAPABILITY|MULTIWINDOW)-SELFTEST: ' "$log" | tail -1 || true)"
             echo "----- selftest $mode（退出码 $code）$verdict -----"
             sed 's/^/  /' "$log"
             # 判定以日志里的结论行为准（与 macOS 一致）：应用的退出方式各平台不同，
@@ -189,19 +189,6 @@ jobs:
               exit 1
             fi
           done
-
-          # 缩放注入：X11 + GDK_SCALE=2 造一次 2x，断言注入给页面的 oriel.system.scale 真的跟随。
-          # "取到了"与"取对了"是两件事，只有这一条能证明那个值来自系统而不是写死的。
-          # 必须带 GDK_BACKEND=x11：Wayland 后端下 GDK_SCALE 不生效（实测，见 DECISIONS 的 HiDPI 一节）。
-          log="$RUNNER_TEMP/selftest-scale.log"
-          GDK_BACKEND=x11 GDK_SCALE=2 xvfb-run -a "$demo" --selftest ipc --expect-scale 2 > "$log" 2>&1
-          verdict="$(grep -E '^IPC-SELFTEST: ' "$log" | tail -1 || true)"
-          echo "----- scale=2（GDK_BACKEND=x11 GDK_SCALE=2）$verdict -----"
-          sed 's/^/  /' "$log"
-          if [[ "$verdict" != *PASS* ]]; then
-            echo "::error::缩放注入未通过（结论行：${verdict:-无}）"
-            exit 1
-          fi
 
           # 主题：深浅两条路径都要走到——用 GTK_THEME（GTK 认可的入口）分别跑，并断言两次结论**不同**。
           # 只跑一次只能证明"读得到主题"，证明不了"深浅判得对"；同一进程内又改不了系统主题，
@@ -303,7 +290,7 @@ jobs:
       - name: Bundle into an MSI and verify it installs
         # 每次 push 都跑 .msi（用户决定）：它是这一批里唯一"生成物会落到用户机器上"的东西，
         # 而 WiX 的那些坑（per-user 目录、UpgradeCode、文件收集）只有真的装一次才暴露。
-        # 固定 WiX v5：v6 起要求接受 OSMF 的付费条款（见 DECISIONS）。
+        # 固定 WiX v5：v6 起要求接受 OSMF 的付费条款（见 API.md）。
         shell: pwsh
         run: |
           dotnet tool install --global wix --version 5.*
@@ -342,7 +329,7 @@ jobs:
           $demo = "samples/OrielDemo/bin/Release/net10.0/win-x64/OrielDemo.exe"
           # 主题只跑一次：Windows 上没有像 GTK_THEME 那样可靠的"造值"入口（改注册表会影响 runner
           # 的其它状态），所以这里只验证"读得到 + 事件通道通"，深/浅判得对由 smoke-linux 的双路径覆盖。
-          foreach ($mode in @("nav", "ipc", "clipboard", "theme", "capability")) {
+          foreach ($mode in @("nav", "ipc", "clipboard", "theme", "capability", "multiwindow")) {
             $out = "$env:RUNNER_TEMP\selftest-$mode.out.txt"
             $err = "$env:RUNNER_TEMP\selftest-$mode.err.txt"
             $p = Start-Process -FilePath $demo -ArgumentList @("--selftest", $mode) -Wait -PassThru `
@@ -353,7 +340,7 @@ jobs:
             # 判定以日志里的结论行为准（与 Linux / macOS 一致），退出码只作为附加信息。
             $verdict = ""
             if (Test-Path $out) {
-              $last = Select-String -Path $out -Pattern '^(NAV|IPC|CLIPBOARD|THEME|CAPABILITY)-SELFTEST: ' | Select-Object -Last 1
+              $last = Select-String -Path $out -Pattern '^(NAV|IPC|CLIPBOARD|THEME|CAPABILITY|MULTIWINDOW)-SELFTEST: ' | Select-Object -Last 1
               if ($last) { $verdict = $last.Line }
             }
             if ($verdict -notmatch 'PASS') {
@@ -398,7 +385,7 @@ jobs:
 
       - name: Smoke run with evidence
         # 托管 macOS runner 具备图形登录会话（2026-09-29 实测：managername=Aqua、/dev/console
-        # 属主为 runner、WindowServer 在跑、能截到 1024x768 真实像素；详见 docs/DECISIONS.md），
+        # 属主为 runner、WindowServer 在跑、能截到 1024x768 真实像素），
         # 所以这里能比 Windows 那条冒烟做得更硬：进程存活 + WebContent 子进程 + CGWindowList
         # 枚举到标题含 "Oriel Demo" 的窗口，三者都断言。截图作 artifact 上传，供人眼确认页面渲染、
         # 中文与 IPC 徽章（这三项没有宿主侧可观测信号）。

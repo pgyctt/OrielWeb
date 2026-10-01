@@ -34,8 +34,97 @@ public sealed class OrielApp : IDisposable
     internal Action<OrielWebView2RuntimeMissingEventArgs>? WebView2RuntimeMissingHandler
         => _builder.WebView2RuntimeMissingHandler;
 
+    /// <summary>
+    /// 应用当前**存活**的窗口（关闭的会自动摘掉）。
+    /// </summary>
     public IReadOnlyList<WebviewWindow> Windows => _windows;
+
     private readonly List<WebviewWindow> _windows = [];
+
+    /// <summary>内嵌资源的解压目录（未用内嵌资源时为 null）。运行时新建的窗口也用它。</summary>
+    private string? _assetDirectory;
+
+    /// <summary>
+    /// 运行时新建一个窗口（多窗口应用用）。
+    /// </summary>
+    /// <param name="configure">窗口选项，与 <see cref="OrielAppBuilder.AddWindow(Action{OrielWindowOptions}?)"/> 同一套。</param>
+    /// <param name="onCreated">
+    /// 建窗**之前**的回调，用来订阅 <c>Loaded</c> / <c>Closing</c> 等事件。与 builder 上那个重载一致：
+    /// 事件必须在窗口后端创建前订阅好。
+    /// </param>
+    /// <returns>新窗口的门面对象（内容异步加载，返回时页面还没加载完）。</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>必须在 UI 线程调用</b>——命令处理、窗口事件、托盘菜单回调里都在 UI 线程上；从线程池
+    /// （<c>Task.Run</c> 等）调用会抛 <see cref="InvalidOperationException"/>。
+    /// 这里刻意**不做**自动 marshal：返回值是同步的窗口对象，"marshal 过去再建"会让调用方拿到一个
+    /// 尚未建好的窗口，比一句明确的报错更难用。
+    /// </para>
+    /// <para>
+    /// 新窗口不是新应用：内嵌资源目录、可信来源、IPC 令牌与能力配置都继承应用级的那些。
+    /// 页面各有一份，命令与门禁是共用的——包括内建的 <c>win.*</c>：它作用到**发起调用的那个窗口**上
+    /// （每个窗口后端各自把自己的窗口交给分发器）。
+    /// </para>
+    /// <para>
+    /// 关掉其中一个窗口不会结束应用；所有窗口都关掉之后消息循环才退出
+    /// （Windows 侧由存活窗口计数归零触发 <c>WM_QUIT</c>，macOS 侧由
+    /// <c>applicationShouldTerminateAfterLastWindowClosed:</c> 回答，Linux 侧由 GTK 主循环自然结束）。
+    /// </para>
+    /// </remarks>
+    public WebviewWindow CreateWindow(
+        Action<OrielWindowOptions>? configure = null, Action<WebviewWindow>? onCreated = null)
+    {
+        if (_backend is null)
+        {
+            throw new InvalidOperationException(
+                "应用尚未启动：CreateWindow 只能在 Run() 之后（消息循环运行期间）调用。");
+        }
+
+        if (!_backend.IsOnUiThread())
+        {
+            throw new InvalidOperationException(
+                "CreateWindow 必须在 UI 线程调用：请在命令处理、窗口事件或托盘菜单回调里发起。");
+        }
+
+        var options = new OrielWindowOptions();
+        configure?.Invoke(options);
+
+        var window = new WebviewWindow();
+        onCreated?.Invoke(window);
+        AttachWindow(window, options);
+        return window;
+    }
+
+    /// <summary>
+    /// 建窗并挂到应用上——启动时的窗口与运行时新建的窗口走**同一条路**。
+    /// </summary>
+    private void AttachWindow(WebviewWindow window, OrielWindowOptions options)
+    {
+        if (_builder.Debug)
+        {
+            options.Debug = true;
+        }
+
+        var backend = _backend!.CreateWindow(window, options, this, _assetDirectory);
+        window.Attach(backend);
+        _windows.Add(window);
+
+        // 每次导航成功都补推一次当前主题：否则新文档要等到用户下次切换才知道现在是深还是浅
+        WebviewWindow created = window;
+        created.NavigationCompleted += args =>
+        {
+            if (args.Success)
+            {
+                PushTheme(created, Theme);
+            }
+        };
+
+        // 关闭后从列表里摘掉：否则 Windows 会越用越长，而"遍历所有窗口"的应用代码
+        // （例如把某个设置套用到每个窗口）会作用到已经销毁的窗口上。
+        // 走 ClosedBookkeeping 而不是公共 Closed 事件：摘除必须发生在用户的 Closed 处理器**之前**，
+        // 否则用户在处理器里读到的 Windows 还包含刚关掉的那个窗口。
+        created.ClosedBookkeeping = () => _windows.Remove(created);
+    }
 
     /// <summary>页面侧的主题事件名：<c>oriel.on('theme.changed', theme =&gt; …)</c>，payload 为 <c>"light"</c> / <c>"dark"</c>。</summary>
     internal const string ThemeEventName = "theme.changed";
@@ -138,7 +227,7 @@ public sealed class OrielApp : IDisposable
     // （打包器的职责），Linux 的 notify-send 与 macOS 的 osascript 则根本没有回调入口。
     // 原先三处都是"显式空实现"，看起来像是如实标注——但**订阅一个永不触发的事件不会编译报错**，
     // 调用方只会在运行时才发现收不到。删掉它，让"不支持"变成编译错误，这才是对的信号。
-    // 详见 docs/DECISIONS.md 的「通知点击上报：直接删掉，而不是留一个空事件」。
+    // 详见 API.md。
 
     /// <summary>
     /// 发送一条系统通知。
@@ -322,7 +411,7 @@ public sealed class OrielApp : IDisposable
             }
         }
 
-        _backend = PlatformBackendFactory.Create();
+        _backend = PlatformBackendFactory.Create(_builder.UserDataFolder);
         _backend.ThemeChanged += OnThemeChanged;
 
         // 托盘先于窗口创建：托盘是应用的外壳，先就绪才能让"启动即最小化到托盘"这类形态成立。
@@ -334,39 +423,23 @@ public sealed class OrielApp : IDisposable
             StartSingleInstanceListener();
         }
 
-        string? assetDirectory = _builder.UseAssets
+        _assetDirectory = _builder.UseAssets
             ? EmbeddedAssetExtractor.Extract(_builder.AssetResourcePrefix)
             : null;
 
-        if (assetDirectory is not null)
+        if (_assetDirectory is not null)
         {
             // Linux/macOS 上内嵌资源的 https 虚拟主机注册不了，导航前会被改写成 file:// 本地路径
             // （见 AssetUrlResolver）。所以解压目录也必须是可信来源——
             // 不加这一条，页面会被**自己的**门禁拒掉，表现为"什么命令都没反应"。
             Guard.AddTrustedPrefix(
-                "file://" + assetDirectory.Replace('\\', '/').TrimEnd('/') + "/");
+                "file://" + _assetDirectory.Replace('\\', '/').TrimEnd('/') + "/");
         }
 
         _windows.EnsureCapacity(_builder.PendingWindows.Count);
         foreach (var (window, options) in _builder.PendingWindows)
         {
-            if (_builder.Debug)
-            {
-                options.Debug = true;
-            }
-            var backend = _backend.CreateWindow(window, options, this, assetDirectory);
-            window.Attach(backend);
-            _windows.Add(window);
-
-            // 每次导航成功都补推一次当前主题：否则新文档要等到用户下次切换才知道现在是深还是浅
-            WebviewWindow created = window;
-            created.NavigationCompleted += args =>
-            {
-                if (args.Success)
-                {
-                    PushTheme(created, Theme);
-                }
-            };
+            AttachWindow(window, options);
         }
 
         _backend.RunMessageLoop();

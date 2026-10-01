@@ -9,7 +9,7 @@ namespace OrielWeb.Platform.Linux;
 /// <para>
 /// 为什么是子进程而不是 libnotify 的 P/Invoke：libnotify 能拿到"点击/关闭"回调，
 /// 但那要把 libnotify 与 glib 的引用计数、GLib 信号一起管起来；本库这一批先只交付
-/// "把通知确实发出去"这一件事（点击上报记入 ROADMAP 作为后续增强，见
+/// "把通知确实发出去"这一件事（点击上报**不提供**：三平台都拿不到，见
 /// <see cref="OrielNotificationOptions.Id"/> 的说明）。
 /// 用 <c>notify-send</c> 的另一个好处是零原生依赖：环境里没有通知守护时它只是个非 0 退出码，
 /// 不会带崩宿主进程。

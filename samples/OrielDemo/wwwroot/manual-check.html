@@ -124,7 +124,7 @@
 </head>
 <body>
     <header class="titlebar">
-        <div class="drag-region" id="drag-region">
+        <div class="drag-region" id="drag-region" data-oriel-drag-region>
             <span class="app-title">Oriel Demo — 手动验证操作台</span>
         </div>
         <div class="win-controls">
@@ -192,6 +192,18 @@
                 <strong>横幅没出现时先看日志那一行</strong>：写「已提交给系统」说明本库已经交出去了，
                 去<strong>设置 → 系统 → 通知</strong>里看 <code>OrielDemo</code> 是否被关掉、专注助手/免打扰是否开着；
                 写「提交失败」才是实现侧的问题。
+            </p>
+        </section>
+
+        <section class="panel">
+            <h2>多窗口</h2>
+            <div class="row">
+                <button data-cmd="manual.newWindow">打开 todo 窗口</button>
+            </div>
+            <p class="hint">
+                每点一次开一个 todo 页面窗口，标题栏会显示「窗口 N」。要看的语义：
+                关掉其中一个窗口应用<b>不应退出</b>；把它留着，主窗口照样能用；
+                在任一窗口里执行 <code>oriel.invoke('win.close')</code> 只关掉<b>发起调用的那个</b>窗口。
             </p>
         </section>
 

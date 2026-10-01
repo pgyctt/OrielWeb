@@ -16,7 +16,7 @@
         app.min.js           → app.min.js          → app/min.js            ❌
 
     推错时解压不报错，页面按原 URL 请求就是 404 白屏。详见
-    docs/reviews/2026-10-01.md §4.3 与 src/OrielWeb/Assets/EmbeddedAssetExtractor.cs。
+     src/OrielWeb/Assets/EmbeddedAssetExtractor.cs。
 
     这里把那一行搬进包：消费方只写 <PackageReference Include="OrielWeb" /> 即可，
     LogicalName 固定用带 '/' 的显式分隔符形式，'.' 从此只是文件名的一部分。

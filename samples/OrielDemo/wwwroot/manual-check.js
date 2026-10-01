@@ -63,98 +63,14 @@ document.querySelectorAll("[data-cmd]").forEach((button) => {
 })();
 
 // ---- 无边框窗口：自绘标题栏 ----
-// 与 app.js 同一套逻辑（两处必须同步改，否则操作台与示范页的拖动行为会不一致）：
-// Windows 必须"先动起来才发起"原生拖动，否则第二次点击会被模态循环吞掉、双击最大化随之失效；
-// 而"这是不是双击的第二下"由宿主注入的 window.oriel.system.doubleClickTimeMs 在 mousedown 内
-// **同步**判定——详见 app.js 里的说明。
-
-const isWindows = window.oriel.platform === "windows";
-const dragRegion = document.getElementById("drag-region");
+//
+// 拖动与双击由库接管（与 app.js 同一套机制，见 docs/API.md 第 2 节）：标题栏元素标注
+// data-oriel-drag-region 之后，库处理"按下并移动 → 移动窗口"与"双击 → 最大化/还原"。
 const maxBtn = document.getElementById("btn-max");
-const DRAG_THRESHOLD_PX = 3;
-const DOUBLE_CLICK_MS = (window.oriel.system && window.oriel.system.doubleClickTimeMs) || 500;
-const DOUBLE_CLICK_DISTANCE_PX = 4;
-let armedDrag = null;
-let dragOrigin = null;
-let lastTitlebarDown = null;
-
-/** 这一次标题栏按下是不是"双击的第二下"。必须在 mousedown 内同步调用。 */
-function isDoubleClickSecondPress(e) {
-    if (e.detail >= 2) return true;
-    if (!lastTitlebarDown) return false;
-    return (e.timeStamp - lastTitlebarDown.t) <= DOUBLE_CLICK_MS
-        && Math.abs(e.screenX - lastTitlebarDown.x) <= DOUBLE_CLICK_DISTANCE_PX
-        && Math.abs(e.screenY - lastTitlebarDown.y) <= DOUBLE_CLICK_DISTANCE_PX;
-}
-
-dragRegion.addEventListener("mousedown", async (e) => {
-    if (e.button !== 0) return;
-
-    // 双击的第二下不进入拖动，让浏览器把 dblclick 正常派发出去（同步判定，见上）
-    if (isDoubleClickSecondPress(e)) {
-        disarmTitlebar();
-        lastTitlebarDown = null;
-        return;
-    }
-    lastTitlebarDown = { t: e.timeStamp, x: e.screenX, y: e.screenY };
-
-    if (isWindows) {
-        armedDrag = { x: e.screenX, y: e.screenY };
-        document.addEventListener("mousemove", onTitlebarMove);
-        document.addEventListener("mouseup", onTitlebarUp);
-    } else {
-        dragOrigin = { x: e.screenX, y: e.screenY };
-        await window.oriel.invoke("win.dragStart", {
-            px: e.screenX, py: e.screenY,
-            wx: window.screenX, wy: window.screenY,
-            ww: window.outerWidth, wh: window.outerHeight,
-            sh: window.screen.height,
-        });
-        document.addEventListener("mousemove", onDragMove);
-        document.addEventListener("mouseup", onDragEnd);
-    }
-});
-
-function disarmTitlebar() {
-    armedDrag = null;
-    document.removeEventListener("mousemove", onTitlebarMove);
-    document.removeEventListener("mouseup", onTitlebarUp);
-}
-
-function onTitlebarMove(e) {
-    if (!armedDrag) return;
-    if (Math.abs(e.screenX - armedDrag.x) <= DRAG_THRESHOLD_PX &&
-        Math.abs(e.screenY - armedDrag.y) <= DRAG_THRESHOLD_PX) {
-        return;
-    }
-    disarmTitlebar();
-    window.oriel.invoke("win.drag");
-}
-
-function onTitlebarUp() {
-    disarmTitlebar();
-}
-
-function onDragMove(e) {
-    if (!dragOrigin) return;
-    e.preventDefault();
-    window.oriel.invoke("win.dragTo", { dx: e.screenX - dragOrigin.x, dy: e.screenY - dragOrigin.y });
-}
-
-function onDragEnd() {
-    dragOrigin = null;
-    document.removeEventListener("mousemove", onDragMove);
-    document.removeEventListener("mouseup", onDragEnd);
-    window.oriel.invoke("win.dragEnd");
-}
 
 function setMaximizedIcon(maximized) {
     maxBtn.classList.toggle("is-maximized", !!maximized);
 }
-
-dragRegion.addEventListener("dblclick", async () => {
-    setMaximizedIcon(await window.oriel.invoke("win.toggleMaximize"));
-});
 
 document.getElementById("btn-min").addEventListener("click", () => window.oriel.invoke("win.minimize"));
 maxBtn.addEventListener("click", async () => setMaximizedIcon(await window.oriel.invoke("win.toggleMaximize")));

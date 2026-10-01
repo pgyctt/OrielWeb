@@ -1,4 +1,4 @@
-﻿#Requires -Version 7
+#Requires -Version 7
 <#
 .SYNOPSIS
     验证 OrielWeb 的包内 build logic（buildTransitive/OrielWeb.targets）。
@@ -8,7 +8,7 @@
     消费方手写 <EmbeddedResource Include="wwwroot\**\*" /> 而不写 LogicalName 时，
     MSBuild 会把目录分隔符压成 '.'，库只能靠"最后一个 '.' 是扩展名"反推目录——
     文件名主干含 '.' 时（app.min.js）必然推错，而且是**静默**的：
-    解压不报错，页面按原 URL 请求就是 404 白屏（见 docs/reviews/2026-10-01.md §4.3）。
+    解压不报错，页面按原 URL 请求就是 404 白屏（见 API.md §4.3）。
 
     本脚本把整条「打包 → 消费 → 断言」的链路跑一遍：
 

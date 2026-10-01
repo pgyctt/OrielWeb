@@ -109,6 +109,18 @@ public sealed class OrielWindowOptions
     public OrielWindowOptions WithFullscreen(bool fullscreen = true) { Fullscreen = fullscreen; return this; }
     public OrielWindowOptions WithOnTop(bool onTop = true) { OnTop = onTop; return this; }
     public OrielWindowOptions WithFrameless(bool frameless = true) { Frameless = frameless; return this; }
+
+    /// <summary>
+    /// 拖动区域选择器（无边框窗口用）：命中的元素由库接管拖动与双击。
+    /// </summary>
+    /// <remarks>
+    /// 不设它也能用——页面在自己的标题栏元素上写 <c>data-oriel-drag-region</c> 属性即可；
+    /// 本选项用于"区域由宿主指定"的场景（页面不必知道有拖动这回事）。
+    /// </remarks>
+    internal string? DragRegionSelector { get; private set; }
+
+    /// <summary>指定拖动区域的选择器（可多次调用，最后一次生效）。</summary>
+    public OrielWindowOptions WithDragRegion(string selector) { ArgumentException.ThrowIfNullOrWhiteSpace(selector); DragRegionSelector = selector; return this; }
     public OrielWindowOptions WithHidden(bool hidden = true) { Hidden = hidden; return this; }
     public OrielWindowOptions WithMaximized(bool maximized = true) { Maximized = maximized; return this; }
     public OrielWindowOptions WithUrl(string url) { Url = url; return this; }

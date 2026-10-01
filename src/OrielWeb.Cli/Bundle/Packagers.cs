@@ -8,7 +8,7 @@ namespace OrielWeb.Cli.Bundle;
 /// <remarks>
 /// 抽成纯函数是为了能被单测：这些文本的错都很难在开发机上发现——MSI 的 UpgradeCode 变了要等
 /// 用户升级时才暴露、Info.plist 少一个键会让 WKWebView 直接 __builtin_trap（见
-/// tools/make-macos-app.sh 头部那段记录）、.desktop 的 Exec 写错只是"点不开"。
+/// oriel bundle 头部那段记录）、.desktop 的 Exec 写错只是"点不开"。
 /// 单测至少能钉住"关键字段在不在、值对不对"。
 /// </remarks>
 internal static class Packagers
@@ -77,7 +77,7 @@ internal static class Packagers
     /// <b>CFBundleIdentifier 不是可选项</b>：WKWebView 在 macOS 上是多进程架构，宿主进程要凭
     /// main bundle 的身份才能与 WebContent / Networking 这些 XPC 服务通信；没有 identifier 时
     /// WebKit 在内部断言处 __builtin_trap()，现象是"进程不崩消息循环、直接死掉"（退出码 133）。
-    /// 见 tools/make-macos-app.sh 头部的真机记录。
+    /// 见 oriel bundle 头部的真机记录。
     /// </remarks>
     internal static string InfoPlist(BundleOptions options, string executableName, bool hasIcon)
     {

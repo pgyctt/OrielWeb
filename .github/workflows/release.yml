@@ -89,7 +89,7 @@ jobs:
       - name: Bundle the installer
         # 本仓库自己吃自己的工具：三平台各出该平台的安装产物（.msi / .dmg / .AppImage）。
         # 发布只交给 dotnet publish、打包只交给 oriel bundle —— 也就是使用者要走的那条路径
-        # （macOS 的 .app 组装也从 tools/make-macos-app.sh 搬进了 CLI，一个实现者）。
+        # （macOS 的 .app 组装也从 oriel bundle 搬进了 CLI，一个实现者）。
         env:
           APPIMAGE_EXTRACT_AND_RUN: '1'
         shell: pwsh
@@ -171,7 +171,7 @@ jobs:
       - name: Zip (macOS)
         if: runner.os == 'macOS'
         # 只打包 .app：裸可执行文件在 macOS 上跑不起来，放进去只会让人以为有两条路。
-        # .app 现在由 oriel bundle 组装（原先的 tools/make-macos-app.sh 已删除，一个实现者）。
+        # .app 现在由 oriel bundle 组装（原先的 oriel bundle 已删除，一个实现者）。
         run: |
           cd dist/bundle
           zip -r "../OrielWeb-demo-${{ matrix.rid }}.zip" "Oriel Demo.app"

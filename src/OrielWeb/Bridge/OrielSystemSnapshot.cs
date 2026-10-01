@@ -1,47 +1,42 @@
 namespace OrielWeb;
 
 /// <summary>
-/// 注入给页面的"宿主事实"快照：页面**同步**读得到的那几个值（<c>window.oriel.system</c>）。
+/// 注入给**库里那段拖动实现**的宿主事实：系统双击间隔。
 /// </summary>
 /// <remarks>
 /// <para>
-/// 为什么需要同步：无边框拖动要在 <c>mousedown</c> 里立刻判断"这是不是双击的第二下"，
-/// 而 <c>oriel.invoke</c> 是异步的——<c>await</c> 回来时那次按下已经过去了，判断没有任何意义。
-/// 所以这几个值必须在脚本注入时就写死在脚本里（本库没有、也不打算引入同步 RPC：
-/// 三平台各要一套自研的原生机制，见 DECISIONS）。
+/// 它不再出现在页面 API 上（<c>oriel.system</c> 已移除）：页面拿不到这些值，也就不存在
+/// "应用依赖它们"这回事——拖动与双击由库接管（页面只需把标题栏标成拖动区域）。
+/// 值以局部常量的形式写进注入脚本，只有脚本内部能用。
 /// </para>
 /// <para>
-/// 取值的时刻是**建窗时**，同一文档内不再变（导航/刷新会重新注入，因此自然跟随）。
-/// 窗口被拖到另一块不同缩放的屏幕上时 <see cref="Scale"/> 会过时，此时页面自己的
-/// <c>window.devicePixelRatio</c> 反而更准——这些值的用途是"启动时的事实"，
-/// 不是"实时状态镜像"。
+/// 为什么必须是"注入时就写死"：拖动要在 <c>mousedown</c> 里**同步**判断"这是不是双击的第二下"，
+/// 而 <c>oriel.invoke</c> 是异步的——<c>await</c> 回来时那次按下已经过去了。
+/// 本库没有、也不打算引入同步 RPC（三平台各要一套自研的原生机制）。
 /// </para>
 /// </remarks>
 /// <param name="DoubleClickTimeMs">系统双击间隔（毫秒）。</param>
-/// <param name="Scale">窗口所在的缩放因子（1.0 = 无缩放）。</param>
-internal readonly record struct OrielSystemSnapshot(int DoubleClickTimeMs, double Scale)
+internal readonly record struct OrielSystemSnapshot(int DoubleClickTimeMs)
 {
     /// <summary>取不到系统设置时用的双击间隔：与 Windows 的默认值一致（GTK 的默认是 400）。</summary>
     internal const int DefaultDoubleClickTimeMs = 500;
 
-    /// <summary>取不到缩放时按无缩放算。</summary>
-    internal const double DefaultScale = 1.0;
-
     /// <summary>
-    /// 把平台取到的原始值规整成可注入的值。
+    /// 判定"这是拖动而不是点击"的位移阈值（逻辑像素）。
     /// </summary>
     /// <remarks>
-    /// 纯函数，好让它被逐例单测：三个平台各自的取值入口都可能返回"没读到"
-    /// （Windows 句柄无效时 <c>GetDpiForWindow</c> 返回 0、GTK 没有 GtkSettings、
-    /// macOS 没有显示器时 <c>mainScreen</c> 是 nil），而这些地方不该各自写一份回退逻辑——
-    /// 更不该让 0 或 NaN 流进注入脚本（<c>scale: 0</c> 会让页面除零，<c>NaN</c> 则是语法错误）。
+    /// 三个平台都需要它，只是原因不同：Windows 的原生模态拖动会吞掉后续点击（按下就发起等于
+    /// 让双击失效），Wayland 下把移动交给合成器会让指针被 grab（同理）。X11/macOS 本来可以立即
+    /// 开始，但用同一个阈值能让三平台的手感一致——而且"几乎没动"的按下本来就不该被算成拖动。
     /// </remarks>
-    internal static OrielSystemSnapshot Normalize(int doubleClickTimeMs, double scale)
-        => new(
-            doubleClickTimeMs > 0 ? doubleClickTimeMs : DefaultDoubleClickTimeMs,
-            IsUsableScale(scale) ? scale : DefaultScale);
+    internal const int DragThresholdPx = 3;
 
-    /// <summary>缩放必须是正数且有限：0 会让页面除零，NaN/Infinity 写进脚本是语法错误。</summary>
-    private static bool IsUsableScale(double scale)
-        => double.IsFinite(scale) && scale > 0;
+    /// <summary>把平台取到的原始值规整成可注入的值（取不到时回退到默认值）。</summary>
+    /// <remarks>
+    /// 纯函数，好让它被逐例单测：三个平台的取值入口都可能返回"没读到"
+    /// （Windows 句柄无效、GTK 没有 GtkSettings 等），而回退只该有这一处——
+    /// 否则三个平台会各自攒出一个不一样的默认值。
+    /// </remarks>
+    internal static OrielSystemSnapshot Normalize(int doubleClickTimeMs)
+        => new(doubleClickTimeMs > 0 ? doubleClickTimeMs : DefaultDoubleClickTimeMs);
 }

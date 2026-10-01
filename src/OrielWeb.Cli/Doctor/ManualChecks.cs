@@ -24,12 +24,26 @@ internal static class ManualChecks
     internal const string DevTools = "DevTools 开关（macOS / Linux）";
     internal const string MacHiddenStart = "macOS 隐藏启动";
     internal const string LinuxHiDpiDrag = "Linux 高 DPI 下的拖动是否跟手（宿主侧已确认无需折算，只剩页面那一半）";
+    internal const string DragBehavior = "标题栏拖动与双击（改为库接管之后）";
+    internal const string MultiWindow = "多窗口（运行时新建的窗口）";
     internal const string TrayIcon = "托盘图标的可见性";
     internal const string Notifications = "通知的展示";
     internal const string ContextMenu = "上下文菜单的外观与交互";
     internal const string Dialogs = "对话框的外观与交互";
     internal const string FileDrop = "文件拖放（整体未验证）";
     internal const string BuiltInContextMenu = "内建右键菜单（接管式）";
+
+    private static readonly ManualStep MultiWindowStep = new(
+        MultiWindow,
+        "跑 demo --manual-check，点「打开 todo 窗口」（可连点几次）；关掉其中一个；" +
+        "在任一窗口里执行 oriel.invoke('win.close')",
+        "新窗口正常加载同一个 todo 页面（标题栏显示「窗口 N」）；关掉一个窗口应用不退出；" +
+        "win.close 只关掉发起调用的那个窗口。Windows 侧已有 --selftest multiwindow 机器断言");
+
+    private static readonly ManualStep DragStep = new(
+        DragBehavior,
+        "按住标题栏拖动；双击标题栏；单击标题栏上的最小化/关闭按钮；在标题栏里的输入框上拖选文字",
+        "拖动跟手、双击切换最大化/还原、按钮照常可点、可交互元素不被当成拖动区域");
 
     private static readonly ManualStep WindowIconStep = new(
         WindowIcon,
@@ -63,8 +77,9 @@ internal static class ManualChecks
         LinuxHiDpiDrag,
         "把桌面缩放设成 200% 后跑 demo（X11 与 Wayland 各一次；GDK_SCALE=2 只在 X11 下生效），" +
         "按住标题栏拖动、双击标题栏",
-        "拖动跟手；双击最大化正常。若窗口比指针快约 scale 倍，说明页面侧拿到的是设备像素" +
-        "（修法是在页面用 window.devicePixelRatio 折算，不要在宿主侧乘 scale）");
+        "拖动跟手；双击最大化正常、单击不移动窗口（拖动与双击由库实现，页面只标注了拖动区域）。" +
+        "若窗口比指针快约 scale 倍，说明增量被设备像素污染——拖动逻辑在库侧" +
+        "（src/OrielWeb/Bridge/oriel-bridge.js），修法不要写成在宿主侧乘 scale");
 
     private static readonly ManualStep TrayStep = new(
         TrayIcon,
@@ -103,6 +118,8 @@ internal static class ManualChecks
     /// <summary>当前平台上需要人眼验证的项（按平台挑，Linux 项不摆到 Windows 上）。</summary>
     internal static IEnumerable<ManualStep> ForCurrentPlatform()
     {
+        yield return DragStep;
+        yield return MultiWindowStep;
         yield return WindowIconStep;
         yield return ClipboardStep;
 

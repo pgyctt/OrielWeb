@@ -10,7 +10,7 @@ namespace OrielWeb.Cli.Doctor;
 /// <remarks>
 /// <para>
 /// 这些检查此前散在三处：<c>tools/verify-linux.sh</c>（dpkg 查库、clang、DISPLAY/WAYLAND_DISPLAY）、
-/// <c>tools/wsl_publish.ps1</c>（同一批 dpkg 检查）、<c>tools/verify-macos.sh</c>
+/// <c>dotnet publish</c>（同一批 dpkg 检查）、<c>tools/verify-macos.sh</c>
 /// （codesign/swiftc/hdiutil），加上库里的 WebView2 运行时探测。散着的代价是"我该跑哪个脚本"，
 /// 而且新人改了库的依赖（例如换上 libwebkit2gtk-4.0）时没有一处会被提醒。
 /// </para>
@@ -200,7 +200,7 @@ internal static class SystemChecks
     }
 
     /// <summary>
-    /// 中文字体：缺了它的症状是"界面中文全是方框"（Linux 首次真机验证时踩过，见 DECISIONS）。
+    /// 中文字体：缺了它的症状是"界面中文全是方框"（Linux 首次真机验证时踩过，见 API.md）。
     /// </summary>
     /// <remarks>
     /// 判据是"<c>sans-serif:lang=zh</c> 会落到哪个字体族"，而不是"装了某个包"——

@@ -21,6 +21,12 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     private readonly WebviewWindow _window;
     private readonly OrielWindowOptions _options;
     private readonly OrielApp _app;
+
+    /// <summary>
+    /// 本窗口的门面对象。内建 <c>win.*</c> 命令要靠它作用到**发起调用的那个窗口**上
+    /// （多窗口下不能用一个全局的"当前窗口"代替）。
+    /// </summary>
+    internal WebviewWindow Window => _window;
     private readonly LinuxPlatformBackend _backend;
     private readonly string? _assetDirectory;
     private readonly LinuxWebMessageHandler _messageHandler;
@@ -466,7 +472,7 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
                 _options.ConsoleForwarding,
                 App.Guard.Token,
                 App.Guard.TrustedPrefixes,
-                ReadSystemSnapshot()),
+                ReadSystemSnapshot(), _options.DragRegionSelector),
             1, // WEBKIT_USER_CONTENT_INJECT_TOP_FRAME（主帧）
             0, // WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START（文档开始处注入，与 Windows/macOS 后端一致）
             0,
@@ -522,15 +528,7 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     /// 多屏不同缩放下这是"按主屏算"的近似值——页面侧有自己的 <c>window.devicePixelRatio</c> 可自校。
     /// </remarks>
     private static OrielSystemSnapshot ReadSystemSnapshot()
-    {
-        nint monitor = GtkNative.GdkDisplayGetDefault() is var display && display != 0
-            ? GtkNative.GdkDisplayGetMonitor(display, 0)
-            : 0;
-
-        return OrielSystemSnapshot.Normalize(
-            LinuxPlatformBackend.ReadDoubleClickTimeMs(),
-            monitor == 0 ? 0 : GtkNative.GdkMonitorGetScaleFactor(monitor));
-    }
+        => OrielSystemSnapshot.Normalize(LinuxPlatformBackend.ReadDoubleClickTimeMs());
 
     private void Navigate()
     {

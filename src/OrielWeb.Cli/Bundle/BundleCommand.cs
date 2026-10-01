@@ -177,7 +177,7 @@ internal static class BundleCommand
             new UTF8Encoding(false));
 
         // 两个层次都要签：先可执行文件（Apple Silicon 的运行前提），再 bundle。
-        // 顺序反了会被内层那份未签名的代码破坏（见 tools/make-macos-app.sh 的说明）。
+        // 顺序反了会被内层那份未签名的代码破坏（见 oriel bundle 的说明）。
         if (!RunTool("/usr/bin/codesign", "--force", "--sign", "-", Path.Combine(macOsDirectory, executableName))
             || !RunTool("/usr/bin/codesign", "--force", "--deep", "--sign", "-", appDirectory))
         {

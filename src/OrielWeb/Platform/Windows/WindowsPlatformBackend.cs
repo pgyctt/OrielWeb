@@ -1,5 +1,7 @@
 using System.Runtime.InteropServices;
+using DirectN.Extensions.Com;
 using OrielWeb.Platform.Windows.Interop;
+using WebView2;
 
 namespace OrielWeb.Platform.Windows;
 
@@ -22,8 +24,14 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
     // 自选的 WM_APP + n 会与它的私有消息撞车（见 Win32MessageWindow 的说明）。
     // 两者各自持有 Win32MessageWindow。
 
-    public WindowsPlatformBackend()
+    /// <param name="userDataFolder">
+    /// 覆盖 WebView2 的 user data folder（<see cref="OrielAppBuilder.UseUserDataFolder"/>）；
+    /// 为空则用 <see cref="DefaultUserDataFolder"/>。它必须是**全进程一个**：环境按它创建，见
+    /// <see cref="GetEnvironmentAsync"/>。
+    /// </param>
+    public WindowsPlatformBackend(string? userDataFolder)
     {
+        _userDataFolder = string.IsNullOrWhiteSpace(userDataFolder) ? DefaultUserDataFolder : userDataFolder;
         EnsureDpiAwareness();
         EnsureMessageWindowClass();
 
@@ -49,6 +57,42 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         _lastTheme = CurrentTheme;
         s_current = this;
     }
+
+    // ---- WebView2 环境（全进程共享）----
+
+    /// <summary>
+    /// 全进程共享的 WebView2 环境（惰性创建，只建一次）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>一个进程里每个窗口各建一个环境是不行的</b>：环境的 user data folder 是**全进程同一个目录**，
+    /// 而 WebView2 不允许同一目录上并存两个环境——第二个会以"资源状态不对"失败，
+    /// 于是"运行时再开一个窗口"在 Windows 上直接起不来。正确形态是**一份环境 + 多个控制器**。
+    /// </para>
+    /// <para>
+    /// 缓存的是 <see cref="Task{TResult}"/> 而不是结果：多个窗口同时首次装配时，只会真正创建一个环境，
+    /// 后来者 await 同一个任务。创建与读取都只在 UI 线程发生。
+    /// </para>
+    /// </remarks>
+    private Task<IComObject<ICoreWebView2Environment>?>? _environment;
+
+    /// <summary>默认的 user data folder：<c>%LOCALAPPDATA%\OrielWeb\WebView2</c>。</summary>
+    internal static string DefaultUserDataFolder { get; } = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "OrielWeb",
+        Win32WindowHost.WebView2UserDataFolderName);
+
+    /// <summary>本次应用的 user data folder（<c>UseUserDataFolder</c> 覆盖过就用它）。</summary>
+    private readonly string _userDataFolder;
+
+    /// <summary>取（必要时创建）共享环境。必须在 UI 线程调用。</summary>
+    /// <remarks>
+    /// 这里刻意不写成 <c>async</c>/<c>await</c>：本类是 <c>unsafe</c> 上下文，在其中 await 会报 CS4004。
+    /// 判空与继续 await 由窗口那侧完成（那边不是 unsafe）。
+    /// </remarks>
+    internal Task<IComObject<ICoreWebView2Environment>?> GetEnvironmentAsync(string? browserFolder)
+        => _environment ??= Functions.CreateCoreWebView2EnvironmentWithOptionsAsync(
+            browserFolder, _userDataFolder, null);
 
     // ---- 系统主题 ----
     // 应用级（而非窗口级）：主题是系统状态，与具体窗口无关。
@@ -165,11 +209,19 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
     }
 
     /// <summary>
-    /// 后端自身不持有需要显式释放的原生资源：托盘归 <see cref="OrielApp"/> 所有并由它释放
-    /// （托盘会连带释放自己的消息窗口），调度窗口随消息循环结束销毁。三平台写法一致。
+    /// 后端自身只持有共享的 WebView2 环境；托盘归 <see cref="OrielApp"/> 所有并由它释放
+    /// （托盘会连带释放自己的消息窗口），调度窗口随消息循环结束销毁。
     /// </summary>
     public void Dispose()
     {
+        // 共享环境比任何单个窗口活得久，所以窗口销毁时**不**释放它（见 Win32WindowHost 的清理），
+        // 只在这里、应用退出时释放一次。
+        if (_environment is { IsCompletedSuccessfully: true } environment)
+        {
+            environment.Result?.Dispose();
+        }
+
+        _environment = null;
     }
 
     // ---- 消息窗口 ----

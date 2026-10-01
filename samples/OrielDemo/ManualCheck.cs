@@ -65,7 +65,56 @@ internal static class ManualCheck
         window.ContextMenuItemClicked += id => Log($"上下文菜单项被点击：{id}");
         window.FileDropped += e => Log($"拖入 {e.Paths.Count} 项：{string.Join("  |  ", e.Paths)}");
 
+        // 主窗口也叫"窗口 1"：多窗口验证时靠标题栏上的标记区分哪个是哪个
+        LabelWindow(window, 1);
+
         Log("操作台就绪：点按钮做动作，托管侧的回调都会出现在这里。");
+    }
+
+    // ---- 多窗口 ----
+
+    /// <summary>已经开出去的窗口数（主窗口算 1）。</summary>
+    private static int _windowCount = 1;
+
+    /// <summary>
+    /// 告诉页面"你是第几个窗口"。
+    /// </summary>
+    /// <remarks>
+    /// 走 <c>EmitEvent</c> 而不是 URL 参数：Linux/macOS 上内嵌资源走 <c>file://</c>，宿主改写 URL 时
+    /// query 不保留（见 README「内嵌页面资源」），只有事件这条路三平台都通。
+    /// 顺带也验证了"宿主事件只到得了发起它的那个窗口"。
+    /// </remarks>
+    private static void LabelWindow(WebviewWindow window, int index)
+        => window.EmitEvent("demo.windowLabel", new ManualLog($"窗口 {index}"), AppJsonContext.Default.ManualLog);
+
+    /// <summary>
+    /// 打开一个 todo 窗口——多窗口的验证入口。
+    /// </summary>
+    /// <remarks>
+    /// 新窗口指向**同一个 todo 页面**（内嵌资源首页）：多窗口要验证的是"各窗口有各自的页面与会话，
+    /// 而命令、能力、令牌是共用的"，以及内建的 <c>win.*</c> 只作用到**发起调用的那个**窗口。
+    /// 返回值是窗口序号，页面会把它写进日志（顺带证明命令回执正常）。
+    /// </remarks>
+    internal static int OpenWindow()
+    {
+        OrielApp app = _app ?? throw new OrielIpcException("操作台未就绪：请用 --manual-check 启动。");
+        int index = ++_windowCount;
+
+        app.CreateWindow(
+            w => w.WithTitle($"Oriel Demo — 窗口 {index}")
+                  .WithSize(560, 640)
+                  .WithMinSize(420, 360)
+                  .WithFrameless()
+                  .Centered(),
+            created =>
+            {
+                created.Loaded += () => LabelWindow(created, index);
+                created.Closed += () => Log($"窗口 {index} 已关闭");
+            });
+
+        Log($"已打开窗口 {index}（当前窗口数：{app.Windows.Count}）。" +
+            "关掉它应用不应退出；把它留着重开主窗口也不会顶掉它。");
+        return index;
     }
 
     /// <summary>
@@ -216,6 +265,14 @@ public sealed partial class ManualCommands
             OrielMenuItem.RoleItem(OrielMenuRole.Close),
         ]);
     }
+
+    // ---- 多窗口 ----
+
+    /// <summary>
+    /// 打开一个 todo 窗口——多窗口的验证入口（实现与说明见 <see cref="ManualCheck.OpenWindow"/>）。
+    /// </summary>
+    [OrielCommand("manual.newWindow")]
+    public static int NewWindow() => ManualCheck.OpenWindow();
 
     // ---- 内建右键菜单（渲染引擎自己弹的那个，不是 ShowContextMenu）----
 

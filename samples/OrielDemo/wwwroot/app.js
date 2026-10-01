@@ -7,112 +7,15 @@ const formEl = document.getElementById("add-form");
 const inputEl = document.getElementById("todo-input");
 
 // ---- 无边框窗口控制 ----
-
-const isWindows = window.oriel.platform === "windows";
-const dragRegion = document.getElementById("drag-region");
+//
+// 标题栏的**拖动与双击由库接管**：页面对标题栏元素标注 data-oriel-drag-region（见 index.html），
+// 库注入的脚本就会处理"按下并移动 → 移动窗口"与"双击 → 最大化/还原"，并自动让开区域内的
+// 按钮/输入框。页面既不写拖动代码，也不需要知道系统双击间隔或缩放——那些值只在库内部使用。
+//
+// 三平台的差异由库吸收（页面不必操心）：Windows 的原生模态拖动会吞掉后续点击，
+// 所以它等指针动过阈值才发起；Wayland 下窗口移动必须交给合成器，而一旦交出去指针就被 grab，
+// 所以库用同一个阈值决定何时真的交出去。详见 docs/API.md 第 2 节。
 const maxBtn = document.getElementById("btn-max");
-let dragOrigin = null;
-
-// 系统双击间隔（毫秒）。宿主在建窗时取好并注入（window.oriel.system），因此 mousedown 里
-// **同步**可读——这正是它存在的理由：判断"这次按下是不是双击的第二下"必须在 mousedown 内完成，
-// 而 oriel.invoke 是异步的，await 回来时那次按下已经过去了。浏览器只给 event.detail、
-// 不给间隔本身，所以这个值只能由宿主给。
-const DOUBLE_CLICK_MS = (window.oriel.system && window.oriel.system.doubleClickTimeMs) || 500;
-
-// 双击的"位置容差"（屏坐标像素）：浏览器判定双击时同样有距离限制（Windows 默认 4 像素见方）。
-// 取同量级的值；两边结论不一致时以浏览器给的 event.detail 为准。
-const DOUBLE_CLICK_DISTANCE_PX = 4;
-
-// 上一次标题栏按下的时间与位置，用于上面的同步判定。
-let lastTitlebarDown = null;
-
-// Windows 的拖动必须"先动起来才发起"。
-// win.drag 走的是程序发起的 WM_NCLBUTTONDOWN + HTCAPTION，它会进入原生模态循环并阻塞消息处理：
-//   * 若在 mousedown 时立刻发起，第二次点击会被该循环吞掉，浏览器永远得不到 dblclick，
-//     标题栏双击最大化随之失效；
-//   * 改为等指针移动超过阈值再发起，则"原地双击"根本不会进入拖动，双击语义得以保留，
-//     而真正的拖动只是晚了几像素才接管——模态循环以当前光标为基点，窗口不会跳。
-// 下面 isDoubleClickSecondPress 的同步判定是更靠前的一道：它按**系统**双击间隔直接认出第二下点击，
-// 这个阈值因此退化成兜底（判定漏掉时仍然保证"按下不动"不会进模态循环）。
-const DRAG_THRESHOLD_PX = 3;
-let armedDrag = null;
-
-/** 这一次标题栏按下是不是"双击的第二下"。必须在 mousedown 内同步调用。 */
-function isDoubleClickSecondPress(e) {
-    // 浏览器自己的判定优先
-    if (e.detail >= 2) return true;
-
-    // 浏览器没给 detail 时自己按系统间隔 + 位置容差判：两者都符合才算双击的第二下
-    if (!lastTitlebarDown) return false;
-    return (e.timeStamp - lastTitlebarDown.t) <= DOUBLE_CLICK_MS
-        && Math.abs(e.screenX - lastTitlebarDown.x) <= DOUBLE_CLICK_DISTANCE_PX
-        && Math.abs(e.screenY - lastTitlebarDown.y) <= DOUBLE_CLICK_DISTANCE_PX;
-}
-
-dragRegion.addEventListener("mousedown", async (e) => {
-    if (e.button !== 0) return;
-
-    // 双击的第二下**不进入拖动**，让浏览器把 dblclick 正常派发出去。
-    // 注意这条判定在 mousedown 内同步完成——这就是 window.oriel.system 的用途（见上）。
-    if (isDoubleClickSecondPress(e)) {
-        disarmTitlebar();
-        lastTitlebarDown = null;
-        return;
-    }
-    lastTitlebarDown = { t: e.timeStamp, x: e.screenX, y: e.screenY };
-
-    if (isWindows) {
-        armedDrag = { x: e.screenX, y: e.screenY };
-        document.addEventListener("mousemove", onTitlebarMove);
-        document.addEventListener("mouseup", onTitlebarUp);
-    } else {
-        // macOS/Linux：宿主不阻塞消息循环，可以立即开始流式拖动
-        dragOrigin = { x: e.screenX, y: e.screenY };
-        await window.oriel.invoke("win.dragStart", {
-            px: e.screenX, py: e.screenY,
-            wx: window.screenX, wy: window.screenY,
-            ww: window.outerWidth, wh: window.outerHeight,
-            sh: window.screen.height,
-        });
-        document.addEventListener("mousemove", onDragMove);
-        document.addEventListener("mouseup", onDragEnd);
-    }
-});
-
-function disarmTitlebar() {
-    armedDrag = null;
-    document.removeEventListener("mousemove", onTitlebarMove);
-    document.removeEventListener("mouseup", onTitlebarUp);
-}
-
-function onTitlebarMove(e) {
-    if (!armedDrag) return;
-    if (Math.abs(e.screenX - armedDrag.x) <= DRAG_THRESHOLD_PX &&
-        Math.abs(e.screenY - armedDrag.y) <= DRAG_THRESHOLD_PX) {
-        return;
-    }
-    disarmTitlebar();
-    window.oriel.invoke("win.drag"); // 原生模态拖动，阻塞到松开鼠标
-}
-
-function onTitlebarUp() {
-    disarmTitlebar();
-}
-
-function onDragMove(e) {
-    if (!dragOrigin) return;
-    e.preventDefault();
-    window.oriel.invoke("win.dragTo", { dx: e.screenX - dragOrigin.x, dy: e.screenY - dragOrigin.y });
-}
-
-function onDragEnd() {
-    dragOrigin = null;
-    document.removeEventListener("mousemove", onDragMove);
-    document.removeEventListener("mouseup", onDragEnd);
-    window.oriel.invoke("win.dragEnd");
-}
-
-dragRegion.addEventListener("dblclick", () => window.oriel.invoke("win.toggleMaximize"));
 
 document.getElementById("btn-min").addEventListener("click", () => window.oriel.invoke("win.minimize"));
 maxBtn.addEventListener("click", async () => setMaximizedIcon(await window.oriel.invoke("win.toggleMaximize")));
@@ -138,6 +41,17 @@ updateDevicePixelRatio();
 window.addEventListener("resize", updateDevicePixelRatio);
 
 window.oriel.on("maximized", setMaximizedIcon);
+
+// 宿主告诉本窗口"你是第几个窗口"（多窗口验证时靠它区分）。走事件而不是 URL 参数：
+// Linux/macOS 上内嵌资源走 file://，宿主改写 URL 时 query 不保留，只有事件这条路三平台都通。
+// data-base 记下标题原文，重复收到同一个标记也不会越接越长。
+const titleEl = document.querySelector(".app-title");
+window.oriel.on("demo.windowLabel", (value) => {
+    if (titleEl && value && value.text) {
+        titleEl.dataset.base ??= titleEl.textContent;
+        titleEl.textContent = `${titleEl.dataset.base} — ${value.text}`;
+    }
+});
 
 let onTop = false;
 document.getElementById("btn-ontop").addEventListener("click", async () => {

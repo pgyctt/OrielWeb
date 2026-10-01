@@ -89,7 +89,7 @@ internal sealed class LinuxWebMessageHandler : IIpcReplySink
     {
         try
         {
-            await _host.App.Dispatcher.HandleInvokeAsync(message, this, _host.CurrentUrl).ConfigureAwait(false);
+            await _host.App.Dispatcher.HandleInvokeAsync(message, this, _host.CurrentUrl, _host.Window).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
