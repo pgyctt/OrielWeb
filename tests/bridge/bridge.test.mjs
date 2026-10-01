@@ -32,16 +32,27 @@ const template = readFileSync(join(repoRoot, templatePath), 'utf8');
 /** 测试用的注入版本（对应 C# 侧 OrielBridgeTemplate 的 VersionLiteral）。 */
 const injectedVersion = '9.8.7';
 
+/** 测试用的令牌（对应 C# 侧 OrielIpcToken.Generate：32 位小写十六进制）。 */
+const injectedToken = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
+
+/** 测试用的可信来源前缀（对应 OrielIpcGuard 自动加入的内嵌资源虚拟主机）。 */
+const trustedPrefixes = ['https://app.oriel/'];
+
 /**
  * 复现 C# 侧的占位符替换，得到该平台真正被注入的脚本。
  * forwardConsole 对应 OrielWindowOptions.ConsoleForwarding（默认关闭）。
  */
-function buildScript(bridge, { forwardConsole = false } = {}) {
+function buildScript(
+    bridge,
+    { forwardConsole = false, token = injectedToken, trusted = trustedPrefixes } = {},
+) {
     const script = template
         .replaceAll('__ORIEL_PLATFORM__', `'${bridge.platform}'`)
         .replaceAll('__ORIEL_POST__', bridge.post)
         .replaceAll('__ORIEL_CONSOLE_ENABLED__', forwardConsole ? 'true' : 'false')
-        .replaceAll('__ORIEL_VERSION__', injectedVersion);
+        .replaceAll('__ORIEL_VERSION__', injectedVersion)
+        .replaceAll('__ORIEL_TOKEN__', token)
+        .replaceAll('__ORIEL_TRUSTED__', JSON.stringify(trusted));
     assert.ok(!script.includes('__ORIEL_'), `${bridge.platform}：生成的脚本仍残留占位符`);
     return script;
 }
@@ -95,13 +106,18 @@ function createEnvironment(channel) {
     return { window: windowStub, document: documentStub, console: consoleStub, consoleCalls, posted, messageListeners, domListeners };
 }
 
-/** 加载桥接脚本。加载期的异常不抛出而是记录，便于单独断言"加载本身无异常"。 */
-function loadBridge(script, channel) {
+/**
+ * 加载桥接脚本。加载期的异常不抛出而是记录，便于单独断言"加载本身无异常"。
+ *
+ * location 必须作为参数注入：脚本用 location.href 判定来源是否可信，而 Node 里没有这个全局。
+ */
+function loadBridge(script, channel, { href = `${trustedPrefixes[0]}index.html` } = {}) {
     const env = createEnvironment(channel);
+    env.location = { href };
     const EventStub = class { constructor(type) { this.type = type; } };
     try {
-        new Function('window', 'document', 'Event', 'console', script)(
-            env.window, env.document, EventStub, env.console);
+        new Function('window', 'document', 'Event', 'console', 'location', script)(
+            env.window, env.document, EventStub, env.console, env.location);
     } catch (error) {
         env.loadError = error;
     }
@@ -155,7 +171,46 @@ test('模板：占位符齐备', () => {
     assert.ok(template.includes('__ORIEL_POST__'), '模板缺少 __ORIEL_POST__');
     assert.ok(template.includes('__ORIEL_CONSOLE_ENABLED__'), '模板缺少 __ORIEL_CONSOLE_ENABLED__');
     assert.ok(template.includes('__ORIEL_VERSION__'), '模板缺少 __ORIEL_VERSION__');
+    assert.ok(template.includes('__ORIEL_TOKEN__'), '模板缺少 __ORIEL_TOKEN__');
+    assert.ok(template.includes('__ORIEL_TRUSTED__'), '模板缺少 __ORIEL_TRUSTED__');
     assert.ok(template.includes('window.__orielBridgeInstalled'), '模板缺少重复注入防护');
+});
+
+// ---- 安全模型（来源 / 令牌） ----
+
+test('安全：不可信来源下桥接完全不安装', () => {
+    // "远程页面不接 IPC"是结构性成立的：脚本自己先退出，而不是装上了再靠宿主侧拦。
+    const env = loadBridge(
+        buildScript(bridges[0]),
+        bridges[0].channel,
+        { href: 'https://evil.example/index.html' });
+
+    assert.equal(env.loadError, undefined, `不可信来源下脚本不应抛异常：${env.loadError}`);
+    assert.equal(env.window.oriel, undefined, '不可信来源下不应存在 window.oriel');
+    assert.equal(env.window.__orielBridgeInstalled, undefined, '不可信来源下不应留下安装标记');
+    assert.equal(env.posted.length, 0);
+});
+
+test('安全：来源按前缀比较，近似域名不算可信', () => {
+    // 前缀是 'https://app.oriel/'（末尾带斜杠），所以把 host 拼进自己域名里这种样子不会命中
+    const env = loadBridge(
+        buildScript(bridges[0]),
+        bridges[0].channel,
+        { href: 'https://app.oriel.evil.com/index.html' });
+
+    assert.equal(env.window.oriel, undefined);
+});
+
+test('安全：可信前缀为多份时，任一份命中即安装', () => {
+    // AllowOrigin 追加的开发期来源（如 Vite dev server）走的是同一条判定
+    const trusted = ['https://app.oriel/', 'http://localhost:5173/'];
+    const env = loadBridge(
+        buildScript(bridges[0], { trusted }),
+        bridges[0].channel,
+        { href: 'http://localhost:5173/index.html' });
+
+    assert.equal(env.loadError, undefined, `桥接脚本加载抛异常：${env.loadError}`);
+    assert.ok(env.window.oriel, '显式放行的来源应当装上桥接');
 });
 
 test('模板：版本号不得写死为字面量', () => {
@@ -171,14 +226,41 @@ for (const bridge of bridges) {
         const env = loadBridge(buildScript(bridge), bridge.channel);
         env.window.oriel.postMessage('from-page', { n: 1 });
         assert.equal(env.posted.length, 1);
-        assert.deepEqual(env.posted[0], { __oriel: 'message', name: 'from-page', payload: { n: 1 } });
+        assert.deepEqual(env.posted[0], {
+            __oriel: 'message', name: 'from-page', payload: { n: 1 }, token: injectedToken,
+        });
     });
 
     test(`${label} postMessage：未给 payload 时投 null、空 name 立即抛出`, () => {
         const env = loadBridge(buildScript(bridge), bridge.channel);
         env.window.oriel.postMessage('bare');
-        assert.deepEqual(env.posted[0], { __oriel: 'message', name: 'bare', payload: null });
+        assert.deepEqual(env.posted[0], {
+            __oriel: 'message', name: 'bare', payload: null, token: injectedToken,
+        });
         assert.throws(() => env.window.oriel.postMessage(''), /postMessage/);
+    });
+
+    test(`${label} 安全：每条出站消息都带上注入的令牌`, async () => {
+        // 令牌随脚本注入，宿主侧不匹配即丢弃（挡"不是本应用注入的脚本也往通道里塞消息"）。
+        // 三种出站消息都要带——漏掉任何一种就是那一条通道没有门禁。
+        const env = loadBridge(buildScript(bridge, { forwardConsole: true }), bridge.channel);
+        env.window.oriel.postMessage('m', { n: 1 });
+        const promise = env.window.oriel.invoke('x', {});
+        deliverResult(env, 1, true, null);
+        await promise;
+        env.console.log('c');
+
+        assert.ok(env.posted.length >= 3, `出站消息数量不足：${env.posted.length}`);
+        for (const message of env.posted) {
+            assert.equal(message.token, injectedToken, `${message.__oriel} 消息缺少令牌`);
+        }
+    });
+
+    test(`${label} 安全：令牌来自注入而不是写死`, () => {
+        const other = 'ffffffffffffffffffffffffffffffff';
+        const env = loadBridge(buildScript(bridge, { token: other }), bridge.channel);
+        env.window.oriel.postMessage('m');
+        assert.equal(env.posted[0].token, other);
     });
 
     test(`${label} console 转发：开启后 console.* 送回宿主，原方法仍被调用`, () => {
@@ -217,7 +299,9 @@ for (const bridge of bridges) {
     test(`${label} 往返：invoke 产生协议消息并能收到回执`, async () => {
         const env = loadBridge(buildScript(bridge), bridge.channel);
         const promise = env.window.oriel.invoke('x', { a: 1 });
-        assert.deepEqual(env.posted.at(-1), { __oriel: 'invoke', id: 1, name: 'x', args: { a: 1 } });
+        assert.deepEqual(env.posted.at(-1), {
+            __oriel: 'invoke', id: 1, name: 'x', args: { a: 1 }, token: injectedToken,
+        });
         deliverResult(env, 1, true, 42);
         assert.equal(await promise, 42);
     });

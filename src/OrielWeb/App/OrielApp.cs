@@ -13,10 +13,19 @@ public sealed class OrielApp : IDisposable
     internal OrielApp(OrielAppBuilder builder)
     {
         _builder = builder;
-        Dispatcher = new OrielCommandDispatcher(builder.TargetFactories, builder.JsonContext);
+        Guard = new OrielIpcGuard(
+            builder.Capabilities,
+            OrielBuildConfiguration.IsDebugBuild(System.Reflection.Assembly.GetEntryAssembly()),
+            builder.AssetHost);
+        Dispatcher = new OrielCommandDispatcher(builder.TargetFactories, builder.JsonContext, Guard);
     }
 
     internal OrielCommandDispatcher Dispatcher { get; }
+
+    /// <summary>
+    /// 入站 IPC 的门禁（来源 / 令牌 / 命令授权）。每个应用实例一个，令牌每进程随机生成一次。
+    /// </summary>
+    internal OrielIpcGuard Guard { get; }
 
     /// <summary>内嵌资源使用的虚拟主机名（取自构建器 <c>UseEmbeddedAssets</c> 的 host 参数）。</summary>
     internal string AssetHost => _builder.AssetHost;
@@ -328,6 +337,15 @@ public sealed class OrielApp : IDisposable
         string? assetDirectory = _builder.UseAssets
             ? EmbeddedAssetExtractor.Extract(_builder.AssetResourcePrefix)
             : null;
+
+        if (assetDirectory is not null)
+        {
+            // Linux/macOS 上内嵌资源的 https 虚拟主机注册不了，导航前会被改写成 file:// 本地路径
+            // （见 AssetUrlResolver）。所以解压目录也必须是可信来源——
+            // 不加这一条，页面会被**自己的**门禁拒掉，表现为"什么命令都没反应"。
+            Guard.AddTrustedPrefix(
+                "file://" + assetDirectory.Replace('\\', '/').TrimEnd('/') + "/");
+        }
 
         _windows.EnsureCapacity(_builder.PendingWindows.Count);
         foreach (var (window, options) in _builder.PendingWindows)

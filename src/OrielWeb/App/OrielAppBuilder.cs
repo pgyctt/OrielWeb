@@ -148,6 +148,26 @@ public sealed class OrielAppBuilder
         return this;
     }
 
+    internal OrielCapabilityOptions? Capabilities { get; private set; }
+
+    /// <summary>
+    /// 声明页面可以调用哪些 IPC 命令（能力模型）。
+    /// </summary>
+    /// <remarks>
+    /// <b>不调用它时的默认行为</b>：Debug 构建全放行，Release 构建**全部拒绝**（fail-closed）。
+    /// 调用之后就以这里写的内容为准，Debug 与 Release 都一样。
+    ///
+    /// 只影响 <c>oriel.invoke</c>（有回执的命令）。单向的 <c>oriel.postMessage</c> 没有命令名，
+    /// 由来源与令牌那一层覆盖。库保留的 <c>win.*</c> 窗口命令始终放行。
+    /// </remarks>
+    public OrielAppBuilder UseCapabilities(Action<OrielCapabilityOptions>? configure = null)
+    {
+        var options = new OrielCapabilityOptions();
+        configure?.Invoke(options);
+        Capabilities = options;
+        return this;
+    }
+
     internal string? AutoStartId { get; private set; }
 
     /// <summary>

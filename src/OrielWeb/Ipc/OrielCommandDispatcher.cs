@@ -30,21 +30,41 @@ internal sealed class OrielCommandDispatcher
     private readonly ConcurrentDictionary<Type, object> _targets = [];
     private readonly Dictionary<string, (IOrielCommandRouter Router, int Index)> _routes;
     private readonly JsonSerializerContext? _jsonContext;
+    private readonly OrielIpcGuard _guard;
 
-    public OrielCommandDispatcher(Dictionary<Type, Func<object>> factories, JsonSerializerContext? jsonContext)
+    public OrielCommandDispatcher(
+        Dictionary<Type, Func<object>> factories, JsonSerializerContext? jsonContext, OrielIpcGuard guard)
     {
         _factories = factories;
         _jsonContext = jsonContext;
+        _guard = guard;
         // 一次性构建「命令名 → (路由, 索引)」索引。此前是每条消息遍历全部 router：
         // O(router 数) + 每次加锁 + 一次数组分配（Snapshot 里的 [.. s_routers]），
         // README 声称的 O(1) 分发实际只成立于单个 router 内部。
         _routes = OrielCommandRegistry.BuildIndex();
     }
 
-    public async ValueTask HandleInvokeAsync(JsonElement message, IIpcReplySink sink)
+    /// <summary>本分发器用的门禁（测试据此取令牌，见 TestHarness）。</summary>
+    internal OrielIpcGuard Guard => _guard;
+
+    /// <param name="message">入站 invoke 消息。</param>
+    /// <param name="sink">回执通道。</param>
+    /// <param name="documentUrl">
+    /// 发起调用的文档 URL（由窗口后端在导航时记录）。**没有它就没法做来源校验**——
+    /// 消息本身不带来源，而"这个页面是不是应用自己的"是能力模型的第一道门。
+    /// </param>
+    public async ValueTask HandleInvokeAsync(JsonElement message, IIpcReplySink sink, string? documentUrl)
     {
         if (message.ValueKind != JsonValueKind.Object)
         {
+            return;
+        }
+
+        // 门禁一、二（来源 + 令牌）先于任何解析：不信任的消息连命令名都不该被读出来。
+        if (!_guard.TryAccept(documentUrl, message, out string? rejection))
+        {
+            OrielIpcGuard.Report(rejection);
+            ReplyError(sink, ReadId(message), rejection ?? "IPC 消息被拒绝。");
             return;
         }
 
@@ -52,7 +72,7 @@ internal sealed class OrielCommandDispatcher
         // 就能在 pending 里对上并立即 settle。以前解析成 int 时，1.5 / 1e30 这类值会抛
         // FormatException，兜底回执只好写死 id:0——而页面的 seq 从 1 开始，永远匹配不到，
         // 那个 Promise 要一直挂到 30 秒超时才失败（表现为"命令没反应"，而不是"参数错了"）。
-        JsonElement id = message.TryGetProperty("id", out var idElement) ? idElement : default;
+        JsonElement id = ReadId(message);
 
         string? name = message.TryGetProperty("name", out var nameElement) && nameElement.ValueKind == JsonValueKind.String
             ? nameElement.GetString()
@@ -61,6 +81,14 @@ internal sealed class OrielCommandDispatcher
         if (string.IsNullOrEmpty(name))
         {
             ReplyError(sink, id, "invoke 消息缺少 name 字段。");
+            return;
+        }
+
+        // 门禁三（命令授权）：来源与令牌都对，不代表这个命令就该被调用。
+        if (!_guard.TryAuthorize(name, out string? denialReason))
+        {
+            OrielIpcGuard.Report(denialReason);
+            ReplyError(sink, id, denialReason ?? "命令未被授权。");
             return;
         }
 
@@ -83,6 +111,9 @@ internal sealed class OrielCommandDispatcher
             ReplyError(sink, id, ex.Message);
         }
     }
+
+    private static JsonElement ReadId(JsonElement message)
+        => message.TryGetProperty("id", out JsonElement idElement) ? idElement : default;
 
     private object ResolveTarget(Type targetType)
     {

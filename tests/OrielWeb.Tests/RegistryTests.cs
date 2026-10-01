@@ -43,7 +43,7 @@ namespace OrielWeb.Tests
                 [typeof(Ns2.Dup)] = () => new Ns2.Dup(),
             };
             // 这两条命令都返回 string（基元），因此不需要 JSON 上下文
-            var dispatcher = new OrielCommandDispatcher(factories, jsonContext: null);
+            var dispatcher = new OrielCommandDispatcher(factories, jsonContext: null, guard: TestGuards.AllowAll());
 
             var (first, _) = await TestHarness.DispatchAsync(dispatcher, "dupns.ns1", null);
             var (second, _) = await TestHarness.DispatchAsync(dispatcher, "dupns.ns2", null);

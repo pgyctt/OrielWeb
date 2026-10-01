@@ -5,7 +5,7 @@
 ## 目录
 
 - [特性](#特性) · [平台支持](#平台支持) · [快速开始](#快速开始)
-- [无边框窗口](#无边框窗口) · [导航与页面通信](#导航与页面通信)
+- [无边框窗口](#无边框窗口) · [导航与页面通信](#导航与页面通信) · [安全与能力模型](#安全与能力模型)
 - [剪贴板、系统主题与单实例](#剪贴板系统主题与单实例) · [平台集成](#平台集成)
 - [对话框](#对话框) · [文件拖放](#文件拖放) · [内建右键菜单](#内建右键菜单)
 - [手动验证与无人自检](#手动验证与无人自检)
@@ -21,6 +21,7 @@
 - **纯 C# 互操作**：macOS（WKWebView + ObjC runtime）与 Linux（GTK3 + WebKitGTK）为手写 P/Invoke；Windows 的 WebView2 COM 走 `WebView2Aot` 的 `[GeneratedComInterface]`/`[GeneratedComClass]` **源生成绑定**（无手写 vtable/IID/RefCount）。三平台都不需要 C++ 中间层
 - **Composition 宿主**（Windows）：WebView2 作为 DirectComposition 的一份视觉合成进窗口，而非子窗口——无边框窗口的边缘 resize 因此能走系统原生路径
 - **零反射 IPC**：`[OrielCommand]` + Roslyn 源生成器在编译期生成分发代码，运行期零反射
+- **能力模型**：页面能调哪些命令由应用显式声明（allow / deny + 每进程令牌 + 来源校验）；未声明时 Debug 全放行、Release 全部拒绝
 - **Native AOT**：全局 `IsAotCompatible`/`IsTrimmable`，发布为原生单文件（WebView2 的运行时加载器已内嵌，无旁文件）
 - **无边框窗口**：自绘标题栏 + 流式/原生拖动 + 最大化/全屏/置顶切换
 - **导航与双向通信**：前进/后退/刷新、导航事件（带错误信息）、页面 console 转发、`EmitEvent` 推事件、`postMessage` 收消息
@@ -125,6 +126,7 @@ internal static class Program
             .UseEmbeddedAssets()                    // https://app.oriel/ ← wwwroot/**
             .UseJsonContext(AppJsonContext.Default) // STJ 源生成上下文（DTO）
             .AddCommands<TodoCommands>()            // [OrielCommand] 命令类
+            .UseCapabilities(c => c.Allow("todo.*"))// 页面能调哪些命令（Release 下不写就一律拒绝）
             .UseDebug()                             // 打开 DevTools
             .AddWindow(w => w.WithTitle("Demo")
                              .WithSize(1024, 720)
@@ -337,6 +339,50 @@ await window.EvaluateJs("document.body.dataset.ready = '1'");
 window.PostToUiThread(() => window.SetTitle("页面已就绪"));   // 必须回 UI 线程
 ```
 
+### 安全与能力模型
+
+页面里的 `oriel.invoke` **谁能调、能调什么**由能力模型决定：来源、令牌、命令授权三层，缺任何一层都有绕过的路。
+
+**默认姿态**：不调用 `UseCapabilities` 时，**Debug 构建全放行、Release 构建全部拒绝**（fail-closed）。
+一旦调用它，就以你写的内容为准，Debug / Release 都一样。
+
+```csharp
+Oriel.CreateBuilder(args)
+    .UseCapabilities(c => c
+        .Allow("todo.*", "sys.info")     // 精确名或前缀通配；"*" 表示全部
+        .Deny("todo.remove")             // deny 优先于 allow
+        .AllowOrigin("http://localhost:5173/"))  // 额外放行的来源（开发期连 dev server）
+    .Run();
+```
+
+| 规则 | 说明 |
+|---|---|
+| 模式 | 精确名 `todo.add`、前缀通配 `todo.*`（末尾那个 `.` 是模式的一部分，所以**不**匹配 `todo` 本身）、`*` 全部。刻意不支持正则——配错的代价是静默放行 |
+| `deny` 优先 | 两条都命中时按拒绝算。"先宽泛 allow、再 deny 挖例外"是最常见的写法，若 allow 优先，那条 deny 就等于没写 |
+| 默认拒绝 | 两条都不命中即拒绝（deny-by-default：没声明就是没有这个能力） |
+| `win.` 前缀始终放行 | 那是无边框窗口的标题栏按钮（最小化 / 最大化 / 关闭 / 拖动），只操作自己那个窗口，不是"能力"。**应用自己的命令请避开这个前缀**，否则会绕过能力配置 |
+| 只管 `oriel.invoke` | 单向的 `oriel.postMessage` 没有命令名，由来源与令牌两层覆盖。`EmitEvent` 是宿主 → 页面方向，不受影响 |
+
+**三层门禁**：
+
+| 层 | 挡什么 |
+|---|---|
+| 来源 | 只有内嵌资源（以及 `AllowOrigin` 显式放行的来源）算可信。**其它来源里桥接脚本根本不安装**——远程页面里连 `window.oriel` 都不存在，而不是"装上了再拦" |
+| 令牌 | 每次启动生成一个随机串（随桥接脚本注入页面，每条入站消息回带）。挡的是"不是本应用注入的脚本也往消息通道里塞东西"，不是防网络攻击的凭据——消息不经过网络 |
+| 命令授权 | 按上面的 allow / deny 名单判定命令名 |
+
+判断"这次是 Debug 还是 Release"取的是**消费方**的构建配置，不是库自己的：库以 Release 发布，它自己的 `#if DEBUG` 永远是 false。
+取值有两条路径——包内 targets 注入的 `AssemblyMetadata("OrielBuildConfiguration")` 优先，取不到则回退到入口程序集的
+`DebuggableAttribute.IsJITOptimizerDisabled`（因此仓库内用 `ProjectReference` 的场景也判定得到）；两条都没有时按 Release 算。
+
+被拒绝时页面侧那个 Promise 会 **reject 并带上原因**（是"落进 Deny 名单"还是"不在 Allow 名单里"），不是让它等到超时——
+"点了没反应"和"这个命令没被授权"必须能分开。
+
+**验证账**：模式匹配、allow/deny 判定、令牌形状与比较、Debug/Release 判定、三层门禁的放行与拒绝路径都有单测
+（`tests/OrielWeb.Tests/CapabilityTests.cs`，60 例）；桥接脚本的"不可信来源不安装 + 每条出站消息带令牌"在
+`tests/bridge/bridge.test.mjs` 里按三平台各断言一遍；端到端由 `--selftest capability` 在真机上走完
+（页面真实 invoke 两条命令：允许的往返成功、没声明的被拒且**没有执行到**）。
+
 ### 命令线程模型
 
 - **命令实例是共享的**：`AddCommands<T>()` 注册的类型只创建一次（惰性单例），所有 invoke 都作用于同一实例。
@@ -356,8 +402,9 @@ window.PostToUiThread(() => window.SetTitle("页面已就绪"));   // 必须回 
 （CI 的三平台冒烟都会跑）：
 
 ```bash
-OrielDemo --selftest nav    # 跳转 → 后退 → 前进 → 刷新 → 加载失败（含错误信息）
-OrielDemo --selftest ipc    # console 转发、postMessage、EmitEvent 闭环（推送 → 页面回显 → 收回）
+OrielDemo --selftest nav         # 跳转 → 后退 → 前进 → 刷新 → 加载失败（含错误信息）
+OrielDemo --selftest ipc         # console 转发、postMessage、EmitEvent 闭环（推送 → 页面回显 → 收回）
+OrielDemo --selftest capability  # 能力模型：允许的命令往返成功、没声明的被拒且未被执行
 ```
 
 ## 剪贴板、系统主题与单实例
@@ -719,7 +766,7 @@ macOS/Linux 为什么不能"就地增删引擎的菜单"：那要经 `webkit_con
 
 - **给人看的**：直接运行 demo（**不带参数**）就是手动验证操作台。
 - **给 CI 的**：`--selftest <名字>` 跑无人自检，跑完打印结论并以退出码表达成败。可用名字：
-  `nav` | `ipc` | `clipboard` | `theme` | `single-instance` | `shell`。
+  `nav` | `ipc` | `clipboard` | `theme` | `single-instance` | `shell` | `capability`。
   名字缺失或写错时会列出可用值并以退出码 2 结束——不留"静默跑成别的模式"的空间。
 
 ```bash
@@ -944,8 +991,11 @@ host 之外的外部 URL（Vite dev server 等）原样加载。背景与取舍�
 
 ## 路线图
 
-后续要补的能力（**三平台一致性缺口 → 内容/IPC 深度 → 平台集成外壳**）、每一项的验证方式，
-以及无头环境验证不了的那部分"待真机验证清单"，见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+后续要补的能力（**三平台一致性缺口 → 内容/IPC 深度 → 平台集成外壳 → 能力模型与工具链**）、
+每一项的验证方式，以及无头环境验证不了的那部分"待真机验证清单"，见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+其中阶段 D 已落地两项：**包内 MSBuild build logic**（见[快速开始](#快速开始)）与
+**安全与能力模型**（见[安全与能力模型](#安全与能力模型)）；另两项——运行时注入的同步 API、
+工具链与打包（`dotnet new` 模板 / `doctor` / 打包器 / updater）——仍未开始。
 已经落地的取舍与实测结论见 [docs/DECISIONS.md](docs/DECISIONS.md)。
 
 ## 许可

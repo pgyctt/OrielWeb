@@ -867,7 +867,8 @@ internal partial class Win32WindowHost : IWindowBackend
             _webViewEvents.ContextMenuRequested += OnContextMenuRequested;
 
             await _webView.AddScriptToExecuteOnDocumentCreatedAsync(
-                OrielBridgeJs.Build(_options.ConsoleForwarding)).ConfigureAwait(true);
+                OrielBridgeJs.Build(_options.ConsoleForwarding, App.Guard.Token, App.Guard.TrustedPrefixes))
+                .ConfigureAwait(true);
 
             _controller.IsVisible = true;
             UpdateBounds();
@@ -922,16 +923,26 @@ internal partial class Win32WindowHost : IWindowBackend
             switch (kind.GetString())
             {
                 case "invoke":
+                    // 门禁在分发器里做：它有回执通道，能把"为什么被拒"送回页面，
+                    // 而不是让那个 Promise 干等到 30 秒超时。
                     _ = DispatchInvokeAsync(root.Clone());
                     break;
                 case "console":
                     // 只有开启 console 转发时页面才会发这类消息（hook 由桥接脚本注入决定）
-                    RaiseConsoleMessage(ReadStringProperty(root, "level"), ReadStringProperty(root, "text"));
+                    if (Accept(root))
+                    {
+                        RaiseConsoleMessage(ReadStringProperty(root, "level"), ReadStringProperty(root, "text"));
+                    }
                     break;
                 case "message":
-                    RaiseMessageReceived(
-                        ReadStringProperty(root, "name"),
-                        root.TryGetProperty("payload", out var payload) ? payload.GetRawText() : "null");
+                    // 单向消息没有命令名，因此只过来源与令牌那一层；
+                    // 命令授权（allow/deny）只管 invoke，原因见 OrielCapabilityOptions。
+                    if (Accept(root))
+                    {
+                        RaiseMessageReceived(
+                            ReadStringProperty(root, "name"),
+                            root.TryGetProperty("payload", out var payload) ? payload.GetRawText() : "null");
+                    }
                     break;
             }
         }
@@ -947,11 +958,25 @@ internal partial class Win32WindowHost : IWindowBackend
             ? value.GetString() ?? string.Empty
             : string.Empty;
 
+    /// <summary>入站消息的来源 + 令牌校验（命令授权不在这里，见分发器）。</summary>
+    private bool Accept(JsonElement root)
+    {
+        if (App.Guard.TryAccept(CurrentUrl, root, out string? rejection))
+        {
+            return true;
+        }
+
+        OrielIpcGuard.Report(rejection);
+        return false;
+    }
+
     private async Task DispatchInvokeAsync(JsonElement message)
     {
         try
         {
-            await App.Dispatcher.HandleInvokeAsync(message, new UiThreadReplySink(this)).ConfigureAwait(true);
+            await App.Dispatcher
+                .HandleInvokeAsync(message, new UiThreadReplySink(this), CurrentUrl)
+                .ConfigureAwait(true);
         }
         catch (Exception ex)
         {
@@ -1070,10 +1095,16 @@ internal partial class Win32WindowHost : IWindowBackend
 
     internal void RaiseNavigationStarting(string url)
     {
+        // _lastNavigationUri 同时充当"当前文档 URL"：入站 IPC 要做来源校验，
+        // 而消息本身不带来源，只能由"这个窗口现在停在哪个 URL"来回答
+        // （它原本是给 NavigationCompleted 补 URL 用的——WebView2 的完成事件里没有 URL）。
         _lastNavigationUri = url;
         NavigationStarting?.Invoke(url);
         PushEventOnUi("navigation.starting", $"{{\"url\":{JsonText.EncodeString(url)}}}");
     }
+
+    /// <summary>当前文档的 URL（导航开始时更新）。入站 IPC 的来源校验用它。</summary>
+    internal string? CurrentUrl => _lastNavigationUri;
 
     internal void RaiseNavigationCompleted(OrielNavigationCompletedEventArgs args)
     {

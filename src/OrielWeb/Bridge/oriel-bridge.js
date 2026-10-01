@@ -1,10 +1,12 @@
 // OrielWeb 三平台共用的注入式桥接脚本模板（EmbeddedResource，见 OrielWeb.csproj）。
 //
-// 由 OrielBridgeTemplate 在创建窗口时替换四个占位符后注入：
+// 由 OrielBridgeTemplate 在创建窗口时替换六个占位符后注入：
 //   __ORIEL_PLATFORM__ → 'windows' | 'macos' | 'linux'
-//   __ORIEL_POST__     → 平台投递表达式（obj 为待发送对象）
+//   __ORIEL_POST__     → 平台投递表达式（obj 为待发送对象，令牌已由 post 加上）
 //   __ORIEL_CONSOLE_ENABLED__ → 'true' | 'false'（见 OrielWindowOptions.ConsoleForwarding）
 //   __ORIEL_VERSION__  → 库版本（取程序集版本前三位，如 '0.1.2'）
+//   __ORIEL_TOKEN__    → 本次进程运行的 IPC 令牌（32 位十六进制）
+//   __ORIEL_TRUSTED__  → 可信 URL 前缀数组，如 ['https://app.oriel/']
 //
 // 三平台此前各自手抄一份，已导致缺陷同步传播（ready 的 TDZ、orielready 的时序
 // 都曾三份全中）。任何修改都会同时作用于三平台——这正是合并的目的。
@@ -18,6 +20,15 @@
 //     Windows 走 COM 完成回调，该方法闲置但无害。
 
 (() => {
+    // 来源校验：不可信的文档**完全不安装** window.oriel——远程页面里连这个对象都不存在，
+    // 而不是"装上再拦"。这样"远程页面不接 IPC"是结构性成立的，不必靠宿主侧再判一次。
+    // __ORIEL_TRUSTED__ 是宿主注入的可信 URL 前缀数组（内嵌资源来源 + AllowOrigin 追加的）。
+    const trusted = __ORIEL_TRUSTED__;
+    const selfHref = location.href;
+    if (!Array.isArray(trusted) || !trusted.some((prefix) => selfHref.indexOf(prefix) === 0)) {
+        return;
+    }
+
     if (window.__orielBridgeInstalled) return;
     window.__orielBridgeInstalled = true;
 
@@ -25,7 +36,14 @@
     const listeners = new Map();
     let seq = 0;
 
-    const post = (obj) => __ORIEL_POST__;
+    // 每次进程启动生成一次，随脚本注入；每条出站消息都带上，宿主侧不匹配即丢弃。
+    // 只安装到可信文档里，所以"令牌泄露给远程页面"这条路本来就不存在。
+    const token = '__ORIEL_TOKEN__';
+
+    const post = (obj) => {
+        obj.token = token;
+        __ORIEL_POST__;
+    };
 
     // 先建 Promise、再建对象：Promise 构造器会同步执行 executor，
     // 若在对象字面量内引用 oriel，会落进暂时性死区（ReferenceError）

@@ -445,7 +445,7 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         GtkNative.GObjectUnref(webkitSettings);
 
         var userScript = GtkNative.WebkitUserScriptNew(
-            LinuxBridgeJs.Build(_options.ConsoleForwarding),
+            LinuxBridgeJs.Build(_options.ConsoleForwarding, App.Guard.Token, App.Guard.TrustedPrefixes),
             1, // WEBKIT_USER_CONTENT_INJECT_TOP_FRAME（主帧）
             0, // WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START（文档开始处注入，与 Windows/macOS 后端一致）
             0,
@@ -616,9 +616,17 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
 
     internal void RaiseNavigationStarting(string url)
     {
+        // 记下当前文档：入站 IPC 要做来源校验，而消息本身不带来源，
+        // 只能由"这个窗口现在停在哪个 URL"来回答。
+        _currentUrl = url;
         NavigationStarting?.Invoke(url);
         PushEventOnUi("navigation.starting", $"{{\"url\":{JsonText.EncodeString(url)}}}");
     }
+
+    /// <summary>当前文档的 URL（导航开始时更新）。入站 IPC 的来源校验用它。</summary>
+    internal string? CurrentUrl => _currentUrl;
+
+    private string? _currentUrl;
 
     internal void RaiseNavigationCompleted(OrielNavigationCompletedEventArgs args)
     {

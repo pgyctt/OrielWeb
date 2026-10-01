@@ -51,7 +51,7 @@ internal static class Program
     /// <c>--selftest</c> 认得的名字。加一个自检只需在这里加名字 + 在 Main 里加一行判定。
     /// </summary>
     private static readonly string[] SelfTestNames =
-        ["nav", "ipc", "clipboard", "theme", "single-instance", "shell"];
+        ["nav", "ipc", "clipboard", "theme", "single-instance", "shell", "capability"];
 
     /// <summary>本次请求的自检名字是否就是 <paramref name="name"/>（忽略大小写与首尾空白）。</summary>
     private static bool IsSelfTest(string? requested, string name)
@@ -101,6 +101,8 @@ internal static class Program
         var singleInstanceSelfTest = IsSelfTest(selfTest, "single-instance");
         // shell：托盘、通知、菜单、快捷键、自启、Shell、拖放
         var shellSelfTest = IsSelfTest(selfTest, "shell");
+        // capability：能力模型的放行 / 拒绝两条路径（页面真实 invoke 各一次）
+        var capabilitySelfTest = IsSelfTest(selfTest, "capability");
         // --manual-check：手动验证操作台（停在那里等人点，不自动退出）。
         // 与 --selftest shell 的分工：那个是给 CI 的无人断言，这个是给人看的——
         // 每项做成按钮，托管侧的回调（托盘菜单项、通知点击、快捷键、拖放）回显到页面。
@@ -110,7 +112,7 @@ internal static class Program
         // 想看 Todo 示例页（"怎么用本库写应用"的示范）加 --todo；跑无人自检时也不用它，
         // 免得两种模式去争同一个托盘。
         bool anySelfTest = navSelfTest || ipcSelfTest || clipboardSelfTest || themeSelfTest
-            || singleInstanceSelfTest || shellSelfTest;
+            || singleInstanceSelfTest || shellSelfTest || capabilitySelfTest;
         var manualCheck = !anySelfTest && !args.Contains("--todo");
 
         // 主题自检需要 OrielApp（主题是应用级的），所以这里显式 Build 再 Run；
@@ -123,6 +125,9 @@ internal static class Program
             .AddCommands<TodoCommands>()
             .AddCommands<WindowCommands>()
             .AddCommands<ManualCommands>()
+            // 能力模型：声明页面真正会调用的命令（都写在这里的用途是当示范——Release 下
+            // 不声明的话一律拒绝，见 README「能力模型」）。win.* 是库保留前缀，始终放行，不必列。
+            .UseCapabilities(c => c.Allow("todo.*", "sys.info", "manual.*", CapabilitySelfTest.AllowedCommand))
             .UseDebug()
             .OnWebView2RuntimeMissing(HandleWebView2RuntimeMissing)
             .AddWindow(w =>
@@ -178,6 +183,10 @@ internal static class Program
                 {
                     ClipboardSelfTest.Attach(win);
                 }
+                if (capabilitySelfTest)
+                {
+                    CapabilitySelfTest.Attach(win);
+                }
             });
 
         if (singleInstanceSelfTest)
@@ -186,6 +195,13 @@ internal static class Program
             builder.SingleInstance(
                 SingleInstanceSelfTest.InstanceId,
                 SingleInstanceSelfTest.OnActivatedBySecondInstance);
+        }
+
+        if (capabilitySelfTest)
+        {
+            // 两条探针命令只在自检时注册：平时它们没有用途，列在能力声明里也只是为了让
+            // "允许的那条"有个真实的被调用对象（拒绝的那条刻意不在名单里）。
+            builder.AddCommands<CapabilityProbeCommands>();
         }
 
         if (shellSelfTest || manualCheck)
@@ -221,7 +237,8 @@ internal static class Program
             || (clipboardSelfTest && ClipboardSelfTest.Failed)
             || (themeSelfTest && ThemeSelfTest.Failed)
             || (singleInstanceSelfTest && SingleInstanceSelfTest.Failed)
-            || (shellSelfTest && ShellSelfTest.Failed))
+            || (shellSelfTest && ShellSelfTest.Failed)
+            || (capabilitySelfTest && CapabilitySelfTest.Failed))
         {
             Environment.ExitCode = 1;
         }

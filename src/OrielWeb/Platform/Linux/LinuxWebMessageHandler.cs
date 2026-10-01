@@ -37,19 +37,32 @@ internal sealed class LinuxWebMessageHandler : IIpcReplySink
             switch (kind)
             {
                 case "invoke":
+                    // 门禁在分发器里做：它有回执通道，能把"为什么被拒"送回页面，
+                    // 而不是让那个 Promise 干等到 30 秒超时。
                     _ = DispatchInvokeAsync(root.Clone());
                     break;
                 case "evalResult":
-                    CompleteEval(root);
+                    if (Accept(root))
+                    {
+                        CompleteEval(root);
+                    }
                     break;
                 case "console":
                     // 只有窗口选项打开了 console 转发，注入的桥接脚本才会发这类消息
-                    _host.RaiseConsoleMessage(ReadString(root, "level"), ReadString(root, "text"));
+                    if (Accept(root))
+                    {
+                        _host.RaiseConsoleMessage(ReadString(root, "level"), ReadString(root, "text"));
+                    }
                     break;
                 case "message":
-                    _host.RaiseMessageReceived(
-                        ReadString(root, "name"),
-                        root.TryGetProperty("payload", out var payload) ? payload.GetRawText() : "null");
+                    // 单向消息没有命令名，因此只过来源与令牌那一层；
+                    // 命令授权（allow/deny）只管 invoke，原因见 OrielCapabilityOptions。
+                    if (Accept(root))
+                    {
+                        _host.RaiseMessageReceived(
+                            ReadString(root, "name"),
+                            root.TryGetProperty("payload", out var payload) ? payload.GetRawText() : "null");
+                    }
                     break;
             }
         }
@@ -60,11 +73,23 @@ internal sealed class LinuxWebMessageHandler : IIpcReplySink
         return 0;
     }
 
+    /// <summary>入站消息的来源 + 令牌校验（命令授权不在这里，见分发器）。</summary>
+    private bool Accept(JsonElement root)
+    {
+        if (_host.App.Guard.TryAccept(_host.CurrentUrl, root, out string? rejection))
+        {
+            return true;
+        }
+
+        OrielIpcGuard.Report(rejection);
+        return false;
+    }
+
     private async Task DispatchInvokeAsync(JsonElement message)
     {
         try
         {
-            await _host.App.Dispatcher.HandleInvokeAsync(message, this).ConfigureAwait(false);
+            await _host.App.Dispatcher.HandleInvokeAsync(message, this, _host.CurrentUrl).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

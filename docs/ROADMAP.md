@@ -240,13 +240,13 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 
 | 项 | 状态 | 做法要点 | 验证方式 |
 |---|---|---|---|
-| **安全与能力模型** | ⏳ 未开始 | 参照 **Ryn**（四者里唯一做到的）：命令白名单**默认拒绝**；配置缺失时 Debug=allow-all、Release=fail-closed；`scope` 用**路径 glob + 符号链接规范化**（不是字符串前缀比较）；`scopedCommands` 用 **argv 模板 + regex** 而不是拼字符串；**每启动一个 token** + Origin 校验 + 仅 loopback；**远程页面不接 IPC**。现状是本库的 IPC 命令**谁都能调**——没有 origin 校验、没有 token、没有按命令授权，这是最大的功能缺口 | 纯函数部分（glob 规范化、argv 模板、token 生成）直接单测；端到端要在真机上验"页面发的 invoke"的授权与拒绝两条路径 |
+| **安全与能力模型** | ✅ 已完成 | 参照 **Ryn**（四者里唯一做到的）：命令白名单**默认拒绝**；配置缺失时 Debug=allow-all、Release=fail-closed；**每启动一个 token** + Origin 校验；**远程页面不接 IPC**。本库的落地形态（与 Ryn 的差异都写在 `DECISIONS.md`）：模式只有**精确名 + 前缀通配**（`todo.*`，刻意不做正则，Ryn 的 glob/argv 模板不属于"webview 核心库"）；**deny 优先**；`win.*` 保留前缀**始终放行**（否则 Release 下无边框窗口的标题栏按钮全废）；来源校验走**注入期判定**——不可信来源的文档里**根本不安装桥接脚本**，而不是装上了再拦；Debug / Release 判定取**消费方**的构建配置（包内 targets 注入的 `AssemblyMetadata` 优先，回退 `DebuggableAttribute`） | `tests/OrielWeb.Tests/CapabilityTests.cs` 60 例纯函数/门禁单测（模式匹配含 `todo.*` 不匹配 `todo` 与大小写、deny 优先、令牌形状与固定时长比较、Debug/Release 判定、三层门禁的放行与拒绝）；`tests/bridge/bridge.test.mjs` 三平台各断言"不可信来源不安装 + 每条出站消息带令牌"；端到端由 `--selftest capability` 在**真机**上验放行与拒绝两条路径（Windows 与 WSL2 + WSLg 各跑一次；macOS 已接进 `verify-macos.sh`，待 CI 的 smoke-macos 首次跑通） |
 | **包内 MSBuild build logic** | ✅ 已完成 | `buildTransitive/OrielWeb.targets` 随包分发，自动把 `wwwroot\**\*` 按带 `/` 分隔符的 `LogicalName` 嵌入；**消费方已自行声明 wwwroot 资源时跳过**（幂等，旧写法行为完全不变）；`<OrielWebEmbeddedAssets>false</OrielWebEmbeddedAssets>` 可整体关掉。顺带注入 `AssemblyMetadata("OrielBuildConfiguration")`，供安全模型判定 Debug / Release。实现里踩到两处 MSBuild 时机陷阱，已写进 `docs/DECISIONS.md` | 验证脚本 `tools/verify-pack.ps1`（已接进 CI 的 test job）跑四个场景：零配置（`app.min.js`、`vendor.bundle.js`、嵌套目录都拿到显式分隔符资源名）、旧写法不重复嵌入、显式关掉、包里确实带上了 targets。最小消费样例 `samples/OrielMinimal/`（整个 csproj 只有一行 `PackageReference`）。**旧写法回归由 `samples/OrielDemo` 保留**——它仍手写那一行且不写 `LogicalName` |
 | **运行时注入的同步 API** | ⏳ 未开始 | 参照 **AOTrino**（它的 `system.doubleClickTimeMs`、同步窗口控制）。本库要解决的具体问题是：无边框拖动必须在 `mousedown` 内**同步**判断双击，不能 await——现在靠"移动阈值"绕过（见 README 无边框窗口一节） | 桥接测试（`tests/bridge/bridge.test.mjs`）覆盖注入对象的存在与同步语义；真机上人眼确认双击与拖动不再互相干扰 |
 | **工具链与打包** | ⏳ 未开始 | 参照 **Ryn**（`new` / `dev` / `build` / `bundle` / `doctor`）与 **AOTrino**（`dotnet new` 模板）：① `dotnet new` 模板（与上一项天然配套）；② `doctor` 子命令——把本文件的「待真机验证清单」变成**可执行**的检查，而不是让人对着文档手工点；③ 打包器：macOS `.app` + dmg（签名/公证）、Windows WiX、Linux AppImage；④ updater：**强制验签 + 防降级**（Ryn 用 ECDSA P-256） | ①③ 在各自平台上跑一次产物；② 断言它对本机环境的判定与文档一致；④ 验签失败与降级两个**负例**必须有测试 |
 
-> 建议顺序：**包内 MSBuild build logic → 安全模型 → 同步 API → 工具链**。
-> 前两项一个消灭现有缺陷、一个堵住最大的能力缺口，且都能在现有环境里验证；
+> 建议顺序：**包内 MSBuild build logic → 安全模型 → 同步 API → 工具链**（前两项已完成）。
+> 前两项一个消灭现有缺陷、一个堵住最大的能力缺口，都已在现有环境里验证；
 > 后两项要引入新的工具链与多平台产物，成本高一个量级。
 
 ## 已确认的缺陷（真机验证发现）

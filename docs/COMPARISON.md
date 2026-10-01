@@ -21,8 +21,8 @@
 | 原生绑定来源 | 自研 P/Invoke + WebView2 源生成绑定 | 第三方 DirectN 系（`DirectNAot` / `WebView2Aot`） | ClangSharp 生成 saucer 绑定 | pythonnet / pyobjc / PyGObject / QtPy |
 | 原生发布 | Native AOT 单文件 | Native AOT 单文件（~11 MB，UPX 后 ~4 MB） | Native AOT-first | 不适用（PyInstaller / py2app） |
 | **IPC 机制** | Roslyn 源生成 switch 路由，**零反射** | **反射 + COM `IDispatch`** | Roslyn 源生成 switch 路由，**零反射** | 注入 JS + `evaluate_js` |
-| **安全模型** | 无能力系统（仅 Shell 的 scheme 白名单） | 近乎没有（一个 `NavigationMode` 开关） | **capabilities deny-by-default，最完整** | 会话 token 防 CSRF |
-| CLI / 模板 / 打包 | 无 | `dotnet new` 模板 + NuGet + 包内 MSBuild targets | **`ryn` CLI（new / dev / build / bundle / doctor）** | PyInstaller / py2app / buildozer hook |
+| **安全模型** | 能力模型已落地（阶段 D，2026-10-01）：deny-by-default + 每启动 token + 来源校验 + 远程页面不装桥接；另有 Shell 的 scheme 白名单 | 近乎没有（一个 `NavigationMode` 开关） | **capabilities deny-by-default，最完整** | 会话 token 防 CSRF |
+| CLI / 模板 / 打包 | 包内 MSBuild targets（阶段 D，2026-10-01）；CLI、`dotnet new` 模板、updater 仍无 | `dotnet new` 模板 + NuGet + 包内 MSBuild targets | **`ryn` CLI（new / dev / build / bundle / doctor）** | PyInstaller / py2app / buildozer hook |
 | 自动更新 | 无 | 无 | **有（强制 ECDSA P-256 验签 + 防降级）** | 无 |
 | 测试 | 298 单测 + 41 桥接 + 三平台 CI smoke | **零测试**（靠 15 个示例 + 手工 checklist） | ~566 个用例 / 10 个测试项目 + CodeQL + benchmark | 43 个 pytest 文件 |
 | 文档形态 | README（就地标验证状态）+ ROADMAP（待真机清单）+ DECISIONS（取舍记录） | 6 篇 + 详尽"陷阱清单" | 16 篇 docs + SECURITY.md + ROADMAP + 迁移说明 | VuePress 10 篇 guide + API 文档 + 61 示例 |
@@ -114,14 +114,21 @@
 
 **对 OrielWeb**：pywebview 的"同名函数约定 + 静默降级"是最该避免的形态——调用方在 macOS 上写好的代码，到 Linux 上只是少了一个 `warning`，行为静默不同。OrielWeb 现在选的"接口 + 文档如实标注"更好，但**还差 Ryn 那一层**：把"这个平台支持什么"变成**机器可读的声明**，而不是只写在 README 表格里。
 
-### 3.4 安全模型做到哪一层 —— OrielWeb 最大的功能缺口
+### 3.4 安全模型做到哪一层 —— 当初 OrielWeb 最大的功能缺口（已补）
 
 - **Ryn（最完整）**：`ryn.json` 的 capabilities **deny-by-default**；配置缺失时 Debug=allow-all、Release=fail-closed；按插件前缀授权、支持 allow/deny；`scope` 是**路径 glob + 符号链接规范化**；`scopedCommands` 用 **argv 模板 + regex**（不是拼字符串）；自定义 scheme 做路径遍历防护；Origin 校验 + **每启动一个 token** + 仅 loopback；**远程页面故意不接 IPC**。
 - **pywebview**：只有一个会话级 `token` 防 CSRF，加几个全局开关（`ALLOW_FILE_URLS` / `ALLOW_DOWNLOADS` / `IGNORE_SSL_ERRORS`）。
 - **AOTrino**：几乎没有——一个 `NavigationMode` 开关 + 三个重写点；host object **没有 origin 过滤**（作者自己在文档里标为限制：Web 窗口下注册即泄漏）。
-- **OrielWeb**：**没有能力系统**。仅 Shell 集成有默认拒绝式的 scheme 白名单（这一处做得比 AOTrino 好），IPC 命令**谁都能调**。ROADMAP 已把「安全与能力模型」明确排在 A/B/C 之后。
+- **OrielWeb（调研当时）**：**没有能力系统**。仅 Shell 集成有默认拒绝式的 scheme 白名单（这一处做得比 AOTrino 好），IPC 命令**谁都能调**。
+  **（2026-10-01 更新：已落地。）** 阶段 D 的第 2 项按这份对照的结论实现，落脚点写在 `DECISIONS.md` 的
+  「能力模型」一节：deny-by-default + allow/deny（deny 优先）+ 每启动 token + 来源校验，
+  且来源校验放在**注入期**——不可信来源的文档里根本不安装桥接脚本（比"装上再拦"更结构性）。
 
-**对 OrielWeb**：这是**最该抄的一节**。Ryn 的五个具体做法（deny-by-default、路径 glob 规范化、argv 模板、每启动 token + origin 校验、远程页面不接 IPC）都是可移植的，而且它与 OrielWeb 的技术前提一致（Native AOT、零反射）。
+**对 OrielWeb（调研当时）**：这是**最该抄的一节**。Ryn 的五个具体做法（deny-by-default、路径 glob 规范化、argv 模板、每启动 token + origin 校验、远程页面不接 IPC）都是可移植的，而且它与 OrielWeb 的技术前提一致（Native AOT、零反射）。
+**（2026-10-01 更新）** 落地时只拿了其中三条，另外两条**刻意没拿**：
+路径 glob 规范化与 argv 模板的判据是给"文件读写 / 执行命令"这类沙箱能力用的，而本库不提供这类能力面
+（`shell.execute` / PTY 明确不在路线图内），能力面就是"应用自己注册的命令名"，标识符匹配足够；
+多搬一个 glob 规范化只会多一处能写错的地方。模式因此只有精确名与 `todo.*` 这类前缀通配，**不做正则**。
 
 ### 3.5 桌面能力面：框架给还是应用自建
 
@@ -212,6 +219,12 @@
 > 与 ROADMAP 现有排序的关系：ROADMAP 把「安全与能力模型」和「工具链与打包」都排在 A/B/C 之后，
 > 本对照支持这个顺序；但建议把 **#2（包内 MSBuild build logic）单独提前**——
 > 它不是"新能力"，而是"消灭一个现有缺陷"，成本远低于另外几项。
+
+**（2026-10-01 更新：上面的第 1 条与第 2 条的前半已完成。）**
+- #1 安全模型 → 阶段 D 第 2 项，已落地并在 Windows / WSL2 + WSLg 真机上跑过端到端（见 `DECISIONS.md`）。
+- #2 包内 MSBuild build logic → 阶段 D 第 1 项，已落地（`tools/verify-pack.ps1` 已接进 CI）。
+- 仍未做的：**工具链的其余部分**（`dotnet new` 模板、`doctor`、打包器与 updater）与
+  **运行时注入的同步 API**——即 ROADMAP 阶段 D 剩下的两项。
 
 ---
 

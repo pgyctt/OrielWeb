@@ -9,8 +9,11 @@ namespace OrielWeb.Platform.MacOS;
 internal static class MacOSBridgeJs
 {
     /// <summary>按窗口选项生成注入脚本（<paramref name="forwardConsole"/> 见 <see cref="OrielWindowOptions.ConsoleForwarding"/>）。</summary>
-    public static string Build(bool forwardConsole) => OrielBridgeTemplate.Create(
-        "'macos'",
-        "window.webkit.messageHandlers.oriel.postMessage(JSON.stringify(obj))",
-        forwardConsole);
+    public static string Build(bool forwardConsole, string token, IReadOnlyList<string> trustedPrefixes)
+        => OrielBridgeTemplate.Create(
+            "'macos'",
+            "window.webkit.messageHandlers.oriel.postMessage(JSON.stringify(obj))",
+            forwardConsole,
+            token,
+            trustedPrefixes);
 }

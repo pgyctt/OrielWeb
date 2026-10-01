@@ -150,11 +150,11 @@ jobs:
         # 剪贴板自检会覆盖系统剪贴板内容——CI 环境无人使用剪贴板，安全。
         run: |
           demo=samples/OrielDemo/bin/Release/net10.0/linux-x64/publish/OrielDemo
-          for mode in nav ipc clipboard; do
+          for mode in nav ipc clipboard capability; do
             log="$RUNNER_TEMP/selftest-$mode.log"
             xvfb-run -a "$demo" --selftest "$mode" > "$log" 2>&1
             code=$?
-            verdict="$(grep -E '^(NAV|IPC|CLIPBOARD)-SELFTEST: ' "$log" | tail -1 || true)"
+            verdict="$(grep -E '^(NAV|IPC|CLIPBOARD|CAPABILITY)-SELFTEST: ' "$log" | tail -1 || true)"
             echo "----- selftest $mode（退出码 $code）$verdict -----"
             sed 's/^/  /' "$log"
             # 判定以日志里的结论行为准（与 macOS 一致）：应用的退出方式各平台不同，
@@ -273,7 +273,7 @@ jobs:
           $demo = "samples/OrielDemo/bin/Release/net10.0/win-x64/OrielDemo.exe"
           # 主题只跑一次：Windows 上没有像 GTK_THEME 那样可靠的"造值"入口（改注册表会影响 runner
           # 的其它状态），所以这里只验证"读得到 + 事件通道通"，深/浅判得对由 smoke-linux 的双路径覆盖。
-          foreach ($mode in @("nav", "ipc", "clipboard", "theme")) {
+          foreach ($mode in @("nav", "ipc", "clipboard", "theme", "capability")) {
             $out = "$env:RUNNER_TEMP\selftest-$mode.out.txt"
             $err = "$env:RUNNER_TEMP\selftest-$mode.err.txt"
             $p = Start-Process -FilePath $demo -ArgumentList @("--selftest", $mode) -Wait -PassThru `
@@ -284,7 +284,7 @@ jobs:
             # 判定以日志里的结论行为准（与 Linux / macOS 一致），退出码只作为附加信息。
             $verdict = ""
             if (Test-Path $out) {
-              $last = Select-String -Path $out -Pattern '^(NAV|IPC|CLIPBOARD|THEME)-SELFTEST: ' | Select-Object -Last 1
+              $last = Select-String -Path $out -Pattern '^(NAV|IPC|CLIPBOARD|THEME|CAPABILITY)-SELFTEST: ' | Select-Object -Last 1
               if ($last) { $verdict = $last.Line }
             }
             if ($verdict -notmatch 'PASS') {

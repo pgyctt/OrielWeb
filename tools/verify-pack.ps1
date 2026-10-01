@@ -20,6 +20,10 @@
       场景 C 显式关闭   同一个工程加 -p:OrielWebEmbeddedAssets=false
                         → 一条 wwwroot 资源都不该有
 
+      另外断言消费方程序集带上了 targets 顺带注入的 AssemblyMetadata("OrielBuildConfiguration")——
+      那是能力模型判定 Debug / Release 的第一条路径，而它同样只存在于包消费链上
+      （build/ 与 buildTransitive/ 不随 ProjectReference 分发）。
+
 .PARAMETER NoPack
     跳过 dotnet pack，直接用 dist/nuget 里现成的包（迭代调试用）。
 
@@ -190,6 +194,18 @@ try {
         '没有出现兼容反推形式的资源名'
     Test-Assert ($a.BuildLog -match '已自动内嵌') `
         '构建日志里能看到"已自动内嵌"的说明'
+
+    # 顺带注入的 AssemblyMetadata("OrielBuildConfiguration")：能力模型判定 Debug / Release 的
+    # **第一条**路径（取不到才回退到 DebuggableAttribute）。它在仓库内用 ProjectReference 的场景
+    # 拿不到（build/ 与 buildTransitive/ 只随包分发），所以只能在这条消费链上验证。
+    #
+    # 证据强度如实说明：这是"这两个字符串以相邻 SerString 的形式躺在程序集里"的存在性证据，
+    # 不是"用反射读出来等于 Release"——但 key 名足够独特、targets 里只有这一处写入，
+    # 而 attribute 的 blob 格式正是 [长度][key][长度][value]，按字节匹配不会误命中别处。
+    $dllPath = Join-Path $sample 'bin/Release/net10.0/OrielMinimal.dll'
+    $raw = [System.Text.Encoding]::Latin1.GetString([System.IO.File]::ReadAllBytes($dllPath))
+    Test-Assert ($raw -match 'OrielBuildConfiguration[\x00-\x20]Release') `
+        '消费方程序集带上 OrielBuildConfiguration=Release 元数据（能力模型取 Debug/Release 的第一条路径）'
 
     # ── 场景 B：旧写法保持兼容 ──────────────────────────────────────
     Write-Host ''
