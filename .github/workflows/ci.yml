@@ -289,19 +289,12 @@ jobs:
           foreach ($name in @("OrielDemo-win-Setup.exe", "OrielDemo-win-Portable.zip", "OrielDemo-win.msi")) {
             if (-not (Test-Path "dist/releases/$name")) { throw "缺少产物 $name" }
           }
-          # 清完之后目录里只该剩安装产物（这是"不该有更新包/清单"那条约定的可执行形式）
+          # 清完之后目录里只该剩安装产物——这条断言同时把"更新包与清单已删"变成了可执行形式。
+          # 这里**不能**再去读更新清单：上一步刚把它删掉。第一版就是这么红的
+          # （删清单之后仍断言 releases.win.json 存在），所以留这段注释。
           $leftover = Get-ChildItem dist/releases -File | Where-Object { $_.Name -notlike 'OrielDemo-win*' }
           if ($leftover) { throw "release 目录里还有不该有的文件：$($leftover.Name -join ', ')" }
-          $msi = Get-ChildItem dist/releases -Filter *.msi | Select-Object -First 1
-          if (-not $msi) { throw "没有产出 .msi（--msi）" }
-
-          # 更新清单必须能解析且写着我们刚打的版本——UpdateManager 就是靠它找新版本
-          $manifest = Get-Content dist/releases/releases.win.json -Raw | ConvertFrom-Json
-          if (@($manifest.Assets).Count -lt 1) { throw "releases.win.json 里没有 Assets" }
-          if (@($manifest.Assets)[0].Version -ne $version) {
-            throw "更新清单里的版本是 $(@($manifest.Assets)[0].Version)，期望 $version"
-          }
-          Write-Output "OK：Velopack 产物齐备（含 $($msi.Name)），清单版本 $version"
+          Write-Output "OK：只留安装产物（$((Get-ChildItem dist/releases -File).Name -join ', ')）"
 
       - name: Self-tests (navigation / IPC / clipboard)
         # 与 Linux 同款断言（见 smoke-linux 的说明）。刻意用 Start-Process 而不是 & 调用，两个原因：

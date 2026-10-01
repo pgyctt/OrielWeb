@@ -83,7 +83,7 @@ jobs:
         run: bash tools/make-macos-app.sh dist/demo/OrielDemo dist "${{ steps.version.outputs.value }}"
 
       - name: Pack with Velopack
-        # 打包交给 vpk：三平台各出自己的那一套（Windows 的 Setup.exe / Portable.zip / RELEASES，外加
+        # 打包交给 vpk：三平台各出自己的那一套（Windows 的 Setup.exe / Portable.zip，外加
         # --msi 的引导包）。发布仍然只交给 dotnet publish，vpk 只消费它的产物——
         # 与使用者要走的那条路径一致。
         shell: pwsh
