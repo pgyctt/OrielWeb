@@ -1618,3 +1618,163 @@ Ryn 的 `scope` 用**路径 glob + 符号链接规范化**、`scopedCommands` �
 
 **顺带踩到的一处**：桥接单测的脚本是用 `new Function(...)` 加参数执行的，脚本现在读 `location.href`,
 而 Node 没有这个全局——不加参数注入就会以 `ReferenceError` 加载失败，表现与"脚本写错"完全一样。
+
+## 运行时注入的同步 API：快照，而不是同步 RPC（2026-10-01）
+
+阶段 D 第三项。要解决的具体问题在 README「无边框窗口」一节：标题栏的 `mousedown` 里必须
+**同步**决定"这一次按下是开始拖动，还是双击的第二下"——`oriel.invoke` 是异步的，`await` 回来时
+那次按下早已过去；而拖动一旦开始，页面就再也收不到第二次点击（Windows 的原生模态循环直接吞掉它）。
+
+### 为什么是快照
+
+页面需要的其实只有**几个常量**：系统设的双击间隔、当前的缩放。所以宿主在建窗时把值算好、
+直接写进注入脚本（`window.oriel.system`），页面同步读。
+
+**刻意不做同步 RPC**（页面在事件处理函数里同步调回宿主）。三平台各要一套**自研**的原生机制：
+
+- Windows 要 `AddHostObjectToScript`（COM host object，Native AOT 下要自己搭 vtable 或引 ComWrappers）；
+- Linux 要 WebKitGTK 的 `script-message-with-reply`（2.40+ 才有）；
+- macOS 要拦 `window.prompt`（`runJavaScriptTextInputPanelWithPrompt:`），因为 `WKScriptMessageHandler`
+  本身没有回复通道。
+
+三套机制彼此毫无共性、"一份桥接脚本三平台共用"这个结构会被打破，而它们要解决的只是"页面拿不到
+三个常量"。代价与收益不成比例——这条取舍写在这里，将来若真出现"必须同步问宿主的动态状态"，
+再单独评估。
+
+### 三平台的取值入口
+
+| | 双击间隔 | 缩放 |
+|---|---|---|
+| Windows | `GetDoubleClickTime()`（毫秒） | `GetDpiForWindow(hwnd) / 96.0`——**窗口所在**显示器 |
+| macOS | `+[NSEvent doubleClickInterval]`（**秒**，要乘 1000） | `NSScreen.mainScreen.backingScaleFactor` |
+| Linux | `GtkSettings` 的 `gtk-double-click-time`（毫秒） | 默认显示器的 `gdk_monitor_get_scale_factor` |
+
+三处都能"取不到"（Windows 句柄无效、macOS 没有显示器、GTK 没有 GtkSettings），
+所以回退**只有一处**：`OrielSystemSnapshot.Normalize`（双击间隔回退 500ms，与 Windows 的默认一致；
+缩放回退 1.0）。平台侧只负责"取不到就返回 0"，各自写一份默认值正是三个平台慢慢长歪的方式。
+
+数值写进脚本时**必须用 InvariantCulture**（`OrielBridgeTemplate.NumberLiteral`）：按当前文化格式化
+会把小数点写成逗号，`scale: 1,5` 在 JS 里是逗号表达式——要么语法错误、要么静默变成 1，
+而"注入脚本坏了"的表现是"页面功能全无"。这条有单测（切到 `de-DE` 再断言输出仍是 `1.5`）。
+
+### 时效性：注入时取一次
+
+取值时刻是**建窗时**，同一文档内不再变；导航/刷新会重新注入因而自然跟随。窗口被拖到另一块不同缩放的
+屏幕上时 `scale` 会过时——但页面自己的 `window.devicePixelRatio` 那时反而更准，而这些值的用途本来就是
+"启动时的事实"，不是实时状态镜像。做"缩放变化时推送更新"要多三处信号订阅（`WM_DPICHANGED` /
+`notify::scale-factor` / `viewDidChangeBackingProperties`）与一条新事件协议，收益不抵成本。
+
+### 顺带否掉的一条：Linux HiDPI 拖动偏移**不需要**折算
+
+阶段 A 里留着一条"⏳ 未开始：用 `gdk_window_get_scale_factor` 折算拖动增量"。动手前先做了实测，
+结论是**这个前提不成立**，折算反而会引入缺陷。
+
+**方法**：写了一个一次性探针（临时工程，用完即删；原路径 `.workbuddy-ai/tmp/gtkprobe/`），
+在 WSL2 + WSLg 的 X11 后端下建一个 GTK 窗口，同时读**逻辑坐标**（`gtk_window_get_position`/
+`gtk_window_get_size`）与**设备像素坐标**（`XTranslateCoordinates` 到 root、`XGetGeometry`），
+然后 `gtk_window_move(+100, +100)` 再读一次。
+
+**结果**（`GDK_SCALE=2`）：
+
+```
+逻辑位置/尺寸 = (118,129) / 200x100
+设备位置/尺寸 = (275,317) / 400x200      ← 尺寸严格 1:2
+请求位移 = 100    逻辑位移 = 84    设备位移 = 167   → 比值 ≈ 1.99
+```
+
+对照 `GDK_SCALE=1`：逻辑 (995,707) / 设备 (1033,766)，即存在一个**恒定的装饰偏移 (38,59)**。
+两式合起来：`设备 = 逻辑 × scale + 装饰偏移`。
+
+**判读**：GDK 的 API 坐标就是**应用像素**（GDK 内部已经乘过 scale 再交给 X），而页面的 CSS 像素
+与之同一套坐标系。宿主侧再乘一次 scale，会在 2x 屏上把现在正确的拖动改成**偏移一倍**。
+
+（X11 下 WM 会调整最终位置，所以位移不是整数 100——但两侧的**比值**恰好等于 scale，
+这一点足以定位坐标系关系；尺寸那一行 1:2 是更直接的证据。）
+
+**由此留下的**：ROADMAP 阶段 A 那一项改为"经实测确认无需折算"，并在待真机清单里留一条只验
+**页面那一半**（`MouseEvent.screenX` 在高 DPI 下是 CSS 像素还是设备像素）——那需要真实高 DPI 桌面。
+
+### 一处平台边界：`GDK_SCALE` 只在 X11 生效
+
+同一份 Linux AOT 产物、只改环境变量实测：
+
+| 后端 | `GDK_SCALE=2` 时注入的 scale |
+|---|---|
+| Wayland（WSLg 默认） | 1 |
+| X11（`GDK_BACKEND=x11`） | **2** |
+
+也就是说 `GDK_SCALE` 这个"伪造缩放"的环境变量在 Wayland 后端下不生效（那边 GDK 用合成器给的缩放）。
+真实 HiDPI 桌面走的是合成器/显示设置，两个后端都给得对；但**CI 里要造 2x 必须同时设
+`GDK_BACKEND=x11`**——smoke-linux 的 `--expect-scale 2` 就是这么跑的。
+
+### 这一批能证明什么、不能证明什么
+
+- **能**：三平台各自取值入口的形态（含 macOS 的秒→毫秒）与"取不到时的回退"由 `SystemSnapshotTests`
+  逐例断言；数值格式化在逗号文化下仍写出点号（否则整份脚本失效）有单测；桥接测试按三平台断言
+  `oriel.system` 同步可读、小数不被截断；真机上 Windows（125% 缩放 → `scale: 1.25`、系统双击间隔 620ms）
+  与 Linux（X11 + `GDK_SCALE=2` → `scale: 2`）都验过，并用 `--expect-scale` 做了**反向对照**
+  （期望 1 而实际 2 时确实报 FAIL），说明这条断言不是"总能通过"的空话。
+- **不能**：macOS 侧（已接入 `verify-macos.sh` 的自检，待 CI 首次跑通）；真实高 DPI 桌面上的
+  拖动跟手（见上，仍需人眼）；`devicePixelRatio` 与注入的 `scale` 在真实 HiDPI 下是否一致。
+
+## 工具链与打包：`oriel doctor` / `oriel bundle`（2026-10-01）
+
+阶段 D 第四项。原先这一项写着四块（模板 / doctor / 打包器 / updater），本轮落地了中间两块——
+另两块留着，理由在末尾。
+
+### `oriel` 刻意不引用本库
+
+它要能在"库还没构建"的环境里跑——它就是用来诊断环境的。引用库会让"工具装不上/跑不起来"
+与"环境有问题"这两种失败混在一起。代价是少量重复（例如 WebView2 运行时的探测库里有一份、
+工具里又写了一份），这是值得的：工具只依赖 BCL 与系统命令，任何一台装了 .NET 的机器都能跑。
+
+### doctor：三级结论，以及"不假装能判人眼项"
+
+- **能跑**（引擎 + 显示环境）缺失是 FAIL，**能开发**（SDK/clang）与**能打包**（wix/appimagetool）
+  缺失是 WARN。混成一种等级会让"这台机器能不能跑我的应用"被无关的工具链问题淹没。
+- 「待真机验证清单」里那些**只能人眼**的项，doctor 不假装能判：它输出一节"该怎么验、该看到什么"，
+  每一项带一个**清单项名**，并有单测断言这些名字逐字符出现在 ROADMAP 的 `####` 小节里。
+  这样"文档改了名而代码没跟上"会立刻变红，而不是让使用者照着输出翻不到那一节。
+- 项目体检的判定是纯函数（`ProjectFacts` → 结论），所以能逐例钉死。两处刻意做到更精确：
+  1. **`TargetFramework` 常常是继承来的**（本仓库自己就把版本与目标框架放在根 `Directory.Build.props`）——
+     读不到时先沿目录树向上找，而不是报"读到空"的阻断项（那是工具的误报）。
+  2. **手写 wwwroot 资源却漏了 `LogicalName`** 分两档：wwwroot 里**已经有**含点文件名
+     （`app.min.js`）就是 FAIL（那批文件必然解压错位、页面 404），还没有就是 WARN（迟早会坏）。
+     一刀切说"阻断"会让 `samples/OrielDemo` 那条**刻意保留的**旧写法回归案例永远红着。
+
+### bundle：只消费发布产物，per-user 安装，WiX 固定 v5
+
+- **输入是一个已发布的目录**，不是 csproj：AOT 与那堆发布属性各项目差别很大，库没有立场替它决定。
+- **MSI 是 per-user**（`%LocalAppData%\Programs\<名字>`，Scope=perUser）：与"AOT 单文件、解压即用"
+  的分发方式一致、不需要 UAC，也避开了"装到 Program Files 之后应用自更新必须提权"
+  （updater 还没做，选 per-machine 等于把那个问题提前埋下）。
+- **WiX 固定在 v5**——这轮最意外的发现：**WiX v7 会拒绝构建并要求接受 OSMF 的付费条款**
+  （`error WIX7015: You must accept the Open Source Maintenance Fee (OSMF) EULA`）。
+  本仓库不引入需要接受专有条款的依赖，所以 v5（最后一个 OSI 许可的版本）是明确选择，
+  `oriel doctor` 会检查主版本并在 ≥ 6 时给出降级命令。
+- **不跨平台打包**：`.dmg` 只能在 macOS 上打、`.AppImage` 只能在 Linux 上打。这不是"没实现"，
+  而是它们需要各自平台上才有的工具（hdiutil；appimagetool 需要 FUSE）。命令会直接说清楚。
+- `--version` 没给时从主可执行文件读**文件版本**：**Windows 上有效，Linux/macOS 上读不出来**
+  （实测：AOT 的 ELF 没有 PE 的版本资源），于是走到"请显式给 `--version`"那条错误。
+  CI 与 release 都显式传，保留兜底只是让本机打包少一个必填项。
+
+### 实测（能证明的部分）
+
+- **MSI 在 Windows 真机上走完闭环**：`msiexec /i /qn` → 退出码 0 → 安装目录里有 `OrielDemo.exe`
+  与 `app.png`、开始菜单快捷方式就位 → `msiexec /x /qn` → 退出码 0 → 安装目录与开始菜单目录都消失。
+  这一条已接进 CI 的**每次 push**（用户决定：MSI 是这批里唯一"生成物会落到用户机器上"的东西）。
+- **Linux 的 AppDir 组装在 WSL 里验过**：`AppRun` 与 `usr/bin/OrielDemo` 都带可执行位（AppImage
+  少一个执行位就完全跑不起来）、`.desktop` 的 `Exec`/`Icon`/`X-AppImage-Version` 都正确、
+  图标落在 AppDir 顶层与 hicolor 两处。缺 appimagetool 时它**只组装 AppDir 并明确报错**，
+  而不是丢一个半成品出去。
+- 顺带踩到并修掉的一处：**XML 注释里出现 `--` 会让整份 csproj 解析失败**（我写注释时把
+  `--project` 写进了注释）。当时 doctor 给的是"没有 PublishAot、没有图标、没有能力声明"这一串
+  **误导性结论**——因为它把"解析失败"当成了"什么都没有"。现在解析失败时**只报这一条**，
+  并直接点出常见原因。这条改动比它看起来重要：工具说假话比没有工具更糟。
+
+### 还没做的两块
+
+- **`dotnet new` 模板**：需要新的模板包与 CI 上的模板测试，且它与"包内 MSBuild build logic"
+  的边界（模板里要不要写 wwwroot 那一行）值得单独讨论。
+- **updater**：需要密钥管理、清单格式与托管、下载与替换流程，以及"验签失败"与"防降级"
+  两个负例测试——是这一项里最重的一块，单独一批更稳。

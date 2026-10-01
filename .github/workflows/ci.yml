@@ -40,6 +40,31 @@ jobs:
         # 注意：必须显式给出文件路径——Node 把纯目录参数当作入口模块解析。
         run: node --test tests/bridge/bridge.test.mjs
 
+      - name: Build the CLI and run doctor
+        # 每次 push 都跑：oriel 是本仓库"验证账"的可执行版本，它自己烂掉必须立刻知道。
+        # 刻意走"打包 → 装成 dotnet tool → 调用"这条完整路径而不是 dotnet run：
+        # 用户拿到的就是那个包，打包元数据（PackAsTool/ToolCommandName）也一并被覆盖到。
+        shell: pwsh
+        run: |
+          dotnet pack src/OrielWeb.Cli -c Release -o dist/cli
+          dotnet tool install --global --add-source dist/cli OrielWeb.Cli
+          $env:PATH = "$env:PATH;$env:USERPROFILE\.dotnet\tools"
+          oriel version
+
+          $doctorJson = oriel doctor --project samples/OrielDemo --json
+          # 0 = 没有阻断项，1 = 有阻断项（都算"跑通了"），2 = 用法错误
+          if ($LASTEXITCODE -gt 1) { throw "oriel doctor 执行失败（退出码 $LASTEXITCODE）" }
+          $doctorJson | Write-Output
+
+          $report = $doctorJson | ConvertFrom-Json
+          if (-not $report.checks) { throw "doctor 没有输出 checks——JSON 结构变了？" }
+          # 机器相关的结论只打印（CI runner 缺什么系统依赖与产品无关）；
+          # **项目体检**必须没有阻断项——那是与机器无关的、我们自己的配置。
+          $blocking = @($report.checks | Where-Object { $_.status -eq 'fail' -and $_.section -like '项目配置*' })
+          if ($blocking.Count -gt 0) { throw "项目体检有阻断项：$($blocking.title -join '、')" }
+          if (@($report.manualChecks).Count -lt 1) { throw "doctor 没给出任何人眼验证指引" }
+          Write-Output "doctor OK：$($report.checks.Count) 项检查、$(@($report.manualChecks).Count) 条人眼指引"
+
       - name: Package build logic (in-package MSBuild targets)
         # 包内 buildTransitive/OrielWeb.targets 的消费链路：打包 → 零配置消费工程 → 断言
         # wwwroot 资源名（含 app.min.js 这类含点文件名）→ 旧写法不重复嵌入 → 可显式关掉。
@@ -165,6 +190,19 @@ jobs:
             fi
           done
 
+          # 缩放注入：X11 + GDK_SCALE=2 造一次 2x，断言注入给页面的 oriel.system.scale 真的跟随。
+          # "取到了"与"取对了"是两件事，只有这一条能证明那个值来自系统而不是写死的。
+          # 必须带 GDK_BACKEND=x11：Wayland 后端下 GDK_SCALE 不生效（实测，见 DECISIONS 的 HiDPI 一节）。
+          log="$RUNNER_TEMP/selftest-scale.log"
+          GDK_BACKEND=x11 GDK_SCALE=2 xvfb-run -a "$demo" --selftest ipc --expect-scale 2 > "$log" 2>&1
+          verdict="$(grep -E '^IPC-SELFTEST: ' "$log" | tail -1 || true)"
+          echo "----- scale=2（GDK_BACKEND=x11 GDK_SCALE=2）$verdict -----"
+          sed 's/^/  /' "$log"
+          if [[ "$verdict" != *PASS* ]]; then
+            echo "::error::缩放注入未通过（结论行：${verdict:-无}）"
+            exit 1
+          fi
+
           # 主题：深浅两条路径都要走到——用 GTK_THEME（GTK 认可的入口）分别跑，并断言两次结论**不同**。
           # 只跑一次只能证明"读得到主题"，证明不了"深浅判得对"；同一进程内又改不了系统主题，
           # 所以只能这样造值。
@@ -261,6 +299,37 @@ jobs:
           if ($p.HasExited) { throw "demo 启动后立即退出，ExitCode=$($p.ExitCode)" }
           Write-Output "OK: 进程存活，消息循环运行中"
           Stop-Process -Id $p.Id -Force
+
+      - name: Bundle into an MSI and verify it installs
+        # 每次 push 都跑 .msi（用户决定）：它是这一批里唯一"生成物会落到用户机器上"的东西，
+        # 而 WiX 的那些坑（per-user 目录、UpgradeCode、文件收集）只有真的装一次才暴露。
+        # 固定 WiX v5：v6 起要求接受 OSMF 的付费条款（见 DECISIONS）。
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.*
+          $env:PATH = "$env:PATH;$env:USERPROFILE\.dotnet\tools"
+          dotnet publish samples/OrielDemo -c Release -r win-x64 -p:DebugType=none -o dist/demo
+          dotnet run --project src/OrielWeb.Cli -c Release -- bundle `
+            --dir dist/demo --rid win-x64 --name "Oriel Demo" --id com.orielweb.demo --out dist/bundle
+
+          $msi = Get-ChildItem dist/bundle -Filter *.msi | Select-Object -First 1
+          if (-not $msi) { throw "没有产出 .msi" }
+          Write-Output "----- $($msi.Name)（$([Math]::Round($msi.Length/1KB,1)) KB）-----"
+
+          $install = Start-Process msiexec -ArgumentList "/i", "`"$($msi.FullName)`"", "/qn", "/norestart" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "安装失败（msiexec 退出码 $($install.ExitCode)）" }
+
+          $installed = "$env:LOCALAPPDATA\Programs\Oriel Demo"
+          if (-not (Test-Path "$installed\OrielDemo.exe")) { throw "安装后找不到 $installed\OrielDemo.exe" }
+          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Oriel Demo\Oriel Demo.lnk")) {
+            throw "安装后没有开始菜单快捷方式"
+          }
+          Write-Output "OK：安装成功，exe $([Math]::Round((Get-Item "$installed\OrielDemo.exe").Length/1MB,1)) MB"
+
+          $uninstall = Start-Process msiexec -ArgumentList "/x", "`"$($msi.FullName)`"", "/qn", "/norestart" -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "卸载失败（msiexec 退出码 $($uninstall.ExitCode)）" }
+          if (Test-Path $installed) { throw "卸载后安装目录仍然存在" }
+          Write-Output "OK：卸载干净"
 
       - name: Self-tests (navigation / IPC / clipboard)
         # 与 Linux 同款断言（见 smoke-linux 的说明）。刻意用 Start-Process 而不是 & 调用，两个原因：

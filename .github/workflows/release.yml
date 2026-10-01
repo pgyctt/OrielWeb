@@ -67,15 +67,93 @@ jobs:
           if (-not (Test-Path $exe)) { throw "AOT 产物缺失：$exe" }
           Write-Output "demo ${{ matrix.rid }}: $([Math]::Round((Get-Item $exe).Length / 1MB, 1)) MB"
 
-      - name: Bundle into a .app (macOS)
-        if: runner.os == 'macOS'
-        # macOS 分发的是 .app 而不是那个可执行文件：WKWebView 是多进程架构，宿主进程要凭 main
-        # bundle 的身份才能与 WebContent/Networking 的 XPC 服务通信，裸可执行文件会走到 WebKit
-        # 的内部断言（SIGTRAP，退出码 133）。构造逻辑与 tools/verify-macos.sh 里那份相同，
-        # 区别是版本号从 Directory.Build.props 取——分发产物该带真版本，而不是脚本里写死的值。
+      - name: Read version
+        id: version
+        # 版本号唯一来源是根 Directory.Build.props：产物文件名与 Info.plist 都用它
+        shell: pwsh
         run: |
-          version=$(sed -n 's/.*<Version>\([^<]*\)<\/Version>.*/\1/p' Directory.Build.props | head -1)
-          bash tools/make-macos-app.sh dist/demo/OrielDemo dist "$version"
+          [xml]$props = Get-Content Directory.Build.props
+          $value = @($props.Project.PropertyGroup.Version)[0].Trim()
+          "value=$value" >> $env:GITHUB_OUTPUT
+
+      - name: Install appimagetool (Linux)
+        if: runner.os == 'Linux'
+        # .AppImage 需要一个外部工具，而它本身是 AppImage；CI 里没有 FUSE，
+        # 所以调用时靠 APPIMAGE_EXTRACT_AND_RUN=1（见下面 bundle 步骤的 env）。
+        run: |
+          curl -sSL -o "$RUNNER_TEMP/appimagetool" \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          echo "$RUNNER_TEMP" >> $GITHUB_PATH
+
+      - name: Bundle the installer
+        # 本仓库自己吃自己的工具：三平台各出该平台的安装产物（.msi / .dmg / .AppImage）。
+        # 发布只交给 dotnet publish、打包只交给 oriel bundle —— 也就是使用者要走的那条路径
+        # （macOS 的 .app 组装也从 tools/make-macos-app.sh 搬进了 CLI，一个实现者）。
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        shell: pwsh
+        run: |
+          dotnet run --project src/OrielWeb.Cli -c Release -- bundle `
+            --dir dist/demo --rid ${{ matrix.rid }} --name "Oriel Demo" --id com.orielweb.demo `
+            --icon samples/OrielDemo/app.png --version ${{ steps.version.outputs.value }} --out dist/bundle
+
+      - name: Verify the MSI (Windows)
+        # 产物自验：这条路径以前从来没被跑过——"能不能装、装完文件在不在、卸得干净吗"
+        # 恰好都是机器可判定的，而它们也是发布产物最容易悄悄坏掉的地方。
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem dist/bundle -Filter *.msi | Select-Object -First 1
+          if (-not $msi) { throw "没有产出 .msi" }
+          $install = Start-Process msiexec -ArgumentList "/i", "`"$($msi.FullName)`"", "/qn", "/norestart" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "MSI 安装失败（退出码 $($install.ExitCode)）" }
+
+          $installed = "$env:LOCALAPPDATA\Programs\Oriel Demo"
+          if (-not (Test-Path "$installed\OrielDemo.exe")) { throw "安装后找不到 $installed\OrielDemo.exe" }
+          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Oriel Demo\Oriel Demo.lnk")) {
+            throw "安装后没有开始菜单快捷方式"
+          }
+          Write-Output "OK：MSI 装得上"
+
+          Start-Process msiexec -ArgumentList "/x", "`"$($msi.FullName)`"", "/qn", "/norestart" -Wait | Out-Null
+          if (Test-Path $installed) { throw "卸载后安装目录仍然存在" }
+          Write-Output "OK：卸得干净"
+
+      - name: Verify the dmg (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          dmg=$(ls dist/bundle/*.dmg | head -1)
+          [ -n "$dmg" ] || { echo "没有产出 .dmg"; exit 1; }
+          mount=/tmp/oriel-dmg
+          rm -rf "$mount"; mkdir -p "$mount"
+          hdiutil attach "$dmg" -nobrowse -mountpoint "$mount"
+          app="$mount/Oriel Demo.app"
+          test -x "$app/Contents/MacOS/OrielDemo" || { echo "挂载后缺少可执行文件"; exit 1; }
+          test -f "$app/Contents/Info.plist" || { echo "挂载后缺少 Info.plist"; exit 1; }
+          # CFBundleIdentifier 缺失时 WKWebView 会直接 __builtin_trap（退出码 133），
+          # 所以这里不是"文件在不在"，而是把它读出来核对。
+          bundle_id=$(plutil -extract CFBundleIdentifier raw "$app/Contents/Info.plist")
+          [ "$bundle_id" = "com.orielweb.demo" ] || { echo "CFBundleIdentifier 不对：$bundle_id"; exit 1; }
+          codesign -dv "$app" 2>&1 | head -3
+          hdiutil detach "$mount"
+          echo "OK：dmg 挂得上，.app 与 bundle identifier 都正确"
+
+      - name: Verify the AppImage (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          appimage=$(ls dist/bundle/*.AppImage | head -1)
+          [ -n "$appimage" ] || { echo "没有产出 .AppImage"; exit 1; }
+          chmod +x "$appimage"
+          rm -rf /tmp/squashfs-root
+          # --appimage-extract 是自解包，不需要 FUSE（CI 里也没有）
+          (cd /tmp && "$GITHUB_WORKSPACE/$appimage" --appimage-extract > /dev/null)
+          test -x /tmp/squashfs-root/AppRun || { echo "解包后缺少 AppRun"; exit 1; }
+          test -x /tmp/squashfs-root/usr/bin/OrielDemo || { echo "解包后找不到可执行文件"; exit 1; }
+          test -f /tmp/squashfs-root/*.desktop || { echo "解包后缺少 .desktop"; exit 1; }
+          grep -q '^Exec=OrielDemo$' /tmp/squashfs-root/*.desktop || { echo ".desktop 的 Exec 不对"; exit 1; }
+          grep -q '^X-AppImage-Version=' /tmp/squashfs-root/*.desktop || { echo ".desktop 缺少版本"; exit 1; }
+          echo "OK：AppImage 解包后 AppRun、可执行文件与 .desktop 都在"
 
       - name: Zip (Windows)
         if: runner.os == 'Windows'
@@ -93,15 +171,18 @@ jobs:
       - name: Zip (macOS)
         if: runner.os == 'macOS'
         # 只打包 .app：裸可执行文件在 macOS 上跑不起来，放进去只会让人以为有两条路。
+        # .app 现在由 oriel bundle 组装（原先的 tools/make-macos-app.sh 已删除，一个实现者）。
         run: |
-          cd dist
-          zip -r "OrielWeb-demo-${{ matrix.rid }}.zip" OrielDemo.app
+          cd dist/bundle
+          zip -r "../OrielWeb-demo-${{ matrix.rid }}.zip" "Oriel Demo.app"
 
       - name: Upload demo
         uses: actions/upload-artifact@v4
         with:
           name: demo-${{ matrix.rid }}
-          path: dist/OrielWeb-demo-${{ matrix.rid }}.zip
+          path: |
+            dist/OrielWeb-demo-${{ matrix.rid }}.zip
+            dist/bundle/*
           # 这里没找到 zip 就是构建出了问题，不能静默跳过
           if-no-files-found: error
           # artifact 只是中转，最终资产挂在 Release 上（永久保留）
@@ -155,6 +236,9 @@ jobs:
             dist/nuget/*.nupkg
             dist/nuget/*.snupkg
             dist/*.zip
+            dist/bundle/*.msi
+            dist/bundle/*.dmg
+            dist/bundle/*.AppImage
 
       - name: Push to nuget.org
         # 通配符必须由 shell 展开：PowerShell 不会给原生命令展开参数里的 *，

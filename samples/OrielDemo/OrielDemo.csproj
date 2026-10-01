@@ -31,7 +31,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- 前端资源内嵌进程序集，启动时解压并由虚拟主机 https://app.oriel/ 提供 -->
+    <!-- 前端资源内嵌进程序集，启动时解压并由虚拟主机 https://app.oriel/ 提供。
+
+         **这一行是刻意保留的旧写法**（不带 LogicalName）：它是包内 buildTransitive/OrielWeb.targets
+         那条"消费方已自行声明就跳过"路径的回归案例（见 README「快速开始」与 tools/verify-pack.ps1）。
+         新项目不要照抄——让 targets 去嵌，或者自己写就必须带 LogicalName。
+         用 `oriel doctor` 体检这个项目时会因此报一条 WARN：那是**预期**的。 -->
     <EmbeddedResource Include="wwwroot\**\*" />
   </ItemGroup>
 

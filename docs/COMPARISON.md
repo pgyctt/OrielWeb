@@ -22,7 +22,7 @@
 | 原生发布 | Native AOT 单文件 | Native AOT 单文件（~11 MB，UPX 后 ~4 MB） | Native AOT-first | 不适用（PyInstaller / py2app） |
 | **IPC 机制** | Roslyn 源生成 switch 路由，**零反射** | **反射 + COM `IDispatch`** | Roslyn 源生成 switch 路由，**零反射** | 注入 JS + `evaluate_js` |
 | **安全模型** | 能力模型已落地（阶段 D，2026-10-01）：deny-by-default + 每启动 token + 来源校验 + 远程页面不装桥接；另有 Shell 的 scheme 白名单 | 近乎没有（一个 `NavigationMode` 开关） | **capabilities deny-by-default，最完整** | 会话 token 防 CSRF |
-| CLI / 模板 / 打包 | 包内 MSBuild targets（阶段 D，2026-10-01）；CLI、`dotnet new` 模板、updater 仍无 | `dotnet new` 模板 + NuGet + 包内 MSBuild targets | **`ryn` CLI（new / dev / build / bundle / doctor）** | PyInstaller / py2app / buildozer hook |
+| CLI / 模板 / 打包 | **`oriel` CLI（`doctor` / `bundle`：.msi / .dmg / .AppImage）+ 包内 MSBuild targets**（阶段 D，2026-10-01）；`dotnet new` 模板与 updater 仍无 | `dotnet new` 模板 + NuGet + 包内 MSBuild targets | **`ryn` CLI（new / dev / build / bundle / doctor）** | PyInstaller / py2app / buildozer hook |
 | 自动更新 | 无 | 无 | **有（强制 ECDSA P-256 验签 + 防降级）** | 无 |
 | 测试 | 298 单测 + 41 桥接 + 三平台 CI smoke | **零测试**（靠 15 个示例 + 手工 checklist） | ~566 个用例 / 10 个测试项目 + CodeQL + benchmark | 43 个 pytest 文件 |
 | 文档形态 | README（就地标验证状态）+ ROADMAP（待真机清单）+ DECISIONS（取舍记录） | 6 篇 + 详尽"陷阱清单" | 16 篇 docs + SECURITY.md + ROADMAP + 迁移说明 | VuePress 10 篇 guide + API 文档 + 61 示例 |
@@ -223,8 +223,9 @@
 **（2026-10-01 更新：上面的第 1 条与第 2 条的前半已完成。）**
 - #1 安全模型 → 阶段 D 第 2 项，已落地并在 Windows / WSL2 + WSLg 真机上跑过端到端（见 `DECISIONS.md`）。
 - #2 包内 MSBuild build logic → 阶段 D 第 1 项，已落地（`tools/verify-pack.ps1` 已接进 CI）。
-- 仍未做的：**工具链的其余部分**（`dotnet new` 模板、`doctor`、打包器与 updater）与
-  **运行时注入的同步 API**——即 ROADMAP 阶段 D 剩下的两项。
+- 仍未做的：**`dotnet new` 模板**与 **updater**（ROADMAP 阶段 D 第 4 项剩下的两块）。
+- 阶段 D 的第 3 项（**运行时注入的同步 API**）也已落地——做成了注入快照而不是同步 RPC，
+  理由与实测见 `DECISIONS.md`。
 
 ---
 

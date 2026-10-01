@@ -5,10 +5,10 @@
 ## 目录
 
 - [特性](#特性) · [平台支持](#平台支持) · [快速开始](#快速开始)
-- [无边框窗口](#无边框窗口) · [导航与页面通信](#导航与页面通信) · [安全与能力模型](#安全与能力模型)
+- [无边框窗口](#无边框窗口) · [导航与页面通信](#导航与页面通信) · [安全与能力模型](#安全与能力模型) · [同步可读的宿主事实](#同步可读的宿主事实)
 - [剪贴板、系统主题与单实例](#剪贴板系统主题与单实例) · [平台集成](#平台集成)
 - [对话框](#对话框) · [文件拖放](#文件拖放) · [内建右键菜单](#内建右键菜单)
-- [手动验证与无人自检](#手动验证与无人自检)
+- [手动验证与无人自检](#手动验证与无人自检) · [命令行工具](#命令行工具oriel)
 - [构建与发布](#构建与发布) · [平台运行要求](#平台运行要求)
 - [路线图](#路线图) · [许可](#许可)
 
@@ -29,6 +29,7 @@
 - **文件拖放**：外部文件拖进窗口 → 本地路径列表（`window.FileDropped`）
 - **内建右键菜单策略**：默认只留剪切/复制/粘贴，可切平台原样或完全禁用
 - **平台集成**：剪贴板（文本 + HTML）、系统主题、单实例、系统托盘、系统通知、菜单（窗口上下文菜单 + 托盘菜单，含平台 role 与加速键）、Shell 集成、开机自启
+- **命令行工具**：`oriel doctor`（把「待真机验证清单」里机器可判定的部分变成可执行检查 + 项目配置体检）与 `oriel bundle`（.msi / .dmg / .AppImage），见[命令行工具](#命令行工具oriel)
 
 > 每项能力**验证到什么程度**（哪些有单测、哪些只有编译、哪些必须人眼）在本文件中就地标注，
 > 未验证项的清单汇总在 [docs/ROADMAP.md](docs/ROADMAP.md)。demo 带两类验证入口：
@@ -382,6 +383,45 @@ Oriel.CreateBuilder(args)
 （`tests/OrielWeb.Tests/CapabilityTests.cs`，60 例）；桥接脚本的"不可信来源不安装 + 每条出站消息带令牌"在
 `tests/bridge/bridge.test.mjs` 里按三平台各断言一遍；端到端由 `--selftest capability` 在真机上走完
 （页面真实 invoke 两条命令：允许的往返成功、没声明的被拒且**没有执行到**）。
+
+### 同步可读的宿主事实
+
+有些判断**必须在事件处理函数内同步完成**——典型例子是无边框窗口的标题栏：`mousedown` 时要立刻决定
+"这一次按下是开始拖动，还是双击的第二下"。`oriel.invoke` 是异步的，`await` 回到页面时那次按下早已过去
+（而且拖动一旦开始，页面就再也收不到第二次点击）。浏览器只给 `event.detail`、不给系统设的双击间隔，
+所以这个值只能由宿主给。
+
+这类值随桥接脚本一起注入，**同步可读**：
+
+```js
+const ms = window.oriel.system.doubleClickTimeMs;  // 系统双击间隔（毫秒）
+const scale = window.oriel.system.scale;           // 窗口所在缩放（1 = 无缩放）
+```
+
+| 平台 | 双击间隔 | 缩放 |
+|---|---|---|
+| Windows | `GetDoubleClickTime()` | `GetDpiForWindow()` ÷ 96（**窗口所在**显示器，多屏不同缩放下才算得对） |
+| macOS | `+[NSEvent doubleClickInterval]`（给的秒 → 注入毫秒） | `NSScreen.mainScreen.backingScaleFactor` |
+| Linux | `GtkSettings` 的 `gtk-double-click-time` | 默认显示器的 `gdk_monitor_get_scale_factor` |
+
+取值时机是**建窗时一次**，同一文档内不再变；导航/刷新会重新注入，因而自然跟随。
+窗口被拖到另一块缩放的屏幕上时 `scale` 会过时——那时页面自己的 `window.devicePixelRatio` 更准。
+这几个值的用途是"启动时的事实"，不是实时状态镜像。取不到时回退成双击间隔 500ms、缩放 1.0。
+
+> **不提供同步 RPC**：那需要三平台各一套自研的原生机制（WebView2 hostObjects / WebKitGTK
+> script-message-with-reply / WKWebView 的 prompt 拦截），还会打破"一份桥接脚本三平台共用"，
+> 而这条需求只用到几个常量。取舍与实测见 [docs/DECISIONS.md](docs/DECISIONS.md)。
+>
+> **Linux 的已知边界**：`GDK_SCALE` 这个"伪造缩放"的环境变量**只在 X11 后端生效**
+> （Wayland 后端下 GDK 用合成器给的缩放）。真实 HiDPI 桌面上两个后端都对，
+> 但要在 CI 里造 2x 得同时设 `GDK_BACKEND=x11`。
+
+**验证账**：回退逻辑（三平台各自的"取不到"形态）与数值格式化有单测
+（`tests/OrielWeb.Tests/SystemSnapshotTests.cs`，含"德语这类用逗号做小数点的文化下也必须写出 `1.5`"
+——否则生成的 `scale: 1,5` 会让整份注入脚本失效）；桥接测试按三平台各断言 `oriel.system` 同步存在、
+小数不被截断；真机上 `--selftest ipc` 断言两个值都是正数，并可用 `--expect-scale <n>`
+直接断言"注入的缩放就是系统缩放"（Windows 与 WSL2 + WSLg 各实测一次，CI 的 smoke-linux
+用 `GDK_BACKEND=x11 GDK_SCALE=2` 造 2x 跑这条）。
 
 ### 命令线程模型
 
@@ -797,6 +837,82 @@ dotnet run --project samples/OrielDemo -c Release -- --manual-check
 
 > `ShowNotification` 返回 `bool` 正是为这条分辨而生：「提交失败」才是实现问题，
 > 「已提交但没显示」是系统设置问题。两者混在一起就只能靠猜。
+
+## 命令行工具（`oriel`）
+
+```bash
+dotnet tool install --global OrielWeb.Cli   # 装完命令名是 oriel
+oriel --help
+```
+
+工具刻意**不引用本库**：它要在"库还没构建"的环境里跑（它就是用来诊断环境的）。
+版本与库同源（都取根 `Directory.Build.props` 的 `<Version>`）。
+
+### `oriel doctor`
+
+把 [docs/ROADMAP.md](docs/ROADMAP.md) 的「待真机验证清单」里**机器可判定**的那部分变成可执行检查，
+另外体检一个应用项目的配置：
+
+```bash
+oriel doctor                          # 体检本机（引擎、显示环境、SDK、工具链、打包工具）
+oriel doctor --project samples/OrielDemo   # 再体检那个项目
+oriel doctor --json                   # 机器可读（CI 用）
+```
+
+| 分类 | 例子 | 缺了算 |
+|---|---|---|
+| **能跑** | WebView2 运行时版本 / libwebkit2gtk 4.1 / GTK3 / 显示环境 | 阻断（FAIL） |
+| **能开发** | .NET 10 SDK、clang（Native AOT 的原生工具链） | 提示（WARN） |
+| **能打包** | WiX v5（.msi）、appimagetool（.AppImage）、hdiutil/codesign | 提示（WARN） |
+
+分三类的理由：混成一种等级会让"这台机器能不能跑我的应用"这个最要紧的问题
+被无关的工具链问题淹没。
+
+项目体检查的是那些**发布后才暴露**、症状是"白屏"或"点了没反应"的配置：
+手写 `wwwroot` 资源却漏了 `LogicalName`（分"已经坏了"与"迟早会坏"两档）、
+没有 `UseCapabilities`（Release 下所有 `oriel.invoke` 会被拒）、没有图标文件、
+目标框架不是 `net10.0`、`PublishAot` 没开、csproj 本身解析不了。
+
+报告末尾会附一节**人眼验证指引**：列出该平台还需要人看什么、跑什么命令、该看到什么。
+工具**不假装**能判定它们——那些项（托盘图标可不可见、通知横幅弹没弹、拖放能不能真的拖进去）
+本质上是"看到才算数"，指引里的每一项都对应 ROADMAP 里的一节，有单测保证两边不会漂移。
+
+退出码：`0` 无阻断项 / `1` 有阻断项 / `2` 用法错误。
+`1` 与 `2` 分开是刻意的——脚本里"我传错了参数"和"这台机器有问题"要能分开处理。
+
+### `oriel bundle`
+
+把一个**已发布的目录**打成该平台的安装产物：
+
+```bash
+dotnet publish samples/OrielDemo -c Release -r win-x64 -p:DebugType=none -o dist/demo
+
+oriel bundle --dir dist/demo --rid win-x64 --name "Oriel Demo" --id com.orielweb.demo \
+             --version 0.1.2 --icon app.png --out dist/bundle
+# 也支持 --manifest bundle.json（同一套字段；命令行值覆盖 manifest）
+```
+
+| RID | 产物 | 依赖的外部工具 |
+|---|---|---|
+| `win-*` | `.msi`（**per-user** 装到 `%LocalAppData%\Programs\<名字>`，带开始菜单快捷方式） | WiX **v5**（`dotnet tool install --global wix --version 5.*`） |
+| `osx-*` | `<名字>.app`（ad-hoc 签名）+ `.dmg` | `codesign` / `hdiutil`（macOS 自带） |
+| `linux-*` | `.AppImage`（缺 appimagetool 时退化成 AppDir） | `appimagetool` |
+
+取舍：
+
+- **只消费发布产物**，不替调用方决定怎么发布——AOT 与那堆属性各项目差别很大，库没有立场替它决定。
+- **per-user 而不是 Program Files**：与"AOT 单文件、解压即用"的分发方式一致，也不需要 UAC；
+  装到 Program Files 之后"应用自己更新"就必须提权（updater 还没做，现在选 per-machine 等于把那个问题提前埋下）。
+- **WiX 固定 v5**：v6 起要求接受 OSMF 的付费条款（`oriel doctor` 会提醒），v5 是最后一个 OSI 许可的版本。
+- **不跨平台打包**：`.dmg` 只能在 macOS 上打、`.AppImage` 只能在 Linux 上打——
+  它们需要的是各自平台上才有的工具，不是"写点代码"能补上的。命令会直接说清楚。
+- `--version` 没给时会从发布目录里的可执行文件读**文件版本**，但**只在 Windows 上有效**
+  （Linux/macOS 的 AOT 产物是 ELF/Mach-O，没有 PE 的版本资源）。
+
+**验证账**：产物文本（.wxs / Info.plist / .desktop / AppRun）与元数据校验有单测
+（含"XML 能被解析回来"这一条——转义写坏的代价是打包时才报一个与真正原因无关的错）；
+MSI 在 Windows 真机上走完"装 → 查 exe 与快捷方式 → 卸 → 查目录已删"（本机与 CI 的每次 push）；
+`.AppImage` 与 `.dmg` 已接进 release 工作流做同样的自验，**首次跑通待确认**（见 ROADMAP 的待验证清单）。
 
 ## 构建与发布
 

@@ -25,8 +25,8 @@
     Linux 的目标 RID，如 linux-x64 / linux-arm64。缺省 linux-x64。
 
     只接受 `linux-*`：本脚本的职责就是在 WSL 里发 Linux 产物，其他平台请用 publish.ps1
-    （Windows）或 make-macos-app.sh（macOS）。跨**架构**是允许的，但取决于 WSL 里是否装了
-    目标架构的工具链。
+    （Windows）或 `oriel bundle`（macOS/Linux 的安装产物）。跨**架构**是允许的，但取决于
+    WSL 里是否装了目标架构的工具链。
 
 .PARAMETER Output
     产物根目录（相对路径按仓库根解析）。缺省 publish。真正的产物在 <Output>/<Runtime>/。

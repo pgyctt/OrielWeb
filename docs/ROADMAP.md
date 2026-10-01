@@ -42,7 +42,7 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 | Linux 隐藏启动 | ✅ 已完成 | `show_all` 后立刻 `hide`（GTK 的 realize 自上而下，不 show 则 webview 不被 realize，页面可能推迟到可见才开始加载） | WSL 实测：`--hidden` 下 `Map State: IsUnMapped`，同时 `WebKitWebProcess` 照常出现（页面照常加载） |
 | macOS/Linux DevTools | ⚠️ 已实现未验证 | macOS：`WKWebView.isInspectable`（13.3+，先 `respondsToSelector:` 探测）；Linux：`WebKitSettings.enable_developer_extras` | CI 三平台冒烟全绿（run 13 / `265c9f0`），只证明开关不影响启动；**面板本身需人眼**（见待真机清单） |
 | 窗口图标（统一 `WithIcon`） | ⚠️ Linux 的**属性写入**已验证，但**任务栏是否真的显示它未验证**（2026-10-01 实测：不显示）；Windows/macOS 未验证 | 各平台落到真正有图标槽的位置：Linux 窗口图标（`gtk_window_set_icon_from_file`）、Windows `WM_SETICON` 覆盖 exe 图标、macOS Dock 图标。**2026-10-01 补上两条关键差异**：① Windows 会主动从 exe 取图标，Linux/macOS 没有等价来源（ELF/Mach-O 不带图标，macOS 的图标在 `.app` bundle 里），**必须由应用显式给文件**；② **GNOME 不读 `_NET_WM_ICON`**——它按 `WM_CLASS` 匹配 `.desktop` 取 `Icon=`，所以 `WithIcon` 在 GNOME 上**改不了任务栏图标**，还需要一份 `.desktop`。见 README「应用图标」 | WSL 对照实测：带 `--icon` 时 `_NET_WM_ICON` 出现 `Icon (48 x 48)`，不带时 `not found`——**这只证明属性被写入**。2026-10-01 用户实测：属性在，任务栏仍是通用图标 → 说明上面第 ② 条。CI 三平台冒烟全绿（run 13），那只证明该代码路径不破坏启动 |
-| Linux HiDPI 拖动偏移 | ⏳ 未开始 | 用 `gdk_window_get_scale_factor` 折算增量（只针对 X11 那条流式路径；Wayland 下的拖动已交给合成器，不存在宿主侧折算） | **需真实高 DPI 缩放环境** → 见待真机清单 |
+| Linux HiDPI 拖动偏移 | ✅ **经实测确认无需折算**（2026-10-01） | 原计划用 `gdk_window_get_scale_factor` 折算拖动增量；实测否掉了这个前提——GDK 的 API 坐标**本来就是应用像素**（GDK 内部已乘 scale 再交给 X），与页面的 CSS 像素是同一套坐标系，再折一次会在 2x 屏上偏移一倍。详见 `DECISIONS.md` 的「Linux HiDPI 拖动偏移：实测结论」 | 探针实测（WSL2 + WSLg、X11 后端、`GDK_SCALE=2`）：窗口的逻辑尺寸 200x100 对应设备尺寸 400x200；`gtk_window_move` 请求的位移在两侧的比值 = scale；且 `设备 = 逻辑 × scale + 固定装饰偏移 (38,59)`，该偏移在 scale=1 与 2 下相同。**只剩页面那一半未验证**（WebKitGTK 的 `MouseEvent.screenX` 在高 DPI 下是 CSS 像素还是设备像素）→ 见待真机清单 |
 
 **已定**：图标来源用显式的 `OrielWindowOptions.WithIcon(path)`——不做"从 exe 取图标"的跨平台抽象，
 因为 macOS 的 `NSWindow` 根本没有窗口级图标槽（它设的是 Dock 图标），硬凑一个统一语义只会在某个平台上失真。
@@ -118,6 +118,19 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 - 若不符：先看窗口标题是否停在 `WithTitle` 设的「Oriel Demo — 手动验证」（那说明页面 `<title>` 没生效、
   页面根本没加载），再确认解压目录里 `manual-check.html` 存在，最后看 `Navigate()` 里
   `AssetUrlResolver` 是否返回了 null（返回 null 就会退回 `loadRequest:`，重新撞上 DNS 失败）。
+
+#### Linux 高 DPI 下的拖动是否跟手（宿主侧已确认无需折算，只剩页面那一半）
+- 状态：宿主侧**已有实测结论**（2026-10-01 探针，见 `DECISIONS.md`：GDK 的 API 坐标就是应用像素，
+  不需要按 scale 折算增量）；未验证的是页面那一半——WebKitGTK 的 `MouseEvent.screenX`
+  给的是 CSS 像素还是设备像素。
+- 环境：Linux 桌面（X11 与 Wayland 各一次），缩放设成 200%（在桌面设置里改；
+  `GDK_SCALE=2` 这个环境变量只在 X11 后端生效）。
+- 步骤：1) 在 200% 缩放下跑 `samples/OrielDemo`；2) 按住标题栏拖动，看窗口是否**跟手**；
+  3) 双击标题栏应最大化、单击标题栏不应移动窗口。
+- 预期：拖动跟手；双击与单击行为正常（demo 的标题栏现在用 `oriel.system.doubleClickTimeMs` 同步判双击）。
+- 若不符：先看偏差的方向——**窗口比指针快约 scale 倍**说明页面侧拿到的是设备像素，
+  修法是**页面**用 `window.devicePixelRatio` 折算增量，**不要**在宿主侧乘 scale
+  （那正是 2026-10-01 被实测否掉的写法）；**慢到 1/scale** 则相反，说明宿主那侧漏了折算。
 
 ## 阶段 B —— 内容与 IPC 深度
 
@@ -242,12 +255,28 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 |---|---|---|---|
 | **安全与能力模型** | ✅ 已完成 | 参照 **Ryn**（四者里唯一做到的）：命令白名单**默认拒绝**；配置缺失时 Debug=allow-all、Release=fail-closed；**每启动一个 token** + Origin 校验；**远程页面不接 IPC**。本库的落地形态（与 Ryn 的差异都写在 `DECISIONS.md`）：模式只有**精确名 + 前缀通配**（`todo.*`，刻意不做正则，Ryn 的 glob/argv 模板不属于"webview 核心库"）；**deny 优先**；`win.*` 保留前缀**始终放行**（否则 Release 下无边框窗口的标题栏按钮全废）；来源校验走**注入期判定**——不可信来源的文档里**根本不安装桥接脚本**，而不是装上了再拦；Debug / Release 判定取**消费方**的构建配置（包内 targets 注入的 `AssemblyMetadata` 优先，回退 `DebuggableAttribute`） | `tests/OrielWeb.Tests/CapabilityTests.cs` 60 例纯函数/门禁单测（模式匹配含 `todo.*` 不匹配 `todo` 与大小写、deny 优先、令牌形状与固定时长比较、Debug/Release 判定、三层门禁的放行与拒绝）；`tests/bridge/bridge.test.mjs` 三平台各断言"不可信来源不安装 + 每条出站消息带令牌"；端到端由 `--selftest capability` 在**真机**上验放行与拒绝两条路径（Windows 与 WSL2 + WSLg 各跑一次；macOS 已接进 `verify-macos.sh`，待 CI 的 smoke-macos 首次跑通） |
 | **包内 MSBuild build logic** | ✅ 已完成 | `buildTransitive/OrielWeb.targets` 随包分发，自动把 `wwwroot\**\*` 按带 `/` 分隔符的 `LogicalName` 嵌入；**消费方已自行声明 wwwroot 资源时跳过**（幂等，旧写法行为完全不变）；`<OrielWebEmbeddedAssets>false</OrielWebEmbeddedAssets>` 可整体关掉。顺带注入 `AssemblyMetadata("OrielBuildConfiguration")`，供安全模型判定 Debug / Release。实现里踩到两处 MSBuild 时机陷阱，已写进 `docs/DECISIONS.md` | 验证脚本 `tools/verify-pack.ps1`（已接进 CI 的 test job）跑四个场景：零配置（`app.min.js`、`vendor.bundle.js`、嵌套目录都拿到显式分隔符资源名）、旧写法不重复嵌入、显式关掉、包里确实带上了 targets。最小消费样例 `samples/OrielMinimal/`（整个 csproj 只有一行 `PackageReference`）。**旧写法回归由 `samples/OrielDemo` 保留**——它仍手写那一行且不写 `LogicalName` |
-| **运行时注入的同步 API** | ⏳ 未开始 | 参照 **AOTrino**（它的 `system.doubleClickTimeMs`、同步窗口控制）。本库要解决的具体问题是：无边框拖动必须在 `mousedown` 内**同步**判断双击，不能 await——现在靠"移动阈值"绕过（见 README 无边框窗口一节） | 桥接测试（`tests/bridge/bridge.test.mjs`）覆盖注入对象的存在与同步语义；真机上人眼确认双击与拖动不再互相干扰 |
-| **工具链与打包** | ⏳ 未开始 | 参照 **Ryn**（`new` / `dev` / `build` / `bundle` / `doctor`）与 **AOTrino**（`dotnet new` 模板）：① `dotnet new` 模板（与上一项天然配套）；② `doctor` 子命令——把本文件的「待真机验证清单」变成**可执行**的检查，而不是让人对着文档手工点；③ 打包器：macOS `.app` + dmg（签名/公证）、Windows WiX、Linux AppImage；④ updater：**强制验签 + 防降级**（Ryn 用 ECDSA P-256） | ①③ 在各自平台上跑一次产物；② 断言它对本机环境的判定与文档一致；④ 验签失败与降级两个**负例**必须有测试 |
+| **运行时注入的同步 API** | ✅ 已完成 | 参照 **AOTrino**（它的 `system.doubleClickTimeMs`）：注入的是**快照**而不是同步 RPC——宿主建窗时把页面同步需要的那几个事实（系统双击间隔、缩放）写进脚本（`window.oriel.system`），页面在 `mousedown` 里同步读。**刻意不做同步 RPC**：那要三平台各一套自研原生机制（WebView2 hostObjects / WebKitGTK script-message-with-reply / WKWebView prompt 拦截），还会打破"一份桥接脚本三平台共用"，而需求只用到几个常量。demo 的标题栏改用同步判定，同时**保留**原来的移动阈值作对照（见 README「同步可读的宿主事实」） | 单测：三平台"取不到"的回退形态与数值格式化（`SystemSnapshotTests`，含逗号文化下仍须写出 `1.5`）；桥接测试：三平台各断言 `oriel.system` 同步存在、小数不被截断；真机：`--selftest ipc` 断言两个值为正，并可用 `--expect-scale <n>` 断言"注入的缩放 == 系统缩放"（Windows 与 WSL2 + WSLg 各跑一次，含反向对照）。CI 的 smoke-linux 用 `GDK_BACKEND=x11 GDK_SCALE=2` 造 2x 跑该断言 |
+| **工具链与打包** | ✅ CLI + doctor + 打包器已完成；`dotnet new` 模板与 updater **仍未开始** | 新增 `src/OrielWeb.Cli`（`PackAsTool`，命令名 `oriel`，刻意不引用库——它要在库还没构建时就能跑）：② `doctor` 把本文件「待真机验证清单」里机器可判定的部分变成可执行检查，并按"能跑 / 能开发 / 能打包"分三级结论，另附一节**人眼验证指引**（每项带对应的小节名，有单测防漂移）；`doctor --project` 体检应用配置（手写 wwwroot 资源缺 `LogicalName` 分"已坏/迟早坏"两档、没声明能力、没图标……）；③ `bundle` 消费一个发布目录，产出 `.msi`（per-user，WiX **v5**）/ `.dmg`（内含 `.app`，ad-hoc 签名）/ `.AppImage`。`tools/make-macos-app.sh` 已删除（.app 组装搬进 CLI，一个实现者）。未做：① `dotnet new` 模板、④ updater | 单测 37 例覆盖参数解析、项目体检判定矩阵、产物文本（含"XML 能被解析回来"）；**MSI 在 Windows 真机上跑完"装 → 查 exe 与快捷方式 → 卸 → 目录已删"**，并接进 CI 的每次 push 与 release；`.dmg` / `.AppImage` 的自验已写进 release 工作流（挂载核内容 / 解包核 AppRun 与 .desktop），**首次跑通待确认**；`doctor` 每次 push 在 CI 里跑（项目体检不允许有阻断项）；doctor 与本文件清单的绑定由单测断言 |
 
-> 建议顺序：**包内 MSBuild build logic → 安全模型 → 同步 API → 工具链**（前两项已完成）。
-> 前两项一个消灭现有缺陷、一个堵住最大的能力缺口，都已在现有环境里验证；
-> 后两项要引入新的工具链与多平台产物，成本高一个量级。
+> 建议顺序：**包内 MSBuild build logic → 安全模型 → 同步 API → 工具链**（前三项已完成，
+> 第 4 项的 CLI / doctor / 打包器也已完成）。前两项一个消灭现有缺陷、一个堵住最大的能力缺口；
+> 最后一项剩下的两块（`dotnet new` 模板、updater）都需要新的分发基础设施，成本高一个量级。
+
+### 待验证清单（阶段 D 的工具链）
+
+#### 打包产物（.dmg / .AppImage）
+- 状态：**路径已实现、自验已写进 release 工作流，但一次都没跑过**。
+  `.msi` 已在 Windows 真机上验过（装 → 查 exe 与快捷方式 → 卸 → 目录已删）；
+  `.app` 的组装在 WSL 里验过 AppDir 那一半，`.dmg` 与 `.AppImage` 的**封装**需要 macOS / appimagetool。
+- 环境：macOS 与 Linux 各一次（release 工作流里会自动跑；本地也可照下面步骤跑）。
+- 步骤：1) `dotnet publish samples/OrielDemo -c Release -r <rid> -p:DebugType=none -o dist/demo`；
+  2) `oriel bundle --dir dist/demo --rid <rid> --name "Oriel Demo" --id com.orielweb.demo --version 0.1.2 --out dist/bundle`；
+  3) macOS：`hdiutil attach dist/bundle/*.dmg`，看 `Oriel Demo.app` 在不在、
+  `plutil -extract CFBundleIdentifier raw "…/Oriel Demo.app/Contents/Info.plist"` 是否为 `com.orielweb.demo`；
+  Linux：`./Oriel-Demo-*.AppImage --appimage-extract`，看 `squashfs-root/AppRun`、`usr/bin/OrielDemo` 与 `*.desktop` 在不在。
+- 预期：三条都符合；`.desktop` 的 `Exec` 指向应用名、`Icon` 与 AppDir 里的图标文件名一致。
+- 若不符：先看 `oriel bundle` 自己的输出（缺外部工具时它会直说缺什么、怎么装）；
+  macOS 的 `.app` 打不开就看 `codesign -dv` 与 Info.plist 的 `CFBundleIdentifier`（缺了它 WKWebView 会直接 trap）。
 
 ## 已确认的缺陷（真机验证发现）
 
