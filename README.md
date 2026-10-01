@@ -181,8 +181,12 @@ internal partial class AppJsonContext : JsonSerializerContext;
 ```
 
 ```js
-// 拖动：Windows 上要等指针移动超过阈值再发起——立即发起会进入原生模态循环并吞掉第二次点击，
-// 双击序列就凑不满、dblclick 不触发。macOS/Linux 用流式拖动（dragStart/dragTo/dragEnd），可立即开始。
+// 拖动：**三个平台都不要在 mousedown 里立刻发起原生拖动**——立即发起会吞掉第二次点击，
+// 双击序列就凑不满、dblclick 不触发。
+//   * Windows：由页面自己等指针移动超过阈值（原生模态循环会吞掉后续点击）；
+//   * Linux（Wayland）：库在 dragStart 里**先不交给合成器**，等 dragTo 的增量超过阈值才交
+//     （一旦交给合成器，指针就被 grab，页面再也收不到事件）——所以页面照常写即可；
+//   * Linux（X11）/ macOS：流式拖动不抢指针，但页面仍应在阈值之后才发 dragStart。
 dragRegion.addEventListener('mousedown', (e) => { /* 记录起点 */ });
 
 // 双击标题栏：最大化 / 还原
@@ -192,26 +196,80 @@ dragRegion.addEventListener('dblclick', () => oriel.invoke('win.toggleMaximize')
 oriel.on('maximized', (maximized) => { /* 切换图标 */ });
 ```
 
-窗口**完全无边框**，边缘拖动调整大小由系统原生处理，无需在页面里实现任何热区。
-Windows 上这一点由 **Composition 宿主**保证：窗口以 `WS_EX_NOREDIRECTIONBITMAP` 创建，WebView2 通过
-`ICoreWebView2CompositionController` 作为 DirectComposition 的一份视觉接入，**不再是子窗口**，
-因此窗口能收到 `WM_NCHITTEST` 并显式给出边缘命中值（子窗口会以 `HTCLIENT` 阻断该消息向上的传递）。
-代价是组合托管的 WebView 收不到系统输入，鼠标消息由宿主转发（键盘不需要）。
-详见 `docs/DECISIONS.md` 中的设计记录。
+窗口**完全无边框**。边缘拖动调整大小由**库自己接管**，页面里不需要任何热区：
+
+| 平台 | 边缘 resize | 说明 |
+|---|---|---|
+| Windows | ✅ 已运行验证 | 由 **Composition 宿主**保证：窗口以 `WS_EX_NOREDIRECTIONBITMAP` 创建，WebView2 通过 `ICoreWebView2CompositionController` 作为 DirectComposition 的一份视觉接入，**不再是子窗口**，因此窗口能收到 `WM_NCHITTEST` 并显式给出边缘命中值（子窗口会以 `HTCLIENT` 阻断该消息向上的传递）。代价是组合托管的 WebView 收不到系统输入，鼠标消息由宿主转发（键盘不需要） |
+| Linux | ⚠️ **已实现，未真机验证** | 去掉窗口装饰后 WM 不再提供 resize 边框（Ubuntu 22.04 实测确认），所以由库自己在 webview 的 `motion-notify-event` / `button-press-event` 里判**边缘热区**（5 逻辑像素），命中就把 resize 交给 WM/合成器（`gtk_window_begin_resize_drag`：X11 走 WM，Wayland 转成 `xdg_toplevel.resize`）。命中判定是纯函数、有 18 个单测；**GTK 侧尚未在真机验证** |
+| macOS | ⚠️ 未实现 | 无边框后同样不再有系统 resize 边框；尚未处理 |
+
+> 热区那几像素里页面收不到 `mousemove`/`click`——这与 Windows 上 `WM_NCHITTEST` 把边缘像素交给 WM
+> 是同一件事，不是 Linux 特有的损失。窗口被设为不可调整大小（`WithResizable(false)`）时不接管。
+> 需要更宽的抓手或自定义外观时，仍可用 `Resize(w, h)` 由应用自己给出手柄。
+> 详见 `docs/DECISIONS.md` 与 ROADMAP 的「已确认的缺陷」。
 
 ### 应用图标
 
-任务栏与 Alt-Tab 的按钮图标取自**窗口图标**：窗口完全没有图标时，Windows 退回的是**通用应用图标**，
-而不是 exe 自带的那个（实测确认）。因此本库在建窗口类时会主动把 exe 的图标取来设到窗口上
-（`ExtractIconEx`，走 shell 自身的解析，不依赖图标资源 ID）。
+**三个平台拿到图标的途径完全不同**——这是最容易被"在 Windows 上试通了"骗过去的一处：
 
-应用侧只需在 csproj 里声明图标即可：
+| 平台 | 图标从哪来 | 应用要做什么 |
+|---|---|---|
+| Windows | 库**主动从 exe 取**（`ExtractIconEx`，走 shell 自身的解析，不依赖图标资源 ID）设到窗口类上。因为窗口完全没有图标时，Windows 退回的是**通用应用图标**而不是 exe 自带的那个（实测确认） | 只在 csproj 声明 `<ApplicationIcon>` |
+| Linux | **只能由应用给文件**：`gtk_window_set_icon_from_file` → X11 下写入 `_NET_WM_ICON`。ELF 里没有图标可取。**⚠️ 但 `_NET_WM_ICON` 只管到一部分桌面环境**——GNOME（Ubuntu 默认）不读它，见下 | `WithIcon(绝对路径)` + 随产物分发文件；**GNOME 上还需要一个 `.desktop`** |
+| macOS | **只能由应用给文件**：`NSApplication.applicationIconImage`（Dock 图标）。裸可执行文件没有 bundle 身份，也就没有图标 | 同上 |
 
 ```xml
-<ApplicationIcon>app.ico</ApplicationIcon>
+<ApplicationIcon>app.ico</ApplicationIcon>                      <!-- Windows：exe 图标 -->
+<None Include="app.png" CopyToOutputDirectory="PreserveNewest" /><!-- Linux/macOS：随产物分发的图标文件 -->
 ```
 
-不声明则窗口不带图标，任务栏显示系统通用图标。
+```csharp
+.AddWindow(w => w.WithTitle("我的应用")
+                 .WithIcon(Path.Combine(AppContext.BaseDirectory, "app.png")))
+```
+
+几条**踩过才知道**的：
+
+- **相对路径会失效**：三个平台都按当前工作目录解析相对路径，而 macOS 从 `.app` 启动时 cwd 是 `/`。
+  一律用 `Path.Combine(AppContext.BaseDirectory, …)` 拼绝对路径。
+- **格式**：Linux/macOS 走 **PNG 最稳**（GTK 经 gdk-pixbuf、Cocoa 经 `NSImage`）；
+  Windows 的 `LoadImageW` 只认 ICO/BMP——而 Windows 侧通常根本不需要设它。
+- **赋值时会校验文件存在**（不存在抛 `FileNotFoundException`）。因为三个平台在加载失败时都是**静默**的
+  （GTK 丢掉 GError、Cocoa 拿到 nil 就跳过、`LoadImageW` 返回 0），不在这里拦住，
+  表现就只剩"图标没生效，且没有任何提示"。
+- 不设图标时：Windows 用 exe 图标，Linux/macOS 显示**系统通用图标**（`samples/OrielDemo` 就是按上面这套
+  做的：`app.ico` 给 Windows，同源的 `app.png` 给另外两个平台，两者都由 `tools/make-icons.ps1` 生成）。
+
+**⚠️ GNOME 上光有 `WithIcon` 不够（2026-10-01 用户实测）**
+
+`_NET_WM_ICON` 是 X11 的"窗口图标"约定，但 **GNOME Shell 的任务栏/应用切换器并不读它**：GNOME 按窗口的
+`WM_CLASS` 去找**匹配的 `.desktop` 文件**、取其中的 `Icon=`；找不到就退回通用图标。
+这正好解释了"`xprop` 里 `_NET_WM_ICON` 明明写进去了，任务栏却还是通用图标"——
+本仓库早先的 Linux 验证只断言了**那个属性存在**，没有断言任务栏真的显示它。
+
+GNOME 上要让任务栏出图标，得给应用装一份 `.desktop`：
+
+```ini
+# ~/.local/share/applications/orieldemo.desktop
+[Desktop Entry]
+Type=Application
+Name=Oriel Demo
+Exec=/绝对路径/OrielDemo
+Icon=/绝对路径/app.png
+StartupWMClass=OrielDemo        # 必须与窗口的 WM_CLASS 的 res_class 对上
+Categories=Utility;
+```
+
+```bash
+update-desktop-database ~/.local/share/applications
+```
+
+`StartupWMClass` 是关键——写错就等于没有匹配，图标照旧是通用图标。用 `xprop WM_CLASS` 取窗口实际的值
+（本仓库实测是 `("OrielDemo" "OrielDemo")`，取第二个，即 res_class）。
+
+> 这条来自用户在 Ubuntu 22.04 上的实测报告；`.desktop` 这一侧的修法**尚未在本仓库逐项验证**。
+> 对要分发的应用来说这份文件应当由安装器写入——那属于 ROADMAP 阶段 D「工具链与打包」。
 
 ## 导航与页面通信
 
@@ -382,8 +440,10 @@ app.ShowNotification(new OrielNotificationOptions
 {
     Title = "构建失败", Body = "见控制台", IconPath = "assets/error.png", Id = "build-failed",
 });
-app.NotificationClicked += id => { /* 点了哪条通知（平台差异见下表） */ };
 ```
+
+> **没有"通知被点击"的回调**——三个平台都拿不到（见下面的验证账）。这个能力**不提供**，
+> 而不是提供一个永不触发的事件：订阅一个空事件不会编译报错，调用方只会在运行时才发现收不到。
 
 通知的**应用标识**默认取入口程序集名（Windows 上即 AUMID，Linux 上是 `notify-send --app-name`），
 因此同机安装的多个基于本库的应用在系统「通知」设置里是分开的、可以逐个静音。需要与打包时注册的
@@ -498,7 +558,7 @@ app.DisableAutoStart();
 |---|---|---|
 | 托盘 | `--selftest shell`：创建托盘 + 设进一份含分隔线/勾选/禁用/子菜单/role 的菜单，进程不崩；`tools/verify-linux-shell.sh` 采集证据 | **图标是否真的出现在托盘区**、菜单外观、点击行为。Linux 另有平台限制：GNOME Shell 需 AppIndicator 扩展、Wayland 会话多数不显示 |
 | 通知投递 | `tools/verify-linux-shell.sh`：真 `notify-send` → 会话总线 → 假通知服务，断言**标题与正文逐字符正确**；另有 8 个单测覆盖**应用标识的规范化**（128 字符上限、空格与非法字符、非 ASCII 保留、兜底值） | macOS 的通知横幅外观；Windows 上 PowerShell/WinRT toast 的实际展示 |
-| 通知点击上报 | **三平台均不支持**，且都是代码里的**显式空实现**（不是"忘了触发"）：未打包应用的 toast 激活需要开始菜单快捷方式携带 AUMID 并注册 COM 激活器，那是打包器的职责；Linux 的 `notify-send` 与 macOS 的 `osascript` 则根本拿不到点击 | — |
+| 通知点击上报 | **不提供该能力**：三平台都拿不到——Windows 需要打包器注册 COM 激活器，Linux 的 `notify-send` 与 macOS 的 `osascript` 根本没有回调入口。2026-10-01 起从 API 中**整体移除**（此前是三个"显式空实现"，但订阅一个永不触发的事件不会编译报错） | — |
 | 菜单构建 | 托盘菜单与窗口上下文菜单共用一套构建与 role 解释；加速键解析有 41 个单测 | 菜单的外观、上下文菜单的弹出位置与交互——需人眼 |
 | 开机自启 | `--selftest shell`：**启用 → 查得到 → 禁用 → 查不到**的闭环（三平台都成立）；Linux 上还逐项核对写出的 `.desktop` 内容；三段配置文本另有 22 个单测（含参数引号的边界：结尾反斜杠、内嵌引号、freedesktop 保留字符） | 下次**开机/登录时是否真的自动启动**——需要真机重启 |
 | Shell 集成 | 取证脚本用 `xdg-open` 替身断言两件事：URL **真的**交给了系统默认程序，且 `file:`/裸路径/`javascript:` **一次都没调出去**（白名单有效性）；另有 24 个单测覆盖校验与三平台命令翻译 | 真实桌面上弹出的浏览器/文件管理器是否符合预期——需人眼 |
@@ -660,7 +720,7 @@ OrielDemo.exe --todo             # Todo 示例页（"怎么用本库写应用"�
 ```
 
 操作台把每项能力做成一个按钮页面，
-并把**托管侧的回调**（托盘菜单项、通知点击、拖放路径）回显到页面底部的日志区。
+并把**托管侧的回调**（托盘菜单项、上下文菜单项、拖放路径）回显到页面底部的日志区。
 其中「内建右键菜单」那一栏可以直接切策略（`Editing` / `Native` / `Disabled`），切完在页面任意处右键
 即可对比——那一栏还带一个输入框，用来验证留下的三项**真的能作用在选中内容上**（粘贴要能把系统剪贴板
 内容送进去，这是"过滤没把原生行为弄坏"的关键证据）：
@@ -673,7 +733,7 @@ dotnet run --project samples/OrielDemo -c Release -- --manual-check
 
 | 现象 | 为什么是预期 |
 |---|---|
-| 点通知不会有回调 | 未打包应用的 toast 激活需要开始菜单快捷方式携带 AUMID + 注册 COM 激活器（打包器的职责）——三平台如实一致 |
+| 点通知不会有回调 | **该能力已整体移除**——三平台都拿不到点击（见「验证账」），所以不再提供这个事件，而不是留一个永不触发的空实现 |
 | 上下文菜单开着时窗口不响应 | 原生弹出菜单的模态行为，直到你选择或取消 |
 | 选文件夹时初始目录无效 | Windows 走老 API（`SHBrowseForFolder`），设初值要挂回调，已记为取舍 |
 | 日志写「已提交给系统」但没看到横幅 | 库已把通知交给系统；显不显示由系统的通知设置与专注助手决定（Windows：设置 → 系统 → 通知） |
@@ -791,6 +851,19 @@ host 之外的外部 URL（Vite dev server 等）原样加载。背景与取舍�
 
 ### Linux 环境依赖与已知限制
 
+- **WSLg / 无 GPU 环境下的 MESA 警告是噪音，别当线索**：stderr 会出现这样一串——
+
+  ```
+  libEGL warning: failed to get driver name for fd -1
+  libEGL warning: MESA-LOADER: failed to retrieve device information
+  MESA: error: ZINK: failed to choose pdev
+  libEGL warning: egl: failed to create dri2 screen
+  ```
+
+  WSLg 下没有 `/dev/dri`，Mesa 找不到硬件 GL，回落到软件渲染——**页面照常显示，功能不受影响**
+  （只是性能差些）。**尤其不要拿它排查"窗口白屏"**：同环境下未经加速的 GTK+WebKit 程序照样画得好，
+  白屏另有原因（见[平台运行要求](#平台运行要求)开头的内嵌资源说明与 `docs/DECISIONS.md`）。
+  这条是**被误导过一次之后**才记下来的。
 - **中文字体必须另行安装**：WebKitGTK 经 fontconfig 取字体，发行版未预装 CJK 字体时中文会渲染成方框。
   先装 `fonts-noto-cjk`（Debian/Ubuntu）再运行；页面侧的 `font-family` 也应带上 `"Noto Sans CJK SC"`
   这类跨平台族，而不是只写 `"Segoe UI"` / `"Microsoft YaHei"` 这类 Windows 专有字体名。

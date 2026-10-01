@@ -56,6 +56,21 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     private bool? _isWayland;
     // 本次拖动是否已经交给合成器——决定 DragTo 该不该插手。
     private bool _waylandDrag;
+    // Wayland 下"按下了、但还没真交给合成器"：等指针动过阈值再交，否则双击会被吞掉（见 LinuxDragSupport）。
+    private bool _waylandDragPending;
+    // 已安排过一次"下一轮主循环再读最大化状态"，避免连续事件重复排队。
+    private bool _maximizedSyncScheduled;
+
+    // 无边框窗口的边缘 resize。窗口一旦 set_decorated(false)，WM 就不再提供 resize 边框，
+    // 只能自己判边缘命中、再把 resize 交回给 WM/合成器（见 LinuxResizeSupport）。
+    private bool _handleResizeEdges;
+    // 指针当前是否停在边缘热区上（用于"离开时把光标交回去"这件事只做一次）。
+    private bool _pointerInResizeBorder;
+    // 按 GdkWindowEdge 索引缓存光标：motion 事件很密，每次现造就太浪费了。
+    // 句柄归本对象所有（gdk_cursor_new_for_display 返回新引用），销毁时统一 unref。
+    private readonly nint[] _resizeCursors = new nint[8];
+    // 当前已设上去的是哪条边的光标；-1 = 没设。
+    private int _activeCursorEdge = -1;
 
     private event Action? Loaded;
     private event Action<OrielCloseRequestEventArgs>? Closing;
@@ -254,6 +269,148 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     }
 
     // ------------------------------------------------------------------
+    // 无边框窗口的边缘 resize
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// 指针在 webview 上移动（<c>motion-notify-event</c>）：进到边缘热区就换成对应的 resize 光标。
+    /// </summary>
+    /// <returns>TRUE = 已处理并**吞掉**该事件（不再交给 WebKit）。</returns>
+    /// <remarks>
+    /// 必须吞掉：WebKit 的默认处理紧接着会按"指针下面是链接还是文本"重设光标，我们刚设的那个会被盖掉，
+    /// 表现为光标闪烁。代价是热区那几像素里页面收不到 <c>mousemove</c>——这与 Windows 上
+    /// <c>WM_NCHITTEST</c> 把边缘像素交给 WM 是同一件事，不是 Linux 特有的损失。
+    /// </remarks>
+    internal bool OnPointerMotionForResize(nint gdkEvent)
+    {
+        if (!_handleResizeEdges || gdkEvent == 0)
+        {
+            return false;
+        }
+
+        GdkWindowEdge? edge = ResolvePointerEdge(gdkEvent);
+        if (edge is null)
+        {
+            if (_pointerInResizeBorder)
+            {
+                _pointerInResizeBorder = false;
+                _activeCursorEdge = -1;
+                SetWebviewCursor(0); // 交回默认；WebKit 下一次 motion 会按内容重设
+            }
+
+            return false;
+        }
+
+        _pointerInResizeBorder = true;
+        if (_activeCursorEdge != (int)edge.Value)
+        {
+            _activeCursorEdge = (int)edge.Value;
+            SetWebviewCursor(ResizeCursor(edge.Value));
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// 在 webview 上按下鼠标（<c>button-press-event</c>）：在边缘热区按下左键时，把 resize 交给
+    /// 窗口管理器/合成器（X11 走 WM、Wayland 转成 <c>xdg_toplevel.resize</c>）。
+    /// </summary>
+    /// <returns>TRUE = 已接管这次按下（不再交给 WebKit）。</returns>
+    internal bool OnButtonPressForResize(nint gdkEvent)
+    {
+        if (!_handleResizeEdges || gdkEvent == 0)
+        {
+            return false;
+        }
+
+        GdkWindowEdge? edge = ResolvePointerEdge(gdkEvent);
+        if (edge is null)
+        {
+            return false;
+        }
+
+        // 只接管左键：右键要留给上下文菜单
+        if (GtkNative.GdkEventGetButton(gdkEvent, out uint button) == 0 || button != 1)
+        {
+            return false;
+        }
+
+        _ = GtkNative.GdkEventGetRootCoords(gdkEvent, out double rootX, out double rootY);
+
+        // 与 gtk_window_begin_move_drag 同理：Wayland 下必须在**按住期间**发出——协议只吃
+        // seat + serial，而 GTK3 取的是最近一次隐式抓取的 serial。这里就在 button-press 里同步调用，
+        // 天然满足该时序；挪到别处（例如异步的页面命令里）就会被合成器直接忽略。
+        GtkNative.GtkWindowBeginResizeDrag(
+            _gtkWindow,
+            (int)edge.Value,
+            (int)button,
+            (int)rootX,
+            (int)rootY,
+            GtkNative.GdkEventGetTime(gdkEvent));
+
+        return true;
+    }
+
+    /// <summary>指针落在窗口的哪条边/哪个角上；不在边缘（或事件没有坐标）时返回 null。</summary>
+    private GdkWindowEdge? ResolvePointerEdge(nint gdkEvent)
+    {
+        if (GtkNative.GdkEventGetCoords(gdkEvent, out double x, out double y) == 0)
+        {
+            return null;
+        }
+
+        return LinuxResizeSupport.ResolveEdge(
+            x,
+            y,
+            GtkNative.GtkWidgetGetAllocatedWidth(_webview),
+            GtkNative.GtkWidgetGetAllocatedHeight(_webview),
+            LinuxResizeSupport.BorderThickness);
+    }
+
+    /// <summary>取（并按需创建）某条边对应的光标句柄。</summary>
+    private nint ResizeCursor(GdkWindowEdge edge)
+    {
+        int index = (int)edge;
+        if (_resizeCursors[index] == 0)
+        {
+            nint display = GtkNative.GdkDisplayGetDefault();
+            if (display != 0)
+            {
+                _resizeCursors[index] = GtkNative.GdkCursorNewForDisplay(
+                    display, (int)LinuxResizeSupport.CursorFor(edge));
+            }
+        }
+
+        return _resizeCursors[index];
+    }
+
+    /// <summary>把光标设到 **webview 自己的** GdkWindow 上（设到顶层窗口上会被子窗口盖掉）。</summary>
+    private void SetWebviewCursor(nint cursor)
+    {
+        nint gdkWindow = GtkNative.GtkWidgetGetWindow(_webview);
+        if (gdkWindow != 0)
+        {
+            GtkNative.GdkWindowSetCursor(gdkWindow, cursor);
+        }
+    }
+
+    /// <summary>释放缓存的光标。<c>gdk_cursor_new_for_display</c> 返回的是新引用，归本对象所有。</summary>
+    private void ReleaseResizeCursors()
+    {
+        for (int i = 0; i < _resizeCursors.Length; i++)
+        {
+            if (_resizeCursors[i] != 0)
+            {
+                GtkNative.GObjectUnref(_resizeCursors[i]);
+                _resizeCursors[i] = 0;
+            }
+        }
+
+        _activeCursorEdge = -1;
+        _pointerInResizeBorder = false;
+    }
+
+    // ------------------------------------------------------------------
     // 创建
     // ------------------------------------------------------------------
 
@@ -265,6 +422,9 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         if (_options.Frameless)
         {
             GtkNative.GtkWindowSetDecorated(_gtkWindow, false);
+            // 去掉装饰后 WM 就不再提供 resize 边框，"拖边缘改大小"会整个失效（Ubuntu 22.04 实测）。
+            // 这里记下要不要自己接管；**不可调整大小的窗口不接管**——接管了也只是白白吃掉边缘那几像素的点击。
+            _handleResizeEdges = _options.Resizable;
         }
 
         if (_minWidth > 0 || _minHeight > 0)
@@ -300,6 +460,12 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
 
         // 拖放落点：注册在 webview 上（信号连接在上一条里，载荷解析在 trampoline 里）
         EnableFileDrop(_webview);
+
+        // 边缘 resize：motion 事件默认不投递，要显式加进事件掩码，热区才收得到指针移动
+        if (_handleResizeEdges)
+        {
+            GtkNative.GtkWidgetAddEvents(_webview, GtkNative.GdkPointerMotionMask);
+        }
 
         GtkNative.GtkContainerAdd(_gtkWindow, _webview);
 
@@ -385,6 +551,7 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         // 时机由 GTK 的 destroy 信号回调（OnDestroyTrampoline）保证，正是真实销毁点。
         LinuxSignalHandlers.UnregisterWebview(_webview);
         LinuxSignalHandlers.UnregisterManager(_userContentManager);
+        ReleaseResizeCursors();
         _webview = 0;
         _userContentManager = 0;
 
@@ -522,11 +689,53 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     }
 
     /// <summary>
+    /// 安排一次"下一轮主循环再读最大化状态"。由 <c>window-state-event</c> 的 trampoline 调用。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>不能在信号 handler 里直接读 <c>gtk_window_is_maximized()</c>。</b>GTK 对最大化状态的更新
+    /// 发生在 <c>GtkWindow</c> 自己的 class closure 里，而普通 handler（<c>g_signal_connect</c> 系）
+    /// 排在 class closure **之前**——此刻读到的还是**旧值**。
+    /// </para>
+    /// <para>
+    /// 症状非常具体，也正好对得上"双击/图标不对"的报法：<b>还原窗口后图标不变，直到窗口失去焦点
+    /// 才变</b>。因为焦点变化本身也会带一个 <c>window-state-event</c>（<c>GDK_WINDOW_STATE_FOCUSED</c>
+    /// 位变了），那一次才读到正确的值。最大化那一步之所以"看起来是对的"，是因为页面同时还会用
+    /// <c>win.toggleMaximize</c> 的返回值（意图值）驱动图标，把问题盖住了。
+    /// </para>
+    /// <para>
+    /// 推迟到下一轮 idle 再读，那时 class closure 已经跑完。连续多个事件合并成一次读
+    /// （<see cref="SyncMaximizedState"/> 内部有状态比对去重）。
+    /// </para>
+    /// </remarks>
+    internal void ScheduleMaximizedSync()
+    {
+        if (_maximizedSyncScheduled)
+        {
+            return;
+        }
+
+        _maximizedSyncScheduled = true;
+        _backend.PostToMainThread(() =>
+        {
+            _maximizedSyncScheduled = false;
+            SyncMaximizedState();
+        });
+    }
+
+    /// <summary>
     /// 读取当前最大化状态，与上次上报值比对，变化时（或 <paramref name="force"/> 时）上报给托管事件与页面。
-    /// 调用时机：GTK 的 window-state-event（WM 确认状态变化后）、每次页面加载完成。
+    /// 调用时机：window-state-event 之后（经 <see cref="ScheduleMaximizedSync"/> 推迟到下一轮主循环）、
+    /// 每次页面加载完成。
     /// </summary>
     internal bool SyncMaximizedState(bool force = false)
     {
+        // 窗口可能已经在"排队等下一次读"期间销毁了：对 0 句柄调 GTK 会报警告甚至崩
+        if (_gtkWindow == 0)
+        {
+            return false;
+        }
+
         bool isMaximized = GtkNative.GtkWindowIsMaximized(_gtkWindow);
         if (!force && isMaximized == _wasMaximized)
         {
@@ -634,17 +843,16 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         if (IsWaylandBackend())
         {
             // Wayland 协议不允许客户端移动自己的窗口（连窗口位置都拿不到），增量这条路根本走不通，
-            // 只能把移动交给合成器。左键 = 1；Wayland 下 root 坐标与时间戳都被忽略。
-            //
-            // 时序是这里唯一的风险点：xdg_toplevel.move 要求带一个有效 serial，而 GTK3 取的是按钮
-            // 按下时记录的隐式抓取 serial。页面在 mousedown 里发 win.dragStart，这里已经是宿主侧
-            // 最早的时机——若这条 IPC 晚到松开之后，请求会被合成器忽略，表现为"拖不动"。
-            GtkNative.GtkWindowBeginMoveDrag(_gtkWindow, 1, 0, 0, 0 /* GDK_CURRENT_TIME */);
-            _waylandDrag = true;
+            // 只能把移动交给合成器。**但不能在这里就交出去**——一旦交出去，指针就被合成器 grab，
+            // 页面收不到后续事件，第二次点击被吞掉，双击永远凑不齐（"双击标题栏最大化"因此失效）。
+            // 所以只记下"按下了"，等指针真的动过阈值（见 DragTo）再交；那时按键仍按着，serial 依然有效。
+            _waylandDrag = false;
+            _waylandDragPending = true;
             return;
         }
 
         _waylandDrag = false;
+        _waylandDragPending = false;
         _dragPointerStart = ((int)px, (int)py);
         GtkNative.GtkWindowGetPosition(_gtkWindow, out var curX, out var curY);
         _dragWindowOrigin = (curX, curY);
@@ -652,6 +860,22 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
 
     public void DragTo(double pointerDx, double pointerDy)
     {
+        if (_waylandDragPending)
+        {
+            // 指针还没动过阈值 → 什么都不做。这样"按下不动"（点击/双击）不会把指针交给合成器。
+            if (!LinuxDragSupport.ExceedsMoveThreshold(pointerDx, pointerDy))
+            {
+                return;
+            }
+
+            // 动过了：现在交给合成器。左键 = 1；Wayland 下 root 坐标与时间戳都被忽略
+            // （GTK3 取的是按钮按下时记录的隐式抓取 serial，此刻按键仍按着，因此有效）。
+            GtkNative.GtkWindowBeginMoveDrag(_gtkWindow, 1, 0, 0, 0 /* GDK_CURRENT_TIME */);
+            _waylandDrag = true;
+            _waylandDragPending = false;
+            return;
+        }
+
         if (_waylandDrag)
         {
             // 合成器接管后指针被 grab，页面收不到 mousemove，这里本不该被调到；真被调到也不插手——
@@ -672,6 +896,7 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     public void EndDrag()
     {
         _waylandDrag = false;
+        _waylandDragPending = false;
         _dragPointerStart = null;
     }
 

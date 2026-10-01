@@ -124,8 +124,12 @@ public sealed class OrielApp : IDisposable
     /// <summary>本平台是否支持系统通知（不支持时 <see cref="ShowNotification(OrielNotificationOptions)"/> 是空操作）。</summary>
     public bool NotificationsSupported => _backend?.NotificationsSupported ?? false;
 
-    /// <summary>用户点击了某条通知；参数是 <see cref="OrielNotificationOptions.Id"/>（见其平台差异说明）。</summary>
-    public event Action<string>? NotificationClicked;
+    // 通知点击上报**已移除**（原 `NotificationClicked` 事件）。
+    // 三个平台都拿不到点击：未打包应用的 toast 激活需要开始菜单快捷方式携带 AUMID 并注册 COM 激活器
+    // （打包器的职责），Linux 的 notify-send 与 macOS 的 osascript 则根本没有回调入口。
+    // 原先三处都是"显式空实现"，看起来像是如实标注——但**订阅一个永不触发的事件不会编译报错**，
+    // 调用方只会在运行时才发现收不到。删掉它，让"不支持"变成编译错误，这才是对的信号。
+    // 详见 docs/DECISIONS.md 的「通知点击上报：直接删掉，而不是留一个空事件」。
 
     /// <summary>
     /// 发送一条系统通知。
@@ -311,7 +315,6 @@ public sealed class OrielApp : IDisposable
 
         _backend = PlatformBackendFactory.Create();
         _backend.ThemeChanged += OnThemeChanged;
-        _backend.NotificationClicked += id => NotificationClicked?.Invoke(id);
 
         // 托盘先于窗口创建：托盘是应用的外壳，先就绪才能让"启动即最小化到托盘"这类形态成立。
         // 与 RestoreTray 同一条路径，免得"启动时建"和"重建"两处各写一遍。

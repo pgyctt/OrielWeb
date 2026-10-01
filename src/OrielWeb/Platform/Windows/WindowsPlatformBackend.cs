@@ -139,20 +139,6 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
     /// </summary>
     public bool NotificationsSupported => true;
 
-    /// <summary>
-    /// 声明但**永不触发**：未打包应用的 toast 激活需要开始菜单快捷方式携带 AUMID 并注册 COM 激活器，
-    /// 那是打包器的职责（参考实现 Ryn 也把这一项列为已知缺口）。
-    /// </summary>
-    /// <remarks>
-    /// 显式空实现，与 Linux/macOS 同一理由：让"这里确实没有触发源"在代码里可见，
-    /// 而不是看起来像"忘了触发"。三平台一致——都拿不到点击，而不是某个平台看起来支持。
-    /// </remarks>
-    public event Action<string>? NotificationClicked
-    {
-        add { }
-        remove { }
-    }
-
     public bool ShowNotification(OrielNotificationOptions notification, string appId)
         => Win32ToastNotification.Send(notification, appId);
 

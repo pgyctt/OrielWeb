@@ -123,17 +123,6 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
     public bool NotificationsSupported => MacOSNotificationSender.IsAvailable;
 
     /// <summary>
-    /// 声明但**永不触发**：osascript 投递拿不到点击回调。要在 macOS 上报点击得进 .app bundle
-    /// 后用 <c>UNUserNotificationCenter</c>（已记入 ROADMAP）。
-    /// </summary>
-    /// <remarks>显式空实现：与 Linux 侧同一理由——让"没有触发源"这件事在代码里看得见。</remarks>
-    public event Action<string>? NotificationClicked
-    {
-        add { }
-        remove { }
-    }
-
-    /// <summary>
     /// 投递通知。<paramref name="appId"/> 被**刻意忽略**：<c>osascript</c> 投递的通知归属于
     /// Script Editor（未打包运行时），应用名由系统决定，AppleScript 没有可传应用标识的入口。
     /// 这与 Windows/Linux 的差异是平台事实，不是漏实现——要按应用分组得进 .app bundle 后用

@@ -150,6 +150,81 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gtk, EntryPoint = "gtk_window_begin_move_drag")]
     internal static partial void GtkWindowBeginMoveDrag(nint window, int button, int rootX, int rootY, uint timestamp);
 
+    // ---- 无边框窗口的边缘 resize（见 LinuxResizeSupport 的说明）----
+    //
+    // 窗口一旦 set_decorated(false)，WM 就不再提供 resize 边框，只能自己判边缘命中、
+    // 再把 resize 交回给 WM/合成器。这条路径与 gtk_window_begin_move_drag 同构：
+    // Wayland 下同样必须在**按住期间**发出（协议只吃 seat + serial）。
+
+    /// <summary>
+    /// 开始一次 resize 拖动。<paramref name="edge"/> 是 <c>GdkWindowEdge</c>（见
+    /// <see cref="GdkWindowEdge"/>）；<paramref name="rootX"/>/<paramref name="rootY"/> 是按下点的根窗口坐标，
+    /// <paramref name="timestamp"/> 取自那次点击事件。
+    /// </summary>
+    /// <remarks>
+    /// "When GDK can support it, the resize will be done using the standard mechanism for the window manager
+    /// or windowing system." —— 也就是 X11 下交给 WM（有边缘吸附/贴边平铺）、Wayland 下转成
+    /// <c>xdg_toplevel.resize</c> 交给合成器。
+    /// </remarks>
+    [LibraryImport(Gtk, EntryPoint = "gtk_window_begin_resize_drag")]
+    internal static partial void GtkWindowBeginResizeDrag(
+        nint window, int edge, int button, int rootX, int rootY, uint timestamp);
+
+    /// <summary>取部件的 GdkWindow（未 realize 时为 0）。用于给 webview 单独设鼠标形状。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_widget_get_window")]
+    internal static partial nint GtkWidgetGetWindow(nint widget);
+
+    /// <summary>往部件的事件掩码里加位。边缘 resize 的 motion 事件要靠它才会被投递。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_widget_add_events")]
+    internal static partial void GtkWidgetAddEvents(nint widget, int events);
+
+    /// <summary><c>GDK_POINTER_MOTION_MASK</c>（GTK3 <c>gdk/gdkevents.h</c>：<c>1 &lt;&lt; 2</c>）。</summary>
+    internal const int GdkPointerMotionMask = 1 << 2;
+
+    /// <summary>部件被分配的宽度（逻辑像素）。用它而不是窗口尺寸：热区判定是在 webview 的坐标系里做的。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_widget_get_allocated_width")]
+    internal static partial int GtkWidgetGetAllocatedWidth(nint widget);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_widget_get_allocated_height")]
+    internal static partial int GtkWidgetGetAllocatedHeight(nint widget);
+
+    /// <summary>
+    /// 给某个 GdkWindow 设鼠标形状；<paramref name="cursor"/> 传 0 表示恢复默认。
+    /// </summary>
+    /// <remarks>
+    /// 必须设在 **webview 自己的** GdkWindow 上，不能设在顶层窗口上：顶层窗口设的光标会被子窗口
+    /// （webview）自己的光标盖掉，等于没设。
+    /// </remarks>
+    [LibraryImport(Gdk, EntryPoint = "gdk_window_set_cursor")]
+    internal static partial void GdkWindowSetCursor(nint window, nint cursor);
+
+    /// <summary>
+    /// 按 <c>GdkCursorType</c> 造一个光标。返回的是**新引用**，调用方负责 <c>g_object_unref</c>。
+    /// </summary>
+    /// <remarks>
+    /// 这个函数在 GTK 3.10 起被标记为 deprecated，官方推荐 <c>gdk_cursor_new_from_name</c>。
+    /// 这里仍用它，是因为**名字**在不同光标主题下并不保证解析得到对应形状，而这个枚举值直接对应
+    /// X 光标字体里的那一张图——我们要的是"形状确定"，不是"跟主题走"。GTK3 的生命周期内它不会消失。
+    /// </remarks>
+    [LibraryImport(Gdk, EntryPoint = "gdk_cursor_new_for_display")]
+    internal static partial nint GdkCursorNewForDisplay(nint display, int cursorType);
+
+    /// <summary>取事件的部件内坐标（逻辑像素）；返回 FALSE 表示该事件没有坐标（例如键盘事件）。</summary>
+    [LibraryImport(Gdk, EntryPoint = "gdk_event_get_coords")]
+    internal static partial int GdkEventGetCoords(nint eventPtr, out double x, out double y);
+
+    /// <summary>取事件的根窗口坐标。</summary>
+    [LibraryImport(Gdk, EntryPoint = "gdk_event_get_root_coords")]
+    internal static partial int GdkEventGetRootCoords(nint eventPtr, out double xRoot, out double yRoot);
+
+    /// <summary>取事件的鼠标按键号（1 = 左键）。</summary>
+    [LibraryImport(Gdk, EntryPoint = "gdk_event_get_button")]
+    internal static partial int GdkEventGetButton(nint eventPtr, out uint button);
+
+    /// <summary>取事件时间戳（<c>GDK_CURRENT_TIME</c> = 0）。</summary>
+    [LibraryImport(Gdk, EntryPoint = "gdk_event_get_time")]
+    internal static partial uint GdkEventGetTime(nint eventPtr);
+
     /// <summary>默认 GdkDisplay。用于判断当前跑在哪个 GDK 后端上。</summary>
     [LibraryImport(Gdk, EntryPoint = "gdk_display_get_default")]
     internal static partial nint GdkDisplayGetDefault();

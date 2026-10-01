@@ -98,6 +98,15 @@ internal static unsafe class LinuxSignalHandlers
         // 内建右键菜单：签名 (WebKitWebView*, WebKitContextMenu*, GdkEvent*, WebKitHitTestResult*, gpointer) → gboolean
         GtkNative.GSignalConnectData(webview, "context-menu",
             (delegate* unmanaged<nint, nint, nint, nint, nint, int>)&OnContextMenuTrampoline, 0, 0, 0);
+
+        // 无边框窗口的边缘 resize：签名 (GtkWidget*, GdkEvent*, gpointer) → gboolean。
+        // 两个信号都连在 webview 上——它铺满客户区，边缘命中自然也在它身上判。
+        // **是否真的接管由宿主决定**（LinuxWindowHost 里的 _handleResizeEdges）：非无边框窗口、
+        // 或窗口不可调整大小时，这两个 trampoline 会立刻返回 FALSE，等价于没接。
+        GtkNative.GSignalConnectData(webview, "motion-notify-event",
+            (delegate* unmanaged<nint, nint, nint, int>)&OnPointerMotionTrampoline, 0, 0, 0);
+        GtkNative.GSignalConnectData(webview, "button-press-event",
+            (delegate* unmanaged<nint, nint, nint, int>)&OnButtonPressTrampoline, 0, 0, 0);
     }
 
     // ------------------------------------------------------------------
@@ -139,6 +148,9 @@ internal static unsafe class LinuxSignalHandlers
 
     // GTK3 的 "window-state-event"（GdkEventWindowState）。这里刻意不解析事件结构——布局细节随 GDK
     // 版本有异，且我们只需要"状态可能变了"这个可靠信号，权威状态一律用 gtk_window_is_maximized 读。
+    //
+    // 但**读的时机要推迟**：普通 handler 排在 GtkWindow 的 class closure 之前，此刻 GTK 还没把新状态
+    // 写进自己的私有字段，同步读只会拿到旧值。交给 ScheduleMaximizedSync 排到下一轮主循环再读。
     // 返回 0（FALSE）= 不吞事件，GTK 自身与其它 handler 继续处理。
     [UnmanagedCallersOnly]
     internal static int OnWindowStateEventTrampoline(nint widget, nint gdkEvent, nint data)
@@ -147,7 +159,46 @@ internal static unsafe class LinuxSignalHandlers
         {
             if (WindowStates.TryGetValue(widget, out var host))
             {
-                host.SyncMaximizedState();
+                host.ScheduleMaximizedSync();
+            }
+        }
+        catch
+        {
+            // 异常不外泄
+        }
+        return 0;
+    }
+
+    // GTK3 的 "motion-notify-event"（GdkEventMotion）→ gboolean。
+    // 无边框窗口的边缘 resize 用：指针进到边缘热区时换光标并**吞掉事件**——不吞的话 WebKit 的默认
+    // 处理会紧接着用"按内容决定"的光标把它覆盖掉，表现为光标闪烁。非边缘时返回 0 放行。
+    [UnmanagedCallersOnly]
+    internal static int OnPointerMotionTrampoline(nint widget, nint gdkEvent, nint data)
+    {
+        try
+        {
+            if (WebviewStates.TryGetValue(widget, out var host))
+            {
+                return host.OnPointerMotionForResize(gdkEvent) ? 1 : 0;
+            }
+        }
+        catch
+        {
+            // 异常不外泄
+        }
+        return 0;
+    }
+
+    // GTK3 的 "button-press-event"（GdkEventButton）→ gboolean。
+    // 在边缘热区按下左键时把 resize 交给 WM/合成器，并吞掉这次按下（免得页面也收到）。
+    [UnmanagedCallersOnly]
+    internal static int OnButtonPressTrampoline(nint widget, nint gdkEvent, nint data)
+    {
+        try
+        {
+            if (WebviewStates.TryGetValue(widget, out var host))
+            {
+                return host.OnButtonPressForResize(gdkEvent) ? 1 : 0;
             }
         }
         catch

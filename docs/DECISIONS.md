@@ -709,9 +709,9 @@ AppKit 先给出线索：`Cannot index window tabs due to missing main bundle id
 ### Linux 通知：`notify-send` 子进程；macOS 通知：`osascript`
 
 - libnotify 的 P/Invoke 能拿到点击/关闭回调，但要连引用计数与 GLib 信号一起管。这一批先交付"发得出去"，
-  代价是拿不到点击——于是 `NotificationClicked` 在 Linux/macOS 上**显式空实现**（`add {} remove {}`），
-  而不是留一个看起来"忘了触发"的自动事件（编译器 CS0067 正好把这个决定逼了出来）。
-  改用 libnotify action 回补点击已记入 ROADMAP。
+  代价是拿不到点击。**（2026-10-01 更新：当时在 Linux/macOS 上做成"显式空实现"（`add {} remove {}`），
+  而不是留一个看起来"忘了触发"的自动事件；后来整个能力被移除了——见文末
+  「通知点击上报：直接删掉，而不是留一个空事件」。）**
 - macOS 未打包运行时没有 `CFBundleIdentifier`，`UNUserNotificationCenter` 直接拒绝，`osascript` 是唯一可行路径
   （Ryn 同样分了"打包 / 未打包"两条路）。**转义是安全关键**：标题与正文来自应用（可能是页面数据），
   会拼进一段 AppleScript 源码——必须转义反斜杠与双引号，且用 argv 传参不经 shell。
@@ -1297,9 +1297,9 @@ WebView2 的合成宿主自己也在用 `WM_APP` 范围的私有消息，于是�
 PowerShell + `ToastNotificationManager` 被它的注释称为 "reliable for any app"，本次照搬。
 
 代价是**拿不到点击激活**：未打包应用的 toast 激活需要开始菜单快捷方式携带 AUMID
-并注册 COM 激活器，那是打包器的职责（Ryn 也把这一项列为已知缺口）。因此 `NotificationClicked`
-在 Windows 上也改成**显式空实现**——三平台在这件事上如实一致（都拿不到），
-而不是让某一个平台看起来支持。
+并注册 COM 激活器，那是打包器的职责（Ryn 也把这一项列为已知缺口）。因此三平台在这一点上如实一致——
+都拿不到点击。**（2026-10-01 更新：当时做成了"显式空实现"，后来整个能力被移除了，
+理由见文末「通知点击上报：直接删掉，而不是留一个空事件」。）**
 
 **教训**：与第三方组件（尤其是 WebView2 这种"住进你窗口里"的组件）共享窗口时，
 `WM_APP + n` 这种"看起来安全"的自选消息号并不安全。要么用 `RegisterWindowMessage`，
@@ -1339,3 +1339,138 @@ PowerShell + `ToastNotificationManager` 被它的注释称为 "reliable for any 
   生成器产出的路由确实带上了新参数（导出生成代码核对过
   `InvokeAsync(int index, object? target, JsonElement args, JsonSerializerContext? jsonContext)`）。
 - 不能证明：真实进程里同时跑两个 `OrielApp` 的端到端行为——那需要两个窗口宿主，无头环境跑不出来。
+
+## 通知点击上报：直接删掉，而不是留一个空事件（2026-10-01）
+
+`NotificationClicked` 曾经在三个后端里都是**显式空实现**（`add {} remove {}`）。
+当时的理由写得很正当：让"这里确实没有触发源"在代码里可见，而不是看起来像"忘了触发"。
+
+**但那个理由只对了一半。** 显式空实现让**实现者**看清了事实，却没有让**调用方**看清：
+
+- 订阅一个永不触发的事件**不会编译报错**，运行时也不会有任何提示——调用方只会在
+  "为什么点了没反应"里耗时间。README 的「验证账」当时确实把这一项写成"三平台均不支持"，
+  但那是**文档层面**的事实，不是**编译器层面**的事实，而后者才是能拦住人的那个。
+- 它还给了一个错误的心理暗示：API 面上留着这个事件，等于承诺"将来某个平台可能支持"。
+  实际上三个平台都没有可行的路——Windows 要打包器注册 COM 激活器；`notify-send` 与 `osascript`
+  根本没有回调入口（Linux 要改用 libnotify 的 action 回调，macOS 要进 .app bundle 后用
+  `UNUserNotificationCenter`，都是换实现而非补一个开关）。
+
+**做法**：把事件从 `OrielApp` 与 `IPlatformBackend` 里一并删掉，三个后端的空实现也删掉。
+于是"不支持"变成了**编译错误**——这是调用方最早、也最便宜的发现时机。
+
+**代价**：将来真要支持时（例如 macOS 打包后走 UN），那是一次"重新引入一个 API"的决定，
+而不是把空事件加回来。这个代价可以接受：真到那天，API 形态大概率也不一样
+（可能要带通知类别、动作按钮、`UNNotificationResponse` 的那些字段）。
+
+**可以推广的一条**：凡是"实现侧明知拿不到、但 API 面上还留着"的能力，**删掉比留空壳好**。
+留空壳的收益（让缺失可见）远小于它的代价（调用方无法在编译期发现）。
+
+> 同时更正了 README 里一处与之相关的**错误声明**：无边框窗口的边缘 resize 在 Linux 上
+> 并不是"由系统原生处理"——Ubuntu 22.04 实测无效（去掉窗口装饰后 WM 不再提供 resize 边框，
+> 而库里没有 `gdk_window_begin_resize_drag` 绑定）。已作为**已确认的缺陷**记入 ROADMAP。
+
+## 无边框窗口的边缘 resize：Windows 白送，Linux 得自己做（2026-10-01）
+
+### 症状与根因
+
+Ubuntu 22.04 虚拟机实测：无边框窗口拖边缘不改变大小。
+
+根因不是"漏了一行调用"，而是**平台能力差异**。窗口一旦 `gtk_window_set_decorated(false)`，
+窗口管理器就不再提供 resize 边框。Windows 上没这个问题，因为那边靠的是 **Composition 宿主**——
+窗口能收到 `WM_NCHITTEST` 并显式给出边缘命中值，WM 于是照样给你边缘 resize（代价是组合托管的
+WebView 收不到系统输入，鼠标消息改由宿主转发）。GTK 没有等价机制：**系统不会白送这份能力**，
+只能自己判命中，再把 resize 交回给 WM/合成器。
+
+### 做法
+
+- 在 **webview** 上接 `motion-notify-event` 与 `button-press-event`——它铺满客户区，边缘命中在它身上判最自然。
+- 显式 `gtk_widget_add_events(webview, GDK_POINTER_MOTION_MASK)`：motion 事件**默认不投递**，
+  不加这一位，热区永远收不到指针移动。
+- 命中边缘就把光标换成对应的 resize 形状，并**吞掉该 motion 事件**。
+  吞掉是必需的：我们的 handler 排在 WebKit 的默认处理**之前**（`RUN_LAST` 信号），但一旦返回 FALSE，
+  WebKit 紧接着就会按"指针下面是链接还是文本"重设光标——表现为光标闪烁。
+- 左键按下且命中边缘 → `gtk_window_begin_resize_drag(window, edge, button, rootX, rootY, timestamp)`。
+  文档原话是 "When GDK can support it, the resize will be done using the standard mechanism for the
+  window manager or windowing system"——即 X11 交给 WM（保留边缘吸附/贴边平铺）、
+  Wayland 转成 `xdg_toplevel.resize` 交给合成器。
+  **必须在 button-press 里同步调用**，与 `gtk_window_begin_move_drag` 同一个理由：
+  Wayland 协议只吃 seat + serial，而 GTK3 取的是最近一次隐式抓取的 serial。
+- 光标设在 **webview 自己的 GdkWindow** 上（`gdk_window_set_cursor`）。设在顶层窗口上会被子窗口
+  自己的光标盖掉，等于没设。
+
+### 两个必须写对、而且"看起来对"验证不了的常量
+
+这两个枚举的值都被**直接当整数**传给 P/Invoke，错一位的后果都只在真机上才看得见：
+
+| 枚举 | 值 | 写错的后果 |
+|---|---|---|
+| `GdkWindowEdge` | NW=0、N=1、NE=2、W=3、E=4、SW=5、S=6、SE=7 | 拖右下角却在改左边 |
+| `GdkCursorType` | `TOP_LEFT_CORNER = 134`（**不是 132**——132 是 `TOP_LEFT_ARROW`）等 | 显示成另一个形状的光标 |
+
+两者都逐值抄自 GTK3 头文件，并各有一个单测把数值钉死。**我第一版就是照记忆把
+`TOP_LEFT_CORNER` 写成 132 的**——查文档才发现差这两位。这类"数值型 ABI"必须查，不能推。
+
+### 顺带修掉的一处文档失实
+
+README 原来写着"窗口完全无边框，边缘拖动调整大小由系统原生处理，无需在页面里实现任何热区"——
+这句话**只在 Windows 成立**，在 Linux 上是错的。已改成三平台对照表
+（Windows ✅ / Linux 已实现未验证 / macOS 未实现）。
+
+### 这一批能证明什么、不能证明什么
+
+- 能证明：边缘命中判定（边界半开、角优先于边、小窗收窄热区）与两个枚举的数值——共 18 个单测。
+- 不能证明：GTK 侧的接线——信号是否真的投递、Wayland 的 serial 时序、光标会不会被 WebKit 抢回、
+  X11 下的边缘吸附是否如期出现。
+- **后续（同日）**：用户在 Ubuntu 22.04 虚拟机实测 **resize 有效**，上面那几条随之从"待验证"升级为
+  **已验证**（ROADMAP 的缺陷表里记了这一条）。
+
+## 两个"状态晚一拍"的缺陷：都是信号/协议的时序问题（2026-10-01）
+
+同一次真机验证还报出两件事：**双击标题栏不能最大化/还原**、**最大化/还原图标在"还原"那一步不更新**
+（要点一下窗口外面才变）。两个都不是"逻辑写错了"，而是**读到的东西比实际晚一拍**。
+
+### 一、在信号 handler 里同步读 GTK 状态，读到的是旧值
+
+`window-state-event` 一来就调 `gtk_window_is_maximized()` ——看起来天经地义，实际拿到的是**旧值**。
+原因在信号的分发顺序：GTK 把新状态写进 `GtkWindow` 私有字段是在**它自己的 class closure** 里，
+而普通 handler（`g_signal_connect` 系）排在 class closure **之前**。
+
+症状的形状正好是它导致的：
+
+| 步骤 | 现象 | 为什么 |
+|---|---|---|
+| 初始 | 图标正确 | 页面加载完成时 `force: true` 上报过一次 |
+| 最大化 | 看起来正确 | **被盖住了**——页面同时用 `win.toggleMaximize` 的返回值（意图值）驱动图标 |
+| 还原 | 图标不变 | 同步读到的是"仍然最大化" → 与上次值相同 → 不上报 |
+| 点窗口外面 | 图标才变 | 焦点变化本身也带一个 `window-state-event`（`FOCUSED` 位变了），那一次才读到正确值 |
+
+**改法**：handler 里不再直接读，改为把读取排到**下一轮主循环**（复用已有的
+`PostToMainThread` → `g_idle_add_full` 通道），那时 class closure 已经跑完。连续事件合并成一次读
+（`SyncMaximizedState` 内部的状态比对会去重）。顺带加了"窗口句柄为 0 就直接返回"的护栏——
+排队的读取可能落到窗口销毁之后。
+
+**没有采用的两个替代方案**（记下来，免得以后有人再想一遍）：
+- **解析事件结构**（`GdkEventWindowState::new_window_state`）：能拿到新值、还不用等一拍，
+  但要在托管侧按偏移读 GDK 结构体。本文件里已有先例（GError 按结构偏移取），但那属于"没有别的办法"时的下策。
+- **改用 `g_signal_connect_after`**：让 handler 排在 class closure 之后，同样能拿到新值，而且更贴 GTK 的习惯。
+  没选它是因为它依赖"该信号确实是 RUN_LAST"这个前提——推迟到下一轮主循环则**与信号标志无关**，更稳。
+
+### 二、Wayland 下"按下就把指针交给合成器"，把第二次点击一起吞了
+
+无边框标题栏的拖动在 Wayland 上是**一次性交给合成器**的（`xdg_toplevel.move`）。原来
+`BeginDragStreaming` 在 Wayland 分支里**立刻**就交了，于是指针被合成器 grab，页面再也收不到后续事件
+——**第二次点击也被吞掉，双击永远凑不齐，`dblclick` 不触发**。
+
+X11 没有这个问题：那边是按增量自己摆窗口（`gtk_window_move`），不抢指针，页面照常收事件。
+所以这个坑只在 Wayland 会话里出现，而 Ubuntu 22.04 默认就是 Wayland。
+
+**改法**：Wayland 分支只记下"按下了"，等 `DragTo` 的增量**超过阈值（4 逻辑像素）**才真正交给合成器
+——那时按键仍按着，serial 依然有效。于是"按下一动不动"的单击与双击都不会触发拖动。
+阈值判定抽成纯函数（`LinuxDragSupport.ExceedsMoveThreshold`）。
+
+**这一条同时暴露了 README 里的一句错话**：原文写"macOS/Linux 用流式拖动，可立即开始"。
+Linux/Wayland 不能立即开始——已改成按平台分别说明。
+
+**可推广的一条**：凡是"把控制权一次性交给外部系统"的操作（合成器的 move/resize、原生模态循环、
+模态对话框），都要问一句"交出去之后，我这边还能不能收到后续输入？"。Windows 上那个"拖动要等阈值"
+的老经验，本质是同一个问题，只是当年只在 Windows 上踩到。

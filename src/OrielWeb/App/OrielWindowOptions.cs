@@ -31,13 +31,54 @@ public sealed class OrielWindowOptions
     /// <summary>是否启用开发者工具（DevTools）。</summary>
     public bool Debug { get; set; }
 
+    private string? _icon;
+
     /// <summary>
-    /// 窗口图标文件路径（PNG / ICO）。各平台落到最贴近的位置：
+    /// 窗口图标文件路径。各平台落到最贴近的位置：
     /// Linux 设窗口图标（X11 下写入 <c>_NET_WM_ICON</c>）；Windows 用 <c>WM_SETICON</c> 覆盖 exe 图标；
     /// macOS **没有窗口级图标概念**，设置的是应用（Dock）图标 <c>NSApplication.applicationIconImage</c>。
-    /// 未设置时 Windows 沿用 exe 自带图标、macOS 沿用 .app bundle 的图标。
     /// </summary>
-    public string? Icon { get; set; }
+    /// <remarks>
+    /// <para>
+    /// <b>Linux 与 macOS 必须显式给这个值，否则就是通用图标。</b>那两个平台没有"从可执行文件里取图标"
+    /// 这回事——ELF 与 Mach-O 都不带图标，macOS 的图标在 <c>.app</c> bundle 里。Windows 则相反：
+    /// 不设它也会主动从 exe 取（见 README「应用图标」），所以这条差异在 Windows 上根本看不出来。
+    /// </para>
+    /// <para>
+    /// 格式：<b>PNG 在 Linux/macOS 上最稳</b>；Windows 的 <c>LoadImageW</c> 只认 ICO/BMP，
+    /// 而它的 exe 图标走 <c>ApplicationIcon</c>，所以 Windows 侧通常不需要设这个值。
+    /// </para>
+    /// <para>
+    /// 路径请用**绝对路径**：三个平台都按当前工作目录解析相对路径，而 macOS 从 <c>.app</c> 启动时
+    /// cwd 是 <c>/</c>——相对路径在那里必然失效。
+    /// </para>
+    /// <para>
+    /// 赋值时**校验文件存在**，不存在直接抛 <see cref="FileNotFoundException"/>。三个平台在加载失败时
+    /// 都是**静默**的（GTK 丢掉 GError、Cocoa 拿到 nil 就跳过、Win32 的 <c>LoadImageW</c> 返回 0），
+    /// 不在这里拦住，表现就是"图标没生效，且没有任何提示"。
+    /// </para>
+    /// </remarks>
+    public string? Icon
+    {
+        get => _icon;
+        set
+        {
+            if (value is not null)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(value);
+                if (!File.Exists(value))
+                {
+                    throw new FileNotFoundException(
+                        $"图标文件不存在：{value}。相对路径按**当前工作目录**解析，" +
+                        "而 macOS 上从 .app 启动时 cwd 是 /，打包分发请传绝对路径" +
+                        "（例如 Path.Combine(AppContext.BaseDirectory, \"app.png\")）。",
+                        value);
+                }
+            }
+
+            _icon = value;
+        }
+    }
 
     /// <summary>
     /// 是否把页面的 console 输出转发给宿主（<see cref="WebviewWindow.ConsoleMessage"/> 事件）。

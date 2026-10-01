@@ -1,13 +1,18 @@
 # Single source for the project mark: a rounded-square in the app palette with a white "webview
-# window" glyph. Produces both artefacts from the same drawing code:
+# window" glyph. Produces three artefacts from the same drawing code:
 #   * samples/OrielDemo/app.ico - the demo's exe icon (16..256, each size drawn natively rather than
 #     downscaled, so 16/24/32 stay legible; every size stored as a PNG payload, Vista+).
+#   * samples/OrielDemo/app.png - the demo's window/Dock icon for Linux and macOS. Those two
+#     platforms have no equivalent of "extract the icon from the executable" (ELF/Mach-O carry no
+#     icon; on macOS the icon lives in the .app bundle), so the app must hand the library a file.
+#     256x256 so the Linux taskbar and the macOS Dock both have something to scale down from.
 #   * orielweb.png             - the 128x128 NuGet package icon (referenced by <PackageIcon>).
-# Re-run after touching the drawing code; both files are committed.
+# Re-run after touching the drawing code; all three files are committed.
 # ASCII-only.
 
 param(
     [string]$IcoOut = (Join-Path (Split-Path $PSScriptRoot -Parent) 'samples\OrielDemo\app.ico'),
+    [string]$DemoPngOut = (Join-Path (Split-Path $PSScriptRoot -Parent) 'samples\OrielDemo\app.png'),
     [string]$PackagePngOut = (Join-Path (Split-Path $PSScriptRoot -Parent) 'orielweb.png')
 )
 
@@ -79,6 +84,7 @@ foreach ($s in $sizes) {
     $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
     $pngs += , @{ Size = $s; Bytes = $ms.ToArray() }
     if ($s -eq 128) { $bmp.Save($PackagePngOut, [System.Drawing.Imaging.ImageFormat]::Png) }
+    if ($s -eq 256) { $bmp.Save($DemoPngOut, [System.Drawing.Imaging.ImageFormat]::Png) }
     $ms.Dispose(); $bmp.Dispose()
 }
 
@@ -110,4 +116,5 @@ $bw.Dispose(); $fs.Dispose()
 Write-Output ("wrote " + $IcoOut)
 Get-Item $IcoOut | Select-Object @{ n = 'KB'; e = { [math]::Round($_.Length / 1KB, 1) } } | Format-Table -AutoSize | Out-String -Width 40
 Write-Output ("sizes: " + (($pngs | ForEach-Object { $_.Size }) -join ', '))
+Write-Output ("demo window icon png: " + $DemoPngOut)
 Write-Output ("package icon png: " + $PackagePngOut)

@@ -10,9 +10,18 @@
     <!-- 示例应用不是 NuGet 包：dotnet pack OrielWeb.slnx 时不要为它产包 -->
     <IsPackable>false</IsPackable>
     <!-- 应用图标：资源管理器、任务栏、Alt-Tab 都取自它。窗口类未设置 hIcon（见 Win32WindowHost），
-         因此窗口图标也回落到这里的 exe 图标。 -->
+         因此窗口图标也回落到这里的 exe 图标。**这只解决 Windows**——Linux/macOS 没有"从 exe 取图标"
+         这回事，那两个平台靠下面复制出去的 app.png + 代码里的 WithIcon（见 README「应用图标」）。 -->
     <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 窗口/Dock 图标（Linux/macOS 用）。必须作为**文件**随产物分发：那两个平台的图标接口
+         只吃文件路径，而 ELF/Mach-O 里没有图标可取。程序运行时按 AppContext.BaseDirectory
+         拼绝对路径引用它（相对路径在 macOS 从 .app 启动时会按 cwd（/）解析）。
+         与 app.ico 同源，都由 tools/make-icons.ps1 生成。 -->
+    <None Include="app.png" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\OrielWeb\OrielWeb.csproj" />

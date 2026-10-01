@@ -16,6 +16,14 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 | **Tauri 2** | `capabilities/*.json` 权限文件与按命令授权；插件化（tray/menu/updater 均以插件形态提供）；托盘/菜单/updater/CLI 的**功能面** |
 | **Ryn** | 源生成 IPC（本库已有）、自定义 scheme、**能力安全模型**、AOT CI |
 
+> **四个项目的逐能力对照见 [COMPARISON.md](COMPARISON.md)**：功能面大表、六个实现方式分岔点
+> （C++ 中间层 / IPC 零反射 / 多平台统一 / 安全模型 / 桌面能力面 / 工具链边界）、
+> 各自承认的取舍，以及"该抄什么、明确不抄什么"的结论。
+> 那份对照的选型结论已经落成下面的 **阶段 D**（安全与能力模型、包内 MSBuild build logic、
+> 运行时注入的同步 API、工具链与打包），其中**包内 MSBuild build logic 建议最先做**——
+> 它不是新能力，而是消灭一个现有缺陷（使用者手写 `<EmbeddedResource>` 时，
+> 不写 `LogicalName` 且文件名含 `.` 会静默解压到错误路径，见 `docs/reviews/2026-10-01.md` §4.3）。
+
 ## 贯穿全程的工程约定
 
 1. **三平台同时做**：新能力必须在三个后端一次落地。历史上"部分有"的项（DevTools、窗口图标、隐藏启动）
@@ -33,7 +41,7 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 |---|---|---|---|
 | Linux 隐藏启动 | ✅ 已完成 | `show_all` 后立刻 `hide`（GTK 的 realize 自上而下，不 show 则 webview 不被 realize，页面可能推迟到可见才开始加载） | WSL 实测：`--hidden` 下 `Map State: IsUnMapped`，同时 `WebKitWebProcess` 照常出现（页面照常加载） |
 | macOS/Linux DevTools | ⚠️ 已实现未验证 | macOS：`WKWebView.isInspectable`（13.3+，先 `respondsToSelector:` 探测）；Linux：`WebKitSettings.enable_developer_extras` | CI 三平台冒烟全绿（run 13 / `265c9f0`），只证明开关不影响启动；**面板本身需人眼**（见待真机清单） |
-| 窗口图标（统一 `WithIcon`） | ✅ Linux 已验证；Windows/macOS 未验证 | 各平台落到真正有图标槽的位置：Linux 窗口图标（`gtk_window_set_icon_from_file`）、Windows `WM_SETICON` 覆盖 exe 图标、macOS Dock 图标 | WSL 对照实测：带 `--icon` 时 `_NET_WM_ICON` 出现 `Icon (48 x 48)`，不带时 `not found`。CI 三平台冒烟全绿（run 13），但那只证明该代码路径不破坏启动——**图标是否真的显示出来仍需人眼**（见待真机清单） |
+| 窗口图标（统一 `WithIcon`） | ⚠️ Linux 的**属性写入**已验证，但**任务栏是否真的显示它未验证**（2026-10-01 实测：不显示）；Windows/macOS 未验证 | 各平台落到真正有图标槽的位置：Linux 窗口图标（`gtk_window_set_icon_from_file`）、Windows `WM_SETICON` 覆盖 exe 图标、macOS Dock 图标。**2026-10-01 补上两条关键差异**：① Windows 会主动从 exe 取图标，Linux/macOS 没有等价来源（ELF/Mach-O 不带图标，macOS 的图标在 `.app` bundle 里），**必须由应用显式给文件**；② **GNOME 不读 `_NET_WM_ICON`**——它按 `WM_CLASS` 匹配 `.desktop` 取 `Icon=`，所以 `WithIcon` 在 GNOME 上**改不了任务栏图标**，还需要一份 `.desktop`。见 README「应用图标」 | WSL 对照实测：带 `--icon` 时 `_NET_WM_ICON` 出现 `Icon (48 x 48)`，不带时 `not found`——**这只证明属性被写入**。2026-10-01 用户实测：属性在，任务栏仍是通用图标 → 说明上面第 ② 条。CI 三平台冒烟全绿（run 13），那只证明该代码路径不破坏启动 |
 | Linux HiDPI 拖动偏移 | ⏳ 未开始 | 用 `gdk_window_get_scale_factor` 折算增量（只针对 X11 那条流式路径；Wayland 下的拖动已交给合成器，不存在宿主侧折算） | **需真实高 DPI 缩放环境** → 见待真机清单 |
 
 **已定**：图标来源用显式的 `OrielWindowOptions.WithIcon(path)`——不做"从 exe 取图标"的跨平台抽象，
@@ -73,14 +81,28 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 - 若不符：Windows 看是否有 `WM_SETTINGCHANGE` + `"ImmersiveColorSet"`；Linux 看 GtkSettings 的
   `notify::` 信号是否被触发；macOS 看通知是否到达（`orielThemeChanged:`）。
 
-#### 窗口图标（Windows / macOS）
-- 状态：**Linux 已验证**（上面的 `_NET_WM_ICON` 对照实验）；Windows 与 macOS **只做了编译验证**。
-- 环境：Windows 桌面 / macOS 桌面。
-- 步骤：1) 用 `--icon <png|ico 路径>` 启动 `samples/OrielDemo`（或代码里 `.WithIcon(path)`）；
-  2) Windows：看任务栏按钮与 Alt-Tab 缩略图；macOS：看 Dock 图标。
-- 预期：显示为指定图片；不传 `--icon` 时 Windows 仍显示 exe 图标、macOS 仍显示 .app bundle 图标。
-- 若不符：Windows 看 `LoadImageW` 是否返回 0（路径不存在或格式不支持时会静默保持原图标）；
-  macOS 看 `NSImage` 是否构造成功（`initWithContentsOfFile:` 返回 0 时跳过设置，不报错）。
+#### 窗口图标（三平台）
+- 状态：Linux 的**属性写入**已验证；**任务栏是否真的显示它未验证**（2026-10-01 实测：不显示）；
+  Windows 与 macOS 只做了编译验证。
+- 2026-10-01 追加（第一次）：用户实测报告 **Linux 与 macOS 的任务栏/Dock 是通用图标**。根因之一是
+  "不给文件就没有图标"——Windows 会主动从 exe 取，那两个平台没有等价来源。已做的处置：demo 增加同源的
+  `samples/OrielDemo/app.png`（256×256，由 `tools/make-icons.ps1` 一并生成）并在非 Windows 上默认用它；
+  `WithIcon` 改为**校验文件存在**；README 的「应用图标」重写成三平台对照表。
+- 2026-10-01 追加（第二次）：用户实测报告 **Ubuntu 22.04 上仍无图标**。定位到第二条根因：
+  **GNOME 不读 `_NET_WM_ICON`**，它按 `WM_CLASS` 匹配 `.desktop` 文件的 `Icon=`。
+  因此"属性写进去了"与"任务栏显示了"是两件事——本仓库此前只断言了前者。
+- 环境：三平台桌面各一次。
+- 步骤：1) 直接跑 `samples/OrielDemo`（**不传 `--icon`**）——Linux 看任务栏、macOS 看 Dock、
+  Windows 看任务栏按钮与 Alt-Tab 缩略图；2) `xprop -id <窗口id> _NET_WM_ICON` 确认属性在；
+  3) **GNOME 上再装一份 `.desktop`**（`StartupWMClass` 必须等于 `xprop WM_CLASS` 的 res_class），
+  重开 demo 看任务栏是否变成项目图标——这是判定"`_NET_WM_ICON` 在 GNOME 上到底有没有用"的关键一步；
+  4) 用 `--icon <绝对路径>` 再启动一次，确认覆盖生效。
+- 预期：第 1 步 Windows 显示 exe 图标、Linux/macOS 视桌面环境而定（GNOME 需第 3 步）；
+  第 3 步装上 `.desktop` 后任务栏应显示项目图标。
+- 若不符：① 先确认产物是**新构建的**（`publish/<rid>/app.png` 在不在——它是这次新加的旁文件）；
+  ② Linux 看 `_NET_WM_ICON` 是否写入（`xprop`，带/不带 `--icon` 对照）；③ macOS 看 `NSImage` 是否构造成功
+  （`initWithContentsOfFile:` 返回 0 时跳过设置、不报错）；④ Windows 看 `LoadImageW` 是否返回 0；
+  ⑤ GNOME 上 `StartupWMClass` 是否与 `WM_CLASS` 的 res_class **逐字符**相同（本仓库实测是 `OrielDemo`）。
 
 #### macOS 隐藏启动
 - 状态：**已实现未验证**（Linux 侧已在 WSL 验证；macOS 的 `Hidden` 走"不 orderFront"分支，
@@ -121,7 +143,7 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 | 系统主题检测（dark/light + 变更事件） | ✅ 完成 | `OrielApp.Theme` + `ThemeChanged` + 页面 `theme.changed`（每次导航后补推）。检测：注册表 + `WM_SETTINGCHANGE` / GtkSettings + `notify::` / `NSUserDefaults` + 系统通知 | `--selftest theme` 三平台通过；Linux 另跑两次（`GTK_THEME` 造值）断言深浅结论**不同**；**切换实时性**见待真机清单 |
 | 拖放（文件拖入 → 路径列表 + 事件） | ✅ 已实现 | Windows：窗口加 `WS_EX_ACCEPTFILES` → `WM_DROPFILES` → `DragQueryFileW`（本库是 Composition 宿主，WebView2 **不是子窗口**，拖放会落到本窗口——不必手写 OLE `IDropTarget`、不必 OLE 初始化），并关掉 WebView2 的 `AllowExternalDrop` 以免它截走拖放；macOS：自定义 `NSView` 子类承载 `NSDraggingDestination`，webview 作为其子视图（**不碰 `WKWebView` 的方法表**，AppKit 沿父视图链查找落点）；Linux：`gtk_drag_dest_set(webview, "text/uri-list")` + `drag-data-received` | **23 个用例**覆盖 URI→本地路径（百分号编码含非 ASCII、`+` 不等于空格、Windows 盘符、`localhost` 与远程主机、非 file 协议、批量保序）；`--selftest shell` 走完注册路径并断言事件订阅可用（`FILE-DROP-SUBSCRIBED`）。**真实拖拽整体未验证**——无头环境造不出 XDND/OLE 会话，见下 |
 | 系统托盘（`AddTray` / `app.Tray`） | ✅ 已实现；Linux 取证通过 | Windows `Shell_NotifyIconW` + `TrackPopupMenuEx`；macOS `NSStatusBar`/`NSMenu`；Linux GTK3 `GtkStatusIcon`/`GtkMenu`（用 GTK 自带而非 AppIndicator，理由见 DECISIONS） | Windows/macOS 编译验证；Linux 由 `--selftest shell` 断言"托盘创建 + 一份含分隔线/勾选/禁用/子菜单/role 的菜单能设进去、进程不崩"，并由 `tools/verify-linux-shell.sh` 采集证据。**图标可见性需人眼**（见下） |
-| 系统通知（`ShowNotification`） | ✅ 已实现；Linux 硬断言 | Windows 经一个短命的 **Windows PowerShell 5.1** 进程调 WinRT `ToastNotificationManager`（Native AOT 下没有 WinRT 投影；**不依赖托盘是否存在**——早先的托盘气球方案已废弃，理由见 `Win32ToastNotification` 的类注释）；macOS `osascript`；Linux `notify-send`。**应用标识**（Windows AUMID / Linux `--app-name`）默认取入口程序集名，可用 `UseNotificationAppId` 覆盖——早先硬编码为 `OrielWeb`，导致所有基于本库的应用在系统通知设置里同名、既分不清也关不掉某一个 | Linux：真 `notify-send` → 会话总线 → 假通知服务，断言**标题与正文逐字符正确**（`tools/verify-linux-shell.sh`）。点击上报**三平台均不支持**，三处都是**显式空实现**（不是"忘触发"） |
+| 系统通知（`ShowNotification`） | ✅ 已实现；Linux 硬断言 | Windows 经一个短命的 **Windows PowerShell 5.1** 进程调 WinRT `ToastNotificationManager`（Native AOT 下没有 WinRT 投影；**不依赖托盘是否存在**——早先的托盘气球方案已废弃，理由见 `Win32ToastNotification` 的类注释）；macOS `osascript`；Linux `notify-send`。**应用标识**（Windows AUMID / Linux `--app-name`）默认取入口程序集名，可用 `UseNotificationAppId` 覆盖——早先硬编码为 `OrielWeb`，导致所有基于本库的应用在系统通知设置里同名、既分不清也关不掉某一个 | Linux：真 `notify-send` → 会话总线 → 假通知服务，断言**标题与正文逐字符正确**（`tools/verify-linux-shell.sh`）。点击上报**不提供**：三平台都拿不到，2026-10-01 起从 API **整体移除**（此前是三个"显式空实现"，但订阅一个永不触发的事件不会编译报错） |
 | 对话框（消息框 / 打开 / 保存 / 选文件夹） | ✅ 已实现（扩展版） | 打开可多选、可给结构化过滤器、可指定初始目录；新增文件夹选择。Windows `GetOpenFileNameW`（`OFN_ALLOWMULTISELECT`+`OFN_EXPLORER`）/ `SHBrowseForFolderW`；macOS `NSOpenPanel`（`URLs` 数组）/ `NSSavePanel`；Linux `GtkFileChooserDialog`（多选读 `GSList`）。过滤器在三种平台形状间的转换与 Win32 多选缓冲区的解析都在纯函数里（`OrielFileFilter` / `OrielFileDialogSupport`） | **30 个单测**（在 Linux CI 上跑，含为 Windows 写的用例）：解析旧字符串、Win32 双 null 渲染、GTK 的 `*.*` 归一、Cocoa 扩展名提取、Win32 多选「单段 vs 多段」两种形状、补扩展名。**对话框外观与交互需人眼**（见下） |
 | 内建右键菜单策略 | ✅ 已实现；Linux 接管链路已实测 | 默认 `Editing`（只留剪切/复制/粘贴）、`Native`（平台原样）、`Disabled`。**Windows 是过滤式**：订阅 `CoreWebView2.ContextMenuRequested` 按 `Name` 保留三项（`ICoreWebView2_11`，由 WebView2Aot 包内部转换）。**macOS / Linux 是接管式**：自己弹只含三项的菜单，编辑命令走引擎的原生通道（macOS `sendAction:to:from:` + `cut:/copy:/paste:`；Linux `webkit_web_view_execute_editing_command`）。早先"就地增删引擎菜单"的写法在 WebKitGTK 4.1 上会破坏内存，理由与证据见 DECISIONS | **37 个单测**（Linux CI 上跑）：接管菜单的三项与 role 归类边界、Windows 保留名单（`copyImage`/`copyLink` 这类陷阱）。Linux 另**实测**：连点右键 6 次不崩、菜单按指针位置弹出、`"Copy"` 把页面选中内容送进系统剪贴板。**macOS 全部未验证**；**菜单外观与真机整链路交互需人眼**（见下） |
 | 窗口上下文菜单 | ✅ 已实现 | 三平台都支持（Windows 阻塞、另两个异步）。菜单构建按平台抽成共享类（`Win32Menu`/`GtkMenu`/`MacOSMenu`），role 由 `OrielMenuRoles` 统一解释 | 三平台编译 ✓；Linux `--selftest shell` 走一遍菜单构建并断言不崩。**菜单外观与上下文菜单的弹出交互需人眼**（见下） |
@@ -147,10 +169,10 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
   role 项里的 `Close` 能关掉窗口。
 - 若不符：macOS 看 `MacOSMenu.Popup` 的"没有当前 NSEvent"日志（后台回调里调用时无法定位菜单）。
 
-#### 通知的展示与点击
+#### 通知的展示
 - 环境：三平台桌面各一次。
-- 步骤：1) `OrielDemo --selftest shell`；2) 看通知横幅；3) Windows 上点一下横幅本体。
-- 预期：横幅显示标题与正文；Windows 上点击后触发 `NotificationClicked`（回传 `Id`）。
+- 步骤：1) `OrielDemo --selftest shell`；2) 看通知横幅。
+- 预期：横幅显示标题与正文。**点击横幅不会有任何回调**——该能力已整体移除（见阶段 C 的系统通知行）。
 - 若不符：Windows 看系统"专注助手/通知"设置里的开关；macOS 看"通知"权限
   （未打包运行时 `osascript` 的通知归属于 Script Editor，可能在系统设置里被静音）。
 
@@ -211,9 +233,87 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 
    有真机后逐项跑完，把结论升级为「已验证」并写进 `docs/DECISIONS.md`。
 
+## 阶段 D —— 能力模型与工具链
+
+来源是 [`docs/COMPARISON.md`](COMPARISON.md) 的选型结论（与 AOTrino / Ryn / pywebview 的逐能力对照）。
+这四项原先都写在下面的「明确不在本路线图内」，现在正式纳入。
+
+| 项 | 状态 | 做法要点 | 验证方式 |
+|---|---|---|---|
+| **安全与能力模型** | ⏳ 未开始 | 参照 **Ryn**（四者里唯一做到的）：命令白名单**默认拒绝**；配置缺失时 Debug=allow-all、Release=fail-closed；`scope` 用**路径 glob + 符号链接规范化**（不是字符串前缀比较）；`scopedCommands` 用 **argv 模板 + regex** 而不是拼字符串；**每启动一个 token** + Origin 校验 + 仅 loopback；**远程页面不接 IPC**。现状是本库的 IPC 命令**谁都能调**——没有 origin 校验、没有 token、没有按命令授权，这是最大的功能缺口 | 纯函数部分（glob 规范化、argv 模板、token 生成）直接单测；端到端要在真机上验"页面发的 invoke"的授权与拒绝两条路径 |
+| **包内 MSBuild build logic** | ⏳ 未开始 | 参照 **AOTrino**：把 `<EmbeddedResource>` + `LogicalName` 写进随包分发的 `.targets`，消费方不必手写。**优先级最高**——它不是新能力，而是消灭一个现有缺陷：现在要求使用者手写那一行，不写 `LogicalName` 且文件名含 `.` 就会**静默解压到错误路径**、页面 404 白屏（见 `docs/reviews/2026-10-01.md` §4.3） | 建一个只写 `<PackageReference>` 的最小样例工程，断言资源被解压到预期路径（必须含 `app.min.js` 这类含点文件名）；旧写法保持兼容 |
+| **运行时注入的同步 API** | ⏳ 未开始 | 参照 **AOTrino**（它的 `system.doubleClickTimeMs`、同步窗口控制）。本库要解决的具体问题是：无边框拖动必须在 `mousedown` 内**同步**判断双击，不能 await——现在靠"移动阈值"绕过（见 README 无边框窗口一节） | 桥接测试（`tests/bridge/bridge.test.mjs`）覆盖注入对象的存在与同步语义；真机上人眼确认双击与拖动不再互相干扰 |
+| **工具链与打包** | ⏳ 未开始 | 参照 **Ryn**（`new` / `dev` / `build` / `bundle` / `doctor`）与 **AOTrino**（`dotnet new` 模板）：① `dotnet new` 模板（与上一项天然配套）；② `doctor` 子命令——把本文件的「待真机验证清单」变成**可执行**的检查，而不是让人对着文档手工点；③ 打包器：macOS `.app` + dmg（签名/公证）、Windows WiX、Linux AppImage；④ updater：**强制验签 + 防降级**（Ryn 用 ECDSA P-256） | ①③ 在各自平台上跑一次产物；② 断言它对本机环境的判定与文档一致；④ 验签失败与降级两个**负例**必须有测试 |
+
+> 建议顺序：**包内 MSBuild build logic → 安全模型 → 同步 API → 工具链**。
+> 前两项一个消灭现有缺陷、一个堵住最大的能力缺口，且都能在现有环境里验证；
+> 后两项要引入新的工具链与多平台产物，成本高一个量级。
+
+## 已确认的缺陷（真机验证发现）
+
+与「待真机验证清单」的区别：那些是**还没验**，这些是**验了、结论是坏的**。
+
+| 缺陷 | 现象 | 状态 |
+|---|---|---|
+| **Linux 无边框窗口的边缘 resize 无效** | Ubuntu 22.04 虚拟机实测：拖窗口边缘不改变大小 | ✅ **已修并真机验证**（2026-10-01；用户在其 Ubuntu 22.04 虚拟机确认有效） |
+| **Linux 标题栏双击不能最大化 / 还原** | Ubuntu 22.04 实测：双击标题栏没反应 | ✅ **已修（2026-10-01）**，待真机复验（见下） |
+| **Linux 最大化 / 还原图标不更新** | 初始正确、最大化后也正确；**还原后图标不变，直到点窗口外面（失焦）才变** | ✅ **已修（2026-10-01）**，待真机复验（见下） |
+
+### 修法一：边缘 resize —— 库自己判热区，再把 resize 交回给 WM/合成器
+
+根因：窗口是 `GTK_WINDOW_TOPLEVEL` + `gtk_window_set_decorated(false)`。**去掉装饰后窗口管理器就不再
+提供 resize 边框**——这不是"库漏了一行调用"，而是"系统不会白送这份能力"，只能自己判命中再交回去。
+
+做法（`LinuxResizeSupport` + `LinuxWindowHost`）：
+
+- 在 webview 上接 `motion-notify-event` 与 `button-press-event`（它铺满客户区，边缘命中就在它身上判），
+  并显式 `gtk_widget_add_events(..., GDK_POINTER_MOTION_MASK)`——motion 事件默认不投递。
+- 边缘热区 **5 逻辑像素**。命中就把光标换成对应的 resize 形状，并**吞掉该 motion 事件**
+  （不吞的话 WebKit 会紧接着用"按内容决定"的光标覆盖掉，表现为光标闪烁）。
+- 左键按下且命中边缘时调 `gtk_window_begin_resize_drag`，**在 button-press 里同步调用**——
+  与 `gtk_window_begin_move_drag` 同理，Wayland 下必须在按住期间发出（协议只吃 seat + serial）。
+- 命中判定抽成纯函数（`LinuxResizeSupport.ResolveEdge`），**18 个单测**覆盖：边界半开、角优先于边、
+  窗口过小时热区收窄（否则整窗都是边缘、页面一个点都点不到）、以及两个 GDK 枚举的数值。
+
+### 修法二：双击失效 —— Wayland 下"按下即交指针"会吞掉第二次点击
+
+根因：Wayland 的移动是**一次性交给合成器**（`xdg_toplevel.move`）。原来 `BeginDragStreaming` 在
+Wayland 分支里**立刻**就交出去了，于是指针被合成器 grab，页面再也收不到后续事件——**第二次点击也被吞掉，
+双击永远凑不齐，`dblclick` 不触发**。（X11 是按增量自己摆窗口、不抢指针，所以没事。）
+
+做法：Wayland 分支改为**只记下"按下了"**，等 `DragTo` 的增量超过阈值（4 逻辑像素）才真正交给合成器——
+那时按键仍按着，serial 依然有效。于是"按下一动不动"的点击与双击都不会触发拖动。
+阈值判定抽成纯函数（`LinuxDragSupport.ExceedsMoveThreshold`），3 个单测覆盖。
+
+### 修法三：图标不更新 —— 在信号 handler 里同步读状态，读到的是旧值
+
+根因：GTK 对最大化状态的更新发生在 `GtkWindow` 自己的 **class closure** 里，而普通 handler
+（`g_signal_connect` 系）排在它**之前**——在 `window-state-event` 里同步调
+`gtk_window_is_maximized()` 拿到的还是**旧值**。
+
+症状之所以长成"还原后不动、点窗口外面才动"，是因为**焦点变化本身也带一个 `window-state-event`**
+（`GDK_WINDOW_STATE_FOCUSED` 位变了），那一次才读到正确的值。最大化那一步"看起来是对的"，
+是因为页面同时用 `win.toggleMaximize` 的返回值（意图值）驱动图标，把问题盖住了。
+
+做法：handler 里不再直接读，改为 `ScheduleMaximizedSync()` 把读取排到**下一轮主循环**
+（复用已有的 `PostToMainThread`/`g_idle_add` 通道），那时 class closure 已经跑完；连续事件合并成一次读
+（`SyncMaximizedState` 内部有状态比对去重）。顺带给它加了"窗口已销毁（句柄为 0）就直接返回"的护栏——
+排队的读取可能在窗口销毁之后才轮到。
+
+### 待真机验证清单（Linux 标题栏双击与图标）
+- 环境：Linux 桌面，**X11 与 Wayland 各一次**（Wayland 是双击那条的复现环境）。
+- 步骤：1) 跑 `samples/OrielDemo`；2) **双击标题栏**——应最大化；再双击——应还原；
+  3) 每次之后看右上角图标：最大化后应是"还原"字形，还原后应是"最大化"字形，且**立即**变化
+  （不需要点窗口外面）；4) 按住标题栏拖动——窗口应跟手移动；5) 单击标题栏（不移动）——窗口不应移动。
+- 预期：2–5 全部符合。
+- 若不符：① 双击仍无反应 → 先确认会话类型（`echo $XDG_SESSION_TYPE`）：Wayland 下才走"延后交指针"
+  那条路；再看 `BeginDragStreaming` 是否真的没在 `dragStart` 里调 `gtk_window_begin_move_drag`。
+  ② 拖动没反应 → 阈值是否太大（`LinuxDragSupport.MoveThresholdPx`），或 `DragTo` 没被调到。
+  ③ 图标仍要失焦才变 → 看 `ScheduleMaximizedSync` 是否真的排进了主循环
+  （`PostToMainThread` → `g_idle_add_full`），以及 `SyncMaximizedState` 的 `_gtkWindow == 0` 护栏是否误拦。
+
 ## 明确不在本路线图内
 
-- **安全与能力模型**（`capabilities` 权限文件、按命令授权、CSP 处理、三平台统一的 scheme 读权限边界）：
-  参照 Tauri/Ryn 的方向已记在案，但排在 A/B/C 之后，届时单独立项。
-- **工具链与打包**（CLI、`dotnet new` 模板、前端构建集成、msi/dmg/AppImage 打包器、updater、
-  代码签名与公证）：参照 AOTrino/Tauri 的方向已记在案，同样排在之后。
+- **`shell.execute` / PTY**：那属于能力沙箱的范畴，与"跨平台 webview 核心库"的定位无关。
+- **移动端**：本库的三个后端都是桌面系统 webview，移动端是另一套（Android WebView / WKWebView-iOS）
+  与另一套生命周期，不在同一抽象下。

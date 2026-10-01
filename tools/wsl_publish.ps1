@@ -360,3 +360,5 @@ if ($Zip) {
     Compress-Archive -Path (Join-Path $publishDir '*') -DestinationPath $zipPath
     Write-Host "  压缩包     : $zipPath（$([Math]::Round((Get-Item $zipPath).Length / 1MB, 2)) MB）"
 }
+
+Pause

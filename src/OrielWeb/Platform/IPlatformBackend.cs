@@ -158,8 +158,7 @@ internal interface IPlatformBackend : IDisposable
     /// </summary>
     bool NotificationsSupported { get; }
 
-    /// <summary>用户点击了某条通知；参数是 <see cref="OrielNotificationOptions.Id"/>。</summary>
-    event Action<string>? NotificationClicked;
+    // 通知点击上报已从接口中移除：三平台都拿不到（见 OrielApp 里同处的说明与 DECISIONS）。
 
     /// <summary>
     /// 启用开机自启。<paramref name="id"/> 是应用标识（注册表值名 / .desktop 文件名 / LaunchAgent Label），

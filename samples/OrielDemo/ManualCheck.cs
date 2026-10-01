@@ -18,7 +18,7 @@ public sealed record ManualState(
 /// </summary>
 /// <remarks>
 /// 为什么回显到页面而不是打印：demo 在 Windows 上是 <c>WinExe</c>，没有控制台，自检的 stdout 看不见。
-/// 而这一批要验证的恰好都是"操作了才有回调"的东西（托盘菜单项、通知点击、快捷键、拖放），
+/// 而这一批要验证的恰好都是"操作了才有回调"的东西（托盘菜单项、上下文菜单项、拖放），
 /// 看不见回调就等于没验证。
 /// <para>
 /// 与 <see cref="ShellSelfTest"/> 的分工：那个是**无人自检**（跑完即退，给 CI 用），
@@ -62,8 +62,6 @@ internal static class ManualCheck
         }
 
         // 其余回调：每一项都是"操作了才会出现"的
-        app.NotificationClicked += id => Log($"通知被点击：{id}");
-
         window.ContextMenuItemClicked += id => Log($"上下文菜单项被点击：{id}");
         window.FileDropped += e => Log($"拖入 {e.Paths.Count} 项：{string.Join("  |  ", e.Paths)}");
 
@@ -130,11 +128,12 @@ public sealed partial class ManualCommands
         bool delivered = App.ShowNotification(new OrielNotificationOptions
         {
             Title = "OrielWeb 手动验证",
-            Body = "这条没有 Id，点它不会有回调。",
+            Body = "这条没有 Id。",
         });
 
         ManualCheck.Log(delivered
-            ? "通知已提交给系统（无 Id）。看不到横幅不是本库的问题——查系统通知设置与专注助手"
+            ? "通知已提交给系统（无 Id）。看不到横幅不是本库的问题——查系统通知设置与专注助手。" +
+              "点横幅不会有回调：通知点击上报已整体移除（三平台都拿不到）"
             : "通知提交失败：这是实现侧的问题（Windows 上走 PowerShell + WinRT toast，脚本非 0 退出）");
     }
 
@@ -143,13 +142,13 @@ public sealed partial class ManualCommands
     {
         bool delivered = App.ShowNotification(new OrielNotificationOptions
         {
-            Title = "点我试试",
-            Body = "点击这条通知，日志里应当出现「通知被点击」。",
+            Title = "带 Id 的通知",
+            Body = "Id 现在只作为这条通知的标识（Windows 上是 toast 的 Tag）。",
             Id = "manual-notify",
         });
 
         ManualCheck.Log(delivered
-            ? "通知已提交给系统（带 Id）。注意：Windows 上是 WinRT toast，点击激活尚未实现（未打包应用的限制）"
+            ? "通知已提交给系统（带 Id）。Id 只作为通知的标识；点击回传已随该功能一起移除"
             : "通知提交失败：这是实现侧的问题（Windows 上走 PowerShell + WinRT toast，脚本非 0 退出）");
     }
 

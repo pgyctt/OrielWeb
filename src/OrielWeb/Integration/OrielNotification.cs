@@ -15,10 +15,12 @@ public sealed class OrielNotificationOptions
     public string? IconPath { get; set; }
 
     /// <summary>
-    /// 通知标识：用户点击该通知时，<see cref="OrielApp.NotificationClicked"/> 回传的就是它。
-    /// 平台间差异较大（见 README 平台矩阵）：<b>三平台当前都拿不到点击</b>，
-    /// 因此这个字段现在只作为"这条通知的身份"传给系统（Windows 上是 toast 的 <c>Tag</c>）。
+    /// 通知标识：作为"这条通知的身份"传给系统（Windows 上是 toast 的 <c>Tag</c>）。
     /// </summary>
+    /// <remarks>
+    /// 它**不再**用于点击回传——通知点击上报功能已整体移除（三个平台都拿不到点击，
+    /// 见 <see cref="OrielApp"/> 里同处的说明）。
+    /// </remarks>
     public string? Id { get; set; }
 }
 

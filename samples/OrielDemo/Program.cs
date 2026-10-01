@@ -24,6 +24,30 @@ internal static class Program
     }
 
     /// <summary>
+    /// Linux/macOS 上的默认窗口图标：产物目录旁的 <c>app.png</c>；没有就用 null（窗口不带图标）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 用 <see cref="AppContext.BaseDirectory"/> 拼**绝对路径**：图标接口按当前工作目录解析相对路径，
+    /// 而 macOS 从 <c>.app</c> 启动时 cwd 是 <c>/</c>——相对路径在那里必然失效。
+    /// </para>
+    /// <para>
+    /// Windows 直接返回 null：那边库会主动从 exe 取图标（csproj 里的 <c>ApplicationIcon</c>），
+    /// 不需要应用给文件。
+    /// </para>
+    /// </remarks>
+    private static string? DefaultIconPath()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return null;
+        }
+
+        string path = Path.Combine(AppContext.BaseDirectory, "app.png");
+        return File.Exists(path) ? path : null;
+    }
+
+    /// <summary>
     /// <c>--selftest</c> 认得的名字。加一个自检只需在这里加名字 + 在 Main 里加一行判定。
     /// </summary>
     private static readonly string[] SelfTestNames =
@@ -40,8 +64,11 @@ internal static class Program
         // --hidden：以隐藏窗口启动。既用于验证三平台的 Hidden 语义（窗口不上屏，但页面照常
         // 加载、IPC 照常往返），也是"先隐藏预热、准备好再显示"这类用法的示例。
         var hidden = args.Contains("--hidden");
-        // --icon <path>：设置窗口图标（Windows/Linux 是窗口图标，macOS 会落到 Dock 图标）
-        var icon = GetOptionValue(args, "--icon");
+        // --icon <path>：设置窗口图标（Windows/Linux 是窗口图标，macOS 会落到 Dock 图标）。
+        // 不给时**在 Linux/macOS 上回落到随产物一起分发的 app.png**——那两个平台没有"从 exe 取图标"
+        // 这回事（ELF/Mach-O 都不带图标，macOS 的图标在 .app bundle 里），不显式给个文件就是通用图标。
+        // Windows 不需要：库会主动从 exe 取（见 README「应用图标」）。
+        var icon = GetOptionValue(args, "--icon") ?? DefaultIconPath();
         // --selftest <名字>：无人交互的自检（CI 用），跑完打印结论并以退出码表达成败。
         // 可用名字见 SelfTestNames。合并成一个开关是为了让 demo 的入口干净——
         // 以前是六个独立开关（--nav-selftest 之类），能力没少，只是不再往命令行上摆一排。

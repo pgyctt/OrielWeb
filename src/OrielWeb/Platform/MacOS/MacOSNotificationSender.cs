@@ -10,9 +10,9 @@ namespace OrielWeb.Platform.MacOS;
 /// 未打包运行（没有 <c>CFBundleIdentifier</c>）时这是唯一可用路径：<c>UNUserNotificationCenter</c>
 /// 对无 bundle 的进程直接拒绝（Ryn 在同一处分了"打包 → UNUserNotificationCenter / 未打包 → osascript"
 /// 两条路，本库这一批先交付后者）。
-/// 代价是拿不到点击回调，因此 <see cref="OrielApp.NotificationClicked"/> 在 macOS 上不触发
-/// （见 <see cref="OrielNotificationOptions.Id"/> 的说明）。放进 .app bundle 后用 UN 的那条路
-/// 才能上报点击，已记入 ROADMAP。
+/// 代价是拿不到点击回调——"通知点击上报"功能因此**已整体移除**（见 <see cref="OrielApp"/> 里同处的说明）。
+/// 放进 .app bundle 后用 UN 的那条路才能上报点击；若将来要做，那是一次"重新引入一个 API"的决定，
+/// 而不是把空事件加回来。
 /// </para>
 /// <para>
 /// <b>转义是安全关键</b>：标题与正文来自应用（可能是页面传来的数据），它们会被拼进一段
