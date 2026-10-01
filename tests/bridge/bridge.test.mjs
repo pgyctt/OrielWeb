@@ -29,15 +29,19 @@ const bridges = [
 
 const template = readFileSync(join(repoRoot, templatePath), 'utf8');
 
+/** 测试用的注入版本（对应 C# 侧 OrielBridgeTemplate 的 VersionLiteral）。 */
+const injectedVersion = '9.8.7';
+
 /**
- * 复现 C# 侧的三次占位符替换，得到该平台真正被注入的脚本。
+ * 复现 C# 侧的占位符替换，得到该平台真正被注入的脚本。
  * forwardConsole 对应 OrielWindowOptions.ConsoleForwarding（默认关闭）。
  */
 function buildScript(bridge, { forwardConsole = false } = {}) {
     const script = template
         .replaceAll('__ORIEL_PLATFORM__', `'${bridge.platform}'`)
         .replaceAll('__ORIEL_POST__', bridge.post)
-        .replaceAll('__ORIEL_CONSOLE_ENABLED__', forwardConsole ? 'true' : 'false');
+        .replaceAll('__ORIEL_CONSOLE_ENABLED__', forwardConsole ? 'true' : 'false')
+        .replaceAll('__ORIEL_VERSION__', injectedVersion);
     assert.ok(!script.includes('__ORIEL_'), `${bridge.platform}：生成的脚本仍残留占位符`);
     return script;
 }
@@ -150,7 +154,14 @@ test('模板：占位符齐备', () => {
     assert.ok(template.includes('__ORIEL_PLATFORM__'), '模板缺少 __ORIEL_PLATFORM__');
     assert.ok(template.includes('__ORIEL_POST__'), '模板缺少 __ORIEL_POST__');
     assert.ok(template.includes('__ORIEL_CONSOLE_ENABLED__'), '模板缺少 __ORIEL_CONSOLE_ENABLED__');
+    assert.ok(template.includes('__ORIEL_VERSION__'), '模板缺少 __ORIEL_VERSION__');
     assert.ok(template.includes('window.__orielBridgeInstalled'), '模板缺少重复注入防护');
+});
+
+test('模板：版本号不得写死为字面量', () => {
+    // oriel.version 是给页面做能力探测用的，写死会与包版本各自漂移。
+    // 这里钉住"必须来自注入"：模板里不该出现形如 '0.1.0' 的裸版本字面量。
+    assert.ok(!/version:\s*'\d+\.\d+\.\d+'/.test(template), '模板里的 version 被写死成了字面量');
 });
 
 for (const bridge of bridges) {
@@ -191,6 +202,7 @@ for (const bridge of bridges) {
         assert.equal(env.loadError, undefined, `桥接脚本加载抛异常：${env.loadError}`);
         assert.ok(env.window.oriel, 'window.oriel 未安装');
         assert.equal(env.window.oriel.platform, bridge.platform);
+        assert.equal(env.window.oriel.version, injectedVersion, 'oriel.version 未采用注入值');
         await env.window.oriel.ready;
     });
 

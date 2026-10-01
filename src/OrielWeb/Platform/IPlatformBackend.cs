@@ -176,10 +176,17 @@ internal interface IPlatformBackend : IDisposable
     /// <summary>
     /// 发送系统通知。
     /// </summary>
+    /// <param name="notification">通知内容与标识。</param>
+    /// <param name="appId">
+    /// 应用标识（已规范化）：Windows 上用作 AUMID，Linux 上用作 <c>notify-send --app-name</c>。
+    /// 它是**应用级**信息（决定系统通知设置里怎么给应用分组），所以按参数传而不是塞进
+    /// <see cref="OrielNotificationOptions"/>——后者是"这一条通知"的描述。
+    /// macOS 没有对应概念，忽略此参数。
+    /// </param>
     /// <returns>
     /// <c>true</c> 表示**已成功提交给系统**——注意它不等于"用户看见了"：横幅显示与否由系统的通知设置、
     /// 专注助手、免打扰时段决定，那些不在本库的控制范围内。失败**不抛异常**（通知失败不该影响业务），
     /// 只如实返回 <c>false</c>，让调用方能据此在应用内补一个提示。
     /// </returns>
-    bool ShowNotification(OrielNotificationOptions notification);
+    bool ShowNotification(OrielNotificationOptions notification, string appId);
 }

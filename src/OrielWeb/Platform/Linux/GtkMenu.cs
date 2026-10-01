@@ -48,6 +48,12 @@ internal sealed unsafe class GtkMenu : IDisposable
             return null;
         }
 
+        // gtk_menu_new() 给的是 floating 引用（GtkWidget 都继承 GInitiallyUnowned）。
+        // 顶层菜单没有父容器替我们 sink，所以在这里取走它，Dispose 里的 unref 才是配对的。
+        // 不 sink 就直接 unref 会打乱引用计数：GTK 报 "A floating object was finalized"，
+        // 连续弹几次菜单就可能把同一个对象销毁两次。子菜单不在此列——set_submenu 会 sink。
+        GtkNative.GObjectRefSink(handle);
+
         var menu = new GtkMenu(handle);
         menu.AppendAll(handle, items, onActivate);
 
@@ -56,12 +62,19 @@ internal sealed unsafe class GtkMenu : IDisposable
         return menu;
     }
 
-    /// <summary>在指针位置弹出。triggerEvent 传 0 是 GTK 明确支持的形态（用当前指针位置）。</summary>
-    internal void Popup()
+    /// <summary>
+    /// 在指针位置弹出。
+    /// </summary>
+    /// <param name="triggerEvent">
+    /// 触发本次弹出的 <c>GdkEvent</c>。从信号处理器里弹时**必须**把它传进来：GTK 靠这个事件
+    /// 定位并决定抓取，传 0 时它会报 "no trigger event for menu popup" 并弹不出来。
+    /// 从异步 IPC 回调里弹（没有当前事件）时只能传 0，此时 GTK 退化为"用当前指针位置"。
+    /// </param>
+    internal void Popup(nint triggerEvent = 0)
     {
         if (_handle != 0 && !_disposed)
         {
-            GtkNative.GtkMenuPopupAtPointer(_handle, 0);
+            GtkNative.GtkMenuPopupAtPointer(_handle, triggerEvent);
         }
     }
 

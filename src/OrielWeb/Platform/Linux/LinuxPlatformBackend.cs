@@ -171,7 +171,8 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
         remove { }
     }
 
-    public bool ShowNotification(OrielNotificationOptions notification) => LinuxNotificationSender.Send(notification);
+    public bool ShowNotification(OrielNotificationOptions notification, string appId)
+        => LinuxNotificationSender.Send(notification, appId);
 
     public void Quit() => GtkNative.GtkMainQuit();
 

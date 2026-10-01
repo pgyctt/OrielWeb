@@ -299,7 +299,7 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
         source.AppendLine("        }");
         source.AppendLine();
 
-        source.AppendLine("        public async global::System.Threading.Tasks.ValueTask<object?> InvokeAsync(int index, object? target, global::System.Text.Json.JsonElement args)");
+        source.AppendLine("        public async global::System.Threading.Tasks.ValueTask<object?> InvokeAsync(int index, object? target, global::System.Text.Json.JsonElement args, global::System.Text.Json.Serialization.JsonSerializerContext? jsonContext)");
         source.AppendLine("        {");
         source.AppendLine("            switch (index)");
         source.AppendLine("            {");
@@ -327,11 +327,11 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
                 else if (parameter.IsOptional)
                 {
                     // char / Guid / DateTime / DateTimeOffset / DTO 等仍走泛型入口（fallback）
-                    source.AppendLine($"                    var __arg_{parameter.Name} = global::OrielWeb.Ipc.OrielJson.GetOptionalArg<{parameter.TypeDisplay}>(args, \"{Escape(parameter.Name)}\");");
+                    source.AppendLine($"                    var __arg_{parameter.Name} = global::OrielWeb.Ipc.OrielJson.GetOptionalArg<{parameter.TypeDisplay}>(args, \"{Escape(parameter.Name)}\", jsonContext);");
                 }
                 else
                 {
-                    source.AppendLine($"                    var __arg_{parameter.Name} = global::OrielWeb.Ipc.OrielJson.GetRequiredArg<{parameter.TypeDisplay}>(args, \"{Escape(parameter.Name)}\");");
+                    source.AppendLine($"                    var __arg_{parameter.Name} = global::OrielWeb.Ipc.OrielJson.GetRequiredArg<{parameter.TypeDisplay}>(args, \"{Escape(parameter.Name)}\", jsonContext);");
                 }
             }
 

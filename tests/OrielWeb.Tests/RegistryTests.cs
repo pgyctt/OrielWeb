@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using OrielWeb.Ipc;
 using Xunit;
 
@@ -25,7 +26,11 @@ namespace OrielWeb.Tests.Ns2
 
 namespace OrielWeb.Tests
 {
-    /// <summary>只有命令名冲突检测不共享 OrielJson 全局上下文，但注册表是全局静态，故同集合串行。</summary>
+    /// <summary>
+    /// 命令注册表**仍是**全局静态（注册发生在程序集加载期的 ModuleInitializer，这是刻意的设计），
+    /// 因此这些用例与其它测试同集合串行——尤其是会往注册表里加伪路由的那个。
+    /// JSON 上下文则已经不再是全局状态（按分发器实例持有）。
+    /// </summary>
     [Collection("IpcSerial")]
     public sealed class RegistryTests
     {
@@ -37,7 +42,8 @@ namespace OrielWeb.Tests
                 [typeof(Ns1.Dup)] = () => new Ns1.Dup(),
                 [typeof(Ns2.Dup)] = () => new Ns2.Dup(),
             };
-            var dispatcher = new OrielCommandDispatcher(factories);
+            // 这两条命令都返回 string（基元），因此不需要 JSON 上下文
+            var dispatcher = new OrielCommandDispatcher(factories, jsonContext: null);
 
             var (first, _) = await TestHarness.DispatchAsync(dispatcher, "dupns.ns1", null);
             var (second, _) = await TestHarness.DispatchAsync(dispatcher, "dupns.ns2", null);
@@ -67,7 +73,7 @@ namespace OrielWeb.Tests
         public Type? TargetType => null;
         public bool RequiresTarget => false;
         public int Route(string name) => name == "dup.same" ? 0 : -1;
-        public ValueTask<object?> InvokeAsync(int index, object? target, JsonElement args) => ValueTask.FromResult<object?>(null);
+        public ValueTask<object?> InvokeAsync(int index, object? target, JsonElement args, JsonSerializerContext? jsonContext) => ValueTask.FromResult<object?>(null);
     }
 
     /// <summary>伪路由：与 <see cref="DuplicateRouterA"/> 注册同名命令。</summary>
@@ -77,6 +83,6 @@ namespace OrielWeb.Tests
         public Type? TargetType => null;
         public bool RequiresTarget => false;
         public int Route(string name) => name == "dup.same" ? 0 : -1;
-        public ValueTask<object?> InvokeAsync(int index, object? target, JsonElement args) => ValueTask.FromResult<object?>(null);
+        public ValueTask<object?> InvokeAsync(int index, object? target, JsonElement args, JsonSerializerContext? jsonContext) => ValueTask.FromResult<object?>(null);
     }
 }

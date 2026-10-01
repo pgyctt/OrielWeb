@@ -47,9 +47,15 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     // 这个标记用来避免把那一趟当成"又一次成功导航"上报。
     private bool _failedSinceLoadStart;
 
-    // 流式拖动状态（GTK 设备像素坐标）
+    // 拖动状态（GTK 设备像素坐标）。两种形态互斥：
+    //  * X11：页面送来起点，之后按增量调 gtk_window_move（流式跟随）；
+    //  * Wayland：把移动一次性交给合成器（gtk_window_begin_move_drag），宿主不再插手。
     private (int X, int Y)? _dragPointerStart;
     private (int X, int Y)? _dragWindowOrigin;
+    // 当前 GDK 后端是否 Wayland；首次拖动时判定一次（拖动路径上不必每次都问 GDK）。
+    private bool? _isWayland;
+    // 本次拖动是否已经交给合成器——决定 DragTo 该不该插手。
+    private bool _waylandDrag;
 
     private event Action? Loaded;
     private event Action<OrielCloseRequestEventArgs>? Closing;
@@ -68,65 +74,78 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     /// <summary>
     /// 内建右键菜单即将弹出（由 <c>context-menu</c> 信号的 trampoline 调进来）。
     /// </summary>
+    /// <param name="menu">WebKit 构造好的菜单；接管式用不上它，但要保留参数以便对照调用点。</param>
+    /// <param name="gdkEvent">触发右键的 <c>GdkEvent</c>，交给自建菜单做定位。</param>
+    /// <returns>
+    /// <c>true</c> = 我们接管，WebKit 什么都不弹；<c>false</c> = 让 WebKit 弹它自己的菜单。
+    /// </returns>
     /// <remarks>
-    /// 改的是 WebKit 已经构造好的那个菜单对象。WebKitGTK 在这里的约定与另两个平台不同：
-    /// 处理器返回 <c>FALSE</c> 表示"我不接管"，WebKit 会**用它自己的、但已被我们改过的**菜单去弹；
-    /// 返回 <c>TRUE</c> 则表示"我自己弹"，WebKit 什么都不弹。我们要的是前者。
+    /// <b>不碰</b> WebKit 传进来的那个菜单对象。早先的做法是就地增删它的项，但那要经
+    /// <c>webkit_context_menu_get_items</c> 配合 <c>webkit_context_menu_remove</c> / <c>g_list_free</c>，
+    /// 在本环境的 WebKitGTK 4.1 上会破坏菜单内部结构——连点几次右键就 double free / 栈保护被破坏。
+    /// 现在改为自己弹菜单，编辑命令走渲染引擎的 API（见 <see cref="TryExecuteNativeEditing"/>）。
     /// </remarks>
-    internal void FilterContextMenu(nint menu)
+    internal bool FilterContextMenu(nint menu, nint gdkEvent)
     {
-        if (menu == 0)
-        {
-            return;
-        }
+        _ = menu; // 接管式用不上 WebKit 的菜单对象
 
         switch (ContextMenuPolicy)
         {
             case OrielContextMenuPolicy.Native:
-                return; // 平台原样
+                return false; // 平台原样，交给 WebKit 弹
 
             case OrielContextMenuPolicy.Disabled:
-                GtkNative.WebkitContextMenuRemoveAll(menu);
-                return;
+                return true; // 接管且什么都不弹 = 右键无反应
 
             default:
-                RemoveNonEditingItems(menu);
-                return;
+                ShowEditingMenu(gdkEvent);
+                return true;
         }
     }
 
-    /// <summary>只留剪切 / 复制 / 粘贴。</summary>
-    /// <remarks>
-    /// 判断依据是菜单项的「标准动作」编号（<c>WebKitContextMenuAction</c>）——它是 WebKit 给的语义标识，
-    /// 与界面语言无关。编号与常量的对应关系（以及为什么它需要一份单测）见
-    /// <see cref="OrielContextMenuSupport"/>。
-    /// </remarks>
-    private static void RemoveNonEditingItems(nint menu)
+    /// <summary>
+    /// 接管式菜单的内容：只含剪切 / 复制 / 粘贴（<see cref="OrielContextMenuPolicy.Editing"/> 的语义）。
+    /// </summary>
+    private void ShowEditingMenu(nint gdkEvent)
     {
-        nint list = GtkNative.WebkitContextMenuGetItems(menu);
-        if (list == 0)
+        _contextMenu?.Dispose();
+        _contextMenu = GtkMenu.Build(OrielMenuRoles.EditingMenuItems(), ActivateMenuItem);
+        _contextMenu?.Popup(gdkEvent);
+    }
+
+    /// <summary>
+    /// 把编辑类 role 落到渲染引擎自己的编辑命令上（<c>WEBKIT_EDITING_COMMAND_*</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 接管式菜单的剪切/复制/粘贴必须走这里：<c>document.execCommand('cut'/'paste')</c> 会被
+    /// webview 的安全策略拦下，而粘贴还要把系统剪贴板送进页面，只有原生侧做得到。
+    /// </remarks>
+    private bool TryExecuteNativeEditing(string role)
+    {
+        if (_webview == 0)
         {
-            return;
+            return false;
         }
 
-        try
+        string? command = role switch
         {
-            // GList 节点布局：{ data, next, prev } —— 沿 next 走，data 才是菜单项
-            for (nint node = list; node != 0; node = Marshal.ReadIntPtr(node, IntPtr.Size))
-            {
-                nint item = Marshal.ReadIntPtr(node);
-                if (item != 0 && !OrielContextMenuSupport.IsEditingWebKitAction(
-                        GtkNative.WebkitContextMenuItemGetStockAction(item)))
-                {
-                    GtkNative.WebkitContextMenuRemove(menu, item);
-                }
-            }
-        }
-        finally
+            OrielMenuRole.Cut => "Cut",
+            OrielMenuRole.Copy => "Copy",
+            OrielMenuRole.Paste => "Paste",
+            OrielMenuRole.Undo => "Undo",
+            OrielMenuRole.Redo => "Redo",
+            OrielMenuRole.SelectAll => "SelectAll",
+            OrielMenuRole.Delete => "Delete",
+            _ => null,
+        };
+
+        if (command is null)
         {
-            // 只释放链表节点：菜单项的所有权仍在菜单上
-            GtkNative.GListFree(list);
+            return false;
         }
+
+        GtkNative.WebkitWebViewExecuteEditingCommand(_webview, command);
+        return true;
     }
 
     internal LinuxWindowHost(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, LinuxPlatformBackend backend)
@@ -221,7 +240,7 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     {
         if (item.Role is { Length: > 0 } role)
         {
-            if (!OrielMenuRoles.TryActivate(role, _app, _window))
+            if (!OrielMenuRoles.TryActivate(role, _app, _window, TryExecuteNativeEditing))
             {
                 System.Diagnostics.Debug.WriteLine($"[OrielWeb] 菜单 role「{role}」在 Linux 上未被处理。");
             }
@@ -326,6 +345,16 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     {
         if (_options.Url is { Length: > 0 } externalUrl)
         {
+            // 内嵌资源的虚拟主机 URL（https://&lt;AssetHost&gt;/…）在 Linux 上没有引擎支持：WebKitGTK 只能
+            // 注册**自定义** scheme，而 https 是保留 scheme。原样交出去会变成一次真实的网络请求，
+            // DNS 解析失败后引擎渲染错误页——表现就是一片空白的窗口，且宿主侧收不到任何异常。
+            // 这里把它映射回解压目录里的本地文件，与 Windows 的虚拟主机映射语义对齐。
+            if (AssetUrlResolver.TryResolveLocalFile(externalUrl, _app.AssetHost, _assetDirectory) is { } localFile)
+            {
+                GtkNative.WebkitWebViewLoadUri(_webview, new Uri(localFile).AbsoluteUri);
+                return;
+            }
+
             GtkNative.WebkitWebViewLoadUri(_webview, externalUrl);
             return;
         }
@@ -596,11 +625,26 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
 
     public void BeginDrag()
     {
-        // Linux 无边框拖动由 JS 流式坐标驱动（win.dragStart 提供起点，DragTo 应用增量）。
+        // Linux 不走这个入口（它对应 Windows 的 WM_NCLBUTTONDOWN 模态循环）：拖动由页面在
+        // mousedown 里经 win.dragStart 发起，宿主再按 GDK 后端决定形态。
     }
 
     public void BeginDragStreaming(double px, double py, double winX, double winY, double winW, double winH, double screenH)
     {
+        if (IsWaylandBackend())
+        {
+            // Wayland 协议不允许客户端移动自己的窗口（连窗口位置都拿不到），增量这条路根本走不通，
+            // 只能把移动交给合成器。左键 = 1；Wayland 下 root 坐标与时间戳都被忽略。
+            //
+            // 时序是这里唯一的风险点：xdg_toplevel.move 要求带一个有效 serial，而 GTK3 取的是按钮
+            // 按下时记录的隐式抓取 serial。页面在 mousedown 里发 win.dragStart，这里已经是宿主侧
+            // 最早的时机——若这条 IPC 晚到松开之后，请求会被合成器忽略，表现为"拖不动"。
+            GtkNative.GtkWindowBeginMoveDrag(_gtkWindow, 1, 0, 0, 0 /* GDK_CURRENT_TIME */);
+            _waylandDrag = true;
+            return;
+        }
+
+        _waylandDrag = false;
         _dragPointerStart = ((int)px, (int)py);
         GtkNative.GtkWindowGetPosition(_gtkWindow, out var curX, out var curY);
         _dragWindowOrigin = (curX, curY);
@@ -608,6 +652,13 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
 
     public void DragTo(double pointerDx, double pointerDy)
     {
+        if (_waylandDrag)
+        {
+            // 合成器接管后指针被 grab，页面收不到 mousemove，这里本不该被调到；真被调到也不插手——
+            // 双方同时移动同一个窗口没有意义。
+            return;
+        }
+
         if (_dragPointerStart is null || _dragWindowOrigin is null)
         {
             return;
@@ -618,7 +669,30 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
             _dragWindowOrigin.Value.Y + (int)pointerDy);
     }
 
-    public void EndDrag() => _dragPointerStart = null;
+    public void EndDrag()
+    {
+        _waylandDrag = false;
+        _dragPointerStart = null;
+    }
+
+    /// <summary>
+    /// 当前 GDK 后端是否 Wayland（判定结果缓存）。拖动形态只在这里分叉：X11 允许客户端自己摆窗口，
+    /// Wayland 只能请合成器代劳。
+    /// </summary>
+    private bool IsWaylandBackend()
+    {
+        if (_isWayland is null)
+        {
+            nint display = GtkNative.GdkDisplayGetDefault();
+            // gdk_display_get_name 返回 GDK 拥有的 const gchar*：复制成托管字符串，指针本身不动。
+            // 必须走"裸指针 + 手工复制"，不要让它封送成 string 返回——原因见 GtkNative 里的注释。
+            nint namePtr = display == 0 ? 0 : GtkNative.GdkDisplayGetName(display);
+            string? name = namePtr == 0 ? null : Marshal.PtrToStringUTF8(namePtr);
+            _isWayland = display != 0 && LinuxDragSupport.IsWaylandDisplay(name);
+        }
+
+        return _isWayland.Value;
+    }
 
     public Task<string> ExecuteScriptAsync(string script)
     {

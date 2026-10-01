@@ -42,7 +42,7 @@
   - **托管 → 原生**：`WebView2Com.cs` 指针包装结构按槽位直接调用（槽位序从官方 `WebView2.h` 提取核对；注意 Controller 在 remove_LostFocus 之后还有 AcceleratorKeyPressed×2、ParentWindow×2 四个方法，ICoreWebView2 共 58 个方法，_3.SetVirtualHostNameToFolderMapping 位于槽 71）。
   - 实现 [GeneratedComInterface] 的类若嵌套或使用主构造函数，CCW 生成会静默失败——已不再使用该机制。
 - COM 互操作用 **`[GeneratedComInterface]`/`[GeneratedComClass]`** 的方案曾据此废弃；**该结论已于 2026-09-28 被推翻并撤销**（见文末"E 阶段执行结果"）。保留的通用经验：此类接口/类必须 partial，LibraryImport 的 bool 返回值需显式 `[MarshalAs(UnmanagedType.Bool)]`。
-- 内容托管 MVP 用 **WebView2 虚拟主机映射**（`SetVirtualHostNameToFolderMapping`，槽 71）+ 内嵌资源启动时解压到用户目录；内存直供的自定义 scheme 为后续优化。外部 dev server URL（Vite 等）直接 `Navigate` 支持。
+- 内容托管 MVP 用 **WebView2 虚拟主机映射**（`SetVirtualHostNameToFolderMapping`，槽 71）+ 内嵌资源启动时解压到用户目录；内存直供的自定义 scheme 为后续优化。外部 dev server URL（Vite 等）直接 `Navigate` 支持。**Linux 与 macOS 没有等价的引擎机制**——那两个引擎都只能注册自定义 scheme，`https` 是保留 scheme，所以指向虚拟主机的 URL 由库映射回本地文件（见文末「内嵌资源虚拟主机 URL 在 Linux/macOS 上白屏」）。
 - 命令参数/返回值：基元类型由生成器逐字段提取/写入（`Utf8JsonReader/Writer`）；DTO 类型经构建器注册 `JsonSerializerContext`（`.UseJsonContext(...)`），规避"生成器无法链式生成 STJ 上下文"的限制。
 - WebView2Loader.dll 经 `Microsoft.Web.WebView2` 包仅取其原生位（托管程序集不引用，AOT 裁剪自动丢弃）。
 - Windows 入口要求 `[STAThread]`（WebView2 COM STA），运行时检测并给出明确报错。
@@ -331,12 +331,26 @@ macOS **无真机**，该修复仅靠代码一致性保证，**未经运行验�
 `dpkg-deb -x` 解包，把 TTC 拷到 `~/.local/share/fonts` 后 `fc-cache -f`；② demo 字体栈补上
 `"Noto Sans CJK SC"` / `"Noto Sans SC"` / `"Source Han Sans SC"` 等跨平台族。**库层对字体零干预**（字体选择属应用与系统职责）。
 
-### 已知限制（本轮仅记录，未修）：Wayland 下无边框窗口不可拖动
+### Wayland 下无边框窗口不可拖动（2026-09-30 已修）
 
-无边框拖动靠 JS 流式坐标 → 宿主 `gtk_window_move`；而 Wayland 协议不允许客户端自行移动窗口，
+无边框拖动原来靠 JS 流式坐标 → 宿主 `gtk_window_move`；而 Wayland 协议不允许客户端自行移动窗口，
 `gtk_window_move` 在 Wayland 下是空操作。**对照取证**：同一个 exe 强制 `GDK_BACKEND=x11` 后拖动正常
-→ 坐实为"后端差异"而非"拖动链路缺陷"。修法方向：Wayland 下改调 `gtk_window_begin_move_drag`
-（交合成器接管），X11 保留流式；本轮未实施。
+→ 坐实为"后端差异"而非"拖动链路缺陷"。
+
+修法：按 GDK 后端分叉。X11 保留流式（`gtk_window_move`，已在真机验证过，不动它）；Wayland 改调
+`gtk_window_begin_move_drag`，由 GDK 转成 `xdg_toplevel.move` 交给合成器——跟手、边缘吸附与贴边平铺
+随之成为原生行为。此后宿主不该再插手：合成器接管时指针被 grab，页面收不到 `mousemove`，`DragTo` 直接
+返回；顺带一提，`root_x`/`root_y` 在 Wayland 下也拿不到（协议没有全局坐标），能给的只有 `button`。
+
+后端判据取 `gdk_display_get_name()` 的前缀（X11 形如 `:0`，Wayland 形如 `wayland-0`），并且刻意**不**看
+环境变量：Wayland 会话里用 `GDK_BACKEND=x11` 时，X11 恰是我们想要的那一侧（那时客户端能自己摆窗口）。
+判据本身是纯函数（`LinuxDragSupport.IsWaylandDisplay`）并带单测——分叉的依据不该只能靠真机验证。
+
+**遗留风险（只能真机验证）**：`xdg_toplevel.move` 要求带一个有效 serial，GTK3 取的是按钮按下时记录的
+隐式抓取 serial，所以这个调用必须落在鼠标按住期间。本库的拖动是"页面 JS → IPC → 宿主"，已经离开 GTK 的
+事件处理栈——页面侧在 `mousedown` 里立刻发起（不像 Windows 那样等移动超过阈值）是把这段延迟压到最短的
+做法，但它是否足够仍要看真机。另有一处副作用：Wayland 下页面收不到 `mouseup`，页面侧的拖动状态要等
+下一次 `mousedown` 复位；宿主侧不受影响（`DragTo` 已是 no-op）。
 
 ### 取证方法：`tools/verify-linux.sh` 已升级为双路径
 
@@ -349,12 +363,47 @@ macOS **无真机**，该修复仅靠代码一致性保证，**未经运行验�
   字体栈修复后重新发布，在**最终产物**上再跑一次（20s 窗）结论一致（两条路径均 PASS）。
 - 环境噪音（不影响功能，仅性能）：WSLg 无 GPU，MESA/ZINK 回落软件渲染，stderr 有
   `libEGL warning: MESA-LOADER: failed to retrieve device information` / `MESA: error: ZINK: failed to choose pdev` 等警告。
+  **2026-09-30 补充：这些警告与渲染无关**——同环境下未经加速的 GTK+WebKit 程序照常渲染；排查白屏时
+  不要把它们当成线索（见「内嵌资源虚拟主机 URL 在 Linux/macOS 上白屏」）。
 
 ### 一处工具侧踩坑（非产品代码）
 
 `pkill -f "WebKitWebProcess|WebKitNetworkProcess"` 会**匹配到承载该命令的 bash 自身**（其命令行里含同样字符串），
 于是把执行环境一起杀掉、命令静默返回空输出（表现为"窗口没起来"）。查/杀进程一律用 `pgrep -x` / `pkill -x`
 精确进程名，不要用会自匹配的 `-f` 模式。
+
+## 内嵌资源虚拟主机 URL 在 Linux/macOS 上白屏（2026-09-30 修复）
+
+**现象**：Linux 与 macOS 上启动 demo（默认打开手动验证台）**窗口一片空白**，连页面背景色都没有；
+宿主侧没有任何异常、日志为空，进程存活、WebKit 子进程照常出现。而 `--todo` 与各 `--selftest` 完全正常。
+
+**根因**：`UseEmbeddedAssets(host)` 把内嵌资源挂在虚拟主机 `https://app.oriel/` 下，demo 的手动验证台用
+`WithUrl($"https://{host}/manual-check.html")` 指定页面。三个平台里**只有 Windows 有引擎级的虚拟主机机制**
+（WebView2 的 `SetVirtualHostNameToFolderMapping`）；WebKitGTK 与 WKWebView 都只能注册**自定义** scheme，
+而 `https` 是保留 scheme、注册不了。于是该 URL 变成一次**真实的网络请求**，DNS 解析失败后引擎渲染错误页——
+就是那片空白。它没有任何宿主侧信号，因此从 `a649a1d`（引入手动验证台）起一直存在；`--todo` 与 `--selftest`
+都不设 `Url`（走 `file://` 直读解压目录），正好把它挡住了。
+
+**排查中被误导过的两件事**（记下来，避免下次重走）：
+
+- WSLg 下没有 `/dev/dri`，stderr 稳定出现 `MESA: error: ZINK: failed to choose pdev` 与
+  `libEGL warning: egl: failed to create dri2 screen`。看着像"渲染坏了"，但**与渲染无关**：同一环境下
+  一个只调 `load_html` 的最小 GTK+WebKit 程序画得好好的。这些警告此后按**性能噪音**看待。
+- 用一个**不经本库**的最小探针做对照，是这次唯一奏效的分诊手段——它把"环境"与"本库"一刀切开。
+  在它之前我先后误判为"虚拟机 GL 问题"和"页面文件被改坏"，两次都错。
+
+**修法**：新增 `AssetUrlResolver.TryResolveLocalFile(url, assetHost, assetDirectory)`（纯函数、带单测），
+把命中虚拟主机的 URL 解析回解压目录里的本地文件。Linux 与 macOS 在 `Navigate()` 的"显式 `Url`"分支里先试
+映射，命中则改用本地文件加载——macOS 走 `loadFileURL:allowingReadAccessToURL:`（读权限限定在资源目录内；
+只把一个 `file://` 交给 `loadRequest:` 是不够的，同目录的 css/js 会被拦下）。Windows 不动，它本来就靠引擎映射。
+
+不改调用方语义：同一个 URL 在三个平台上落到同一份资源。外部 URL（Vite dev server 等）原样加载；
+host 必须**精确**匹配（`app.oriel.example.com` 这类不命中），解析出的路径必须仍在资源目录内（挡 `../` 与百分号编码）。
+
+**验证**：解析器 22 个用例（host 精确匹配与大小写、http/https 同义、站点根、query/fragment、目录穿越与
+`%2F`、文件不存在、无资源目录、非法 URL），全量单测 258 通过。WSL2 + WSLg 真机跑修复后的产物，默认模式
+（手动验证台）**完整渲染**：标题、「已连接」徽章、环境面板（平台 linux / 托盘已创建 / 通知可用否 / 开机自启未启用）、
+托盘与通知按钮、日志三行。macOS 为同一根因的同一修法，**尚未真机验证**（见 ROADMAP 的待真机清单）。
 
 ## Linux 最大化图标与窗口状态相反（2026-09-29 修复）
 
@@ -953,6 +1002,99 @@ Cocoa 的字符串与 WebKitGTK 的整数在 C# 里都**没有编译期检查**�
 - **不能**：菜单弹出后实际剩下哪几项、菜单的样子、以及"剪切/复制/粘贴是否真的作用于页面选区"。
   这三件事都要人眼在真机上点一次。清单在 `docs/ROADMAP.md`。
 
+> **同日晚些时候被取代**：上面这套「就地增删引擎菜单」的实现在 WebKitGTK 4.1 上会破坏内存
+> （连点几次右键即崩溃），已整体换成「自己弹菜单」的接管式。macOS 一并改了，Windows 保留过滤式。
+> 见下一节。
+
+## 内建右键菜单：改用「接管式」（2026-09-30）
+
+上一节的做法（就地增删渲染引擎构造好的菜单）在 **WebKitGTK 4.1** 上会破坏内存：Linux 上连点几次
+右键，进程就以 `double free` / 栈保护被破坏 / 段错误退出。这一节记的是换成「自己弹菜单」的原因与代价。
+
+### 症状与定位
+
+机器侧稳定复现：连点右键，**第 3～4 次**必崩。三种报错形式都出现过（随环境与内存布局变化）：
+
+```
+free(): double free detected in tcache 2
+*** stack smashing detected ***: terminated
+Segmentation fault (core dumped)
+```
+
+分层二分（每轮连点右键 5～6 次）把范围压到最小：
+
+| 改动 | 结果 |
+|---|---|
+| `Native`：完全不碰菜单对象 | **6 次全存活** |
+| 只调 `webkit_context_menu_get_items`，不用返回值 | **6 次全存活** |
+| 遍历 + `g_list_free`（不 remove） | 第 3 次崩 |
+| 遍历 + `stock_action` + `g_list_free` | 第 3 次崩 |
+| 遍历 + `stock_action` + `remove`（不 free） | 第 4 次崩 |
+
+结论：**只要真的去读/释放/移除引擎的菜单项就会崩，只拿到链表的头而不使用它是安全的**。
+也就是说 `webkit_context_menu_get_items` 返回的那个 `GList` 在本版本 WebKitGTK 上**不是**
+"归调用方所有的容器副本"——`g_list_free` 释放的是引擎的内部节点，`webkit_context_menu_remove` 同理。
+这不是我们某一行写错，是这条路本身不该走。
+
+（另有一个信号：`webkit_context_menu_item_get_stock_action` 自 WebKitGTK 2.24 起已废弃，
+那份"编号 → 是不是编辑项"的对应表也失去了可靠性。）
+
+> 定位过程中一度被误导：在 `GDK_BACKEND=x11` 下**不做任何操作**也会崩（撞在 .NET GC 惰性初始化
+> 读 cgroup 的 `fclose` 上），据此以为与右键无关。经确认那是同一处内存破坏的另一个触发点
+> （谁先碰到谁崩），而用户报告的是"操作右键/拖动才崩"——按真实操作路径复现后立刻对上。
+
+### 新做法：自己弹菜单，编辑命令走引擎 API
+
+`Editing` 策略下不再改引擎的菜单，而是**接管**：
+
+- **Linux**：`context-menu` 信号的 trampoline **返回 TRUE**（"我自己弹，你别弹"），
+  宿主用已有的 `GtkMenu` 弹一个只含剪切/复制/粘贴的菜单。
+- **macOS**：`willOpenMenu:` 没有"拒绝弹出"的返回值，所以接管方式是 `removeAllItems` 之后
+  换上我们自己的三项——action 用 AppKit 的标准 selector、target 留空，选择时由响应链执行，
+  顺带白拿 Cmd+X/C/V。
+- **Windows 不动**：WebView2 没有公开的 cut/copy/paste 编程接口，自建菜单的编辑项只能退回
+  `document.execCommand`，粘贴会失效。它保留过滤式（保留下来的项由引擎自己执行），这条路本来就通。
+
+编辑命令必须走**引擎的原生通道**，不能退回 `execCommand`：
+
+| 平台 | 原生通道 |
+|---|---|
+| Linux | `webkit_web_view_execute_editing_command(webview, "Cut"/"Copy"/"Paste")` |
+| macOS | `NSMenuItem` 的 `cut:` / `copy:` / `paste:`，经 `sendAction:to:from:`（target = nil）走响应链 |
+
+为此给 `OrielMenuRoles.TryActivate` 加了一个可选的 `nativeEditing` 通道：编辑类 role 先交给平台，
+平台不认识才退回 `execCommand`。`OrielMenuRoles.IsEditingRole` 与 `EditingMenuItems()` 集中定义
+"哪些 role 算编辑类""接管菜单该弹哪三项"，两个后端都从那里取。
+
+### 顺带修掉的两个缺陷
+
+接管式第一次跑通时日志里有两个警告，都是 `GtkMenu` 自身的问题，一并修了：
+
+- `A floating object was finalized` —— `gtk_menu_new()` 返回的是 **floating 引用**
+  （GTK widget 都继承 `GInitiallyUnowned`）。顶层菜单没有父容器替我们 sink，直接 `g_object_unref`
+  会打乱引用计数，连续弹几次就可能双重销毁。现在在 `GtkMenu.Build` 里 `g_object_ref_sink` 取走它
+  （子菜单不在此列，`set_submenu` 会 sink）。
+- `no trigger event for menu popup` / `gtk_menu_popup_at_rect` 断言失败 —— 在信号处理器里
+  `gtk_menu_popup_at_pointer(menu, NULL)` 拿不到触发事件。信号本身就带 `GdkEvent`，
+  现在把它一路传到 `GtkMenu.Popup(triggerEvent)`。
+
+### 删掉的东西
+
+`OrielContextMenuSupport` 里为 Cocoa（`identifier` 常量）与 WebKitGTK（`stock action` 编号）
+准备的两张识别表连同它们的单测一起删了——接管式不再需要"认出引擎的菜单项是哪一项"。
+只剩 WebView2 那张（Windows 仍在过滤）。这顺带消掉了那两个"没有编译期检查、只能靠人眼"的风险点。
+
+### 这一批能证明什么、不能证明什么
+
+- **能**（Linux，WSLg + GTK3）：
+  - 连点右键 6 次不崩，stderr 无任何警告；
+  - 菜单确实弹出——X 树里出现 `102x83` 的菜单窗口，位置就是指针位置，尺寸与三项吻合；
+  - `webkit_web_view_execute_editing_command(view, "Copy")` 真的把页面选中内容送进了系统剪贴板
+    （C 探针实测：先 JS 聚焦选中，再执行命令，最后从剪贴板读回 `ORIEL-EDITING-PROBE`）；
+  - 247 个单测通过，其中内建右键菜单相关 37 个（含接管式菜单内容与 role 归类的新用例）。
+- **不能**：macOS 侧的一切（本机没有 macOS）；Windows 侧未改动，行为同前。
+  接管式菜单在真机上的外观与整链路交互仍需人眼，清单在 `docs/ROADMAP.md`。
+
 ## 文件拖放：三平台各走哪条路，以及为什么这条最省（2026-09-30）
 
 能力面：把外部文件拖进窗口 → 得到**本地路径列表**（`window.FileDropped`）。
@@ -1162,3 +1304,38 @@ PowerShell + `ToastNotificationManager` 被它的注释称为 "reliable for any 
 **教训**：与第三方组件（尤其是 WebView2 这种"住进你窗口里"的组件）共享窗口时，
 `WM_APP + n` 这种"看起来安全"的自选消息号并不安全。要么用 `RegisterWindowMessage`，
 要么（更简单）**给需要回调的组件一个自己的窗口**。
+
+## IPC 的 JSON 上下文：从全局静态改为按应用实例持有（2026-10-01）
+
+`OrielJson` 原来用一个 `private static JsonSerializerContext? s_context` 保存应用注册的 STJ 上下文
+（`OrielJson.Use(...)` 写入，`OrielAppBuilder.UseJsonContext(...)` 是它唯一的调用点）。
+这在"一个进程一个应用"下看不出问题，但同一进程里创建第二个应用时，后者会**覆盖**前者要用的上下文，
+而且**不会报错**——只是静默地拿错类型信息（表现可能是 DTO 反序列化出错误结果，或莫名其妙地报
+"类型未注册"）。测试、以及"一个进程托管多个窗口宿主"的场景都会踩到。
+
+### 改法：上下文随调用显式传递，不落任何静态字段
+
+- `OrielJson` 里需要上下文的入口（`GetRequiredArg<T>` / `GetOptionalArg<T>` / `WriteResult`）各多收一个
+  `JsonSerializerContext?` 参数。只做 JSON 元素层面校验的 `RequireArgElement` / `TryGetArgElement` /
+  `RequireArgKind` **不需要**，保持原样——它们是"直出路径"，本来就与上下文无关。
+- `IOrielCommandRouter.InvokeAsync` 增加 `JsonSerializerContext?` 参数，由 `OrielCommandDispatcher`
+  （每个 `OrielApp` 一个实例）透传；分发器在构造时从 `OrielAppBuilder.JsonContext` 取到它。
+- `OrielJson.Use(JsonSerializerContext)` 与那个静态字段**一并删除**。删掉而不是留个空壳：
+  留一个不生效的 `Use` 会让调用方以为注册成功了、实际什么都没发生——**编译错误才是对的信号**。
+
+### 取舍
+
+- **代价**：`OrielJson` 的三个方法签名变了，`IOrielCommandRouter` 也变了。前者虽是 `public`，
+  但它的公开性只是"生成器要在消费方程序集里调用它"的技术需要，不是面向使用者的 API——
+  README 里从头到尾只出现 `UseJsonContext`，没出现过 `OrielJson.Use`。
+- **顺带的收益**：`OrielJsonTests` 与 `DispatcherTests` 原来因为共享这个静态字段必须放进同一个
+  xUnit 集合串行执行，现在可以并行。
+- 基元类型不需要上下文这一点被**显式测了**（传 `null` 也能用）：否则很容易在重构里把
+  "没有上下文"错误地升级成"所有命令都必须有上下文"，那是把可用性白白收紧。
+
+### 这一批能证明什么、不能证明什么
+
+- 能证明：DTO 命令在两个上下文不同的分发器上行为互不干扰；无上下文时分发器仍能服务基元命令；
+  生成器产出的路由确实带上了新参数（导出生成代码核对过
+  `InvokeAsync(int index, object? target, JsonElement args, JsonSerializerContext? jsonContext)`）。
+- 不能证明：真实进程里同时跑两个 `OrielApp` 的端到端行为——那需要两个窗口宿主，无头环境跑不出来。

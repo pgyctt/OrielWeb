@@ -133,7 +133,17 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
         remove { }
     }
 
-    public bool ShowNotification(OrielNotificationOptions notification) => MacOSNotificationSender.Send(notification);
+    /// <summary>
+    /// 投递通知。<paramref name="appId"/> 被**刻意忽略**：<c>osascript</c> 投递的通知归属于
+    /// Script Editor（未打包运行时），应用名由系统决定，AppleScript 没有可传应用标识的入口。
+    /// 这与 Windows/Linux 的差异是平台事实，不是漏实现——要按应用分组得进 .app bundle 后用
+    /// <c>UNUserNotificationCenter</c>（已记入 ROADMAP）。
+    /// </summary>
+    public bool ShowNotification(OrielNotificationOptions notification, string appId)
+    {
+        _ = appId;
+        return MacOSNotificationSender.Send(notification);
+    }
 
     public void RunMessageLoop()
     {

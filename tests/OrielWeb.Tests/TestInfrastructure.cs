@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using OrielWeb.Ipc;
 using Xunit;
 
@@ -16,6 +17,22 @@ public sealed record UnregisteredDto(string X);
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(TestDto))]
 internal sealed partial class TestJsonContext : JsonSerializerContext;
+
+/// <summary>
+/// 空 JSON 上下文：对任何类型都返回 null。
+/// </summary>
+/// <remarks>
+/// 两个用途：验证"DTO 类型未注册"的错误路径；以及验证**两个应用各持一个上下文时互不干扰**
+/// （这正是把上下文从静态字段改成按实例持有的目的）。
+/// </remarks>
+internal sealed class EmptyJsonContext : JsonSerializerContext
+{
+    public EmptyJsonContext() : base(null) { }
+
+    protected override JsonSerializerOptions? GeneratedSerializerOptions => null;
+
+    public override JsonTypeInfo? GetTypeInfo(Type type) => null;
+}
 
 /// <summary>测试命令类（源生成器会为其生成路由并经 ModuleInitializer 自动注册）。</summary>
 public sealed partial class TestCommands

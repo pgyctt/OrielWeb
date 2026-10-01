@@ -1,11 +1,15 @@
 name: release
 
 # 发布：推送 v* 标签（或手动触发，需选一个 v* 标签的 ref）。
-# 产物：GitHub Release（NuGet 包 + demo 单文件 exe）+ nuget.org。
+# 产物：GitHub Release（NuGet 包 + 三平台 demo 单文件）+ nuget.org。
 # 前置：仓库 Secrets 里配置 NUGET_API_KEY（nuget.org 的 Push API Key）；
 #       未配置时工作流在最后一步失败，但 Release 资产已在上传完毕（推 NuGet 放在最后）。
 # 版本号唯一来源是根 Directory.Build.props 的 <Version>；
 # 标签必须与之一致（形如 vX.Y.Z 对应 X.Y.Z），下面的校验步骤会拦截不一致的发布。
+#
+# demo 按平台拆成三个 runner：NativeAOT 不支持跨操作系统编译，三个平台的产物只能在各自的
+# runner 上产出（依赖与 ci.yml 的 compile-* 一致）。汇总只做一次——三个 runner 各推一次
+# NuGet 会互相抢，同名 Release 资产也会互相覆盖，所以挂资产与推包都放在最后的 publish job。
 
 on:
   push:
@@ -17,7 +21,95 @@ permissions:
   contents: write
 
 jobs:
+  demo:
+    # 三平台各自发布自己的 demo。资产名按 RID 区分：AOT 产物是自包含的，
+    # 同名文件混在一起会互相覆盖。
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+            exe: OrielDemo.exe
+          - os: ubuntu-latest
+            rid: linux-x64
+            exe: OrielDemo
+          - os: macos-latest
+            rid: osx-arm64
+            exe: OrielDemo
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        if: runner.os == 'Linux'
+        # WebKitGTK/GTK 的头文件与 .pc 是编译期要用的；zlib1g-dev 与 clang 是 Native AOT 的前置
+        # （runner 通常已带，显式列出以免依赖镜像）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev zlib1g-dev clang
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish demo (${{ matrix.rid }})
+        # DebugType=none：不带 pdb/dbg/dSYM，三个平台的包都只留可执行文件
+        run: dotnet publish samples/OrielDemo -c Release -r ${{ matrix.rid }} -p:DebugType=none -o dist/demo
+
+      - name: Check output
+        # 与 ci.yml 的 compile-* 同款断言：退出码为 0 但产物缺失是可能的，与其让人去目录里翻，
+        # 不如在这里说清楚。顺带把体积打进日志，包明显变大时才看得到。
+        shell: pwsh
+        run: |
+          $exe = Join-Path dist/demo '${{ matrix.exe }}'
+          if (-not (Test-Path $exe)) { throw "AOT 产物缺失：$exe" }
+          Write-Output "demo ${{ matrix.rid }}: $([Math]::Round((Get-Item $exe).Length / 1MB, 1)) MB"
+
+      - name: Bundle into a .app (macOS)
+        if: runner.os == 'macOS'
+        # macOS 分发的是 .app 而不是那个可执行文件：WKWebView 是多进程架构，宿主进程要凭 main
+        # bundle 的身份才能与 WebContent/Networking 的 XPC 服务通信，裸可执行文件会走到 WebKit
+        # 的内部断言（SIGTRAP，退出码 133）。构造逻辑与 tools/verify-macos.sh 里那份相同，
+        # 区别是版本号从 Directory.Build.props 取——分发产物该带真版本，而不是脚本里写死的值。
+        run: |
+          version=$(sed -n 's/.*<Version>\([^<]*\)<\/Version>.*/\1/p' Directory.Build.props | head -1)
+          bash tools/make-macos-app.sh dist/demo/OrielDemo dist "$version"
+
+      - name: Zip (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path 'dist/demo/*' -DestinationPath 'dist/OrielWeb-demo-${{ matrix.rid }}.zip' -Force
+
+      - name: Zip (Linux)
+        if: runner.os == 'Linux'
+        # 用系统的 zip 而不是 Compress-Archive：后者在 Linux/macOS 上不保留 Unix 权限位，
+        # 解压出来的可执行文件会丢掉可执行位。
+        run: |
+          cd dist/demo
+          zip -r "../OrielWeb-demo-${{ matrix.rid }}.zip" .
+
+      - name: Zip (macOS)
+        if: runner.os == 'macOS'
+        # 只打包 .app：裸可执行文件在 macOS 上跑不起来，放进去只会让人以为有两条路。
+        run: |
+          cd dist
+          zip -r "OrielWeb-demo-${{ matrix.rid }}.zip" OrielDemo.app
+
+      - name: Upload demo
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-${{ matrix.rid }}
+          path: dist/OrielWeb-demo-${{ matrix.rid }}.zip
+          # 这里没找到 zip 就是构建出了问题，不能静默跳过
+          if-no-files-found: error
+          # artifact 只是中转，最终资产挂在 Release 上（永久保留）
+          retention-days: 7
+
   publish:
+    # 等三个平台的 demo 都产出再汇总：needs 保证任一平台失败就不会发出半套资产
+    needs: [demo]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,12 +139,13 @@ jobs:
           }
           Write-Output "版本一致：$version"
 
-      - name: Publish demo (win-x64, single file)
-        run: dotnet publish samples/OrielDemo -c Release -r win-x64 -p:DebugType=none -o dist/demo
-
-      - name: Zip demo
-        shell: pwsh
-        run: Compress-Archive -Path 'dist/demo/*' -DestinationPath 'dist/OrielWeb-demo-win-x64.zip' -Force
+      - name: Download the demo zips
+        uses: actions/download-artifact@v4
+        with:
+          pattern: demo-*
+          path: dist
+          # 三个 artifact 里各有一个不同名的 zip，合并到 dist/ 即可
+          merge-multiple: true
 
       - name: Attach assets to the GitHub release
         # 放在推 NuGet 之前：推送失败（如未配置 NUGET_API_KEY）不影响 Release 资产
@@ -61,7 +154,7 @@ jobs:
           files: |
             dist/nuget/*.nupkg
             dist/nuget/*.snupkg
-            dist/OrielWeb-demo-win-x64.zip
+            dist/*.zip
 
       - name: Push to nuget.org
         # 通配符必须由 shell 展开：PowerShell 不会给原生命令展开参数里的 *，

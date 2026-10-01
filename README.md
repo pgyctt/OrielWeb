@@ -71,10 +71,26 @@ NuGet 会自动运行它，因此不需要额外的包。
     <ApplicationIcon>app.ico</ApplicationIcon>  <!-- 任务栏图标，见「应用图标」 -->
   </PropertyGroup>
   <ItemGroup>
-    <EmbeddedResource Include="wwwroot\**\*" /> <!-- 前端资源内嵌 -->
+    <!-- 前端资源内嵌。LogicalName 里用 '/' 保留目录边界：这样 '.' 就只是文件名的一部分，
+         app.min.js / vendor.bundle.js 这类含点文件名才不会被解压成 app/min.js。
+         不写 LogicalName 也能跑，但目录名或文件名含 '.' 时会静默解压到错误的路径（页面 404 白屏）。 -->
+    <EmbeddedResource Include="wwwroot\**\*"
+                      LogicalName="$(AssemblyName).wwwroot/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>
 ```
+
+> **`LogicalName` 不是可选项，除非你的资源文件名里不含 `.`。** 两套写法都能跑，区别只在
+> 资源名到磁盘路径的映射方式：
+>
+> | 写法 | 资源名 | 解压结果 |
+> |---|---|---|
+> | `LogicalName="…wwwroot/%(RecursiveDir)%(Filename)%(Extension)"` | `App.wwwroot/assets/img/logo.svg`、`App.wwwroot/app.min.js` | 按 `/` 还原目录，`.` 一律是文件名的一部分 ✅ |
+> | 只有 `Include="wwwroot\**\*"` | `App.wwwroot.assets.img.logo.svg`、`App.wwwroot.app.min.js` | MSBuild 把目录压成了 `.`，库只能靠"最后一个 `.` 是扩展名"反推 —— 文件名主干或目录名含 `.` 时**必然推错** ❌ |
+>
+> 推错的形态是**静默的**：解压不报错，但文件落到了 `app/min.js`，页面按原 URL 请求就是 404 白屏。
+> 库靠前缀（`wwwroot/` 还是 `wwwroot.`）自动识别用的是哪一种，映射逻辑有 17 个单测覆盖
+> （`tests/OrielWeb.Tests/EmbeddedAssetTests.cs`）。
 
 在仓库内开发时（而不是引用 NuGet 包），把包引用换成项目引用。注意分析器不会随
 `ProjectReference` 传递，生成器需要像下面这样显式引用：
@@ -257,6 +273,9 @@ window.PostToUiThread(() => window.SetTitle("页面已就绪"));   // 必须回 
 
 - **命令实例是共享的**：`AddCommands<T>()` 注册的类型只创建一次（惰性单例），所有 invoke 都作用于同一实例。
   因此**命令方法必须线程安全**——并发 invoke 可能同时进入同一方法。
+  > 严格说"只创建一次"有一个例外：首次并发 invoke 时，惰性创建走的是
+  > `ConcurrentDictionary.GetOrAdd`，竞态下工厂**可能被调用多次**（多次创建、留最后一个）。
+  > 所以工厂应当幂等，不要在里面做"只能做一次"的事（占独占资源、启动线程等）。
 - 命令执行发生在**后台线程**（不阻塞 UI 消息循环）；回执由分发器切回 UI 线程后投递。
 - 命令内需要操作 UI 时，请经 `OrielApp.PostToMainThread(...)` 切回主线程。
 - 应用自己的异步流程同理：`await` 之后不在 UI 线程，碰窗口前要经 `WebviewWindow.PostToUiThread(...)`（见上文）。
@@ -355,7 +374,7 @@ tray.SetMenu(
 ]);
 ```
 
-通知是应用级入口，与是否启用托盘无关（Windows 上它的载体恰好是托盘气球，但那是实现细节）：
+通知是应用级入口，与是否启用托盘无关（Windows 上走 WinRT toast，**不经托盘**）：
 
 ```csharp
 app.ShowNotification("下载完成", "文件已保存到「下载」");   // 便捷重载
@@ -364,6 +383,21 @@ app.ShowNotification(new OrielNotificationOptions
     Title = "构建失败", Body = "见控制台", IconPath = "assets/error.png", Id = "build-failed",
 });
 app.NotificationClicked += id => { /* 点了哪条通知（平台差异见下表） */ };
+```
+
+通知的**应用标识**默认取入口程序集名（Windows 上即 AUMID，Linux 上是 `notify-send --app-name`），
+因此同机安装的多个基于本库的应用在系统「通知」设置里是分开的、可以逐个静音。需要与打包时注册的
+AUMID 对齐时用 `UseNotificationAppId` 覆盖：
+
+```csharp
+Oriel.CreateBuilder(args)
+    .UseNotificationAppId("com.example.myapp")   // 不设则用程序集名（规范化后：≤128 字符、不含空格）
+    .AddWindow(w => w.WithTitle("Todo"))
+    .Run();
+```
+
+> macOS 没有对应入口：未打包运行时 `osascript` 投递的通知归属于 Script Editor，应用名由系统决定
+> （要按应用分组得进 `.app` bundle 后用 `UNUserNotificationCenter`，已记入 ROADMAP）。
 ```
 
 菜单项统一用 `OrielMenuItem`（分隔线、禁用、勾选、子菜单、平台 role 都在其中），
@@ -381,7 +415,8 @@ tray?.SetMenu(/* … */);                 // 重建出来的是**新对象**：�
 > 而是进程退出后图标还留在通知区（幽灵图标）——那正是没调 `NIM_DELETE` 的症状。
 
 > 三平台实现：Windows `Shell_NotifyIconW` + 弹出菜单（`TrackPopupMenuEx`）、macOS `NSStatusBar`/`NSMenu`、
-> Linux GTK3 `GtkStatusIcon`/`GtkMenu`。通知：Windows 用独立的隐藏托盘项发气球（因此不启用托盘也能发）、
+> Linux GTK3 `GtkStatusIcon`/`GtkMenu`。通知：Windows 经一个短命的 **Windows PowerShell 5.1** 进程调
+> WinRT `ToastNotificationManager`（Native AOT 下没有 WinRT 投影；这条路不依赖托盘是否存在）、
 > macOS 走 `osascript`、Linux 走 `notify-send`。
 
 ### 菜单
@@ -462,10 +497,10 @@ app.DisableAutoStart();
 | 能力 | 机器断言 | 尚未验证（需人眼或真机） |
 |---|---|---|
 | 托盘 | `--selftest shell`：创建托盘 + 设进一份含分隔线/勾选/禁用/子菜单/role 的菜单，进程不崩；`tools/verify-linux-shell.sh` 采集证据 | **图标是否真的出现在托盘区**、菜单外观、点击行为。Linux 另有平台限制：GNOME Shell 需 AppIndicator 扩展、Wayland 会话多数不显示 |
-| 通知投递 | `tools/verify-linux-shell.sh`：真 `notify-send` → 会话总线 → 假通知服务，断言**标题与正文逐字符正确** | macOS 的通知横幅外观与点击上报；Windows 气球的实际展示 |
-| 通知点击上报 | Windows：气球点击回传 `Id` | Linux（`notify-send` 拿不到点击，要改 libnotify 的 action 回调）、macOS（`osascript` 无回调）——两处都在代码里**显式空实现**，而不是"忘了触发" |
+| 通知投递 | `tools/verify-linux-shell.sh`：真 `notify-send` → 会话总线 → 假通知服务，断言**标题与正文逐字符正确**；另有 8 个单测覆盖**应用标识的规范化**（128 字符上限、空格与非法字符、非 ASCII 保留、兜底值） | macOS 的通知横幅外观；Windows 上 PowerShell/WinRT toast 的实际展示 |
+| 通知点击上报 | **三平台均不支持**，且都是代码里的**显式空实现**（不是"忘了触发"）：未打包应用的 toast 激活需要开始菜单快捷方式携带 AUMID 并注册 COM 激活器，那是打包器的职责；Linux 的 `notify-send` 与 macOS 的 `osascript` 则根本拿不到点击 | — |
 | 菜单构建 | 托盘菜单与窗口上下文菜单共用一套构建与 role 解释；加速键解析有 41 个单测 | 菜单的外观、上下文菜单的弹出位置与交互——需人眼 |
-| 开机自启 | `--selftest shell`：**启用 → 查得到 → 禁用 → 查不到**的闭环（三平台都成立）；Linux 上还逐项核对写出的 `.desktop` 内容；三段配置文本另有 12 个单测 | 下次**开机/登录时是否真的自动启动**——需要真机重启 |
+| 开机自启 | `--selftest shell`：**启用 → 查得到 → 禁用 → 查不到**的闭环（三平台都成立）；Linux 上还逐项核对写出的 `.desktop` 内容；三段配置文本另有 22 个单测（含参数引号的边界：结尾反斜杠、内嵌引号、freedesktop 保留字符） | 下次**开机/登录时是否真的自动启动**——需要真机重启 |
 | Shell 集成 | 取证脚本用 `xdg-open` 替身断言两件事：URL **真的**交给了系统默认程序，且 `file:`/裸路径/`javascript:` **一次都没调出去**（白名单有效性）；另有 24 个单测覆盖校验与三平台命令翻译 | 真实桌面上弹出的浏览器/文件管理器是否符合预期——需人眼 |
 
 ## 对话框
@@ -568,36 +603,45 @@ window.ContextMenuPolicy = OrielContextMenuPolicy.Disabled;
 app.CreateWindow(new OrielWindowOptions().WithContextMenuPolicy(OrielContextMenuPolicy.Native));
 ```
 
-策略**运行时随时可改**，下次右键就生效（过滤发生在每次弹出时，不缓存）。
+策略**运行时随时可改**，下次右键就生效（不缓存）。
 
 被去掉的项里有几个是**会造成实际损失**的，不只是"没用"：「刷新」在单页应用里等于丢掉整页状态
 （用户填了一半的表单），「另存为」存下来的是一份引用了外部脚本/样式的 HTML 外壳，
 「后退」会跑出应用自己的路由。
 
 留下的三项则是**只有原生侧能给**的——粘贴要把系统剪贴板内容送进页面编辑区，而页面自己做不到
-（`document.execCommand('paste')` 在现代浏览器里被禁用）。所以实现方式是**改内建菜单本身**，
-而不是"禁掉它、自己画一个"：另造的菜单没有这三项的真实行为。
+（`document.execCommand('paste')` 在现代浏览器里被禁用）。
 
 > 这与 `ShowContextMenu` 是**两条独立通道**：那个是宿主自己构造并弹出的菜单（项由
 > `OrielMenuItem` 描述、点击回传 `ContextMenuItemClicked`），与渲染引擎的内建菜单互不干涉。
 
-### 三平台的钩子
+### 实现方式：接管宿主菜单，编辑命令走引擎
 
-| 平台 | 钩子 | 关键点 |
+`Editing` 策略在 macOS 与 Linux 上是**接管式**——不复用引擎构造好的菜单，而是自己弹一个只含
+剪切/复制/粘贴的菜单；三项走引擎的原生编辑命令，所以仍然作用于页面选区与系统剪贴板。
+
+| 平台 | 做法 | 编辑命令 |
 |---|---|---|
-| Windows | `CoreWebView2.ContextMenuRequested` | 事件在 `ICoreWebView2_11` 上，但 **WebView2Aot 包内部已完成接口转换**，不需要自己 QueryInterface。判断用 `Name`（未本地化，如 `"copy"`），**不是** `Label`；集合按下标删，因此**从后往前**遍历 |
-| macOS | `WKUIDelegate` 的 `webView:willOpenMenu:withEvent:` | 拿到现成的 `NSMenu` 直接改；判断用 `identifier`（`WKMenuItemIdentifierCopy`），**不是** `title`（中文环境是「拷贝」）。`willOpenMenu` 是 macOS 11+，旧系统不回调 |
-| Linux | `context-menu` 信号 | 语义**反着**：返回 `TRUE` = 应用自己接管、WebKit 什么也不弹；返回 `FALSE` 才会让 WebKit 用它自己的（已被改过项的）菜单弹出。判断用 `stock action` 编号 |
+| Windows | **过滤式**：订阅 `CoreWebView2.ContextMenuRequested`，按 `Name`（未本地化，如 `"copy"`）保留三项、其余删掉（集合按下标删，因此**从后往前**遍历）；菜单仍由 WebView2 弹 | 由 WebView2 自己执行保留下来的项 |
+| macOS | **接管式**：`willOpenMenu:` 里 `removeAllItems` 后换上我们的三项 | `NSMenuItem` 的 `cut:` / `copy:` / `paste:`，经 `sendAction:to:from:`（target = nil）走响应链 |
+| Linux | **接管式**：`context-menu` 信号返回 `TRUE`（"我自己弹，你别弹"），宿主用 `GtkMenu` 弹三项 | `webkit_web_view_execute_editing_command(webview, "Cut"/"Copy"/"Paste")` |
 
-> 三平台判断"这是哪一项"用的都是**未本地化**的标识——这是本功能最容易写错的地方，拿显示文本判断
-> 会在换语言时静默失效。这些名单被抽成了平台无关的纯数据比较（`OrielContextMenuSupport`），
-> 于是能在 Linux 的 CI 上被单测覆盖，**包括为 Windows 与 Cocoa 写的那两组**。
+Windows 为什么保持过滤式：WebView2 没有公开的 cut/copy/paste 编程接口，自建菜单的编辑项只能退回
+`document.execCommand`，粘贴会失效；而它保留下来的项由引擎自己执行，这条路本来就通。
+
+macOS/Linux 为什么不能"就地增删引擎的菜单"：那要经 `webkit_context_menu_get_items` 配合
+`remove` / `g_list_free` 之类的接口，在 WebKitGTK 4.1 上会破坏引擎内部结构——连点几次右键就崩。
+完整症状与二分证据见 `docs/DECISIONS.md`。
+
+`OrielMenuRoles.IsEditingRole` 与 `EditingMenuItems()` 集中定义"哪些 role 算编辑类""接管菜单弹哪三项"；
+编辑类 role 优先交给平台的原生通道（`TryActivate` 的 `nativeEditing` 参数），平台不认识才退回 `execCommand`。
 
 ### 验证账
 
 | 项 | 机器断言 | 尚未验证 |
 |---|---|---|
-| 保留名单 | **48 个用例**（在 Linux CI 上跑，**含为 Windows 与 Cocoa 写的那些**）：三平台各自保留的三项、`copyImage`/`copyLink`/`CopyLink` 这类"看着像复制但不是"的陷阱、WebKitGTK 编号 `13`(RELOAD) 与 `17`(DELETE) 的**相邻边界**（错一位就会把「刷新」「删除」留下）、`null`/空串/大小写 | **菜单弹出后实际剩下哪几项**、菜单外观、以及"剪切/复制/粘贴是否真的作用于页面选区"——需人眼。清单见 `docs/ROADMAP.md` |
+| 接管菜单的内容与 role 归类 | **37 个用例**：三项的顺序与默认文案、role 项不带 `Id`、`IsEditingRole` 的编辑类/非编辑类边界；以及 Windows 保留名单（含 `copyImage`/`copyLink` 这类"看着像复制但不是"的陷阱、`null`/空串/大小写） | **菜单弹出后的实际外观**、**剪切/复制/粘贴在真机上是否整链路可用**——需人眼，清单见 `docs/ROADMAP.md` |
+| Linux 接管链路 | **实测**（WSLg + GTK3）：连点右键 6 次不崩、stderr 无警告、菜单窗口按指针位置弹出、`"Copy"` 命令把页面选中内容送进了系统剪贴板 | macOS 侧全部（本机无 macOS） |
 
 ## 手动验证与无人自检
 
@@ -643,9 +687,13 @@ dotnet run --project samples/OrielDemo -c Release -- --manual-check
 
 ```powershell
 pwsh tools/publish.ps1                    # 本机平台，产物在 publish/<当前 rid>/
-pwsh tools/publish.ps1 -Runtime linux-x64 # 指定 RID
+pwsh tools/publish.ps1 -Runtime win-arm64 # 指定 RID（只能是当前操作系统的，见下）
 pwsh tools/publish.ps1 -Zip               # 额外打一个 zip 便于分发
 pwsh tools/publish.ps1 -NoClean           # 保留上一次的产物
+
+pwsh tools/wsl_publish.ps1                # Windows 上出 Linux 产物：丢进 WSL 里发布
+pwsh tools/wsl_publish.ps1 -Zip           # 同上，并打包成 publish/linux-x64.zip
+pwsh tools/wsl_publish.ps1 -DryRun        # 只打印将要执行的命令，先确认路径映射
 ```
 
 **按 RID 分子目录不是偏好而是必需**：三个平台/架构的 AOT 产物都是自包含的，混在一个目录里会互相覆盖，
@@ -672,6 +720,13 @@ dotnet publish samples/OrielDemo -c Release -r linux-x64
 > `Cross-OS native compilation is not supported` 失败），脚本会在发起编译**之前**挡下并说明原因——
 > 这也是 CI 里每个平台各有一个 runner 的缘故。跨**架构**是另一回事（例如在同一台 Linux 上出 arm64），
 > 能否成功取决于是否装了目标架构的工具链。另外 macOS 的产物必须打包成 `.app` 才能启动 WKWebView（见下）。
+>
+> Windows 上要出 Linux 产物不必切机器：**`tools/wsl_publish.ps1` 把发布丢进 WSL**——对 NativeAOT 来说
+> WSL 就是"目标平台"，于是 `publish.ps1` 挡下的那个缺口由它补上。产物仍落在 Windows 侧的
+> `publish/linux-x64/`，与 `publish.ps1` 的产物按 RID 分目录共存、互不覆盖。它只接受 `linux-*`，
+> 其余平台仍归 `publish.ps1`。两个注意点：AOT 在 `/mnt/*`（跨文件系统）上明显更慢，首次可能几分钟；
+> 仓库放在 UNC 路径（`\\server\share`）或网络驱动器上时映射不到 `/mnt`，脚本会直接报错——
+> 拿不准就先 `-DryRun` 把要执行的命令与全部路径打印出来看。
 
 ### Windows 发布产物
 
@@ -693,10 +748,46 @@ WebView2 的运行需要微软的 `WebView2Loader.dll`。官方只有两条路�
   可免去 `%TEMP%` 解压。实测可链接成功，但属**应用级**配置（库无法替消费方设置），且需跳过
   `WebView2Utilities.Initialize`，故本库未采用。
 
+### 三平台分发包（GitHub Release）
+
+推送 `v*` 标签会触发 `.github/workflows/release.yml`：三个平台各自在自己的 runner 上发布 demo
+（NativeAOT 不能跨操作系统编译，这正是 CI 里每平台一个 runner 的原因），再汇总到同一个 Release。
+资产名按 RID 区分——三份产物都是自包含的，混在一起分不出谁是谁：
+
+| 资产 | 内容 | 运行前提 |
+|---|---|---|
+| `OrielWeb-demo-win-x64.zip` | `OrielDemo.exe` | WebView2 Runtime（缺失时应用自己会引导安装） |
+| `OrielWeb-demo-linux-x64.zip` | `OrielDemo` | `libwebkit2gtk-4.1` + GTK3 运行库；中文字体与 Wayland 的限制见[平台运行要求](#平台运行要求) |
+| `OrielWeb-demo-osx-arm64.zip` | `OrielDemo.app`（ad-hoc 签名） | Apple Silicon；下载后要去掉 quarantine 属性才能启动 |
+
+三个包都用 `-p:DebugType=none` 发布，所以不带 pdb/dbg/dSYM。macOS 那份**必须是 `.app` 而不是裸可执行文件**：
+WKWebView 是多进程架构，宿主进程要凭 main bundle 身份才能与 WebContent 通信，裸文件会 `SIGTRAP`
+（退出码 133）——原因与验证过程见 [macOS 运行要求](#macos-运行要求)。
+
+下载后怎么跑：
+
+```bash
+# Linux
+unzip OrielWeb-demo-linux-x64.zip && ./OrielDemo
+
+# macOS：先去掉隔离标记，再打开
+unzip OrielWeb-demo-osx-arm64.zip
+xattr -dr com.apple.quarantine OrielDemo.app
+open OrielDemo.app
+```
+
+macOS 那份是 **ad-hoc 签名、未做公证**：Gatekeeper 对"从网上下载、又没有 Developer ID 签名"的包
+一律拦截，去掉 quarantine 是最省事的路（右键 → 打开 也可以）。
+
 ## 平台运行要求
 
 > 各平台的支持状态（哪些已运行验证、哪些只有编译）见前面的[平台支持](#平台支持)一节。
 > 这里只讲**跑起来需要什么、有什么已知限制**。
+
+**内嵌资源 URL（`UseEmbeddedAssets` 的虚拟主机）在三平台靠不同机制落地**：`WithUrl($"https://{host}/…")`
+在 Windows 上由 WebView2 的虚拟主机映射处理；在 Linux/macOS 上则由库在导航前把它映射成解压目录里的本地文件
+（那两个引擎只能注册**自定义** scheme，而 `https` 是保留 scheme）。对调用方是同一个 URL、同一份资源；
+host 之外的外部 URL（Vite dev server 等）原样加载。背景与取舍见 `docs/DECISIONS.md`。
 
 ### Linux 环境依赖与已知限制
 
@@ -704,9 +795,11 @@ WebView2 的运行需要微软的 `WebView2Loader.dll`。官方只有两条路�
   先装 `fonts-noto-cjk`（Debian/Ubuntu）再运行；页面侧的 `font-family` 也应带上 `"Noto Sans CJK SC"`
   这类跨平台族，而不是只写 `"Segoe UI"` / `"Microsoft YaHei"` 这类 Windows 专有字体名。
   库本身不碰字体（字体选择属应用与系统职责）。
-- **Wayland 下无边框窗口不可拖动**：无边框拖动依赖 `gtk_window_move`，而 Wayland 协议不允许客户端自行
-  移动窗口，该调用在 Wayland 下是空操作；强制 X11（`GDK_BACKEND=x11`）时拖动正常。改用
-  `gtk_window_begin_move_drag` 交合成器接管的修法**尚未实施**。
+- **无边框拖动在两种后端下是两条路**：X11 按增量自己摆（`gtk_window_move`）；Wayland 协议不允许客户端
+  移动自己的窗口（连窗口位置都拿不到），改调 `gtk_window_begin_move_drag`，由 GDK 转成
+  `xdg_toplevel.move` 交给合成器——跟手、边缘吸附与贴边平铺因此都是原生行为。这条路的时序有要求
+  （请求必须在鼠标按住期间发出，理由见 `docs/DECISIONS.md`），**真机上的跟手效果尚未人眼确认**；
+  若在你的合成器上拖不动，可用 `GDK_BACKEND=x11` 作对照。
 
 ### macOS 运行要求
 

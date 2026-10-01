@@ -16,8 +16,7 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
     private readonly uint _uiThreadId;
     private readonly nint _messageHwnd;
     private int _aliveWindows;
-
-    private Win32TrayBackend? _tray;
+    private int _ran;
 
     // 托盘与通知**不再**借用调度窗口：那个窗口的消息空间与 WebView2 共享，
     // 自选的 WM_APP + n 会与它的私有消息撞车（见 Win32MessageWindow 的说明）。
@@ -99,7 +98,7 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
     {
         var host = Win32WindowHost.Create(window, options, app, assetDirectory, this);
 
-        _aliveWindows++;
+        Interlocked.Increment(ref _aliveWindows);
 
         return host;
     }
@@ -114,6 +113,12 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
 
     public void RunMessageLoop()
     {
+        // 与 Linux/macOS 后端一致：重复调用直接返回，不嵌套第二个消息循环
+        if (Interlocked.Exchange(ref _ran, 1) == 1)
+        {
+            return;
+        }
+
         while (Win32.GetMessageW(out var message, 0, 0, 0) > 0)
         {
             Win32.TranslateMessage(ref message);
@@ -121,11 +126,11 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         }
     }
 
-    public ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app)
-    {
-        _tray = new Win32TrayBackend(app, options);
-        return _tray;
-    }
+    /// <summary>
+    /// 创建托盘。这里**不持有**托盘对象：托盘的归属与释放统一由 <see cref="OrielApp"/> 负责
+    /// （见 <see cref="OrielApp.Dispose"/>），三个后端在这一点上写法保持一致。
+    /// </summary>
+    public ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app) => new Win32TrayBackend(app, options);
 
     // ---- 通知 ----
 
@@ -148,8 +153,8 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         remove { }
     }
 
-    public bool ShowNotification(OrielNotificationOptions notification)
-        => Win32ToastNotification.Send(notification);
+    public bool ShowNotification(OrielNotificationOptions notification, string appId)
+        => Win32ToastNotification.Send(notification, appId);
 
     public void Quit() => Win32.PostQuitMessage(0);
 
@@ -167,17 +172,18 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
 
     internal void OnWindowDestroyed()
     {
-        if (--_aliveWindows <= 0)
+        if (Interlocked.Decrement(ref _aliveWindows) <= 0)
         {
             Win32.PostQuitMessage(0);
         }
     }
 
-    /// <summary>释放托盘；调度窗口随消息循环结束销毁。</summary>
+    /// <summary>
+    /// 后端自身不持有需要显式释放的原生资源：托盘归 <see cref="OrielApp"/> 所有并由它释放
+    /// （托盘会连带释放自己的消息窗口），调度窗口随消息循环结束销毁。三平台写法一致。
+    /// </summary>
     public void Dispose()
     {
-        // 托盘会连带释放它自己的消息窗口（通知走 PowerShell，无需释放）
-        _tray?.Dispose();
     }
 
     // ---- 消息窗口 ----

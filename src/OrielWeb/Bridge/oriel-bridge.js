@@ -1,9 +1,10 @@
 // OrielWeb 三平台共用的注入式桥接脚本模板（EmbeddedResource，见 OrielWeb.csproj）。
 //
-// 由 OrielBridgeTemplate 在创建窗口时替换三个占位符后注入：
+// 由 OrielBridgeTemplate 在创建窗口时替换四个占位符后注入：
 //   __ORIEL_PLATFORM__ → 'windows' | 'macos' | 'linux'
 //   __ORIEL_POST__     → 平台投递表达式（obj 为待发送对象）
 //   __ORIEL_CONSOLE_ENABLED__ → 'true' | 'false'（见 OrielWindowOptions.ConsoleForwarding）
+//   __ORIEL_VERSION__  → 库版本（取程序集版本前三位，如 '0.1.2'）
 //
 // 三平台此前各自手抄一份，已导致缺陷同步传播（ready 的 TDZ、orielready 的时序
 // 都曾三份全中）。任何修改都会同时作用于三平台——这正是合并的目的。
@@ -34,7 +35,9 @@
 
     const oriel = {
         platform: __ORIEL_PLATFORM__,
-        version: '0.1.0',
+        // 由宿主注入的库版本（见 OrielBridgeTemplate）。页面用它做能力探测，
+        // 因此**不能**在这里写死字面量——写死会与包版本各自漂移，静默误导所有兼容判断。
+        version: '__ORIEL_VERSION__',
         ready: ready,
         // 命令回执超时（毫秒），可在页面侧改写为其他值；<=0 表示不启用超时。
         // 没有它时，命令永不回执（如宿主侧异常导致 sink 未投递）会让 Promise

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace OrielWeb.Ipc;
 
@@ -20,6 +21,15 @@ public interface IOrielCommandRouter
     /// <summary>命令名 → 索引；未注册的命令返回 -1。</summary>
     int Route(string name);
 
-    /// <summary>执行索引对应的命令。<paramref name="target"/> 为静态命令时为 null。</summary>
-    ValueTask<object?> InvokeAsync(int index, object? target, JsonElement args);
+    /// <summary>
+    /// 执行索引对应的命令。
+    /// </summary>
+    /// <param name="index">命令索引（由 <see cref="Route"/> 得到）。</param>
+    /// <param name="target">命令实例；静态命令时为 null。</param>
+    /// <param name="args">命令的 args 元素。</param>
+    /// <param name="jsonContext">
+    /// 应用注册的 STJ 源生成上下文，供 DTO 参数反序列化用；基元参数用不到，可能为 null。
+    /// 由调用方（<see cref="OrielCommandDispatcher"/>）透传，**不来自任何静态状态**。
+    /// </param>
+    ValueTask<object?> InvokeAsync(int index, object? target, JsonElement args, JsonSerializerContext? jsonContext);
 }

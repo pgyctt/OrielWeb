@@ -132,4 +132,85 @@ public sealed class AutoStartTests
         string value = AutoStartContent.WindowsRunValue(@"C:\app.exe", ["--a", "--b"]);
         Assert.Equal("\"C:\\app.exe\" --a --b", value);
     }
+
+    // ---- 参数引号的边界：这些以前会**静默**写坏（自启项写错要等下次开机才发现） ----
+
+    [Fact]
+    public void WindowsRunValue_DoublesTrailingBackslash()
+    {
+        // 加引号的参数以 '\' 结尾时，收尾引号会被它转义掉 → 引号失衡 → 后续参数被吞。
+        // CommandLineToArgvW 的规则要求把结尾的反斜杠加倍。
+        string value = AutoStartContent.WindowsRunValue(@"C:\app.exe", [@"--path=C:\my dir\"]);
+
+        Assert.Equal("\"C:\\app.exe\" \"--path=C:\\my dir\\\\\"", value);
+    }
+
+    [Fact]
+    public void WindowsRunValue_LeavesUnquotedArgumentWithoutSpacesAlone()
+    {
+        // 不含空白与引号的参数本来就不需要加引号，此时结尾的反斜杠也没有失衡问题
+        string value = AutoStartContent.WindowsRunValue(@"C:\app.exe", [@"--path=C:\dir\"]);
+
+        Assert.Equal("\"C:\\app.exe\" --path=C:\\dir\\", value);
+    }
+
+    [Fact]
+    public void WindowsRunValue_QuotesEmbeddedQuote()
+    {
+        // 字面引号要写成 2n+1 个反斜杠（n = 引号前已有的反斜杠数）
+        string value = AutoStartContent.WindowsRunValue(@"C:\app.exe", ["--title=a\"b"]);
+
+        Assert.Equal("\"C:\\app.exe\" \"--title=a\\\"b\"", value);
+    }
+
+    [Fact]
+    public void WindowsRunValue_DoublesBackslashBeforeEmbeddedQuote()
+    {
+        // 一个反斜杠紧跟引号：n=1 → 3 个反斜杠，解析回来是 1 个反斜杠 + 1 个字面引号
+        string value = AutoStartContent.WindowsRunValue(@"C:\app.exe", ["a\\\"b"]);
+
+        Assert.Equal("\"C:\\app.exe\" \"a\\\\\\\"b\"", value);
+    }
+
+    [Fact]
+    public void WindowsRunValue_QuotesEmptyArgument()
+    {
+        Assert.Equal("\"C:\\app.exe\" \"\"", AutoStartContent.WindowsRunValue(@"C:\app.exe", [""]));
+    }
+
+    [Fact]
+    public void DesktopEntry_EscapesBackslashInsideQuotes()
+    {
+        // 规范要求引号内 '\'、'$'、'`'、'"' 四个字符都必须反斜杠转义。
+        // 只转义引号时，"--path=C:\temp" 会被解析器把 \t 当成制表符，参数随之损坏。
+        string content = AutoStartContent.LinuxDesktopEntry("myapp", Exe, [@"--path=C:\temp"]);
+
+        Assert.Contains(@" ""--path=C:\\temp""", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DesktopEntry_EscapesDollarAndBacktickInsideQuotes()
+    {
+        string content = AutoStartContent.LinuxDesktopEntry("myapp", Exe, ["--path=$HOME", "`cmd`"]);
+
+        Assert.Contains(@" ""--path=\$HOME""", content, StringComparison.Ordinal);
+        Assert.Contains(@" ""\`cmd\`""", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DesktopEntry_LeavesPlainArgumentUnquoted()
+    {
+        // 短横线不是保留字符：--minimized 不该被加引号（更接近用户手写的形态）
+        string content = AutoStartContent.LinuxDesktopEntry("myapp", Exe, ["--minimized"]);
+
+        Assert.Contains($"Exec=\"{Exe}\" --minimized\n", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DesktopEntry_QuotesEmptyArgument()
+    {
+        string content = AutoStartContent.LinuxDesktopEntry("myapp", Exe, [""]);
+
+        Assert.Contains($"Exec=\"{Exe}\" \"\"\n", content, StringComparison.Ordinal);
+    }
 }

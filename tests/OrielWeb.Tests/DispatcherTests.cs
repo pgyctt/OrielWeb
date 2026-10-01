@@ -7,13 +7,13 @@ namespace OrielWeb.Tests;
 
 /// <summary>
 /// 分发器端到端单测：真实源生成路由 + ModuleInitializer 注册 + 回执协议断言。
-/// 与 OrielJsonTests 同集合串行（共享 OrielJson 全局上下文）。
 /// </summary>
-[Collection("IpcSerial")]
+/// <remarks>
+/// JSON 上下文按分发器实例持有（不再是全局静态状态），因此本类与 <c>OrielJsonTests</c>
+/// 不需要串行执行。
+/// </remarks>
 public sealed class DispatcherTests
 {
-    public DispatcherTests() => OrielJson.Use(TestJsonContext.Default);
-
     private static OrielCommandDispatcher CreateDispatcher(bool withFactory = true)
     {
         var factories = new Dictionary<Type, Func<object>>();
@@ -21,7 +21,7 @@ public sealed class DispatcherTests
         {
             factories[typeof(TestCommands)] = () => new TestCommands();
         }
-        return new OrielCommandDispatcher(factories);
+        return new OrielCommandDispatcher(factories, TestJsonContext.Default);
     }
 
     private static Task<(JsonDocument Reply, TestSink Sink)> DispatchAsync(
@@ -132,6 +132,51 @@ public sealed class DispatcherTests
         Assert.Contains("name", reply.GetProperty("error").GetString());
     }
 
+    // ---- id 回写（回执必须能被页面用它自己发出的那个值查回来） ----
+
+    [Fact]
+    public async Task FractionalId_IsEchoedBackVerbatim()
+    {
+        // 页面侧是 JS number：回执里的 id 与它发出去的一致，才能在 pending 里对上并立即 settle。
+        // 以前把 id 解析成 int，1.5 会抛 FormatException，兜底回执写死 id:0——而页面的 seq 从 1 开始，
+        // 永远匹配不到，那个 Promise 要一直挂到 30 秒超时（表现为"命令没反应"，而不是"参数错了"）。
+        var sink = new TestSink();
+        using var doc = JsonDocument.Parse(
+            """{ "__oriel": "invoke", "id": 1.5, "name": "t.echo", "args": { "text": "x" } }""");
+        await CreateDispatcher().HandleInvokeAsync(doc.RootElement.Clone(), sink);
+
+        var reply = JsonDocument.Parse(sink.Replies.Single()).RootElement;
+        Assert.True(reply.GetProperty("ok").GetBoolean());
+        Assert.Equal(1.5, reply.GetProperty("id").GetDouble());
+    }
+
+    [Fact]
+    public async Task OutOfInt32RangeId_IsEchoedBackVerbatim()
+    {
+        var sink = new TestSink();
+        using var doc = JsonDocument.Parse(
+            """{ "__oriel": "invoke", "id": 5000000000, "name": "t.echo", "args": { "text": "x" } }""");
+        await CreateDispatcher().HandleInvokeAsync(doc.RootElement.Clone(), sink);
+
+        var reply = JsonDocument.Parse(sink.Replies.Single()).RootElement;
+        Assert.True(reply.GetProperty("ok").GetBoolean());
+        Assert.Equal(5_000_000_000L, reply.GetProperty("id").GetInt64());
+    }
+
+    [Fact]
+    public async Task MissingId_FallsBackToZero()
+    {
+        // 协议要求 id 字段始终存在，缺失时兜底写 0（桥接脚本的 seq 是自增整数，不会发这种消息）
+        var sink = new TestSink();
+        using var doc = JsonDocument.Parse(
+            """{ "__oriel": "invoke", "name": "t.echo", "args": { "text": "x" } }""");
+        await CreateDispatcher().HandleInvokeAsync(doc.RootElement.Clone(), sink);
+
+        var reply = JsonDocument.Parse(sink.Replies.Single()).RootElement;
+        Assert.True(reply.GetProperty("ok").GetBoolean());
+        Assert.Equal(0, reply.GetProperty("id").GetInt32());
+    }
+
     [Fact]
     public async Task CommandThrows_ErrorReplyWithMessage()
     {
@@ -152,7 +197,7 @@ public sealed class DispatcherTests
     public async Task MissingFactory_ErrorReply()
     {
         // NoFactoryCommands 的路由已被生成器注册，但本分发器没有它的工厂
-        var dispatcher = new OrielCommandDispatcher([]);
+        var dispatcher = new OrielCommandDispatcher([], TestJsonContext.Default);
         var (reply, _) = await DispatchAsync(dispatcher, "nf.hello", null);
         Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
         Assert.Contains("AddCommands", reply.RootElement.GetProperty("error").GetString());
@@ -187,5 +232,47 @@ public sealed class DispatcherTests
         var values = results.Select(r => r.Reply.Value().GetInt32()).ToList();
         Assert.Equal(total, values.Distinct().Count());
         Assert.Equal(total - 1, values.Max() - values.Min());
+    }
+
+    // ---- JSON 上下文按实例持有 ----
+
+    [Fact]
+    public async Task TwoDispatchers_WithDifferentContexts_DoNotInterfere()
+    {
+        // 这是把上下文从静态字段改成按实例持有的**目的**：以前后创建的那个会覆盖前者用的上下文，
+        // 两个应用互相串——而且表现是静默地用错类型信息，不是报错。
+        var withContext = new OrielCommandDispatcher(
+            new Dictionary<Type, Func<object>> { [typeof(TestCommands)] = () => new TestCommands() },
+            TestJsonContext.Default);
+        var withoutContext = new OrielCommandDispatcher(
+            new Dictionary<Type, Func<object>> { [typeof(TestCommands)] = () => new TestCommands() },
+            new EmptyJsonContext());
+
+        object args = new { input = new { name = "n", value = 1, flag = true } };
+
+        // 同一个 DTO 命令：有上下文的成功，没上下文的按未注册类型报错
+        var (okReply, _) = await DispatchAsync(withContext, "t.dto", args);
+        Assert.True(okReply.RootElement.GetProperty("ok").GetBoolean());
+
+        var (failReply, _) = await DispatchAsync(withoutContext, "t.dto", args);
+        Assert.False(failReply.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Contains("UseJsonContext", failReply.RootElement.GetProperty("error").GetString());
+
+        // 再问一次有上下文的那位：它没有被"后创建的那个"影响
+        var (againReply, _) = await DispatchAsync(withContext, "t.dto", args);
+        Assert.True(againReply.RootElement.GetProperty("ok").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Dispatcher_WithoutContext_StillServesPrimitiveCommands()
+    {
+        // 上下文只对 DTO 是必需的：没注册上下文的应用，基元命令照样要能用
+        var dispatcher = new OrielCommandDispatcher(
+            new Dictionary<Type, Func<object>> { [typeof(TestCommands)] = () => new TestCommands() },
+            jsonContext: null);
+
+        var (reply, _) = await DispatchAsync(dispatcher, "t.echo", new { text = "你好" });
+        Assert.True(reply.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal("你好", reply.Value().GetString());
     }
 }

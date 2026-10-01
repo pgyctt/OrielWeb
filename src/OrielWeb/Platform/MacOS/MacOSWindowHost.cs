@@ -82,8 +82,9 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     /// 内建右键菜单即将弹出（由 <c>OrielUIDelegate</c> 的 <c>willOpenMenu:</c> 调进来）。
     /// </summary>
     /// <remarks>
-    /// 直接修改传进来的 <c>NSMenu</c>：它由 WebKit 构造、即将由 WebKit 弹出，删掉几项之后
-    /// 保留项的 action 仍是 WebKit 的实现，所以剪切/复制/粘贴照旧作用于页面选区。
+    /// <c>willOpenMenu:</c> 没有"拒绝弹出"的返回值，所以接管的方式是**换掉菜单内容**：
+    /// 清空 WebKit 的项，换上只含剪辑命令的项。不再就地增删 WebKit 的项——那类做法依赖渲染引擎
+    /// 的内部结构（Linux 侧同源的写法在 WebKitGTK 4.1 上会破坏内存），而自建菜单这条路本来就有。
     /// </remarks>
     internal void FilterContextMenu(nint menu)
     {
@@ -102,50 +103,89 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
                 return;
 
             default:
-                RemoveNonEditingItems(menu);
+                ObjCRuntime.SendVoid(menu, ObjCRuntime.Sel("removeAllItems"));
+                AppendEditingItems(menu);
                 return;
         }
     }
 
-    /// <summary>只留剪切 / 复制 / 粘贴。</summary>
+    /// <summary>
+    /// 往菜单里追加剪切 / 复制 / 粘贴。
+    /// </summary>
     /// <remarks>
-    /// 判断依据是菜单项的 <c>identifier</c>（WebKit 公开的 <c>WKMenuItemIdentifier</c> 常量），
-    /// <b>不是</b> <c>title</c>——标题是本地化文本（中文系统上是「拷贝」、英文是 <c>Copy</c>），
-    /// 拿它判断会在换语言时静默失效。
-    /// <para>
-    /// 先取 <c>itemArray</c> 快照再删：它是不可变副本，边遍历边 <c>removeItem:</c> 不会打乱遍历。
-    /// </para>
+    /// action 用 AppKit 的标准 selector、target 留空，选择时由响应链交给 <c>WKWebView</c> 执行，
+    /// 因此真正作用于页面选区与系统剪贴板；顺带白拿 Cmd+X/C/V 的快捷键。
     /// </remarks>
-    private static void RemoveNonEditingItems(nint menu)
+    private static void AppendEditingItems(nint menu)
     {
-        nint items = ObjCRuntime.SendId(menu, ObjCRuntime.Sel("itemArray"));
-        if (items == 0)
+        foreach (OrielMenuItem item in OrielMenuRoles.EditingMenuItems())
         {
-            return;
-        }
-
-        int count = (int)ObjCRuntime.SendId(items, ObjCRuntime.Sel("count"));
-        for (int i = 0; i < count; i++)
-        {
-            nint item = ObjCRuntime.SendIdNint(items, ObjCRuntime.Sel("objectAtIndex:"), i);
-            if (item != 0 && !OrielContextMenuSupport.IsEditingCocoaIdentifier(ReadMenuIdentifier(item)))
+            string? selectorName = EditingSelector(item.Role);
+            if (selectorName is null)
             {
-                ObjCRuntime.SendVoidObj(menu, ObjCRuntime.Sel("removeItem:"), item);
+                continue;
             }
+
+            nint menuItem = ObjCRuntime.SendIdObjObjObj(
+                ObjCRuntime.SendId(ObjCRuntime.GetClassOrThrow("NSMenuItem"), ObjCRuntime.Sel("alloc")),
+                ObjCRuntime.Sel("initWithTitle:action:keyEquivalent:"),
+                ObjCRuntime.MakeNSString(OrielMenuRoles.DefaultLabel(item.Role) ?? string.Empty),
+                ObjCRuntime.Sel(selectorName),
+                ObjCRuntime.MakeNSString(EditingKeyEquivalent(item.Role)));
+
+            if (menuItem == 0)
+            {
+                continue;
+            }
+
+            // NSEventModifierFlagCommand = 1 << 20
+            ObjCRuntime.SendVoidNint(menuItem, ObjCRuntime.Sel("setKeyEquivalentModifierMask:"), 1 << 20);
+            ObjCRuntime.SendVoidObj(menu, ObjCRuntime.Sel("addItem:"), menuItem);
         }
     }
 
-    /// <summary>取菜单项的 <c>identifier</c>；旧系统没有该属性，探测后再读。</summary>
-    private static string? ReadMenuIdentifier(nint item)
+    /// <summary>编辑类 role → AppKit 的标准 selector；不认识的 role 返回 null。</summary>
+    private static string? EditingSelector(string? role) => role switch
     {
-        if (!ObjCRuntime.SendBoolRetObj(
-                item, ObjCRuntime.Sel("respondsToSelector:"), ObjCRuntime.Sel("identifier")))
+        OrielMenuRole.Cut => "cut:",
+        OrielMenuRole.Copy => "copy:",
+        OrielMenuRole.Paste => "paste:",
+        OrielMenuRole.Undo => "undo:",
+        OrielMenuRole.Redo => "redo:",
+        OrielMenuRole.SelectAll => "selectAll:",
+        OrielMenuRole.Delete => "delete:",
+        _ => null,
+    };
+
+    private static string EditingKeyEquivalent(string? role) => role switch
+    {
+        OrielMenuRole.Cut => "x",
+        OrielMenuRole.Copy => "c",
+        OrielMenuRole.Paste => "v",
+        _ => string.Empty,
+    };
+
+    /// <summary>
+    /// 把编辑类 role 经 AppKit 的响应链交给 <c>WKWebView</c> 执行。
+    /// </summary>
+    /// <remarks>
+    /// 自建菜单里的编辑项走这里（<c>document.execCommand('paste')</c> 会被安全策略拦下）。
+    /// target 传 nil 是有意的：<c>sendAction:to:from:</c> 会从当前第一响应者沿响应链找实现，
+    /// 编辑时第一响应者正是 webview 内部的编辑视图；找不到时返回 false，不会崩。
+    /// </remarks>
+    private bool TryExecuteNativeEditing(string role)
+    {
+        string? selectorName = EditingSelector(role);
+        if (selectorName is null)
         {
-            return null;
+            return false;
         }
 
-        nint identifier = ObjCRuntime.SendId(item, ObjCRuntime.Sel("identifier"));
-        return identifier == 0 ? null : ObjCRuntime.ToManagedString(identifier);
+        nint app = ObjCRuntime.SendId(
+            ObjCRuntime.GetClassOrThrow("NSApplication"), ObjCRuntime.Sel("sharedApplication"));
+
+        return ObjCRuntime.SendBoolRetObjObjObj(
+            app, ObjCRuntime.Sel("sendAction:to:from:"), ObjCRuntime.Sel(selectorName), 0, 0);
     }
 
     internal MacOSWindowHost(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, MacOSPlatformBackend backend)
@@ -245,7 +285,7 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     {
         if (item.Role is { Length: > 0 } role)
         {
-            if (!OrielMenuRoles.TryActivate(role, _app, _window))
+            if (!OrielMenuRoles.TryActivate(role, _app, _window, TryExecuteNativeEditing))
             {
                 System.Diagnostics.Debug.WriteLine($"[OrielWeb] 菜单 role「{role}」在 macOS 上未被处理。");
             }
@@ -430,6 +470,16 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     {
         if (_options.Url is { Length: > 0 } externalUrl)
         {
+            // 内嵌资源的虚拟主机 URL（https://&lt;AssetHost&gt;/…）在 macOS 上没有引擎支持：WKWebView 的
+            // WKURLSchemeHandler 只能注册**自定义** scheme，而 https 是保留 scheme。原样交出去会变成一次
+            // 真实的网络请求，DNS 解析失败后渲染错误页——就是一片空白。这里映射回解压目录里的本地文件，
+            // 与 Windows 的虚拟主机映射语义对齐。
+            if (AssetUrlResolver.TryResolveLocalFile(externalUrl, _app.AssetHost, _assetDirectory) is { } localFile)
+            {
+                LoadLocalFile(localFile);
+                return;
+            }
+
             // URLWithString: 同样要 NSString*，不是 char*
             var url = ObjCRuntime.SendIdObj(
                 ObjCRuntime.GetClass("NSURL"),
@@ -440,22 +490,31 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
             return;
         }
 
-        // 内嵌资产：loadFileURL（读权限限定在 www 目录内）
+        // 内嵌资产首页
         if (_assetDirectory is not null)
         {
-            var indexHtml = Path.Combine(_assetDirectory, "index.html");
-            var fileUrl = ObjCRuntime.SendIdObjBool(
-                ObjCRuntime.GetClass("NSURL"),
-                ObjCRuntime.Sel("fileURLWithPath:isDirectory:"),
-                ObjCRuntime.MakeNSString(indexHtml),
-                false);
-            var wwwUrl = ObjCRuntime.SendIdObjBool(
-                ObjCRuntime.GetClass("NSURL"),
-                ObjCRuntime.Sel("fileURLWithPath:isDirectory:"),
-                ObjCRuntime.MakeNSString(_assetDirectory),
-                true);
-            ObjCRuntime.SendVoidObjObj(_webview, ObjCRuntime.Sel("loadFileURL:allowingReadAccessToURL:"), fileUrl, wwwUrl);
+            LoadLocalFile(Path.Combine(_assetDirectory, "index.html"));
         }
+    }
+
+    /// <summary>
+    /// 用 <c>loadFileURL:allowingReadAccessToURL:</c> 加载本地文件。读权限限定在资源目录内——只把一个
+    /// <c>file://</c> URL 交给 <c>loadRequest:</c> 是不够的：那样没有读权限，页面引用的同目录资源
+    /// （styles.css、app.js）会被 WKWebView 拦下，页面同样只剩空白。
+    /// </summary>
+    private void LoadLocalFile(string filePath)
+    {
+        var fileUrl = ObjCRuntime.SendIdObjBool(
+            ObjCRuntime.GetClass("NSURL"),
+            ObjCRuntime.Sel("fileURLWithPath:isDirectory:"),
+            ObjCRuntime.MakeNSString(filePath),
+            false);
+        var accessUrl = ObjCRuntime.SendIdObjBool(
+            ObjCRuntime.GetClass("NSURL"),
+            ObjCRuntime.Sel("fileURLWithPath:isDirectory:"),
+            ObjCRuntime.MakeNSString(_assetDirectory!),
+            true);
+        ObjCRuntime.SendVoidObjObj(_webview, ObjCRuntime.Sel("loadFileURL:allowingReadAccessToURL:"), fileUrl, accessUrl);
     }
 
     private void HideStandardButton(nint buttonKind)

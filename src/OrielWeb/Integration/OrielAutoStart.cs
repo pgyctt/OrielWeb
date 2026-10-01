@@ -15,9 +15,24 @@ namespace OrielWeb;
 /// 平台只负责"把这些文本放到该放的地方"（Linux 写 <c>~/.config/autostart</c>、
 /// macOS 写 <c>~/Library/LaunchAgents</c>、Windows 写 <c>HKCU\...\Run</c>）。
 /// </para>
+/// <para>
+/// <b>Windows 与 Linux 的引号规则不一样，不能共用一个函数</b>：
+/// Windows 走 <c>CommandLineToArgvW</c> 的规则（引号前的反斜杠要成对加倍），
+/// Linux 走 freedesktop 的 Exec 规则（引号内 <c>"</c> <c>`</c> <c>$</c> <c>\</c> 四个字符都必须转义）。
+/// 共用一套的后果是"在某一个平台上悄悄解析错"，所以这里按平台分成两个函数。
+/// </para>
 /// </remarks>
 internal static class AutoStartContent
 {
+    /// <summary>Windows 命令行里需要加引号的字符（空白与双引号）。</summary>
+    private static readonly char[] WindowsQuoteTriggers = [' ', '\t', '"'];
+
+    /// <summary>
+    /// freedesktop Exec 的保留字符：出现任一就必须给参数加引号（规范 "Exec key" 一节）。
+    /// </summary>
+    private static readonly char[] DesktopReserved =
+        [' ', '\t', '\n', '"', '\'', '\\', '>', '<', '~', '|', '&', ';', '$', '*', '?', '#', '(', ')', '`'];
+
     /// <summary>
     /// freedesktop 的 autostart 项。<c>Exec</c> 里的可执行路径**总是加引号**：
     /// 规范允许含空格的路径，而解析方对不带引号的空格按"参数分隔"处理。
@@ -28,8 +43,8 @@ internal static class AutoStartContent
         builder.Append("[Desktop Entry]\n");
         builder.Append("Type=Application\n");
         builder.Append("Name=").Append(EscapeDesktop(id)).Append('\n');
-        builder.Append("Exec=").Append(QuoteExecutable(executable));
-        AppendArguments(builder, arguments);
+        builder.Append("Exec=").Append(QuoteForDesktop(executable, force: true));
+        AppendArguments(builder, arguments, static argument => QuoteForDesktop(argument));
         builder.Append('\n');
         builder.Append("Terminal=false\n");
         // GNOME 会记住"用户曾在启动应用里关掉它"，这个键让自启项在启用时就明确生效
@@ -72,14 +87,13 @@ internal static class AutoStartContent
     /// </summary>
     internal static string WindowsRunValue(string executable, IReadOnlyList<string>? arguments)
     {
-        var builder = new StringBuilder(QuoteExecutable(executable));
-        AppendArguments(builder, arguments);
+        var builder = new StringBuilder(QuoteForWindows(executable, force: true));
+        AppendArguments(builder, arguments, static argument => QuoteForWindows(argument));
         return builder.ToString();
     }
 
-    private static string QuoteExecutable(string executable) => "\"" + executable + "\"";
-
-    private static void AppendArguments(StringBuilder builder, IReadOnlyList<string>? arguments)
+    private static void AppendArguments(
+        StringBuilder builder, IReadOnlyList<string>? arguments, Func<string, string> quote)
     {
         if (arguments is null)
         {
@@ -88,20 +102,123 @@ internal static class AutoStartContent
 
         foreach (string argument in arguments)
         {
-            builder.Append(' ').Append(QuoteArgument(argument));
+            builder.Append(' ').Append(quote(argument));
         }
     }
 
-    /// <summary>参数含空格或引号时加引号（引号内的引号用反斜杠转义，Windows 与 Unix 的解析都能接受）。</summary>
-    private static string QuoteArgument(string argument)
-        => argument.Length == 0 || argument.Contains(' ') || argument.Contains('"')
-            ? "\"" + argument.Replace("\"", "\\\"", StringComparison.Ordinal) + "\""
-            : argument;
+    /// <summary>
+    /// 按 <c>CommandLineToArgvW</c> 的规则给参数加引号（Windows）。
+    /// </summary>
+    /// <remarks>
+    /// 规则的关键有两条，只写"把引号换成 <c>\"</c>"是不够的：
+    /// <list type="number">
+    ///   <item>
+    ///     反斜杠只在**紧邻引号**时才有转义含义：<c>n</c> 个反斜杠后跟 <c>"</c> 表示
+    ///     <c>n/2</c> 个反斜杠加一个引号切换；n 为奇数时最后那个反斜杠被吞掉。
+    ///     因此要输出一个字面引号，必须写 <c>2n+1</c> 个反斜杠。
+    ///   </item>
+    ///   <item>
+    ///     参数**以反斜杠结尾**时，收尾引号会被前面的反斜杠转义掉，引号失衡、后续参数被吞。
+    ///     所以结尾的反斜杠必须加倍。这正是"<c>--path=C:\dir\</c>"这类参数以前会写坏的原因。
+    ///   </item>
+    /// </list>
+    /// </remarks>
+    /// <param name="argument">要写入的参数。</param>
+    /// <param name="force">
+    /// 是否无条件加引号。可执行路径用 <c>true</c>——它的值由系统直接解析，不加引号时含空格的路径
+    /// 会被切成"程序 + 参数"；普通参数用默认的 <c>false</c>（不加引号更接近用户手写的形态）。
+    /// </param>
+    internal static string QuoteForWindows(string argument, bool force = false)
+    {
+        if (argument.Length == 0)
+        {
+            return "\"\"";
+        }
 
-    /// <summary>desktop entry 的值里换行与反斜杠要转义（键名与值都不允许裸换行）。</summary>
+        if (!force && argument.IndexOfAny(WindowsQuoteTriggers) < 0)
+        {
+            return argument;
+        }
+
+        var builder = new StringBuilder(argument.Length + 2);
+        builder.Append('"');
+
+        int backslashes = 0;
+        foreach (char c in argument)
+        {
+            if (c == '\\')
+            {
+                backslashes++;
+                continue;
+            }
+
+            if (c == '"')
+            {
+                // 2n+1：n 对表示 n 个字面反斜杠，多出来的一个用来转义这个引号
+                builder.Append('\\', (backslashes * 2) + 1).Append('"');
+            }
+            else
+            {
+                builder.Append('\\', backslashes).Append(c);
+            }
+
+            backslashes = 0;
+        }
+
+        // 收尾：结尾的反斜杠要加倍，否则它会转义掉下面那个收尾引号
+        builder.Append('\\', backslashes * 2).Append('"');
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// 按 freedesktop Desktop Entry 的规则给 <c>Exec</c> 的参数加引号（Linux）。
+    /// </summary>
+    /// <remarks>
+    /// 规范要求：参数含保留字符时用双引号包起来，且引号内的 <c>"</c>、<c>`</c>、<c>$</c>、<c>\</c>
+    /// 四个字符**都必须**用反斜杠转义。只转义引号的话，含反斜杠的参数（例如 <c>--path=C:\temp</c>）
+    /// 会被遵循规范的解析器当成转义序列，<c>\t</c> 变成制表符、参数随之损坏。
+    /// </remarks>
+    /// <param name="argument">要写入的参数。</param>
+    /// <param name="force">是否无条件加引号（可执行路径用 <c>true</c>，理由同 <see cref="QuoteForWindows"/>）。</param>
+    internal static string QuoteForDesktop(string argument, bool force = false)
+    {
+        if (argument.Length == 0)
+        {
+            return "\"\"";
+        }
+
+        if (!force && argument.IndexOfAny(DesktopReserved) < 0)
+        {
+            return argument;
+        }
+
+        var builder = new StringBuilder(argument.Length + 2);
+        builder.Append('"');
+        foreach (char c in argument)
+        {
+            if (c is '"' or '`' or '$' or '\\')
+            {
+                builder.Append('\\');
+            }
+
+            builder.Append(c);
+        }
+
+        builder.Append('"');
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// desktop entry 的值转义：反斜杠与换行/回车/制表符（键名与值都不允许裸换行）。
+    /// </summary>
+    /// <remarks>
+    /// 反斜杠必须**最先**替换，否则会把后面替换出来的转义序列再转义一遍。
+    /// </remarks>
     private static string EscapeDesktop(string value)
         => value.Replace("\\", "\\\\", StringComparison.Ordinal)
-                .Replace("\n", "\\n", StringComparison.Ordinal);
+                .Replace("\n", "\\n", StringComparison.Ordinal)
+                .Replace("\r", "\\r", StringComparison.Ordinal)
+                .Replace("\t", "\\t", StringComparison.Ordinal);
 
     private static string EscapeXml(string value)
         => value.Replace("&", "&amp;", StringComparison.Ordinal)

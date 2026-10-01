@@ -13,7 +13,7 @@ public sealed class OrielApp : IDisposable
     internal OrielApp(OrielAppBuilder builder)
     {
         _builder = builder;
-        Dispatcher = new OrielCommandDispatcher(builder.TargetFactories);
+        Dispatcher = new OrielCommandDispatcher(builder.TargetFactories, builder.JsonContext);
     }
 
     internal OrielCommandDispatcher Dispatcher { get; }
@@ -140,12 +140,38 @@ public sealed class OrielApp : IDisposable
         ArgumentNullException.ThrowIfNull(notification);
         ArgumentException.ThrowIfNullOrWhiteSpace(notification.Title);
         var backend = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
-        return backend.ShowNotification(notification);
+        return backend.ShowNotification(notification, NotificationAppId);
     }
 
     /// <summary>发送一条系统通知（便捷重载）；返回值语义见 <see cref="ShowNotification(OrielNotificationOptions)"/>。</summary>
     public bool ShowNotification(string title, string? body = null)
         => ShowNotification(new OrielNotificationOptions { Title = title, Body = body });
+
+    /// <summary>
+    /// 通知的"应用标识"：Windows 上即 AUMID，Linux 上是 <c>notify-send --app-name</c>。
+    /// 可用 <see cref="OrielAppBuilder.UseNotificationAppId"/> 覆盖，默认取入口程序集名。
+    /// </summary>
+    internal string NotificationAppId => _builder.NotificationAppId ?? DefaultNotificationAppId();
+
+    /// <summary>
+    /// 默认通知标识 = 入口程序集名（规范化后）；取不到程序集时退回可执行文件名，再退回 <c>OrielWeb</c>。
+    /// </summary>
+    /// <remarks>
+    /// 用程序集名而不是可执行文件名：<c>dotnet run</c> 下 <see cref="Environment.ProcessPath"/> 是
+    /// <c>dotnet</c>，所有开发期的应用会挤进同一个标识里。程序集名在 AOT 单文件下同样可用。
+    /// </remarks>
+    internal static string DefaultNotificationAppId()
+    {
+        string? name = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            name = Environment.ProcessPath is { } executable
+                ? Path.GetFileNameWithoutExtension(executable)
+                : null;
+        }
+
+        return OrielNotificationAppId.Sanitize(name);
+    }
 
     // ---- 开机自启 ----
 
@@ -259,17 +285,28 @@ public sealed class OrielApp : IDisposable
         // 单实例判定必须在建窗之前：否则第二个实例会先闪出一个窗口再退出。
         if (_builder.SingleInstanceId is { } instanceId)
         {
-            if (!SingleInstanceGuard.TryAcquire(instanceId, out FileStream? lockFile))
+            switch (SingleInstanceGuard.TryAcquire(instanceId, out FileStream? lockFile))
             {
-                // 已有实例在跑：通知它，然后直接返回（不进消息循环）——Main 随之结束，退出码保持 0。
-                SingleInstanceGuard.NotifyPrimary(instanceId);
-                Console.WriteLine("SINGLE-INSTANCE-SECONDARY: 已有实例，已通知并退出");
-                Console.Out.Flush();
-                return;
-            }
+                case SingleInstanceGuard.AcquireResult.AlreadyRunning:
+                    // 已有实例在跑：激活请求已在 TryAcquire 里发出（那个探活连接就是判定手段），
+                    // 这里直接返回（不进消息循环）——Main 随之结束，退出码保持 0。
+                    // 下面这行是 tools/verify-macos.sh 与 demo 自检 grep 的**契约标记**，不要改措辞。
+                    Console.WriteLine("SINGLE-INSTANCE-SECONDARY: 已有实例，已通知并退出");
+                    Console.Out.Flush();
+                    return;
 
-            _singleInstanceLock = lockFile;
-            _singleInstanceServer = SingleInstanceGuard.CreateListener(instanceId);
+                case SingleInstanceGuard.AcquireResult.Unavailable:
+                    // 锁文件创建不出来（目录只读、磁盘满、沙箱拦截……），无法判定有没有别的实例。
+                    // 这里**倾向于启动**：静默不启动（不建窗、退出码 0）比多开一个窗口难排查得多。
+                    // 判定细节与理由见 SingleInstanceGuard.TryAcquire。
+                    break;
+
+                case SingleInstanceGuard.AcquireResult.Acquired:
+                default:
+                    _singleInstanceLock = lockFile;
+                    _singleInstanceServer = SingleInstanceGuard.CreateListener(instanceId);
+                    break;
+            }
         }
 
         _backend = PlatformBackendFactory.Create();

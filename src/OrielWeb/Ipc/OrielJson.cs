@@ -9,30 +9,29 @@ namespace OrielWeb.Ipc;
 /// 全部基于 System.Text.Json 源生成契约，运行期零反射（Native AOT 安全）。
 /// </summary>
 /// <remarks>
-/// 基元类型直接读写；DTO（自定义类型）需要在应用入口调用
-/// <c>OrielAppBuilder.UseJsonContext(JsonSerializerContext)</c> 注册 STJ 源生成的上下文。
+/// <para>
+/// <b>JSON 上下文按应用实例持有，这里没有任何全局静态状态。</b>需要上下文的入口都把
+/// <see cref="JsonSerializerContext"/> 作为显式参数收下，由 <see cref="OrielCommandDispatcher"/>
+/// （每个 <see cref="OrielApp"/> 一个）透传进来。
+/// 早先它是一个 <c>static</c> 字段，于是同一进程里创建第二个应用会互相串——测试、或"一个进程
+/// 托管多个宿主"的场景都会踩到，而且表现是**静默地用了别人的类型信息**。
+/// </para>
+/// <para>
+/// 上下文由应用入口调用 <c>OrielAppBuilder.UseJsonContext(JsonSerializerContext)</c> 注册
+/// （STJ 源生成产物）；基元类型不需要上下文，DTO（自定义类型）需要。
+/// </para>
 /// </remarks>
 public static class OrielJson
 {
-    private static JsonSerializerContext? s_context;
-
-    /// <summary>注册应用级 <see cref="JsonSerializerContext"/>（STJ 源生成产物）。重复注册以最后一次为准。</summary>
-    public static void Use(JsonSerializerContext context)
+    internal static JsonTypeInfo? Resolve(Type type, JsonSerializerContext? jsonContext)
     {
-        ArgumentNullException.ThrowIfNull(context);
-        s_context = context;
-    }
-
-    internal static JsonTypeInfo? Resolve(Type type)
-    {
-        var context = s_context;
-        if (context is null)
+        if (jsonContext is null)
         {
             return null;
         }
         try
         {
-            return context.GetTypeInfo(type);
+            return jsonContext.GetTypeInfo(type);
         }
         catch (InvalidOperationException)
         {
@@ -91,7 +90,10 @@ public static class OrielJson
     }
 
     /// <summary>提取必需命名参数。属性缺失或为 null（对非可空类型）时抛出 <see cref="OrielIpcException"/>。</summary>
-    public static T GetRequiredArg<T>(JsonElement args, string name)
+    /// <param name="args">命令的 args 元素。</param>
+    /// <param name="name">参数名。</param>
+    /// <param name="jsonContext">应用注册的 STJ 源生成上下文（DTO 参数需要；基元类型可传 null）。</param>
+    public static T GetRequiredArg<T>(JsonElement args, string name, JsonSerializerContext? jsonContext)
     {
         if (args.ValueKind != JsonValueKind.Object || !args.TryGetProperty(name, out var element))
         {
@@ -101,11 +103,11 @@ public static class OrielJson
         {
             throw new OrielIpcException($"命令参数 '{name}' 不能为 null（声明为非可空）。");
         }
-        return DeserializeArg<T>(element, name);
+        return DeserializeArg<T>(element, name, jsonContext);
     }
 
     /// <summary>提取可选命名参数（可空类型）。属性缺失或为 null 时返回默认值。</summary>
-    public static T? GetOptionalArg<T>(JsonElement args, string name)
+    public static T? GetOptionalArg<T>(JsonElement args, string name, JsonSerializerContext? jsonContext)
     {
         if (args.ValueKind != JsonValueKind.Object || !args.TryGetProperty(name, out var element))
         {
@@ -115,10 +117,10 @@ public static class OrielJson
         {
             return default;
         }
-        return DeserializeArg<T>(element, name);
+        return DeserializeArg<T>(element, name, jsonContext);
     }
 
-    private static T DeserializeArg<T>(JsonElement element, string name)
+    private static T DeserializeArg<T>(JsonElement element, string name, JsonSerializerContext? jsonContext)
     {
         // 基元类型快速路径（typeof 比较，无反射）
         switch (typeof(T))
@@ -206,8 +208,8 @@ public static class OrielJson
                 return (T)(object)(float)element.GetDouble();
         }
 
-        // DTO：走用户注册的 JsonSerializerContext
-        var typeInfo = Resolve(typeof(T));
+        // DTO：走应用注册的 JsonSerializerContext
+        var typeInfo = Resolve(typeof(T), jsonContext);
         if (typeInfo is null)
         {
             throw new OrielIpcException(
@@ -244,8 +246,11 @@ public static class OrielJson
     // 返回值写入
     // ------------------------------------------------------------------
 
-    /// <summary>把命令返回值写入 <paramref name="writer"/>。基元类型直写；DTO 经注册上下文序列化。</summary>
-    public static void WriteResult(Utf8JsonWriter writer, object? value)
+    /// <summary>把命令返回值写入 <paramref name="writer"/>。基元类型直写；DTO 经应用注册的上下文序列化。</summary>
+    /// <param name="writer">目标写入器。</param>
+    /// <param name="value">命令返回值。</param>
+    /// <param name="jsonContext">应用注册的 STJ 源生成上下文（DTO 返回值需要；基元类型可传 null）。</param>
+    public static void WriteResult(Utf8JsonWriter writer, object? value, JsonSerializerContext? jsonContext)
     {
         switch (value)
         {
@@ -309,7 +314,7 @@ public static class OrielJson
         }
 
         var type = value.GetType();
-        var typeInfo = Resolve(type);
+        var typeInfo = Resolve(type, jsonContext);
         if (typeInfo is null)
         {
             throw new OrielIpcException(

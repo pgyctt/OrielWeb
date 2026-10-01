@@ -242,9 +242,8 @@ internal static unsafe class LinuxSignalHandlers
     /// 信号签名：<c>(WebKitWebView*, WebKitContextMenu*, GdkEvent*, WebKitHitTestResult*, gpointer) → gboolean</c>。
     /// </summary>
     /// <remarks>
-    /// 返回 <c>FALSE</c> 是**故意的**：这个信号的约定是「返回 TRUE = 应用自己接管、WebKit 什么也不弹」。
-    /// 我们要的恰恰相反——让 WebKit 用它自己的（已被我们改过项的）菜单去弹，
-    /// 这样留下来的剪切/复制/粘贴仍是引擎实现，真的能作用到页面选区上。
+    /// 这个信号的约定是「返回 TRUE = 应用自己接管、WebKit 什么都不弹」。<c>Editing</c> 策略下我们
+    /// 返回 TRUE 并自己弹菜单：不碰 WebKit 构造的菜单对象（那条路在 WebKitGTK 4.1 上会破坏内存）。
     /// </remarks>
     [UnmanagedCallersOnly]
     internal static int OnContextMenuTrampoline(nint webview, nint menu, nint gdkEvent, nint hitTestResult, nint data)
@@ -253,12 +252,12 @@ internal static unsafe class LinuxSignalHandlers
         {
             if (WebviewStates.TryGetValue(webview, out var host))
             {
-                host.FilterContextMenu(menu);
+                return host.FilterContextMenu(menu, gdkEvent) ? 1 : 0;
             }
         }
         catch
         {
-            // 过滤失败就让菜单原样弹出，不影响右键本身
+            // 接管途中出错就交回 WebKit：它自己的菜单仍然完整，右键至少能用
         }
 
         return 0;

@@ -18,7 +18,15 @@ public sealed class OrielWindowOptions
     public bool Frameless { get; set; }
     public bool Hidden { get; set; }
     public bool Maximized { get; set; }
-    /// <summary>直接加载的外部 URL（如 Vite dev server）。未设置时使用内嵌资产首页。</summary>
+    /// <summary>
+    /// 直接加载的 URL。未设置时使用内嵌资产首页（<c>&lt;资源目录&gt;/index.html</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 取值指向内嵌资源虚拟主机（<c>https://&lt;UseEmbeddedAssets 的 host&gt;/…</c>）时，三个平台都会
+    /// 落到同一份内嵌资源上：Windows 交给 WebView2 的虚拟主机映射；Linux 与 macOS 的引擎只能注册
+    /// **自定义** scheme（<c>https</c> 是保留 scheme、注册不了），由库在导航前把 URL 映射成解压目录里的
+    /// 本地文件。其它 URL（如 Vite dev server 的 <c>http://localhost:5173</c>）原样加载。
+    /// </remarks>
     public string? Url { get; set; }
     /// <summary>是否启用开发者工具（DevTools）。</summary>
     public bool Debug { get; set; }

@@ -34,7 +34,7 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 | Linux 隐藏启动 | ✅ 已完成 | `show_all` 后立刻 `hide`（GTK 的 realize 自上而下，不 show 则 webview 不被 realize，页面可能推迟到可见才开始加载） | WSL 实测：`--hidden` 下 `Map State: IsUnMapped`，同时 `WebKitWebProcess` 照常出现（页面照常加载） |
 | macOS/Linux DevTools | ⚠️ 已实现未验证 | macOS：`WKWebView.isInspectable`（13.3+，先 `respondsToSelector:` 探测）；Linux：`WebKitSettings.enable_developer_extras` | CI 三平台冒烟全绿（run 13 / `265c9f0`），只证明开关不影响启动；**面板本身需人眼**（见待真机清单） |
 | 窗口图标（统一 `WithIcon`） | ✅ Linux 已验证；Windows/macOS 未验证 | 各平台落到真正有图标槽的位置：Linux 窗口图标（`gtk_window_set_icon_from_file`）、Windows `WM_SETICON` 覆盖 exe 图标、macOS Dock 图标 | WSL 对照实测：带 `--icon` 时 `_NET_WM_ICON` 出现 `Icon (48 x 48)`，不带时 `not found`。CI 三平台冒烟全绿（run 13），但那只证明该代码路径不破坏启动——**图标是否真的显示出来仍需人眼**（见待真机清单） |
-| Linux HiDPI 拖动偏移 | ⏳ 未开始 | 用 `gdk_window_get_scale_factor` 折算增量 | **需真实高 DPI 缩放环境** → 见待真机清单 |
+| Linux HiDPI 拖动偏移 | ⏳ 未开始 | 用 `gdk_window_get_scale_factor` 折算增量（只针对 X11 那条流式路径；Wayland 下的拖动已交给合成器，不存在宿主侧折算） | **需真实高 DPI 缩放环境** → 见待真机清单 |
 
 **已定**：图标来源用显式的 `OrielWindowOptions.WithIcon(path)`——不做"从 exe 取图标"的跨平台抽象，
 因为 macOS 的 `NSWindow` 根本没有窗口级图标槽（它设的是 Dock 图标），硬凑一个统一语义只会在某个平台上失真。
@@ -86,6 +86,17 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 - 状态：**已实现未验证**（Linux 侧已在 WSL 验证；macOS 的 `Hidden` 走"不 orderFront"分支，
   需要通过 `CGWindowList` 断言窗口不在 on-screen 列表里才算验证）。
 
+#### macOS 内嵌资源虚拟主机 URL（2026-09-30 修复后待验证）
+- 状态：**已修复未验证**。Linux 侧已在 WSL2 + WSLg 真机确认（默认模式的手动验证台完整渲染）；
+  macOS 与它**同一根因、同一修法**（`AssetUrlResolver` + `loadFileURL:allowingReadAccessToURL:`），
+  但尚未在真机跑过。根因与修法见 `docs/DECISIONS.md` 的「内嵌资源虚拟主机 URL 在 Linux/macOS 上白屏」。
+- 环境：macOS 桌面。
+- 步骤：直接跑 `samples/OrielDemo`（默认模式即加载 `https://app.oriel/manual-check.html`）。
+- 预期：手动验证台完整渲染——标题、环境面板（平台 darwin）、托盘与通知按钮、右下角徽章「已连接」。
+- 若不符：先看窗口标题是否停在 `WithTitle` 设的「Oriel Demo — 手动验证」（那说明页面 `<title>` 没生效、
+  页面根本没加载），再确认解压目录里 `manual-check.html` 存在，最后看 `Navigate()` 里
+  `AssetUrlResolver` 是否返回了 null（返回 null 就会退回 `loadRequest:`，重新撞上 DNS 失败）。
+
 ## 阶段 B —— 内容与 IPC 深度
 
 应用价值最直接的一批，全部能在 bridge 单测与三平台 smoke 里断言。
@@ -110,9 +121,9 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
 | 系统主题检测（dark/light + 变更事件） | ✅ 完成 | `OrielApp.Theme` + `ThemeChanged` + 页面 `theme.changed`（每次导航后补推）。检测：注册表 + `WM_SETTINGCHANGE` / GtkSettings + `notify::` / `NSUserDefaults` + 系统通知 | `--selftest theme` 三平台通过；Linux 另跑两次（`GTK_THEME` 造值）断言深浅结论**不同**；**切换实时性**见待真机清单 |
 | 拖放（文件拖入 → 路径列表 + 事件） | ✅ 已实现 | Windows：窗口加 `WS_EX_ACCEPTFILES` → `WM_DROPFILES` → `DragQueryFileW`（本库是 Composition 宿主，WebView2 **不是子窗口**，拖放会落到本窗口——不必手写 OLE `IDropTarget`、不必 OLE 初始化），并关掉 WebView2 的 `AllowExternalDrop` 以免它截走拖放；macOS：自定义 `NSView` 子类承载 `NSDraggingDestination`，webview 作为其子视图（**不碰 `WKWebView` 的方法表**，AppKit 沿父视图链查找落点）；Linux：`gtk_drag_dest_set(webview, "text/uri-list")` + `drag-data-received` | **23 个用例**覆盖 URI→本地路径（百分号编码含非 ASCII、`+` 不等于空格、Windows 盘符、`localhost` 与远程主机、非 file 协议、批量保序）；`--selftest shell` 走完注册路径并断言事件订阅可用（`FILE-DROP-SUBSCRIBED`）。**真实拖拽整体未验证**——无头环境造不出 XDND/OLE 会话，见下 |
 | 系统托盘（`AddTray` / `app.Tray`） | ✅ 已实现；Linux 取证通过 | Windows `Shell_NotifyIconW` + `TrackPopupMenuEx`；macOS `NSStatusBar`/`NSMenu`；Linux GTK3 `GtkStatusIcon`/`GtkMenu`（用 GTK 自带而非 AppIndicator，理由见 DECISIONS） | Windows/macOS 编译验证；Linux 由 `--selftest shell` 断言"托盘创建 + 一份含分隔线/勾选/禁用/子菜单/role 的菜单能设进去、进程不崩"，并由 `tools/verify-linux-shell.sh` 采集证据。**图标可见性需人眼**（见下） |
-| 系统通知（`ShowNotification`） | ✅ 已实现；Linux 硬断言 | Windows 用**独立的隐藏托盘项**发 `NIF_INFO` 气球（因此不启用托盘也能发）；macOS `osascript`；Linux `notify-send` | Linux：真 `notify-send` → 会话总线 → 假通知服务，断言**标题与正文逐字符正确**（`tools/verify-linux-shell.sh`）。点击上报仅 Windows 支持，另两个平台**显式空实现**（不是"忘触发"） |
+| 系统通知（`ShowNotification`） | ✅ 已实现；Linux 硬断言 | Windows 经一个短命的 **Windows PowerShell 5.1** 进程调 WinRT `ToastNotificationManager`（Native AOT 下没有 WinRT 投影；**不依赖托盘是否存在**——早先的托盘气球方案已废弃，理由见 `Win32ToastNotification` 的类注释）；macOS `osascript`；Linux `notify-send`。**应用标识**（Windows AUMID / Linux `--app-name`）默认取入口程序集名，可用 `UseNotificationAppId` 覆盖——早先硬编码为 `OrielWeb`，导致所有基于本库的应用在系统通知设置里同名、既分不清也关不掉某一个 | Linux：真 `notify-send` → 会话总线 → 假通知服务，断言**标题与正文逐字符正确**（`tools/verify-linux-shell.sh`）。点击上报**三平台均不支持**，三处都是**显式空实现**（不是"忘触发"） |
 | 对话框（消息框 / 打开 / 保存 / 选文件夹） | ✅ 已实现（扩展版） | 打开可多选、可给结构化过滤器、可指定初始目录；新增文件夹选择。Windows `GetOpenFileNameW`（`OFN_ALLOWMULTISELECT`+`OFN_EXPLORER`）/ `SHBrowseForFolderW`；macOS `NSOpenPanel`（`URLs` 数组）/ `NSSavePanel`；Linux `GtkFileChooserDialog`（多选读 `GSList`）。过滤器在三种平台形状间的转换与 Win32 多选缓冲区的解析都在纯函数里（`OrielFileFilter` / `OrielFileDialogSupport`） | **30 个单测**（在 Linux CI 上跑，含为 Windows 写的用例）：解析旧字符串、Win32 双 null 渲染、GTK 的 `*.*` 归一、Cocoa 扩展名提取、Win32 多选「单段 vs 多段」两种形状、补扩展名。**对话框外观与交互需人眼**（见下） |
-| 内建右键菜单策略 | ✅ 已实现 | 默认 `Editing`（只留剪切/复制/粘贴）、`Native`（平台原样）、`Disabled`。Windows 订阅 `CoreWebView2.ContextMenuRequested` 按项过滤（`ICoreWebView2_11`，由 WebView2Aot 包内部转换）；macOS 新建 `OrielUIDelegate` 走 `webView:willOpenMenu:withEvent:` 改现成 `NSMenu`；Linux 连 `context-menu` 信号改 `WebKitContextMenu` 后**返回 FALSE** 让 WebKit 自己弹（返回 TRUE 会变成"什么都不弹"） | **48 个单测**（在 Linux CI 上跑，含为 Windows/Cocoa 写的那些）：三平台保留名单、`copyImage`/`copyLink` 这类"看着像但不是"的陷阱、WebKitGTK 编号 13/17 的**相邻边界**（错一位就会把「刷新」「删除」留下）。**菜单实际长什么样需人眼**（见下） |
+| 内建右键菜单策略 | ✅ 已实现；Linux 接管链路已实测 | 默认 `Editing`（只留剪切/复制/粘贴）、`Native`（平台原样）、`Disabled`。**Windows 是过滤式**：订阅 `CoreWebView2.ContextMenuRequested` 按 `Name` 保留三项（`ICoreWebView2_11`，由 WebView2Aot 包内部转换）。**macOS / Linux 是接管式**：自己弹只含三项的菜单，编辑命令走引擎的原生通道（macOS `sendAction:to:from:` + `cut:/copy:/paste:`；Linux `webkit_web_view_execute_editing_command`）。早先"就地增删引擎菜单"的写法在 WebKitGTK 4.1 上会破坏内存，理由与证据见 DECISIONS | **37 个单测**（Linux CI 上跑）：接管菜单的三项与 role 归类边界、Windows 保留名单（`copyImage`/`copyLink` 这类陷阱）。Linux 另**实测**：连点右键 6 次不崩、菜单按指针位置弹出、`"Copy"` 把页面选中内容送进系统剪贴板。**macOS 全部未验证**；**菜单外观与真机整链路交互需人眼**（见下） |
 | 窗口上下文菜单 | ✅ 已实现 | 三平台都支持（Windows 阻塞、另两个异步）。菜单构建按平台抽成共享类（`Win32Menu`/`GtkMenu`/`MacOSMenu`），role 由 `OrielMenuRoles` 统一解释 | 三平台编译 ✓；Linux `--selftest shell` 走一遍菜单构建并断言不崩。**菜单外观与上下文菜单的弹出交互需人眼**（见下） |
 | 开机自启 | ✅ 已实现 | Windows 写 HKCU 的 Run 键、macOS 写 LaunchAgent plist（不调 `launchctl load`，避免立刻再拉起一个实例）、Linux 写 freedesktop 的 autostart `.desktop`。配置文本由共用的纯函数生成 | **B 批里最硬的一条**：取证脚本断言"启用 → 查得到 → 禁用 → 查不到"的闭环，并逐项核对 `.desktop` 的内容（Desktop Entry 头、带引号的 Exec、参数、GNOME 启用标志）；另有 12 个单测覆盖三段文本。**"下次开机真的起来了"仍需真机重启** |
 | Shell（打开外链 / 在文件管理器里显示） | ✅ 已实现 | 用系统默认程序打开 URL 与文件、在文件管理器里显示；**默认拒绝式的 scheme 白名单**（只放 http/https/mailto）。**不含** Ryn 的 `shell.execute`/PTY——那属能力沙箱范畴 | 取证脚本用 `xdg-open` 替身断言两点：URL 真的交出去了、危险目标一次都没调出去；24 个单测覆盖校验与三平台命令翻译 |
@@ -169,13 +180,14 @@ OrielWeb 是"跨平台系统 webview 核心库"：纯 C# P/Invoke、无 C++ 中�
   `public.file-url`（`performDragOperation:` 没被调用就是落点没命中）；Linux 看 `gtk_drag_dest_get_target_list`
   是否非 0。**URI 解析本身已有单测，若路径错了先怀疑落点而不是解析。**
 
-#### 内建右键菜单的过滤效果
+#### 内建右键菜单（接管式）
 - 环境：三平台桌面各一次。
-- 步骤：1) 在操作台页面**普通区域**右键（默认策略）→ 看菜单里是否**只剩**剪切/复制/粘贴；
+- 步骤：1) 在操作台页面**普通区域**右键（默认策略）→ 菜单里应**只有**剪切/复制/粘贴；
   2) 在输入框里输入文字、选中、右键 → 这三项应当可用，且**真的能作用在选中内容上**
   （粘贴要能把系统剪贴板内容送进去）；3) 切到 `平台原样` 再右键 → 应恢复出「后退/刷新/另存为/检查元素」等；
-  4) 切到 `完全不弹` 再右键 → 应当什么都不出现。
-- 预期：四步都符合。第 2 步是关键——它验证的是"过滤没有把原生行为弄坏"。
+  4) 切到 `完全不弹` 再右键 → 应当什么都不出现；
+  5) **连点右键 5～6 次** → 进程不得崩溃（这一条是为 WebKitGTK 那处内存破坏加的回归项）。
+- 预期：五步都符合。第 2、5 步是关键——前者验证"接管没把原生编辑行为弄坏"，后者是回归。
 - 若不符：先看**策略是否生效**（操作台右上角日志会打印当前策略），再按平台看钩子是否被调用：
   Windows 看 WebView2 运行时版本是否够新（老运行时没有 `ICoreWebView2_11`，`ContextMenuRequested` 不会来）；
   macOS 看 `setUIDelegate:` 是否设上（`willOpenMenu:` 未被调用就是委托没生效）、系统是否 ≥ 11；

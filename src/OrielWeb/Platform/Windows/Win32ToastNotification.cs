@@ -44,18 +44,19 @@ namespace OrielWeb.Platform.Windows;
 /// </remarks>
 internal static class Win32ToastNotification
 {
-    /// <summary>
-    /// AUMID。未打包运行时通知会归到这个标识下（在系统"通知"设置里按它出现）。
-    /// 实测未注册的 AUMID 也能投递（<c>CreateToastNotifier</c> 不拒绝）。
-    /// </summary>
-    private const string AppUserModelId = "OrielWeb";
-
     /// <summary>Windows PowerShell 5.1 的位置（WinRT 投影只在它上面可用）。</summary>
     private static readonly Lazy<string> s_powerShell = new(FindWindowsPowerShell);
 
     /// <summary>投递一条 toast。</summary>
+    /// <param name="notification">通知内容与标识。</param>
+    /// <param name="appId">
+    /// AUMID：未打包运行时通知会归到这个标识下（在系统"通知"设置里按它出现，用户按它静音）。
+    /// 由 <see cref="OrielNotificationAppId.Sanitize"/> 规范化过（≤128 字符、不含空格与非法字符），
+    /// 因此可以直接放进 PowerShell 单引号字符串；这里仍再转义一次，免得日后有人绕过规范化直接调用。
+    /// 实测未注册的 AUMID 也能投递（<c>CreateToastNotifier</c> 不拒绝）。
+    /// </param>
     /// <returns>脚本是否成功执行（PowerShell 退出码为 0）。</returns>
-    internal static bool Send(OrielNotificationOptions notification)
+    internal static bool Send(OrielNotificationOptions notification, string appId)
     {
         try
         {
@@ -82,7 +83,9 @@ internal static class Win32ToastNotification
                 "$xml.LoadXml('", toastXml, "'); ",
                 "$toast = New-Object Windows.UI.Notifications.ToastNotification $xml; ",
                 tagPart,
-                "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('", AppUserModelId, "').Show($toast)");
+                "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('",
+                EscapeForXmlAndScript(appId),
+                "').Show($toast)");
 
             // 用 -EncodedCommand（UTF-16LE 的 Base64）而不是 -Command：脚本里带着应用给的标题与正文，
             // 走命令行参数时非 ASCII 内容会按本地代码页解释而乱码（实测中文标题直接变成乱码，

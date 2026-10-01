@@ -135,6 +135,42 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gtk, EntryPoint = "gtk_window_move")]
     internal static partial void GtkWindowMove(nint window, int x, int y);
 
+    /// <summary>
+    /// 开始窗口拖动：把移动交给窗口管理器 / 窗口系统，而不是客户端自己摆。
+    /// X11 下 GDK 发 <c>_NET_WM_MOVERESIZE</c> 给 WM；Wayland 下转成 <c>xdg_toplevel.move</c>，
+    /// 由合成器接管（协议不允许客户端指定自己的位置，所以这是唯一的正路）。
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="button"/> 是触发拖动的按钮（左键 = 1）；<paramref name="rootX"/> /
+    /// <paramref name="rootY"/> 是按下点的根窗口坐标；<paramref name="timestamp"/> 是那次点击事件的
+    /// 时间（<c>GDK_CURRENT_TIME</c> = 0）。Wayland 下后三个参数不被使用——协议只吃 seat + serial，
+    /// 而 GTK3 的 Wayland 后端取的是 seat 上**最近一次隐式抓取的 serial**，也就是按钮按下时记录的那个：
+    /// 所以这个调用必须在鼠标按住期间完成，晚到松开之后就会被合成器忽略。
+    /// </remarks>
+    [LibraryImport(Gtk, EntryPoint = "gtk_window_begin_move_drag")]
+    internal static partial void GtkWindowBeginMoveDrag(nint window, int button, int rootX, int rootY, uint timestamp);
+
+    /// <summary>默认 GdkDisplay。用于判断当前跑在哪个 GDK 后端上。</summary>
+    [LibraryImport(Gdk, EntryPoint = "gdk_display_get_default")]
+    internal static partial nint GdkDisplayGetDefault();
+
+    /// <summary>
+    /// 显示名：X11 形如 <c>:0</c>，Wayland 形如 <c>wayland-0</c>（取自 <c>WAYLAND_DISPLAY</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 返回裸指针、由调用方复制，**不要**写成
+    /// <c>[return: MarshalAs(UnmanagedType.LPUTF8Str)]</c> + <c>string</c> 返回。
+    /// 那样源生成器为返回值生成的封送代码会写坏调用者的栈，表现为调用后立刻
+    /// <c>*** stack smashing detected ***: terminated</c> 并 abort
+    /// （实测于 .NET 10 / Linux x64，且只在真正走到该调用时才触发——不碰这条路径时进程一切正常，
+    /// 极难与"某个功能一用就闪退"对上号）。
+    ///
+    /// 本文件其它函数也一律是这个形态：返回的 <c>gchar*</c> 复制后再按需 <c>g_free</c>。
+    /// 指针本身归 GDK 所有，不释放。
+    /// </remarks>
+    [LibraryImport(Gdk, EntryPoint = "gdk_display_get_name")]
+    internal static partial nint GdkDisplayGetName(nint display);
+
     [LibraryImport(Gtk, EntryPoint = "gtk_window_resize")]
     internal static partial void GtkWindowResize(nint window, int width, int height);
 
@@ -279,6 +315,17 @@ internal static unsafe partial class GtkNative
 
     [LibraryImport(GOject, EntryPoint = "g_object_unref")]
     internal static partial void GObjectUnref(nint obj);
+
+    /// <summary>
+    /// 接管一个 <c>GInitiallyUnowned</c>（GTK widget）的 floating 引用。
+    /// </summary>
+    /// <remarks>
+    /// 所有 widget 创建时都带 floating 引用，直接 <c>g_object_unref</c> 会打乱引用计数——
+    /// GTK 会打 "A floating object was finalized"，对象可能被销毁两次。持有 widget 的一方
+    /// 要先 sink，之后的 unref 才是配对的。
+    /// </remarks>
+    [LibraryImport(GOject, EntryPoint = "g_object_ref_sink")]
+    internal static partial nint GObjectRefSink(nint obj);
 
     // ---- 窗口图标 ----
 
@@ -429,37 +476,17 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Glib, EntryPoint = "g_strfreev")]
     internal static partial void GStrfreev(nint strv);
 
-    // ---- 内建右键菜单的过滤（webkit_context_menu_*）----
-    // 在 context-menu 信号的处理器里直接改 WebKit 构造好的菜单对象；
-    // 保留项的动作仍由 WebKit 实现，所以剪切/复制/粘贴照旧作用于页面选区。
+    // ---- 内建右键菜单的接管（webkit_web_view_execute_editing_command）----
+    // 接管式**不再读改** WebKit 构造的菜单对象：那条路（get_items + remove / g_list_free）
+    // 在本环境的 WebKitGTK 4.1 上会破坏菜单内部结构，连点几次右键即 double free / 段错误。
+    // 现在改为自己弹一个只含剪辑项的菜单，三项走渲染引擎自己的编辑命令——它们作用于当前选区
+    // 与系统剪贴板，是 document.execCommand('cut'/'paste') 做不到的。
 
     /// <summary>
-    /// 取菜单项列表（<c>GList*</c>，节点是 <c>WebKitContextMenuItem*</c>）。
+    /// 执行一个编辑命令，取值见 <c>WEBKIT_EDITING_COMMAND_*</c>：
+    /// <c>"Cut"</c> / <c>"Copy"</c> / <c>"Paste"</c> / <c>"Undo"</c> / <c>"Redo"</c> /
+    /// <c>"SelectAll"</c> / <c>"Delete"</c>。
     /// </summary>
-    /// <remarks>
-    /// 链表**必须**用 <see cref="GListFree"/> 释放，但其中的菜单项**不归调用方**——
-    /// 它们的所有权仍在菜单上，不能逐个 unref。
-    /// </remarks>
-    [LibraryImport(WebKit, EntryPoint = "webkit_context_menu_get_items")]
-    internal static partial nint WebkitContextMenuGetItems(nint menu);
-
-    /// <summary>从菜单里移除一项（不影响其它项的所有权）。</summary>
-    [LibraryImport(WebKit, EntryPoint = "webkit_context_menu_remove")]
-    internal static partial void WebkitContextMenuRemove(nint menu, nint item);
-
-    /// <summary>移除全部项。</summary>
-    [LibraryImport(WebKit, EntryPoint = "webkit_context_menu_remove_all")]
-    internal static partial void WebkitContextMenuRemoveAll(nint menu);
-
-    /// <summary>
-    /// 取菜单项的「标准动作」编号（<c>WebKitContextMenuAction</c>）；
-    /// 应用自己插进去的项返回 <c>WEBKIT_CONTEXT_MENU_ACTION_CUSTOM</c>。
-    /// 编号与常量的对应见 <see cref="OrielContextMenuSupport"/>。
-    /// </summary>
-    [LibraryImport(WebKit, EntryPoint = "webkit_context_menu_item_get_stock_action")]
-    internal static partial int WebkitContextMenuItemGetStockAction(nint item);
-
-    /// <summary>释放 <c>GList</c> 的节点（与 <see cref="GSListFree"/> 不同：GList 是双向链表）。</summary>
-    [LibraryImport(Glib, EntryPoint = "g_list_free")]
-    internal static partial void GListFree(nint list);
+    [LibraryImport(WebKit, EntryPoint = "webkit_web_view_execute_editing_command", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial void WebkitWebViewExecuteEditingCommand(nint webView, string command);
 }

@@ -1,6 +1,16 @@
-# 统一按 LF 存储与检出，避免 Windows 上 core.autocrlf 造成的
-# "LF will be replaced by CRLF" 警告、混合行尾与无意义 diff。
+# 统一按 LF 存储与检出。
+#
+# 这里是**行尾约定的唯一权威**：它随仓库分发，对每个 clone 都生效，
+# 优先级也高于各人本机的 core.autocrlf（后者只是没有属性规则时的兜底）。
+# 因此不需要让每个人都去关 core.autocrlf——那既不可靠（新人不一定会设），
+# 也管不到 CI。
 * text=auto eol=lf
+
+# 例外：批处理脚本必须是 CRLF。
+# cmd.exe 解析 LF-only 的 .bat/.cmd 时，在标签跳转（goto :label）与多行构造上历来有兼容问题，
+# 所以这两类文件不能跟着全仓走 LF。当前仓库没有此类文件，这条是为将来加的。
+*.bat text eol=crlf
+*.cmd text eol=crlf
 
 # 显式声明二进制，避免被当作文本做行尾转换
 *.png binary

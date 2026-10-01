@@ -21,11 +21,51 @@ namespace OrielWeb;
 internal static class OrielMenuRoles
 {
     /// <summary>
+    /// 是否是编辑类 role（撤销/重做/剪切/复制/粘贴/全选/删除）。
+    /// </summary>
+    /// <remarks>
+    /// 这几项与渲染引擎的"编辑命令"一一对应。接管式的内建右键菜单要弹的就是它们，
+    /// 且必须走引擎自己的命令（见 <see cref="TryActivate"/> 的 nativeEditing）。
+    /// </remarks>
+    internal static bool IsEditingRole(string role) => role is
+        OrielMenuRole.Undo or OrielMenuRole.Redo or OrielMenuRole.Cut or
+        OrielMenuRole.Copy or OrielMenuRole.Paste or OrielMenuRole.SelectAll or
+        OrielMenuRole.Delete;
+
+    /// <summary>
+    /// <see cref="OrielContextMenuPolicy.Editing"/> 下接管式菜单要弹的内容：只有剪切 / 复制 / 粘贴。
+    /// </summary>
+    /// <remarks>
+    /// 顺序按各平台惯例（剪切、复制、粘贴）。文案由 <see cref="DefaultLabel"/> 提供，即英文
+    /// Cut/Copy/Paste —— 与 Windows 内建菜单一致，也不假装本地化。
+    /// </remarks>
+    internal static IReadOnlyList<OrielMenuItem> EditingMenuItems() =>
+    [
+        OrielMenuItem.RoleItem(OrielMenuRole.Cut),
+        OrielMenuItem.RoleItem(OrielMenuRole.Copy),
+        OrielMenuItem.RoleItem(OrielMenuRole.Paste),
+    ];
+
+    /// <summary>
     /// 按 role 执行；返回 false 表示这一项没人处理（调用方应当忽略它，而不是抛异常——
     /// "某个 role 在该平台无法实现"不该让整个菜单失效）。
     /// </summary>
-    internal static bool TryActivate(string role, OrielApp app, WebviewWindow? window)
+    /// <param name="role">菜单项的 role 名，取值见 <see cref="OrielMenuRole"/>。</param>
+    /// <param name="app">应用门面（应用级 role 需要它，如 quit）。</param>
+    /// <param name="window">发起动作的窗口；为 null 时窗口级与编辑类 role 都判定为"没人处理"。</param>
+    /// <param name="nativeEditing">
+    /// 宿主侧的"原生编辑命令"通道：接管式菜单弹出的剪切/复制/粘贴必须走它，因为
+    /// <c>document.execCommand('cut'/'paste')</c> 会被 webview 的安全策略拦下（粘贴还要把系统
+    /// 剪贴板送进页面，只有原生侧能做）。传 null 时退回 <c>execCommand</c>（尽力而为）。
+    /// </param>
+    internal static bool TryActivate(string role, OrielApp app, WebviewWindow? window,
+        Func<string, bool>? nativeEditing = null)
     {
+        if (nativeEditing is not null && IsEditingRole(role) && nativeEditing(role))
+        {
+            return true;
+        }
+
         switch (role)
         {
             case OrielMenuRole.Quit:

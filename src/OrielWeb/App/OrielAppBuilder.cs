@@ -32,10 +32,19 @@ public sealed class OrielAppBuilder
         return this;
     }
 
-    /// <summary>注册 STJ 源生成的 JsonSerializerContext：DTO 命令参数/返回值由此实现 AOT 安全序列化。</summary>
+    internal JsonSerializerContext? JsonContext { get; private set; }
+
+    /// <summary>
+    /// 注册 STJ 源生成的 <see cref="JsonSerializerContext"/>：DTO 命令参数/返回值由此实现 AOT 安全序列化。
+    /// </summary>
+    /// <remarks>
+    /// 上下文**按应用实例持有**（存在这里，随 <see cref="OrielApp"/> 传给 IPC 分发器），
+    /// 不写任何全局静态状态——因此同一进程里创建多个应用时，它们各用各的类型信息。
+    /// </remarks>
     public OrielAppBuilder UseJsonContext(JsonSerializerContext context)
     {
-        OrielJson.Use(context);
+        ArgumentNullException.ThrowIfNull(context);
+        JsonContext = context;
         return this;
     }
 
@@ -149,6 +158,30 @@ public sealed class OrielAppBuilder
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
         AutoStartId = id;
+        return this;
+    }
+
+    internal string? NotificationAppId { get; private set; }
+
+    /// <summary>
+    /// 覆盖系统通知的"应用标识"——Windows 上是 <b>AUMID</b>（系统"通知"设置里按它给应用分组），
+    /// Linux 上是 <c>notify-send --app-name</c>。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 默认取**入口程序集名**（经 <see cref="OrielNotificationAppId.Sanitize"/> 规范化），
+    /// 因此同机安装的多个基于本库的应用在通知设置里是分开的，用户可以逐个静音。
+    /// 不覆盖的话以前所有应用都叫 <c>OrielWeb</c>，用户在设置里既分不清也关不掉某一个。
+    /// </para>
+    /// <para>
+    /// 需要覆盖的典型场景：与应用清单/开始菜单快捷方式里已注册的 AUMID 对齐（打包分发时），
+    /// 或程序集名带版本号、不适合当用户可见名字。
+    /// </para>
+    /// </remarks>
+    public OrielAppBuilder UseNotificationAppId(string appId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(appId);
+        NotificationAppId = appId;
         return this;
     }
 
