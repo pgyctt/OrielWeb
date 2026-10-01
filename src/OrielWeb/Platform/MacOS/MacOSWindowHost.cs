@@ -366,7 +366,11 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
             ObjCRuntime.SendId(clsWKUserScript, ObjCRuntime.Sel("alloc")),
             ObjCRuntime.Sel("initWithSource:injectionTime:forMainFrameOnly:"),
             ObjCRuntime.MakeNSString(
-                MacOSBridgeJs.Build(_options.ConsoleForwarding, App.Guard.Token, App.Guard.TrustedPrefixes)),
+                MacOSBridgeJs.Build(
+                    _options.ConsoleForwarding,
+                    App.Guard.Token,
+                    App.Guard.TrustedPrefixes,
+                    ReadSystemSnapshot())),
             0, // WKUserScriptInjectionTimeAtDocumentStart
             true);
         ObjCRuntime.SendVoidObj(userContentController, ObjCRuntime.Sel("addUserScript:"), userScript);
@@ -743,6 +747,32 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     }
 
     public void Center() => ObjCRuntime.SendVoid(_nsWindow, ObjCRuntime.Sel("center"));
+
+    /// <summary>
+    /// 注入给页面的宿主事实快照（见 <see cref="OrielSystemSnapshot"/>）：系统双击间隔与缩放。
+    /// </summary>
+    /// <remarks>
+    /// 两者都是"取不到就返回 0"的形式（没有显示器时 <c>mainScreen</c> 是 nil、框架未加载时类查不到），
+    /// 由 <see cref="OrielSystemSnapshot.Normalize"/> 统一兜底。注意
+    /// <c>+[NSEvent doubleClickInterval]</c> 给的是**秒**，注入给页面的是毫秒。
+    /// </remarks>
+    private static OrielSystemSnapshot ReadSystemSnapshot()
+    {
+        nint nsEventClass = ObjCRuntime.GetClass("NSEvent");
+        double intervalSeconds = nsEventClass == 0
+            ? 0
+            : ObjCRuntime.SendDouble(nsEventClass, ObjCRuntime.Sel("doubleClickInterval"));
+
+        nint screenClass = ObjCRuntime.GetClass("NSScreen");
+        nint screen = screenClass == 0 ? 0 : ObjCRuntime.SendId(screenClass, ObjCRuntime.Sel("mainScreen"));
+        double scale = screen == 0
+            ? 0
+            : ObjCRuntime.SendDouble(screen, ObjCRuntime.Sel("backingScaleFactor"));
+
+        return OrielSystemSnapshot.Normalize(
+            (int)Math.Round(intervalSeconds * 1000),
+            scale);
+    }
 
     public void BeginDrag()
     {

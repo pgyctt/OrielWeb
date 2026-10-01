@@ -94,6 +94,21 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
         });
 
     /// <summary>
+    /// 系统双击间隔（毫秒）：GtkSettings 的 <c>gtk-double-click-time</c>。
+    /// </summary>
+    /// <remarks>
+    /// 取不到时返回 0，由 <see cref="OrielSystemSnapshot.Normalize"/> 统一兜底——
+    /// 回退值只该有那一处，否则三个平台会各自攒出一个不一样的默认值。
+    /// </remarks>
+    internal static int ReadDoubleClickTimeMs()
+    {
+        nint settings = GtkNative.GtkSettingsGetDefault();
+        return settings == 0
+            ? 0
+            : WithGValue(settings, "gtk-double-click-time", "gint", value => GtkNative.GValueGetInt(value));
+    }
+
+    /// <summary>
     /// 经 GValue 读一个 GObject 属性的通用壳。GValue 必须先清零再 <c>g_value_init</c>，
     /// 读完必须 <c>g_value_unset</c>（否则字符串类型会泄漏内部拷贝）。
     /// </summary>

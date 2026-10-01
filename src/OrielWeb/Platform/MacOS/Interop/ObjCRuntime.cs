@@ -62,6 +62,17 @@ internal static unsafe partial class ObjCRuntime
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial void SendVoid(nint self, nint sel);
 
+    /// <summary>
+    /// 无参数、返回 <c>double</c> 的调用（如 <c>+[NSEvent doubleClickInterval]</c>、
+    /// <c>-[NSScreen backingScaleFactor]</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 不能拿 <see cref="SendId"/> 代用：返回浮点与返回整数在 arm64 上走不同的寄存器组，
+    /// 这正是本文件按签名多次声明 objc_msgSend 的原因。
+    /// </remarks>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial double SendDouble(nint self, nint sel);
+
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial void SendVoidObj(nint self, nint sel, nint arg);
 

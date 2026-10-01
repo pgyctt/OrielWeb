@@ -1,12 +1,14 @@
 // OrielWeb 三平台共用的注入式桥接脚本模板（EmbeddedResource，见 OrielWeb.csproj）。
 //
-// 由 OrielBridgeTemplate 在创建窗口时替换六个占位符后注入：
+// 由 OrielBridgeTemplate 在创建窗口时替换八个占位符后注入：
 //   __ORIEL_PLATFORM__ → 'windows' | 'macos' | 'linux'
 //   __ORIEL_POST__     → 平台投递表达式（obj 为待发送对象，令牌已由 post 加上）
 //   __ORIEL_CONSOLE_ENABLED__ → 'true' | 'false'（见 OrielWindowOptions.ConsoleForwarding）
 //   __ORIEL_VERSION__  → 库版本（取程序集版本前三位，如 '0.1.2'）
 //   __ORIEL_TOKEN__    → 本次进程运行的 IPC 令牌（32 位十六进制）
 //   __ORIEL_TRUSTED__  → 可信 URL 前缀数组，如 ['https://app.oriel/']
+//   __ORIEL_DOUBLE_CLICK_MS__ → 系统双击间隔（毫秒）
+//   __ORIEL_SCALE__    → 窗口所在缩放因子（如 2 或 1.5）
 //
 // 三平台此前各自手抄一份，已导致缺陷同步传播（ready 的 TDZ、orielready 的时序
 // 都曾三份全中）。任何修改都会同时作用于三平台——这正是合并的目的。
@@ -56,6 +58,15 @@
         // 由宿主注入的库版本（见 OrielBridgeTemplate）。页面用它做能力探测，
         // 因此**不能**在这里写死字面量——写死会与包版本各自漂移，静默误导所有兼容判断。
         version: '__ORIEL_VERSION__',
+        // 宿主事实快照（见 C# 侧 OrielSystemSnapshot）：这几个值必须**同步**可读——
+        // 无边框拖动要在 mousedown 里立刻判断"这是不是双击的第二下"，await 回来时那次按下已经过去了。
+        // 因此它们在脚本注入时就写死在这里（本库不提供同步 RPC），建窗时取一次、同一文档内不变，
+        // 导航/刷新会重新注入因而自然跟随。窗口被拖到另一块缩放的屏幕上时 scale 会过时，
+        // 那时页面自己的 window.devicePixelRatio 更准。
+        system: {
+            doubleClickTimeMs: __ORIEL_DOUBLE_CLICK_MS__,
+            scale: __ORIEL_SCALE__
+        },
         ready: ready,
         // 命令回执超时（毫秒），可在页面侧改写为其他值；<=0 表示不启用超时。
         // 没有它时，命令永不回执（如宿主侧异常导致 sink 未投递）会让 Promise

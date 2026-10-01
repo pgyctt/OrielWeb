@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace OrielWeb;
@@ -16,6 +17,8 @@ internal static class OrielBridgeTemplate
     private const string VersionToken = "__ORIEL_VERSION__";
     private const string SecurityToken = "__ORIEL_TOKEN__";
     private const string TrustedToken = "__ORIEL_TRUSTED__";
+    private const string DoubleClickToken = "__ORIEL_DOUBLE_CLICK_MS__";
+    private const string ScaleToken = "__ORIEL_SCALE__";
 
     private static readonly string s_source = LoadSource();
 
@@ -27,6 +30,7 @@ internal static class OrielBridgeTemplate
     /// <param name="forwardConsole">是否启用 console 转发（见 <see cref="OrielWindowOptions.ConsoleForwarding"/>）。</param>
     /// <param name="token">本次进程运行的 IPC 令牌（见 <see cref="Ipc.OrielIpcToken"/>）。</param>
     /// <param name="trustedPrefixes">可信来源的 URL 前缀（脚本据此决定要不要安装）。</param>
+    /// <param name="system">宿主事实快照（页面同步可读，见 <see cref="OrielSystemSnapshot"/>）。</param>
     /// <remarks>
     /// console 转发的实现只存在于模板里（未启用时代码保留但不执行），C# 侧不再抄一份：
     /// 三份手抄脚本互相漂移正是这个模板要消灭的问题。
@@ -36,14 +40,34 @@ internal static class OrielBridgeTemplate
         string postExpression,
         bool forwardConsole,
         string token,
-        IReadOnlyList<string> trustedPrefixes)
+        IReadOnlyList<string> trustedPrefixes,
+        OrielSystemSnapshot system)
         => s_source
             .Replace(PlatformToken, platformLiteral, StringComparison.Ordinal)
             .Replace(PostToken, postExpression, StringComparison.Ordinal)
             .Replace(ConsoleEnabledToken, forwardConsole ? "true" : "false", StringComparison.Ordinal)
             .Replace(VersionToken, VersionLiteral, StringComparison.Ordinal)
             .Replace(SecurityToken, token, StringComparison.Ordinal)
-            .Replace(TrustedToken, TrustedLiteral(trustedPrefixes), StringComparison.Ordinal);
+            .Replace(TrustedToken, TrustedLiteral(trustedPrefixes), StringComparison.Ordinal)
+            .Replace(DoubleClickToken, NumberLiteral(system.DoubleClickTimeMs), StringComparison.Ordinal)
+            .Replace(ScaleToken, NumberLiteral(system.Scale), StringComparison.Ordinal);
+
+    /// <summary>数值 → JS 数值字面量。</summary>
+    /// <remarks>
+    /// 必须显式用 <see cref="CultureInfo.InvariantCulture"/>：按当前文化格式化会把小数点写成逗号
+    /// （德语、法语等），生成的脚本就成了 <c>scale: 1,5</c>——在 JS 里那是逗号表达式，
+    /// 要么语法错误要么静默变成 1，"注入脚本坏了"的表现还是"页面功能全无"。
+    /// <para>
+    /// 用 "R"（往返格式）而不是 "0.###"：后者会把极大/极小的值四舍五入掉，而这个方法的入参
+    /// 已经是规整过的（见 <see cref="OrielSystemSnapshot.Normalize"/>），格式化只负责不引入新的失真。
+    /// 非有限值（NaN/Infinity）理论上到不了这里，真到了就回退成 1——写进脚本的 NaN 是语法错误，
+    /// 而那会让整个桥接脚本加载失败。
+    /// </para>
+    /// </remarks>
+    internal static string NumberLiteral(double value)
+        => double.IsFinite(value)
+            ? value.ToString("R", CultureInfo.InvariantCulture)
+            : "1";
 
     /// <summary>
     /// 可信来源前缀 → JS 数组字面量。

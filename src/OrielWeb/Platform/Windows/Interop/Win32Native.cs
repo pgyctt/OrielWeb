@@ -526,6 +526,17 @@ internal static unsafe partial class Win32
     [LibraryImport("user32")]
     internal static partial uint GetDpiForWindow(nint hwnd);
 
+    /// <summary>
+    /// 系统双击间隔（毫秒，控制面板里可改；默认 500）。
+    /// </summary>
+    /// <remarks>
+    /// 无边框窗口要在页面的 <c>mousedown</c> 里**同步**判断"这次按下是不是双击的第二下"，
+    /// 而浏览器只给 <c>event.detail</c>、不给间隔本身——页面得知道系统设了多长才算得出来。
+    /// 值为 0 表示取不到（本机没登录会话等），由 <see cref="OrielSystemSnapshot.Normalize"/> 兜底。
+    /// </remarks>
+    [LibraryImport("user32")]
+    internal static partial uint GetDoubleClickTime();
+
     /// <summary>按指定 DPI 取系统度量（per-monitor DPI 感知下 <see cref="GetSystemMetrics"/> 不可靠）。</summary>
     [LibraryImport("user32")]
     internal static partial int GetSystemMetricsForDpi(int index, uint dpi);

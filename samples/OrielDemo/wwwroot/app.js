@@ -13,17 +13,53 @@ const dragRegion = document.getElementById("drag-region");
 const maxBtn = document.getElementById("btn-max");
 let dragOrigin = null;
 
+// 系统双击间隔（毫秒）。宿主在建窗时取好并注入（window.oriel.system），因此 mousedown 里
+// **同步**可读——这正是它存在的理由：判断"这次按下是不是双击的第二下"必须在 mousedown 内完成，
+// 而 oriel.invoke 是异步的，await 回来时那次按下已经过去了。浏览器只给 event.detail、
+// 不给间隔本身，所以这个值只能由宿主给。
+const DOUBLE_CLICK_MS = (window.oriel.system && window.oriel.system.doubleClickTimeMs) || 500;
+
+// 双击的"位置容差"（屏坐标像素）：浏览器判定双击时同样有距离限制（Windows 默认 4 像素见方）。
+// 取同量级的值；两边结论不一致时以浏览器给的 event.detail 为准。
+const DOUBLE_CLICK_DISTANCE_PX = 4;
+
+// 上一次标题栏按下的时间与位置，用于上面的同步判定。
+let lastTitlebarDown = null;
+
 // Windows 的拖动必须"先动起来才发起"。
 // win.drag 走的是程序发起的 WM_NCLBUTTONDOWN + HTCAPTION，它会进入原生模态循环并阻塞消息处理：
 //   * 若在 mousedown 时立刻发起，第二次点击会被该循环吞掉，浏览器永远得不到 dblclick，
 //     标题栏双击最大化随之失效；
 //   * 改为等指针移动超过阈值再发起，则"原地双击"根本不会进入拖动，双击语义得以保留，
 //     而真正的拖动只是晚了几像素才接管——模态循环以当前光标为基点，窗口不会跳。
+// 下面 isDoubleClickSecondPress 的同步判定是更靠前的一道：它按**系统**双击间隔直接认出第二下点击，
+// 这个阈值因此退化成兜底（判定漏掉时仍然保证"按下不动"不会进模态循环）。
 const DRAG_THRESHOLD_PX = 3;
 let armedDrag = null;
 
+/** 这一次标题栏按下是不是"双击的第二下"。必须在 mousedown 内同步调用。 */
+function isDoubleClickSecondPress(e) {
+    // 浏览器自己的判定优先
+    if (e.detail >= 2) return true;
+
+    // 浏览器没给 detail 时自己按系统间隔 + 位置容差判：两者都符合才算双击的第二下
+    if (!lastTitlebarDown) return false;
+    return (e.timeStamp - lastTitlebarDown.t) <= DOUBLE_CLICK_MS
+        && Math.abs(e.screenX - lastTitlebarDown.x) <= DOUBLE_CLICK_DISTANCE_PX
+        && Math.abs(e.screenY - lastTitlebarDown.y) <= DOUBLE_CLICK_DISTANCE_PX;
+}
+
 dragRegion.addEventListener("mousedown", async (e) => {
     if (e.button !== 0) return;
+
+    // 双击的第二下**不进入拖动**，让浏览器把 dblclick 正常派发出去。
+    // 注意这条判定在 mousedown 内同步完成——这就是 window.oriel.system 的用途（见上）。
+    if (isDoubleClickSecondPress(e)) {
+        disarmTitlebar();
+        lastTitlebarDown = null;
+        return;
+    }
+    lastTitlebarDown = { t: e.timeStamp, x: e.screenX, y: e.screenY };
 
     if (isWindows) {
         armedDrag = { x: e.screenX, y: e.screenY };

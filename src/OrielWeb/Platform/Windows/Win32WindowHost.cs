@@ -867,7 +867,11 @@ internal partial class Win32WindowHost : IWindowBackend
             _webViewEvents.ContextMenuRequested += OnContextMenuRequested;
 
             await _webView.AddScriptToExecuteOnDocumentCreatedAsync(
-                OrielBridgeJs.Build(_options.ConsoleForwarding, App.Guard.Token, App.Guard.TrustedPrefixes))
+                OrielBridgeJs.Build(
+                    _options.ConsoleForwarding,
+                    App.Guard.Token,
+                    App.Guard.TrustedPrefixes,
+                    ReadSystemSnapshot()))
                 .ConfigureAwait(true);
 
             _controller.IsVisible = true;
@@ -1105,6 +1109,18 @@ internal partial class Win32WindowHost : IWindowBackend
 
     /// <summary>当前文档的 URL（导航开始时更新）。入站 IPC 的来源校验用它。</summary>
     internal string? CurrentUrl => _lastNavigationUri;
+
+    /// <summary>
+    /// 注入给页面的宿主事实快照（见 <see cref="OrielSystemSnapshot"/>）：系统双击间隔与缩放。
+    /// </summary>
+    /// <remarks>
+    /// 缩放取的是**窗口所在显示器**的 DPI（<c>GetDpiForWindow</c>）而不是主屏——多屏不同缩放下，
+    /// 窗口在哪个屏上就该按哪个屏算。句柄无效时它返回 0，由 <see cref="OrielSystemSnapshot.Normalize"/> 兜底。
+    /// </remarks>
+    private OrielSystemSnapshot ReadSystemSnapshot()
+        => OrielSystemSnapshot.Normalize(
+            (int)Win32.GetDoubleClickTime(),
+            Win32.GetDpiForWindow(_hwnd) / 96.0);
 
     internal void RaiseNavigationCompleted(OrielNavigationCompletedEventArgs args)
     {

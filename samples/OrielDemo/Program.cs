@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json.Serialization;
 using OrielWeb;
 using OrielDemo;
@@ -74,6 +75,16 @@ internal static class Program
         // 以前是六个独立开关（--nav-selftest 之类），能力没少，只是不再往命令行上摆一排。
         // 自检的**输出结论格式没变**（NAV-SELFTEST: PASS 等），脚本仍按原来的行去 grep。
         var selfTest = GetOptionValue(args, "--selftest");
+        // --expect-scale <n>：配合 --selftest ipc 断言"注入给页面的缩放就是这个值"。
+        // 给 CI 造值用：Linux 上必须同时设 GDK_BACKEND=x11 + GDK_SCALE=2
+        // （Wayland 后端下 GDK_SCALE 不生效，实测见 DECISIONS 的 HiDPI 一节）。
+        var expectScale = double.TryParse(
+            GetOptionValue(args, "--expect-scale"),
+            NumberStyles.Float,
+            CultureInfo.InvariantCulture,
+            out double parsedScale)
+            ? parsedScale
+            : (double?)null;
         if (args.Contains("--selftest") && string.IsNullOrWhiteSpace(selfTest))
         {
             Console.Error.WriteLine($"--selftest 需要一个名字。可用：{string.Join(" | ", SelfTestNames)}");
@@ -177,7 +188,7 @@ internal static class Program
                 }
                 if (ipcSelfTest)
                 {
-                    IpcSelfTest.Attach(win);
+                    IpcSelfTest.Attach(win, expectScale);
                 }
                 if (clipboardSelfTest)
                 {

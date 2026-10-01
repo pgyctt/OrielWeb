@@ -178,6 +178,40 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gtk, EntryPoint = "gtk_widget_add_events")]
     internal static partial void GtkWidgetAddEvents(nint widget, int events);
 
+    /// <summary>
+    /// 取第 <paramref name="monitorNum"/> 个显示器（<c>gdk_display_get_monitor</c>，GDK 3.22+）。
+    /// 默认显示器本身在文件后半（<c>GdkDisplayGetDefault</c>，用于判断 GDK 后端）。
+    /// </summary>
+    [LibraryImport(Gdk, EntryPoint = "gdk_display_get_monitor")]
+    internal static partial nint GdkDisplayGetMonitor(nint display, int monitorNum);
+
+    /// <summary>
+    /// 显示器的缩放因子（1 = 无缩放；2 表示 2x），用于给页面注入的宿主事实快照
+    /// （见 <see cref="OrielSystemSnapshot"/>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>刻意读显示器而不是窗口</b>：脚本在导航之前注册，那一刻 webview 可能还没 realize，
+    /// 窗口那条路根本读不到（<c>gdk_window_get_window</c> 为 0）。显示器条目与 realize 无关——
+    /// 探针实测"建窗之后、show 之前"就给得出正确值（<c>GDK_SCALE=2</c> 下为 2）。
+    /// </para>
+    /// <para>
+    /// <b>已知边界</b>：<c>GDK_SCALE</c> 这个"伪造缩放"的环境变量**只在 X11 后端生效**。
+    /// 2026-10-01 实测（同一份 AOT 产物、只改环境变量）：<c>GDK_BACKEND=x11 GDK_SCALE=2</c> → 2，
+    /// <c>GDK_BACKEND=wayland GDK_SCALE=2</c> → 1。真实 HiDPI 桌面走的是合成器/显示设置给出的
+    /// scale，两个后端都给得对；但**CI 里要造 2x 必须同时设 <c>GDK_BACKEND=x11</c>**
+    /// （smoke-linux 的那条 <c>--expect-scale 2</c> 就是这么跑的）。
+    /// </para>
+    /// <para>
+    /// <b>它不用于折算拖动增量</b>：GDK 的 API 坐标一律是<b>应用像素</b>（GDK 内部乘过 scale 再交给 X），
+    /// 与页面的 CSS 像素是同一套坐标系。2026-10-01 的探针实测：<c>GDK_SCALE=2</c> 下窗口的逻辑尺寸
+    /// 200x100 对应设备尺寸 400x200，且 <c>gtk_window_move</c> 的位移在两侧的比例正是 scale。
+    /// 详见 DECISIONS 的「Linux HiDPI 拖动偏移：实测结论」。
+    /// </para>
+    /// </remarks>
+    [LibraryImport(Gdk, EntryPoint = "gdk_monitor_get_scale_factor")]
+    internal static partial int GdkMonitorGetScaleFactor(nint monitor);
+
     /// <summary><c>GDK_POINTER_MOTION_MASK</c>（GTK3 <c>gdk/gdkevents.h</c>：<c>1 &lt;&lt; 2</c>）。</summary>
     internal const int GdkPointerMotionMask = 1 << 2;
 
@@ -471,6 +505,10 @@ internal static unsafe partial class GtkNative
 
     [LibraryImport(GOject, EntryPoint = "g_value_get_boolean")]
     internal static partial int GValueGetBoolean(nint value);
+
+    /// <summary>取 GValue 里的 int（<c>gtk-double-click-time</c> 这类以毫秒计的设置是 "gint"）。</summary>
+    [LibraryImport(GOject, EntryPoint = "g_value_get_int")]
+    internal static partial int GValueGetInt(nint value);
 
     /// <summary>取 GValue 里的字符串（归 GValue 所有，不要释放）。</summary>
     [LibraryImport(GOject, EntryPoint = "g_value_get_string")]

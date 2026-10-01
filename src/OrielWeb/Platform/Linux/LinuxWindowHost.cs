@@ -444,14 +444,6 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         GtkNative.WebkitWebViewSetSettings(_webview, webkitSettings);
         GtkNative.GObjectUnref(webkitSettings);
 
-        var userScript = GtkNative.WebkitUserScriptNew(
-            LinuxBridgeJs.Build(_options.ConsoleForwarding, App.Guard.Token, App.Guard.TrustedPrefixes),
-            1, // WEBKIT_USER_CONTENT_INJECT_TOP_FRAME（主帧）
-            0, // WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START（文档开始处注入，与 Windows/macOS 后端一致）
-            0,
-            0);
-        GtkNative.WebkitUserContentManagerAddScript(_userContentManager, userScript);
-
         // 信号连接（先注册状态，再连接信号）
         LinuxSignalHandlers.RegisterWindow(_gtkWindow, this);
         LinuxSignalHandlers.RegisterWebview(_webview, this);
@@ -466,6 +458,20 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         {
             GtkNative.GtkWidgetAddEvents(_webview, GtkNative.GdkPointerMotionMask);
         }
+
+        // 桥接脚本（document 创建时注入）。宿主事实快照在这里取一次：
+        // 它读的是显示器与 GtkSettings，都与窗口是否 realize 无关（见 ReadSystemSnapshot）。
+        var userScript = GtkNative.WebkitUserScriptNew(
+            LinuxBridgeJs.Build(
+                _options.ConsoleForwarding,
+                App.Guard.Token,
+                App.Guard.TrustedPrefixes,
+                ReadSystemSnapshot()),
+            1, // WEBKIT_USER_CONTENT_INJECT_TOP_FRAME（主帧）
+            0, // WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START（文档开始处注入，与 Windows/macOS 后端一致）
+            0,
+            0);
+        GtkNative.WebkitUserContentManagerAddScript(_userContentManager, userScript);
 
         GtkNative.GtkContainerAdd(_gtkWindow, _webview);
 
@@ -505,6 +511,25 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         }
 
         Navigate();
+    }
+
+    /// <summary>
+    /// 注入给页面的宿主事实快照（见 <see cref="OrielSystemSnapshot"/>）：系统双击间隔与缩放。
+    /// </summary>
+    /// <remarks>
+    /// 缩放读**默认显示器**的（而不是窗口的）：脚本在导航之前注册，那一刻窗口可能还没 realize。
+    /// 取不到时返回 0，由 <see cref="OrielSystemSnapshot.Normalize"/> 兜底成 1.0。
+    /// 多屏不同缩放下这是"按主屏算"的近似值——页面侧有自己的 <c>window.devicePixelRatio</c> 可自校。
+    /// </remarks>
+    private static OrielSystemSnapshot ReadSystemSnapshot()
+    {
+        nint monitor = GtkNative.GdkDisplayGetDefault() is var display && display != 0
+            ? GtkNative.GdkDisplayGetMonitor(display, 0)
+            : 0;
+
+        return OrielSystemSnapshot.Normalize(
+            LinuxPlatformBackend.ReadDoubleClickTimeMs(),
+            monitor == 0 ? 0 : GtkNative.GdkMonitorGetScaleFactor(monitor));
     }
 
     private void Navigate()

@@ -63,18 +63,40 @@ document.querySelectorAll("[data-cmd]").forEach((button) => {
 })();
 
 // ---- 无边框窗口：自绘标题栏 ----
-// 与 app.js 同一套逻辑（Windows 必须"先动起来才发起"原生拖动，否则第二次点击会被
-// 模态循环吞掉，双击最大化随之失效）。
+// 与 app.js 同一套逻辑（两处必须同步改，否则操作台与示范页的拖动行为会不一致）：
+// Windows 必须"先动起来才发起"原生拖动，否则第二次点击会被模态循环吞掉、双击最大化随之失效；
+// 而"这是不是双击的第二下"由宿主注入的 window.oriel.system.doubleClickTimeMs 在 mousedown 内
+// **同步**判定——详见 app.js 里的说明。
 
 const isWindows = window.oriel.platform === "windows";
 const dragRegion = document.getElementById("drag-region");
 const maxBtn = document.getElementById("btn-max");
 const DRAG_THRESHOLD_PX = 3;
+const DOUBLE_CLICK_MS = (window.oriel.system && window.oriel.system.doubleClickTimeMs) || 500;
+const DOUBLE_CLICK_DISTANCE_PX = 4;
 let armedDrag = null;
 let dragOrigin = null;
+let lastTitlebarDown = null;
+
+/** 这一次标题栏按下是不是"双击的第二下"。必须在 mousedown 内同步调用。 */
+function isDoubleClickSecondPress(e) {
+    if (e.detail >= 2) return true;
+    if (!lastTitlebarDown) return false;
+    return (e.timeStamp - lastTitlebarDown.t) <= DOUBLE_CLICK_MS
+        && Math.abs(e.screenX - lastTitlebarDown.x) <= DOUBLE_CLICK_DISTANCE_PX
+        && Math.abs(e.screenY - lastTitlebarDown.y) <= DOUBLE_CLICK_DISTANCE_PX;
+}
 
 dragRegion.addEventListener("mousedown", async (e) => {
     if (e.button !== 0) return;
+
+    // 双击的第二下不进入拖动，让浏览器把 dblclick 正常派发出去（同步判定，见上）
+    if (isDoubleClickSecondPress(e)) {
+        disarmTitlebar();
+        lastTitlebarDown = null;
+        return;
+    }
+    lastTitlebarDown = { t: e.timeStamp, x: e.screenX, y: e.screenY };
 
     if (isWindows) {
         armedDrag = { x: e.screenX, y: e.screenY };

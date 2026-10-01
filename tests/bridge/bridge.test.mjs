@@ -38,13 +38,23 @@ const injectedToken = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
 /** 测试用的可信来源前缀（对应 OrielIpcGuard 自动加入的内嵌资源虚拟主机）。 */
 const trustedPrefixes = ['https://app.oriel/'];
 
+/** 测试用的宿主事实快照（对应 C# 侧 OrielSystemSnapshot；scale 刻意用非整数）。 */
+const injectedDoubleClickMs = 477;
+const injectedScale = 1.5;
+
 /**
  * 复现 C# 侧的占位符替换，得到该平台真正被注入的脚本。
  * forwardConsole 对应 OrielWindowOptions.ConsoleForwarding（默认关闭）。
  */
 function buildScript(
     bridge,
-    { forwardConsole = false, token = injectedToken, trusted = trustedPrefixes } = {},
+    {
+        forwardConsole = false,
+        token = injectedToken,
+        trusted = trustedPrefixes,
+        doubleClickMs = injectedDoubleClickMs,
+        scale = injectedScale,
+    } = {},
 ) {
     const script = template
         .replaceAll('__ORIEL_PLATFORM__', `'${bridge.platform}'`)
@@ -52,7 +62,10 @@ function buildScript(
         .replaceAll('__ORIEL_CONSOLE_ENABLED__', forwardConsole ? 'true' : 'false')
         .replaceAll('__ORIEL_VERSION__', injectedVersion)
         .replaceAll('__ORIEL_TOKEN__', token)
-        .replaceAll('__ORIEL_TRUSTED__', JSON.stringify(trusted));
+        .replaceAll('__ORIEL_TRUSTED__', JSON.stringify(trusted))
+        // C# 侧用 InvariantCulture 格式化（见 OrielBridgeTemplate.NumberLiteral）
+        .replaceAll('__ORIEL_DOUBLE_CLICK_MS__', String(doubleClickMs))
+        .replaceAll('__ORIEL_SCALE__', String(scale));
     assert.ok(!script.includes('__ORIEL_'), `${bridge.platform}：生成的脚本仍残留占位符`);
     return script;
 }
@@ -173,6 +186,8 @@ test('模板：占位符齐备', () => {
     assert.ok(template.includes('__ORIEL_VERSION__'), '模板缺少 __ORIEL_VERSION__');
     assert.ok(template.includes('__ORIEL_TOKEN__'), '模板缺少 __ORIEL_TOKEN__');
     assert.ok(template.includes('__ORIEL_TRUSTED__'), '模板缺少 __ORIEL_TRUSTED__');
+    assert.ok(template.includes('__ORIEL_DOUBLE_CLICK_MS__'), '模板缺少 __ORIEL_DOUBLE_CLICK_MS__');
+    assert.ok(template.includes('__ORIEL_SCALE__'), '模板缺少 __ORIEL_SCALE__');
     assert.ok(template.includes('window.__orielBridgeInstalled'), '模板缺少重复注入防护');
 });
 
@@ -286,6 +301,25 @@ for (const bridge of bridges) {
         assert.equal(env.window.oriel.platform, bridge.platform);
         assert.equal(env.window.oriel.version, injectedVersion, 'oriel.version 未采用注入值');
         await env.window.oriel.ready;
+    });
+
+    test(`${label} 宿主事实快照：oriel.system 同步可读`, () => {
+        // 这几个值必须**同步**可读——无边框拖动要在 mousedown 里判断"这是不是双击的第二下"，
+        // await 回来时那次按下已经过去。所以它们是注入时写死的，不是任何 Promise 的结果。
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const system = env.window.oriel.system;
+
+        assert.equal(typeof system, 'object', 'oriel.system 不存在');
+        assert.equal(system.doubleClickTimeMs, injectedDoubleClickMs);
+        assert.equal(system.scale, injectedScale);
+        assert.equal(typeof system.doubleClickTimeMs, 'number');
+        assert.equal(typeof system.scale, 'number');
+    });
+
+    test(`${label} 宿主事实快照：小数不被截断`, () => {
+        // 1.5 若被当成整数格式化就会变成 1，页面的缩放判断随之错一倍
+        const env = loadBridge(buildScript(bridge, { scale: 1.25 }), bridge.channel);
+        assert.equal(env.window.oriel.system.scale, 1.25);
     });
 
     test(`${label} 事件：DOMContentLoaded 之后注册的 orielready 监听器能被触发`, () => {
