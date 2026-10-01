@@ -1474,3 +1474,55 @@ Linux/Wayland 不能立即开始——已改成按平台分别说明。
 **可推广的一条**：凡是"把控制权一次性交给外部系统"的操作（合成器的 move/resize、原生模态循环、
 模态对话框），都要问一句"交出去之后，我这边还能不能收到后续输入？"。Windows 上那个"拖动要等阈值"
 的老经验，本质是同一个问题，只是当年只在 Windows 上踩到。
+
+---
+
+## 包内 MSBuild build logic：两处时机陷阱（2026-10-01）
+
+把 `<EmbeddedResource>` + `LogicalName` 搬进随包分发的 `buildTransitive/OrielWeb.targets`
+（ROADMAP 阶段 D）时，同一个文件里踩到两次"在错误的时机做了正确的事"。两次都**不报错**，
+只给出看起来无关的症状，值得单独记下。
+
+### 陷阱一：自引用元数据放进 Target 会批出空值
+
+LogicalName 写成 `$(AssemblyName).wwwroot/%(RecursiveDir)%(Filename)%(Extension)`。
+把 `Include` 放进 `<Target>`（先想到"放进 Target 才能看见消费方已声明的项"）时，
+csc 报 `CS1508 此程序集中已使用了资源标识符 "MyApp.wwwroot/"`。
+
+看一眼 csc 命令行就明白：`/resource:...\app.min.js,MyApp.wwwroot/` ——
+`%(RecursiveDir)`、`%(Filename)`、`%(Extension)` **全部展开成了空**。
+
+根因：`<Target>` 里属性中的 `%()` 元数据引用触发的是**批处理**，而它批处理的对象是
+"当时已存在的该类型项"。消费方自己没声明过资源时那个集合是空的，于是批出一批空值，
+四个文件共用一个资源名。**自引用元数据只在求值期（顶层 ItemGroup）解析正确。**
+
+### 陷阱二：求值期读 `@(EmbeddedResource)` 拿到的是字面量
+
+既然注入必须在求值期，那"消费方是否已声明 wwwroot"也在求值期判断就好——**不成立**。
+实测在求值期读：
+
+```
+<_OrielWebDeclaredResources>@(EmbeddedResource)</_OrielWebDeclaredResources>
+```
+
+得到的是**字面量字符串** `@(EmbeddedResource)`，**不是空串**。这个区别很关键：
+按"空串即未声明"写判据，会得到与事实相反的结论，而且它静默得没有任何提示。
+
+根因：NuGet 把包内 targets 放在 `obj/*.nuget.g.targets` 里导入，而那个导入点
+**早于项目体的项求值**——此时 `EmbeddedResource` 这个项类型还没被任何 `<ItemGroup>` 建立，
+MSBuild 就把项引用原样留在属性值里。
+
+### 由此定下的形态
+
+- **注入在求值期**（要 `%(RecursiveDir)`），无条件、并打上 `OrielWebAutoEmbed="true"` 标记；
+- **判定在执行期**（要看见消费方的项），挂在 `BeforeTargets="PrepareForBuild"`，
+  发现消费方也声明了 wwwroot 就 `Remove` 掉自己那份。
+
+**可推广的两条**：
+1. MSBuild 的"求值期 / 执行期"不是实现细节，而是**语义分界**——同一个文件里两种时机都要用时，
+   就得接受"先无条件加、再按需撤"这种看起来绕的形态。
+2. 排障时**去看 csc 的命令行**（`-v:n`，编译行末尾的 `/resource:` 与 `LogicalName`），
+   比读 targets 代码快得多——上面陷阱一的根因在命令行里一眼可见，而 targets 里看不出任何异样。
+
+另外一处小坑：`Message` 的 `Importance="low"` 只在 `-v:detailed` 及以上显示，
+而 `-v:n` 是最常用的排障档位。诊断信息用 `normal`（`dotnet build` 默认的 minimal 仍看不到）。

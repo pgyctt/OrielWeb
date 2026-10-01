@@ -40,6 +40,14 @@ jobs:
         # 注意：必须显式给出文件路径——Node 把纯目录参数当作入口模块解析。
         run: node --test tests/bridge/bridge.test.mjs
 
+      - name: Package build logic (in-package MSBuild targets)
+        # 包内 buildTransitive/OrielWeb.targets 的消费链路：打包 → 零配置消费工程 → 断言
+        # wwwroot 资源名（含 app.min.js 这类含点文件名）→ 旧写法不重复嵌入 → 可显式关掉。
+        # 不接进来的话，改动 targets 只能等发布后在某个消费方那里以"页面 404 白屏"的形式暴露——
+        # 那正是这份 targets 要消灭的静默失败。脚本自带断言与退出码。
+        shell: pwsh
+        run: pwsh tools/verify-pack.ps1
+
   compile-windows:
     # 与 compile-linux / compile-macos 同属"编译并产出可执行产物"这一组；
     # Windows 侧这里额外检查 AOT 产物是否存在与大小（smoke-windows 依赖它）。

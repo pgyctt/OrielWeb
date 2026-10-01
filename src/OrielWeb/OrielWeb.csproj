@@ -27,6 +27,12 @@
          本包在编译期内嵌了微软分发的 WebView2Loader.dll，按其 BSD 许可须随包复现声明。 -->
     <None Include="..\..\orielweb.png" Pack="True" PackagePath="\" Visible="false" />
     <None Include="..\..\THIRD-PARTY-NOTICES.txt" Pack="True" PackagePath="\" />
+    <!-- 包内 build logic：消费方不必再手写 <EmbeddedResource> + LogicalName，
+         也不会踩到"含点文件名被静默解压到错误路径"那个坑。理由见文件头。
+         放 buildTransitive\（不是 build\）：**间接引用者也能吃到**——
+         应用 → 引用一个带 wwwroot 的类库 → 那个类库的资源也会被正确嵌入。
+         文件名必须是 <PackageId>.targets，NuGet 只自动导入这个名字。 -->
+    <None Include="buildTransitive\OrielWeb.targets" Pack="True" PackagePath="buildTransitive\" Visible="false" />
   </ItemGroup>
 
   <ItemGroup>

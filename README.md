@@ -70,30 +70,40 @@ NuGet 会自动运行它，因此不需要额外的包。
     <PublishAot>true</PublishAot>               <!-- 原生单文件发布 -->
     <ApplicationIcon>app.ico</ApplicationIcon>  <!-- 任务栏图标，见「应用图标」 -->
   </PropertyGroup>
-  <ItemGroup>
-    <!-- 前端资源内嵌。LogicalName 里用 '/' 保留目录边界：这样 '.' 就只是文件名的一部分，
-         app.min.js / vendor.bundle.js 这类含点文件名才不会被解压成 app/min.js。
-         不写 LogicalName 也能跑，但目录名或文件名含 '.' 时会静默解压到错误的路径（页面 404 白屏）。 -->
-    <EmbeddedResource Include="wwwroot\**\*"
-                      LogicalName="$(AssemblyName).wwwroot/%(RecursiveDir)%(Filename)%(Extension)" />
-  </ItemGroup>
+  <!-- 就这些。wwwroot 下的前端资源由包内的 buildTransitive/OrielWeb.targets 自动内嵌。 -->
 </Project>
 ```
 
-> **`LogicalName` 不是可选项，除非你的资源文件名里不含 `.`。** 两套写法都能跑，区别只在
-> 资源名到磁盘路径的映射方式：
->
-> | 写法 | 资源名 | 解压结果 |
-> |---|---|---|
-> | `LogicalName="…wwwroot/%(RecursiveDir)%(Filename)%(Extension)"` | `App.wwwroot/assets/img/logo.svg`、`App.wwwroot/app.min.js` | 按 `/` 还原目录，`.` 一律是文件名的一部分 ✅ |
-> | 只有 `Include="wwwroot\**\*"` | `App.wwwroot.assets.img.logo.svg`、`App.wwwroot.app.min.js` | MSBuild 把目录压成了 `.`，库只能靠"最后一个 `.` 是扩展名"反推 —— 文件名主干或目录名含 `.` 时**必然推错** ❌ |
->
-> 推错的形态是**静默的**：解压不报错，但文件落到了 `app/min.js`，页面按原 URL 请求就是 404 白屏。
-> 库靠前缀（`wwwroot/` 还是 `wwwroot.`）自动识别用的是哪一种，映射逻辑有 17 个单测覆盖
-> （`tests/OrielWeb.Tests/EmbeddedAssetTests.cs`）。
+**不需要写 `<EmbeddedResource>`** —— 包里带了一份 MSBuild targets（`buildTransitive/OrielWeb.targets`），
+它会把 `wwwroot\**\*` 按带 `/` 分隔符的 `LogicalName` 嵌进去，`buildTransitive/` 意味着**间接
+引用者也能吃到**（应用 → 带 `wwwroot` 的类库 → 那个类库的资源同样正确）。
+
+这不是便利性问题，而是消灭一个静默缺陷：手写那一行时若漏了 `LogicalName`，MSBuild 会把
+目录分隔符压成 `.`，库只能靠"最后一个 `.` 是扩展名"反推目录——文件名主干或目录名含 `.` 时
+**必然推错**：
+
+| 写法 | 资源名 | 解压结果 |
+|---|---|---|
+| 包内 targets 用的 `LogicalName="…wwwroot/%(RecursiveDir)%(Filename)%(Extension)"` | `App.wwwroot/assets/img/logo.svg`、`App.wwwroot/app.min.js` | 按 `/` 还原目录，`.` 一律是文件名的一部分 ✅ |
+| 只写 `Include="wwwroot\**\*"` | `App.wwwroot.assets.img.logo.svg`、`App.wwwroot.app.min.js` | MSBuild 把目录压成了 `.`，库只能反推 —— 含点文件名时**必然推错** ❌ |
+
+推错的形态是**静默的**：解压不报错，但文件落到了 `app/min.js`，页面按原 URL 请求就是 404 白屏。
+
+两条行为约定：
+
+- **自己声明过就跳过**（幂等）：项目里已经有指向 `wwwroot` 的 `<EmbeddedResource>` 时，
+  targets 不做任何事，旧写法的行为完全不变（`-v:n` 构建日志里能看到"跳过自动内嵌"）。
+- **可整体关掉**：`<OrielWebEmbeddedAssets>false</OrielWebEmbeddedAssets>`。
+  关掉之后你要自己写那一行，并且**必须写 `LogicalName`**。
+
+> 映射逻辑（资源名 → 磁盘路径）由 `EmbeddedAssetExtractor` 靠前缀判定（`wwwroot/` 还是 `wwwroot.`），
+> 有单测覆盖（`tests/OrielWeb.Tests/EmbeddedAssetTests.cs`）；整条"打包 → 消费 → 断言"链路由
+> `tools/verify-pack.ps1` 验证（含 `app.min.js` 这类含点文件名、嵌套目录、旧写法不重复嵌入、
+> 显式关掉四个场景），最小消费样例见 `samples/OrielMinimal/`。
 
 在仓库内开发时（而不是引用 NuGet 包），把包引用换成项目引用。注意分析器不会随
-`ProjectReference` 传递，生成器需要像下面这样显式引用：
+`ProjectReference` 传递，生成器需要像下面这样显式引用——而且 `build/`、`buildTransitive/`
+这类资产只随**包**分发，`ProjectReference` 拿不到，所以仓库内的项目仍然自己写那一行：
 
 ```xml
 <ProjectReference Include="..\..\src\OrielWeb\OrielWeb.csproj" />
@@ -754,7 +764,14 @@ pwsh tools/publish.ps1 -NoClean           # 保留上一次的产物
 pwsh tools/wsl_publish.ps1                # Windows 上出 Linux 产物：丢进 WSL 里发布
 pwsh tools/wsl_publish.ps1 -Zip           # 同上，并打包成 publish/linux-x64.zip
 pwsh tools/wsl_publish.ps1 -DryRun        # 只打印将要执行的命令，先确认路径映射
+
+pwsh tools/verify-pack.ps1                # 验证包内 build logic：打包 → 消费 → 断言资源名
 ```
+
+`tools/verify-pack.ps1` 走的不是"发布应用"，而是**包的消费链路**：先 `dotnet pack` 到本地
+`dist/nuget`，再构建 `samples/OrielMinimal/`（一个只写 `<PackageReference>` 的工程），
+断言 `wwwroot` 资源被嵌成正确的名字。四个场景：零配置、旧写法不重复嵌入、显式关掉、
+以及包里确实带上了那份 targets。改了 `buildTransitive/OrielWeb.targets` 之后跑它。
 
 **按 RID 分子目录不是偏好而是必需**：三个平台/架构的 AOT 产物都是自包含的，混在一个目录里会互相覆盖，
 也判断不出"这份是给谁的"。分开之后多次发布互不干扰，清理也只影响对应那一份。

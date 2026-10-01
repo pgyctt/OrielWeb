@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    「零配置」消费样例：整个 csproj 里**没有一行** <EmbeddedResource>。
+
+    wwwroot 下的资源由 OrielWeb 包内的 buildTransitive/OrielWeb.targets 自动嵌入，
+    并带上显式 '/' 分隔符的 LogicalName——因此 app.min.js 这类**含点文件名**
+    不会再被反推成 app/min.js（那会静默 404 白屏，见 docs/reviews/2026-10-01.md §4.3）。
+
+    这个工程刻意**不进 OrielWeb.slnx**：它引用的是 NuGet 包而不是项目，
+    需要先 dotnet pack 出本地包才能还原。驱动它的是 tools/verify-pack.ps1。
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>OrielMinimal</RootNamespace>
+    <!-- 显式声明 TFM，不靠仓库根的 Directory.Build.props：
+         真实消费方也不会继承本仓库的 props，样例就该按消费方的样子写。
+         （本工程被复制到临时目录做对照实验时，这条也是它能独立构建的前提。） -->
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- 样例不产包 -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 版本号取自仓库根 Directory.Build.props 的 <Version>（在仓库内构建时继承），
+         因此不会与刚 pack 出来的包版本漂移。 -->
+    <PackageReference Include="OrielWeb" Version="$(Version)" />
+  </ItemGroup>
+
+</Project>

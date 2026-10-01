@@ -1,0 +1,128 @@
+<Project>
+
+  <!--
+    OrielWeb 的包内 build logic（随包分发在 buildTransitive/，由 NuGet 自动导入）。
+
+    ── 它解决的具体缺陷 ──────────────────────────────────────────────
+    使用者在 csproj 里手写
+
+        <EmbeddedResource Include="wwwroot\**\*" />
+
+    而不写 LogicalName 时，MSBuild 会把 %(RecursiveDir) 里的分隔符压成 '.'，
+    于是库只能靠"最后一个 '.' 是扩展名"去反推目录。这个反推在**文件名主干含 '.'**
+    时必然出错，而且是**静默**的：
+
+        assets/img/logo.svg  → assets.img.logo.svg → assets/img/logo.svg   ✅
+        app.min.js           → app.min.js          → app/min.js            ❌
+
+    推错时解压不报错，页面按原 URL 请求就是 404 白屏。详见
+    docs/reviews/2026-10-01.md §4.3 与 src/OrielWeb/Assets/EmbeddedAssetExtractor.cs。
+
+    这里把那一行搬进包：消费方只写 <PackageReference Include="OrielWeb" /> 即可，
+    LogicalName 固定用带 '/' 的显式分隔符形式，'.' 从此只是文件名的一部分。
+
+    ── 三条约定 ────────────────────────────────────────────────────
+    1. **默认开启**，但消费方已经自己声明过 wwwroot 资源时**跳过**（幂等）。
+       不跳过的话同一批文件会被嵌两次，且两份的 LogicalName 不同
+       （一份显式分隔符、一份兼容反推），解压目录里会出现 app.js 与 app/min.js 并存。
+    2. **旧写法保持兼容**：已经手写 <EmbeddedResource> 的项目行为完全不变——
+       走的就是上面第 1 条的"跳过"分支。
+    3. 可用 <OrielWebEmbeddedAssets>false</OrielWebEmbeddedAssets> 整体关掉。
+
+    ── 为什么"注入"在求值期，而"跳过判定"在执行期 ────────────────────
+    两件事的时机要求相反，这是本文件最容易写错的地方：
+
+    * **注入必须在求值期。** 放进 <Target> 时，属性里的 %(RecursiveDir) / %(Filename)
+      会触发**批处理**，而它批处理的对象是"当时已存在的 EmbeddedResource 项"；
+      消费方没自己声明过资源时那个集合是空的 → 批出一批空值，LogicalName 变成
+      `MyApp.wwwroot/`，几个文件撞同一个资源名，csc 报 CS1508「已使用资源标识符」。
+      自引用元数据只在求值期解析正确。
+
+    * **判定必须在执行期。** NuGet 把本文件放在 obj/*.nuget.g.targets 里导入，
+      实测导入时机**早于项目体的项求值**：在求值期读 @(EmbeddedResource) 得到的是
+      **字面量字符串** '@(EmbeddedResource)'——不是空串。这个区别很关键：
+      按"空串即未声明"写，会得到与事实相反的结论。所以只能先无条件注入并打上标记，
+      等执行期项都齐了再回头把"自己那份"移除。
+
+    ── 顺带注入构建配置 ──────────────────────────────────────────────
+    AssemblyMetadata("OrielBuildConfiguration", Debug|Release)。
+
+    库自己是以 Release 发布的，所以库内部的 #if DEBUG 永远是 false——
+    "这是 Debug 还是 Release 构建"这个问题只能由**消费方**的构建配置回答。
+    安全模型需要它（Debug 全放行 / Release 默认拒绝），判定入口见
+    src/OrielWeb/Ipc/OrielBuildConfiguration.cs，那里读不到该元数据时
+    会回退到入口程序集的 DebuggableAttribute。
+  -->
+
+  <PropertyGroup>
+    <!-- 资源名前缀里的程序集名。用 AssemblyName 而不是 MSBuildProjectName：
+         两者可以不同（csproj 里显式设过 <AssemblyName>），而库是按**程序集名**去找资源的。
+         兜底仍写一份，免得将来导入顺序变化时静默生成错误的前缀（那正是本文件要消灭的失败形态）。 -->
+    <_OrielWebAssetAssemblyName Condition="'$(AssemblyName)' != ''">$(AssemblyName)</_OrielWebAssetAssemblyName>
+    <_OrielWebAssetAssemblyName Condition="'$(_OrielWebAssetAssemblyName)' == ''">$(MSBuildProjectName)</_OrielWebAssetAssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(OrielWebEmbeddedAssets)' != 'false'">
+    <!-- 用 $(MSBuildProjectDirectory) 拼绝对路径，不写裸的 wwwroot\**\*：
+         被 Import 的文件里，相对 glob 的解析基准不值得赌。
+         %(RecursiveDir) 仍相对这个 glob 的根，LogicalName 因此与手写推荐写法逐字符一致。
+         OrielWebAutoEmbed 是给下面那个目标认领"自己人"用的标记。 -->
+    <EmbeddedResource Include="$(MSBuildProjectDirectory)\wwwroot\**\*"
+                      LogicalName="$(_OrielWebAssetAssemblyName).wwwroot/%(RecursiveDir)%(Filename)%(Extension)"
+                      OrielWebAutoEmbed="true" />
+  </ItemGroup>
+
+  <!-- 构建配置：供 OrielBuildConfiguration 在运行期判定 Debug / Release。
+       走 SDK 的 AssemblyAttribute（由 GenerateAssemblyInfo 写进生成的 AssemblyInfo）。
+       消费方若设了 GenerateAssemblyInfo=false，这条不会生效——
+       那时运行期回退到 DebuggableAttribute，不影响可用性。 -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>OrielBuildConfiguration</_Parameter1>
+      <_Parameter2>$(Configuration)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <!--
+    执行期：认定消费方有没有自己声明 wwwroot 资源，有就把我们注入的那份撤掉。
+    挂在 PrepareForBuild 之前——它早于 PrepareResources 与 GenerateAssemblyInfo，
+    撤掉的项不会再被 csc 看见。
+  -->
+  <Target Name="_OrielWebPreparePackageAssets" BeforeTargets="PrepareForBuild">
+
+    <ItemGroup>
+      <!-- 我们注入的那批（带标记） -->
+      <_OrielWebInjected Include="@(EmbeddedResource)"
+                         Condition="'%(EmbeddedResource.OrielWebAutoEmbed)' == 'true'" />
+      <!-- 消费方自己声明的 wwwroot 资源：不带标记，且落在某个 wwwroot 目录下。
+           用 FullPath 而不是 Identity：消费方可能写相对路径也可能写绝对路径。
+           分隔符先归一成 '/'，免得同一件事在 Windows 与 Unix 上写成两种判断。 -->
+      <_OrielWebForeignWwwroot Include="@(EmbeddedResource)"
+                               Condition="'%(EmbeddedResource.OrielWebAutoEmbed)' != 'true'
+                                          and $([System.String]::Copy('%(EmbeddedResource.FullPath)').Replace('\','/').Contains('/wwwroot/'))" />
+    </ItemGroup>
+
+    <PropertyGroup>
+      <_OrielWebSkipAutoEmbed Condition="'@(_OrielWebForeignWwwroot)' != ''">true</_OrielWebSkipAutoEmbed>
+    </PropertyGroup>
+
+    <ItemGroup Condition="'$(_OrielWebSkipAutoEmbed)' == 'true'">
+      <EmbeddedResource Remove="@(_OrielWebInjected)" />
+    </ItemGroup>
+
+    <!-- 诊断信息：让"到底嵌没嵌、为什么跳过"直接看得见，而不是让人去猜资源名。
+         重要性用 normal 而不是 low：MSBuild 只在 detailed 及以上才显示 low，
+         而 -v:n 是最常用的排障档位——用 low 等于这条信息在排障时恰好不出现。
+         默认的 dotnet build（minimal）仍然看不到它，不会污染正常构建输出。 -->
+    <Message Importance="normal"
+             Condition="'$(_OrielWebSkipAutoEmbed)' == 'true'"
+             Text="OrielWeb: 项目已自行声明 @(_OrielWebForeignWwwroot->Count()) 个 wwwroot 资源，跳过自动内嵌（旧写法保持原样）。" />
+    <Message Importance="normal"
+             Condition="'$(_OrielWebSkipAutoEmbed)' != 'true' and '@(_OrielWebInjected)' != ''"
+             Text="OrielWeb: 已自动内嵌 @(_OrielWebInjected->Count()) 个 wwwroot 资源（LogicalName 用显式 '/' 分隔符，含点文件名不会再被推错路径）。" />
+    <Message Importance="normal"
+             Condition="'$(OrielWebEmbeddedAssets)' == 'false'"
+             Text="OrielWeb: OrielWebEmbeddedAssets=false，已关闭自动内嵌。" />
+  </Target>
+
+</Project>
