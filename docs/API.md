@@ -14,7 +14,7 @@
 - [9. 文件拖放](#9-文件拖放)
 - [10. 内建右键菜单](#10-内建右键菜单)
 - [11. 页面侧 API](#11-页面侧-api)
-- [12. 命令行工具 oriel](#12-命令行工具-oriel)
+- [12. 打包与分发（Velopack）](#12-打包与分发velopack)
 - [13. 运行要求](#13-运行要求)
 - [14. 验证与自检](#14-验证与自检)
 
@@ -393,7 +393,8 @@ window.ContextMenuPolicy = OrielContextMenuPolicy.Editing;  // Editing（默认�
 ## 12. 打包与分发（Velopack）
 
 安装包与自动更新交给 [Velopack](https://velopack.io)（`vpk`）。**本库不自带打包器**：打包不是 webview
-能力，产物形态（Setup.exe / nupkg / RELEASES / 可选 .msi）由 Velopack 决定，我们只把参数喂进去。
+能力，产物形态（Windows 的 Setup.exe / 可选 .msi、Linux 的 AppImage、macOS 的 .pkg）由 Velopack 决定，
+我们只把参数喂进去——它顺带产出的更新包与更新清单由我们删掉（理由见下）。
 
 ```bash
 dotnet tool install --global vpk
@@ -412,6 +413,13 @@ pwsh tools/publish.ps1 -Bundle        # 发布 + 打包（版本号取自根 Dir
 Linux 走 `pwsh tools/wsl_publish.ps1 -Bundle`（打包必须在 WSL 里跑），产物落在
 `dist/<rid>-releases/`：`OrielDemo.AppImage`（**自更新的 AppImage**——Linux 上没有独立安装器，
 这就是分发形态）。不需要外部 `appimagetool`（`vpk` 自带 appimagekit runtime）。
+
+macOS 走 release 工作流（与 AOT 同理，打包只能在 macOS 上跑）：`tools/make-macos-app.sh` 把裸可执行
+文件组装成 `dist/OrielDemo.app`，`vpk pack --packDir dist/OrielDemo.app` 再消费它——**不需要
+`--mainExe`**（入口点取自那个 `.app` 的 `Info.plist`），也**不要传 `--icon`**（macOS 上它认 `.icns`，
+传 `.png` 会失败；`--icon` 本就可选，`--help` 里只有 `--packDir` 标了 REQ）。产出
+`OrielDemo-osx-Setup.pkg` 与 `OrielDemo-osx-Portable.zip`。组装脚本还会建好 `Contents/Resources/`：
+`vpk` 要往里写 `sq.version`，且假定目录已存在（缺它时抛 `DirectoryNotFoundException`）。
 
 - **只留"能装的东西"**：更新包 `*-full.nupkg`（Velopack 的"release"）与更新清单
   （`releases.*.json` / `assets.*.json` / `RELEASES*`）打包后即被删除——本仓库不发更新源，
@@ -465,7 +473,7 @@ sudo apt-get install -y fonts-noto-cjk   # 中文界面必需，否则渲染成�
 | 桥接测试（`tests/bridge/bridge.test.mjs`） | 三平台共用脚本的行为一致性：就绪、事件、往返、回执、超时、不可信来源不安装、每条出站消息带令牌 |
 | 无人自检（`OrielDemo --selftest <名字>`） | `nav` `ipc` `theme` `single-instance` `shell` `capability` `multiwindow`——自己驱动页面、打印结论行、以退出码表达成败 |
 | 手动验证操作台（直接运行 demo） | 托盘、通知、对话框、拖放、右键菜单、图标等**只能人眼**判定项，每项都写了预期 |
-| Velopack 打包（CI 每 push 跑） | `vpk pack` 成功、产物齐备（含 `--msi`）、更新清单能被解析且版本正确 |
+| Velopack 打包 | Windows **每 push** 跑（`vpk pack` 成功、安装产物齐备、更新包与清单按约定已删）；Linux/macOS 只在 release 跑（三平台各自的产物形态见 §12） |
 
 `--selftest ipc` 还会断言注入脚本里的**拖动接管就位**（`oriel.dragRegion` 是函数、标题栏被登记成
 拖动区域）与**内建窗口命令往返**（页面调两次 `win.toggleOnTop`，而 demo 没有注册任何 `win.*`）
@@ -476,3 +484,7 @@ sudo apt-get install -y fonts-noto-cjk   # 中文界面必需，否则渲染成�
 
 三平台的具体取证脚本在 `tools/`（`verify-linux.sh`、`verify-linux-shell.sh`、`verify-macos.sh`、`verify-pack.ps1`），
 由 CI 调用；哪些项**已经过真机**、哪些还只是编译验证，见 [ROADMAP.md](ROADMAP.md)。
+
+失败时，CI 里的冒烟步骤与打包步骤都会把原因写成 **GitHub 注解**（各自检模式的结论行、`vpk` 自己的
+报错），而不是只留一个"exit code 1"：注解用 GitHub API 就能读到，作业日志需要 token——这个差别
+决定了排查能不能在不登录的情况下做完（2026-10-02 的几次事故都是靠它定位的）。

@@ -40,7 +40,7 @@
 - 步骤：`OrielDemo --hidden`，用 `CGWindowList` 断言窗口不在 on-screen 列表里。
 - 预期：窗口不上屏，但页面照常加载、IPC 照常往返（Linux 侧已在 WSL 验证过同样的语义）。
 
-#### Linux 高 DPI 下的拖动是否跟手（宿主侧已确认无需折算，只剩页面那一半）
+#### Linux 高 DPI 下的拖动是否跟手（拖动已在库侧，不要折算）
 - 环境：Linux 桌面 + 真实高 DPI 缩放（X11 与 Wayland 各一次；`GDK_SCALE=2` 只在 X11 下生效）。
 - 步骤：在 200% 缩放下跑 demo；按住标题栏拖动；双击标题栏。
 - 预期：拖动跟手、双击最大化正常、单击标题栏不移动窗口（拖动与双击都由库实现，页面只标了拖动区域）。
@@ -53,8 +53,9 @@
   在任一窗口里执行 `oriel.invoke('win.close')`。
 - 预期：新窗口正常加载同一个 todo 页面（标题栏显示「窗口 N」）；关掉一个窗口应用**不退出**；
   `win.close` 只关掉**发起调用的那个**窗口。
-- 状态：Windows 已有机器断言（`--selftest multiwindow`：运行时建窗 → 各自会话 → 关一个不退出 →
-  `win.close` 只关发起者 → 窗口列表摘除）；Linux/macOS 待 CI 冒烟。
+- 状态：三平台都已有机器断言（`--selftest multiwindow`：运行时建窗 → 各自会话 → 关一个不退出 →
+  `win.close` 只关发起者 → 窗口列表摘除）——`smoke-linux` / `smoke-windows` / `verify-macos.sh` 都跑它，
+  2026-10-02 三平台全绿。剩下的是人眼确认窗口位置/大小/标题这类可见效果。
 - 若不符：先看新窗口是否装配成功——Windows 上"同一个 user data folder 上两个 WebView2 环境"
   曾使第二个窗口起不来（现已改为全进程共享一个环境，见 API.md §1）。
 
@@ -62,8 +63,9 @@
 - 环境：三平台桌面各一次。
 - 步骤：按住标题栏拖动；双击标题栏；单击标题栏上的最小化/关闭按钮；在标题栏里的输入框上拖选文字。
 - 预期：拖动跟手、双击切换最大化/还原、按钮照常可点、可交互元素不被当成拖动区域。
-- 若不符：先确认标题栏元素带了 `data-oriel-drag-region`（`oriel.dragRegion()` 返回的区域数应 ≥ 1），
-  再看库的拖动实现与 `win.*` 命令是否注册（缺 `AddCommands` 时页面那句 invoke 会以"未知命令"被拒，控制台里看得到）。
+- 若不符：先确认标题栏元素带了 `data-oriel-drag-region`（`oriel.dragRegion()` 返回的区域数应 ≥ 1）；
+  再确认注入脚本装上了（**不可信来源根本不安装桥接**，`window.oriel` 不存在——见 API.md §4）；
+  `win.*` 由库内建、应用无需注册，拖动实现本身在 `src/OrielWeb/Bridge/oriel-bridge.js`。
 
 #### 托盘图标的可见性
 - 环境：有托盘区的桌面（Windows 任务栏；macOS 菜单栏；Linux 用 Xfce/KDE，或装了 AppIndicator 扩展的 GNOME）。
@@ -104,17 +106,18 @@
 - 若不符：先看策略是否生效（操作台右上角日志会打印当前策略），再按平台看钩子是否被调用（Windows 需要较新的 WebView2 运行时才有 `ContextMenuRequested`）。
 
 #### 打包产物与安装（三平台各一套）
-- 状态：打包已从"自研打包器"换成 **Velopack**（`vpk`）。Windows 侧**打包**跑过
-  （`publish.ps1 -Bundle` → Setup.exe / .msi / Portable.zip，版本取自
-  `Directory.Build.props`）；Linux 侧**打包与运行都跑过**（`wsl_publish.ps1 -Bundle` → `OrielDemo.AppImage`，
-  且在 WSLg 里运行该 AppImage 跑通了 `--selftest nav`）。产物只留"能装的东西"——更新包与更新清单
-  打包后即删（本仓库不发更新源）。
-  但**安装与卸载没有验过**——原先那条"MSI 静默装卸 + 查快捷方式"的机器断言随自研打包器一起去掉了；
-  macOS 侧只写进了 release 工作流，**一次都没跑过**。
+- 状态：打包已从"自研打包器"换成 **Velopack**（`vpk`）。三平台**打包都跑过**：Windows
+  （`publish.ps1 -Bundle` → Setup.exe / .msi / Portable.zip）、Linux（`wsl_publish.ps1 -Bundle` →
+  `OrielDemo.AppImage`，且在 WSLg 里运行它跑通了 `--selftest nav`）、macOS（release 工作流，
+  2026-10-02 的 `v0.1.8` 出 `OrielDemo-osx-Setup.pkg` + `-osx-Portable.zip`）。产物只留"能装的东西"
+  ——更新包与更新清单打包后即删（本仓库不发更新源）。
+  但**安装与卸载没有验过**：原先那条"MSI 静默装卸 + 查快捷方式"的机器断言随自研打包器一起去掉了，
+  现在机器层只剩"打包成功 + 产物齐备"。
 - 环境：三平台各自一次（与 AOT 一样，`vpk` 只能产出所在平台的产物）。
 - 步骤：`pwsh tools/publish.ps1 -Bundle`；然后**真装一次**——跑 `Setup.exe`（或 `.msi`），
   确认装得上、开始菜单有快捷方式、能启动、卸得干净。macOS 先
-  `bash tools/make-macos-app.sh dist/demo/OrielDemo dist <版本>` 再 `vpk pack --packDir dist/OrielDemo.app`，
-  最后打开 `.app`；Linux 跑那份 `.AppImage`。
+  `bash tools/make-macos-app.sh dist/demo/OrielDemo dist <版本>` 再 `vpk pack --packDir dist/OrielDemo.app`
+  （**别传 `--icon`**：macOS 上只认 `.icns`，另外 `.app` 里必须有 `Contents/Resources/`——两条都在
+  README 的打包一节里写了），最后打开 `.app`；Linux 跑那份 `.AppImage`。
 - 预期：安装后能启动且页面正常；卸载后安装目录消失。
 - 若不符：先看 `vpk` 的输出（未签名时它会明确警告），再按平台看系统事件日志。

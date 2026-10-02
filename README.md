@@ -232,7 +232,7 @@ MIME 类型由各引擎按扩展名自行推断，库不做映射表。
 | 文件拖放 | 拖入文件/文件夹 → 本地路径列表 + 事件 |
 | 内建右键菜单 | 默认只留剪切/复制/粘贴，可切平台原样或完全禁用 |
 | 多窗口 | `app.CreateWindow(...)` 运行时新建窗口；关掉一个窗口应用不退出，`app.Windows` 自动摘除已关闭的窗口 |
-| 打包与更新 | 交给 **Velopack**（`vpk`）：Setup.exe / .msi / Portable.zip / nupkg / RELEASES，并支持应用自更新；`pwsh tools/publish.ps1 -Bundle` 一条命令出全套 |
+| 打包与更新 | 交给 **Velopack**（`vpk`）：Windows 出 Setup.exe / .msi / Portable.zip，Linux 出 AppImage，macOS 出 Setup.pkg / Portable.zip；`pwsh tools/publish.ps1 -Bundle` 一条命令出全套。**应用自更新尚未接入**（见下） |
 
 各项的用法、平台差异与**为什么这么设计**见 [docs/API.md](docs/API.md)。
 
@@ -249,11 +249,11 @@ pwsh tools/publish.ps1 -Bundle
 
 # 也可以分开：先发布，再让 vpk 消费产物
 pwsh tools/publish.ps1
-vpk pack --packId OrielDemo --packVersion 0.1.4 --packDir dist/win-x64 \
+vpk pack --packId OrielDemo --packVersion <版本> --packDir dist/win-x64 \
   --packTitle "Oriel Demo" --mainExe OrielDemo.exe --icon samples/OrielDemo/app.ico --msi
 ```
 
-产物落在 `dist/<rid>-releases/`。Windows 上的实际清单（Linux 见下）:
+产物落在 `dist/<rid>-releases/`。Windows 上的实际清单（Linux 与 macOS 见下）:
 
 | 产物 | 用途 |
 |---|---|
@@ -268,6 +268,21 @@ Linux 上（`pwsh tools/wsl_publish.ps1 -Bundle`，打包在 WSL 里跑）出的
 | `OrielDemo.AppImage` | **自更新的 AppImage**——Linux 上没有独立的安装器，这就是分发形态 |
 
 AppImage 不需要外部 `appimagetool`（`vpk` 自带 appimagekit runtime），也不需要 FUSE 就能自解包运行。
+
+macOS 上（在 macOS 机器上跑，`vpk` 消费 `tools/make-macos-app.sh` 组装好的 `.app`）出的是：
+
+| 产物 | 用途 |
+|---|---|
+| `OrielDemo-osx-Setup.pkg` | 安装包（`.pkg`）——macOS 上没有独立的 Setup.exe 这类外壳 |
+| `OrielDemo-osx-Portable.zip` | 免安装的便携版（解压出 `.app`） |
+
+macOS 上 `vpk pack` 有两条**额外要求**，都是实测踩出来的：
+
+- **`.app` 里必须有 `Contents/Resources/` 目录**：`vpk` 要往里写 `sq.version`，而且假定目录已存在
+  （缺它时报 `DirectoryNotFoundException: … Contents/Resources/sq.version`）。`make-macos-app.sh` 会建好。
+- **不要给 `--icon` 传 `.png`**：`vpk` 在 macOS 上认的是 `.icns`（Windows 用 `.ico`、Linux 用 `.png`），
+  传错格式会直接失败。`--icon` 本就可选（`--help` 里只有 `--packDir` 标了 REQ），图标该由 `.app` 自己带；
+  要给图标就从 `app.png` 生成 `.icns` 放进 bundle。
 
 - **只留"能装的东西"**：更新包 `*-full.nupkg`（Velopack 的"release"）与更新清单
   （`releases.*.json` / `assets.*.json` / `RELEASES*`）在打包后**即被删除**——本仓库不发更新源，
