@@ -78,17 +78,35 @@ internal static class ClipboardSelfTest
     private static string? SetAndReadText(WebviewWindow window, string text)
         => ReadWithRetry(() => window.ClipboardText, text, () => window.SetClipboardText(text));
 
-    /// <summary>读一次；与期望不符时重写再读一次（原因见类注释）。</summary>
+    /// <summary>读一次；与期望不符时重写再读（原因见类注释）。最多 3 轮，轮次会打进日志。</summary>
+    /// <remarks>
+    /// 为什么是 3 轮而不是 2 轮：2026-10-02 把 Windows 冒烟从 IL 构建换成**出货的 AOT 产物**之后，
+    /// 这条断言开始间歇性失败（AOT 3/4 失败、同一台机器的 JIT 4/4 通过），而失败run里"重写一次"
+    /// 也没救回来——它的样子是：写 HTML 的同一个会话里，CF_HTML 读得到、先写的 CF_UNICODETEXT
+    /// 事后却不在剪贴板上。成因还没定论（同进程里 WebView2 也在摸剪贴板，AOT 改变了时序），
+    /// 所以这里把重试放宽到 3 轮并把轮次打到日志里：真凶还在时至少能看出"第几轮救回来的"。
+    /// **这是缓解不是定论**——库侧 `Win32Clipboard.SetClipboardHtml` 的写入失败目前是静默的，
+    /// 该不该在库里回读校验/重写，等这个问题定性之后再定。
+    /// </remarks>
     private static string? ReadWithRetry(Func<string?> read, string expected, Action rewrite)
     {
-        string? value = read();
-        if (value == expected)
+        for (int attempt = 1; ; attempt++)
         {
-            return value;
-        }
+            string? value = read();
+            if (value == expected || attempt >= 3)
+            {
+                if (value != expected && attempt > 1)
+                {
+                    Console.WriteLine($"[clipboard] 第 {attempt} 轮仍不符（每轮都重写过一次）");
+                }
 
-        rewrite();
-        return read();
+                return value;
+            }
+
+            Console.WriteLine($"[clipboard] 第 {attempt} 轮不符，重写后再读");
+            rewrite();
+            Thread.Sleep(150);
+        }
     }
 
     /// <summary>不符时打印码点——"看着一样但不相等"只能这样定位。</summary>

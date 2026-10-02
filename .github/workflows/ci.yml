@@ -337,7 +337,13 @@ jobs:
         #     重定向抓不到原生 stdout（本机实测过），Start-Process 的显式管道才行。
         shell: pwsh
         run: |
-          $demo = "samples/OrielDemo/bin/Release/net10.0/win-x64/OrielDemo.exe"
+          # 跑**要发布的那份 AOT 产物**，不是 bin 里的 IL 构建：
+          #   1) bin/Release/net10.0/win-x64/OrielDemo.exe 在 AOT 发布之后就没这一号文件了
+          #      （发布把该目录重建成 OrielDemo.dll + deps/runtimeconfig），而本步骤排在打包之后；
+          #   2) Linux 与 macOS 的冒烟跑的也是 AOT 产物，Windows 用 IL 构建才是异类——
+          #      自检里的能力模型、内建命令、多窗口都不该只在 JIT 下被验证过。
+          $demo = "dist/demo/OrielDemo.exe"
+          if (-not (Test-Path $demo)) { throw "没找到 AOT 产物：$demo（打包那一步应当已经产出）" }
           # 主题只跑一次：Windows 上没有像 GTK_THEME 那样可靠的"造值"入口（改注册表会影响 runner
           # 的其它状态），所以这里只验证"读得到 + 事件通道通"，深/浅判得对由 smoke-linux 的双路径覆盖。
           # 六个模式**都跑完**再报失败：一次运行就能看出"只有一个模式挂了"还是"全挂了"，
