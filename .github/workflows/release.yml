@@ -116,7 +116,12 @@ jobs:
           if ($code -ne 0) {
             # vpk 的失败原因只在它自己的输出里，而日志要 token 才能读——注解不用。
             # 把最后几行拼进注解，下一次失败就能直接看到原因（与 ci.yml 的冒烟步骤同一个理由）。
-            $tail = ($output | Where-Object { "$_".Trim() } | Select-Object -Last 3) -join ' / '
+            # vpk 先打错误信息、再打一串 "   at Velopack…" 栈帧。只取非栈帧的行：
+            # 否则注解里留下的全是 frames（0.1.6 那次就是这样，等于白丢一轮）。
+            $meaningful = $output |
+              Where-Object { "$_".Trim() } |
+              Where-Object { "$_" -notmatch '^\s+at ' }
+            $tail = ($meaningful | Select-Object -Last 3) -join ' / '
             Write-Output "::error title=vpk pack 失败（${{ runner.os }}，退出码 $code）::$tail"
             throw "vpk pack 失败（退出码 $code）"
           }
