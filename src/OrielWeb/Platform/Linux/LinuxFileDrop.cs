@@ -30,7 +30,7 @@ internal sealed partial class LinuxWindowHost
         if (s_dropTargets == 0)
         {
             // GtkTargetEntry { gchar* target; guint flags; guint info; }：按实际布局手工摆放，
-            // 因为 GTK 的 P/Invoke 声明里没有这个结构（剪贴板那边也是手写的）
+            // 因为 GtkNative 只声明函数、不声明结构体
             nint entry = Marshal.AllocHGlobal(IntPtr.Size + (sizeof(uint) * 2));
             Marshal.WriteIntPtr(entry, Marshal.StringToCoTaskMemUTF8("text/uri-list"));
             Marshal.WriteInt32(entry, IntPtr.Size, 0);                          // flags

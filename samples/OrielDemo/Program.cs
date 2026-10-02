@@ -52,7 +52,7 @@ internal static class Program
     /// <c>--selftest</c> 认得的名字。加一个自检只需在这里加名字 + 在 Main 里加一行判定。
     /// </summary>
     private static readonly string[] SelfTestNames =
-        ["nav", "ipc", "clipboard", "theme", "single-instance", "shell", "capability", "multiwindow"];
+        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow"];
 
     /// <summary>本次请求的自检名字是否就是 <paramref name="name"/>（忽略大小写与首尾空白）。</summary>
     private static bool IsSelfTest(string? requested, string name)
@@ -94,8 +94,6 @@ internal static class Program
         // ipc：页面 console → 宿主、页面 postMessage → 宿主、宿主 EmitEvent → 页面 → 回显宿主
         //（它会顺带打开 ConsoleForwarding）
         var ipcSelfTest = IsSelfTest(selfTest, "ipc");
-        // clipboard：剪贴板文本与 HTML 的写→读回（会覆盖系统剪贴板内容）
-        var clipboardSelfTest = IsSelfTest(selfTest, "clipboard");
         // theme：主题读取与 theme.changed 事件通道（页面回显确认；深浅两条路径由 CI 造值）
         var themeSelfTest = IsSelfTest(selfTest, "theme");
         // single-instance：双进程协作（脚本起两个实例）
@@ -114,7 +112,7 @@ internal static class Program
         // **它是 demo 的默认页面**：直接运行 exe 看到的就是操作台。
         // 想看 Todo 示例页（"怎么用本库写应用"的示范）加 --todo；跑无人自检时也不用它，
         // 免得两种模式去争同一个托盘。
-        bool anySelfTest = navSelfTest || ipcSelfTest || clipboardSelfTest || themeSelfTest
+        bool anySelfTest = navSelfTest || ipcSelfTest || themeSelfTest
             || singleInstanceSelfTest || shellSelfTest || capabilitySelfTest || multiWindowSelfTest;
         var manualCheck = !anySelfTest && !args.Contains("--todo");
 
@@ -181,10 +179,6 @@ internal static class Program
                 {
                     IpcSelfTest.Attach(win);
                 }
-                if (clipboardSelfTest)
-                {
-                    ClipboardSelfTest.Attach(win);
-                }
                 if (capabilitySelfTest)
                 {
                     CapabilitySelfTest.Attach(win);
@@ -240,7 +234,6 @@ internal static class Program
         // 自检的结论已在运行期打印，这里只把成败映射到进程退出码（CI 的冒烟脚本据此判定）。
         if ((navSelfTest && NavSelfTest.Failed)
             || (ipcSelfTest && IpcSelfTest.Failed)
-            || (clipboardSelfTest && ClipboardSelfTest.Failed)
             || (themeSelfTest && ThemeSelfTest.Failed)
             || (singleInstanceSelfTest && SingleInstanceSelfTest.Failed)
             || (shellSelfTest && ShellSelfTest.Failed)

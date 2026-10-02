@@ -480,49 +480,6 @@ internal static unsafe partial class GtkNative
     [LibraryImport(GOject, EntryPoint = "g_value_get_string")]
     internal static partial nint GValueGetString(nint value);
 
-    // ---- 剪贴板 ----
-
-    /// <summary>取一个 GdkAtom（如 "CLIPBOARD"、"text/html"）；只做原子化，不涉及所有权。</summary>
-    [LibraryImport(Gdk, EntryPoint = "gdk_atom_intern", StringMarshalling = StringMarshalling.Utf8)]
-    internal static partial nint GdkAtomIntern(string atomName, int onlyIfExists);
-
-    [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_get")]
-    internal static partial nint GtkClipboardGet(nint selection);
-
-    /// <summary>阻塞等待剪贴板文本；返回需 g_free 的 UTF-8 副本，无文本时返回 0。</summary>
-    [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_wait_for_text")]
-    internal static partial nint GtkClipboardWaitForText(nint clipboard);
-
-    /// <summary>写入纯文本并取得所有权；length 传 -1 表示 NUL 结尾。</summary>
-    [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_set_text", StringMarshalling = StringMarshalling.Utf8)]
-    internal static partial void GtkClipboardSetText(nint clipboard, string text, int length);
-
-    [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_clear")]
-    internal static partial void GtkClipboardClear(nint clipboard);
-
-    /// <summary>阻塞等待指定 target 的内容；返回需 gtk_selection_data_free 的指针，无内容时返回 0。</summary>
-    [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_wait_for_contents")]
-    internal static partial nint GtkClipboardWaitForContents(nint clipboard, nint target);
-
-    /// <summary>
-    /// 以"声明式"方式拥有剪贴板：给出 target 列表与取数回调，对方来要时才回调取数据。
-    /// 自定义 target（如 text/html）只能用这种方式写（set_text 只支持纯文本）。
-    /// </summary>
-    [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_set_with_data")]
-    internal static partial int GtkClipboardSetWithData(nint clipboard, nint targets, uint nTargets, nint getFunc, nint clearFunc, nint userData);
-
-    [LibraryImport(Gtk, EntryPoint = "gtk_selection_data_get_data")]
-    internal static partial nint GtkSelectionDataGetData(nint selection);
-
-    [LibraryImport(Gtk, EntryPoint = "gtk_selection_data_get_length")]
-    internal static partial int GtkSelectionDataGetLength(nint selection);
-
-    [LibraryImport(Gtk, EntryPoint = "gtk_selection_data_set")]
-    internal static partial int GtkSelectionDataSet(nint selection, nint type, int format, nint data, int length);
-
-    [LibraryImport(Gtk, EntryPoint = "gtk_selection_data_free")]
-    internal static partial void GtkSelectionDataFree(nint selection);
-
     // ---- 文件拖放（gtk_drag_dest_*）----
     // 在 webview 上注册 URIs 类型作为落点；载荷由 GTK 解析成 uri 列表，我们只负责把
     // file:// 转成本地路径（OrielFileDropSupport.UriToPath，纯函数、有单测）。

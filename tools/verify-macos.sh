@@ -175,7 +175,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-section "机器断言自检：nav / ipc / clipboard / theme / capability / multiwindow"
+section "机器断言自检：nav / ipc / theme / capability / multiwindow"
 # 放在观察窗之前：自检自己驱动页面（跳转 / 后退 / 前进 / 刷新 / 失败、console 转发、
 # postMessage、EmitEvent 闭环），跑完自己关窗退出，退出码即结论，与后面的观察窗互不干扰。
 # 这里不用 timeout：macOS 自带的是 BSD 用户态，没有 GNU coreutils 的 timeout。
@@ -183,7 +183,7 @@ section "机器断言自检：nav / ipc / clipboard / theme / capability / multi
 SELFTEST_FAILED=0
 # 未通过模式的结论行汇总，最后拼进一条 GitHub 注解（注解用 API 就能读，不必登录翻日志）
 SELFTEST_FAIL_DETAIL=""
-for mode in nav ipc clipboard theme capability multiwindow; do
+for mode in nav ipc theme capability multiwindow; do
     selftest_log="$OUT/selftest-$mode.log"
     # 自检开关已合并：--selftest <名字>；输出结论行格式未变（NAV-SELFTEST: PASS 等）
     "$APP_EXE" --selftest "$mode" >"$selftest_log" 2>&1 &
@@ -201,7 +201,7 @@ for mode in nav ipc clipboard theme capability multiwindow; do
         selftest_code=$?
     fi
 
-    selftest_verdict="$(grep -E '^(NAV|IPC|CLIPBOARD|THEME|CAPABILITY|MULTIWINDOW)-SELFTEST: ' "$selftest_log" | tail -1 || true)"
+    selftest_verdict="$(grep -E '^(NAV|IPC|THEME|CAPABILITY|MULTIWINDOW)-SELFTEST: ' "$selftest_log" | tail -1 || true)"
     echo "  [$mode] 退出码=${selftest_code} 结论=${selftest_verdict:-无}"
     # 明细总是回显到 CI 日志：artifact 里有完整文件，但日志能直接看
     sed 's/^/    /' "$selftest_log" || true
@@ -409,7 +409,7 @@ fi
 wait "$APP_PID" 2>/dev/null || true
 
 section "结果汇总"
-echo "自检（6 模式+单实例）: $([[ $SELFTEST_FAILED -eq 0 ]] && echo "全部 PASS" || echo "有未通过，见 selftest-*.log")"
+echo "自检（各模式+单实例）: $([[ $SELFTEST_FAILED -eq 0 ]] && echo "全部 PASS" || echo "有未通过，见 selftest-*.log")"
 echo "进程存活至观察窗结束 : $([[ $ALIVE -eq 1 ]] && echo 是 || echo 否)"
 if [[ -n "$EXIT_CODE" ]]; then
     echo "进程退出码           : ${EXIT_CODE}"

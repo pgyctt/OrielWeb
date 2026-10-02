@@ -247,24 +247,6 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// <summary>重新加载当前页面（会重新触发导航事件与 <see cref="Loaded"/> 之外的导航流程）。</summary>
     public void Reload() => Backend.Reload();
 
-    // ---- 剪贴板 ----
-
-    /// <summary>剪贴板文本；没有文本时返回 null。</summary>
-    public string? ClipboardText => Backend.GetClipboardText();
-
-    /// <summary>写入剪贴板文本（替换现有内容）。</summary>
-    public void SetClipboardText(string text) => Backend.SetClipboardText(text);
-
-    /// <summary>剪贴板 HTML；没有 HTML 时返回 null。</summary>
-    public string? ClipboardHtml => Backend.GetClipboardHtml();
-
-    /// <summary>
-    /// 写入剪贴板 HTML；同时写一份纯文本回退（<paramref name="plainTextFallback"/> 为 null 时用 HTML 本身），
-    /// 这样只认文本的应用也能粘贴到内容。
-    /// </summary>
-    public void SetClipboardHtml(string html, string? plainTextFallback = null)
-        => Backend.SetClipboardHtml(html, plainTextFallback);
-
     /// <summary>
     /// 把动作切回 UI 线程执行（已在 UI 线程则直接执行）。
     /// </summary>

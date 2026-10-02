@@ -23,12 +23,6 @@
 - 预期：能打开 Web Inspector；把 `Debug` 置 false 后同一入口不再出现。
 - 若不符：macOS 先确认系统 ≥ 13.3（`isInspectable` 是 13.3+ 的 API，更早的系统上库会跳过设置）；Linux 看 `webkit_settings_set_enable_developer_extras` 是否被调用。
 
-#### 剪贴板的跨进程互操作（未验证）
-- 环境：任意桌面环境。
-- 步骤：`OrielDemo --selftest clipboard`（会写系统剪贴板），在别的应用里粘贴；反过来复制带格式的内容再用 `window.ClipboardHtml` 读。
-- 预期：文本能互相粘贴；HTML 粘到富文本编辑器应保留粗体等格式。
-- 若不符：先看 `Win32Clipboard.BuildCfHtml` 的偏移（CF_HTML 的偏移按**字节**计），Linux 侧看 target 列表。
-
 #### 主题切换的实时性（未验证）
 - 环境：任意桌面环境（Linux 需要真实桌面而非 xvfb）。
 - 步骤：不带参数运行 demo，在系统设置里切换深色/浅色。

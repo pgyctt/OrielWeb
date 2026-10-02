@@ -8,7 +8,7 @@
 - [3. 导航与页面通信](#3-导航与页面通信)
 - [4. 安全与能力模型](#4-安全与能力模型)
 - [5. 拖动与双击的实现边界](#5-拖动与双击的实现边界)
-- [6. 剪贴板、系统主题、单实例](#6-剪贴板系统主题单实例)
+- [6. 系统主题与单实例](#6-系统主题与单实例)
 - [7. 平台集成](#7-平台集成)
 - [8. 对话框](#8-对话框)
 - [9. 文件拖放](#9-文件拖放)
@@ -88,7 +88,6 @@ WebviewWindow second = app.CreateWindow(
 | 几何与外观 | `SetTitle` `SetResizable` `SetMinSize` `MoveTo` `Resize` `Center` |
 | 导航 | `GoBack` `GoForward` `Reload` `CanGoBack` `CanGoForward` |
 | 拖动 | `BeginDrag()` `BeginDragStreaming(px,py,wx,wy,ww,wh,sh)` `DragTo(dx,dy)` `EndDrag()` |
-| 剪贴板 | `ClipboardText` `SetClipboardText` `ClipboardHtml` `SetClipboardHtml(html, plainTextFallback)` |
 | IPC | `EmitEvent(name, json)` `EmitEvent<T>(name, payload, JsonTypeInfo<T>)` `EvaluateJs(script)` `PostToUiThread(Action)` |
 | 对话框 | `ShowMessage` `ShowOpenFileDialog` `ShowSaveFileDialog` `ShowFolderDialog` |
 | 菜单 | `ShowContextMenu(items)` `ContextMenuPolicy` |
@@ -275,13 +274,9 @@ window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
 > 于是不必为它引入三平台各一套自研的原生机制（WebView2 host objects /
 > WebKitGTK `script-message-with-reply` / 拦 `window.prompt`）——那还会打破"一份桥接脚本三平台共用"。
 
-## 6. 剪贴板、系统主题、单实例
+## 6. 系统主题与单实例
 
 ```csharp
-string? text = window.ClipboardText;
-window.SetClipboardText("你好");
-window.SetClipboardHtml("<b>你好</b>", "你好");   // 第二个参数是纯文本回退
-
 OrielTheme theme = app.Theme;                    // Light / Dark
 app.ThemeChanged += t => { };
 ```
@@ -289,9 +284,6 @@ app.ThemeChanged += t => { };
 ```js
 oriel.on('theme.changed', (t) => document.documentElement.dataset.theme = t);
 ```
-
-三平台写 HTML 时都**同时写一份纯文本回退**（macOS 用 `NSPasteboard`、Windows 用 CF_HTML、
-Linux 走自定义 target），只认文本的应用也能粘贴。
 
 ```csharp
 builder.SingleInstance("com.example.myapp", win => { /* 首实例被唤醒 */ });
@@ -471,7 +463,7 @@ sudo apt-get install -y fonts-noto-cjk   # 中文界面必需，否则渲染成�
 |---|---|
 | 单测（`tests/OrielWeb.Tests`） | 分发器与回执协议、能力模型、内建窗口命令表、资源 URL 解析、文件/Shell/对话框的纯函数、快照回退与数值格式化 |
 | 桥接测试（`tests/bridge/bridge.test.mjs`） | 三平台共用脚本的行为一致性：就绪、事件、往返、回执、超时、不可信来源不安装、每条出站消息带令牌 |
-| 无人自检（`OrielDemo --selftest <名字>`） | `nav` `ipc` `clipboard` `theme` `single-instance` `shell` `capability` `multiwindow`——自己驱动页面、打印结论行、以退出码表达成败 |
+| 无人自检（`OrielDemo --selftest <名字>`） | `nav` `ipc` `theme` `single-instance` `shell` `capability` `multiwindow`——自己驱动页面、打印结论行、以退出码表达成败 |
 | 手动验证操作台（直接运行 demo） | 托盘、通知、对话框、拖放、右键菜单、图标等**只能人眼**判定项，每项都写了预期 |
 | Velopack 打包（CI 每 push 跑） | `vpk pack` 成功、产物齐备（含 `--msi`）、更新清单能被解析且版本正确 |
 
