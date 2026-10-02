@@ -65,3 +65,7 @@ dist/
 ## 发布产物（tools/publish.ps1 与 wsl_publish.ps1，可随时重新生成）
 ## publish/ 是它们早先的默认目录，保留忽略以免旧产物污染 git status
 publish/
+
+## 意外的解压目录：LocalApplicationData 取不到时内嵌资源会落到 <CWD>/OrielWeb/<程序集名>/www
+## （2026-10-02 误提交过一次，6 个文件）。Extractor 已加兜底，这条是防手抖的兜底兜底。
+/OrielWeb/

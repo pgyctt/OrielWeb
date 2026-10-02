@@ -15,11 +15,18 @@ internal static class EmbeddedAssetExtractor
             ?? throw new InvalidOperationException("无法确定入口程序集。");
 
         string assemblyName = assembly.GetName().Name ?? "app";
-        string root = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "OrielWeb",
-            assemblyName,
-            "www");
+
+        // LocalApplicationData 取不到时（精简容器、没设 HOME 的环境）GetFolderPath 返回空串，
+        // 而 Path.Combine("", "OrielWeb", …) 拼出的是**相对**路径——资源会被解到当前工作目录里。
+        // 2026-10-02 就这么在仓库根上造出了一个 OrielWeb/OrielDemo/www 并被误提交。
+        // 这种情况退回临时目录：宁可落在奇怪的地方，也不要在别人的工作目录里拉屎。
+        string dataRoot = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrEmpty(dataRoot))
+        {
+            dataRoot = Path.GetTempPath();
+        }
+
+        string root = Path.Combine(dataRoot, "OrielWeb", assemblyName, "www");
 
         var names = assembly.GetManifestResourceNames();
         (string Prefix, bool ExplicitSeparators) convention = ResolveConvention(names, assemblyName, resourcePrefixOverride);
