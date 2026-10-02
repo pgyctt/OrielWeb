@@ -181,6 +181,8 @@ section "机器断言自检：nav / ipc / clipboard / theme / capability / multi
 # 这里不用 timeout：macOS 自带的是 BSD 用户态，没有 GNU coreutils 的 timeout。
 # 自检自身有看门狗（nav 90s / ipc 30s），下面的等待循环只是兜底。
 SELFTEST_FAILED=0
+# 未通过模式的结论行汇总，最后拼进一条 GitHub 注解（注解用 API 就能读，不必登录翻日志）
+SELFTEST_FAIL_DETAIL=""
 for mode in nav ipc clipboard theme capability multiwindow; do
     selftest_log="$OUT/selftest-$mode.log"
     # 自检开关已合并：--selftest <名字>；输出结论行格式未变（NAV-SELFTEST: PASS 等）
@@ -211,6 +213,7 @@ for mode in nav ipc clipboard theme capability multiwindow; do
         :
     else
         SELFTEST_FAILED=1
+        SELFTEST_FAIL_DETAIL="${SELFTEST_FAIL_DETAIL:+$SELFTEST_FAIL_DETAIL }[$mode] ${selftest_verdict:-无结论行}（退出码 ${selftest_code}）"
         echo "    （未读到 PASS 结论行，按失败处理）"
     fi
 done
@@ -233,10 +236,12 @@ sed 's/^/    /' "$OUT/si-primary.log" || true
 sed 's/^/    /' "$OUT/si-secondary.log" || true
 if ! grep -q 'SINGLE-INSTANCE: PASS' "$OUT/si-primary.log"; then
     SELFTEST_FAILED=1
+    SELFTEST_FAIL_DETAIL="${SELFTEST_FAIL_DETAIL:+$SELFTEST_FAIL_DETAIL }[single-instance] 首实例没有收到激活请求"
     echo "    （首实例没有收到激活请求）"
 fi
 if ! grep -q 'SINGLE-INSTANCE-SECONDARY' "$OUT/si-secondary.log"; then
     SELFTEST_FAILED=1
+    SELFTEST_FAIL_DETAIL="${SELFTEST_FAIL_DETAIL:+$SELFTEST_FAIL_DETAIL }[single-instance] 第二个实例没有通知首实例"
     echo "    （第二个实例没有通知首实例）"
 fi
 
@@ -450,6 +455,18 @@ else
     [[ $WEBKIT_SEEN -eq 0 ]] && echo "  - 全程没有出现 WebContent 子进程（webview 没有真正开始加载页面）"
     [[ -z "$WINDOW_LINE" ]] && echo "  - 未枚举到标题含 \"$WINDOW_TITLE_PATTERN\" 的窗口"
     [[ $SELFTEST_FAILED -eq 0 ]] || echo "  - 自检未通过（见 $OUT/selftest-*.log）"
+fi
+
+# 把失败原因写成一条 GitHub 注解。注解用 GitHub API 就能读到（`/check-runs/<job>/annotations`），
+# 不必登录去翻日志——2026-10-02 查这次 macOS 冒烟时，正是这个差别决定了能不能在本地把问题查下去：
+# 日志要 token（403），注解不要。所以"失败了就留一条注解"不是装饰，是可诊断性的一部分。
+if [[ -n "${GITHUB_ACTIONS:-}" && $exit_code -ne 0 ]]; then
+    FAIL_DETAIL=""
+    [[ $ALIVE -eq 1 ]] || FAIL_DETAIL="$FAIL_DETAIL 进程未存活;"
+    [[ $WEBKIT_SEEN -eq 1 ]] || FAIL_DETAIL="$FAIL_DETAIL 没有 WebContent 子进程;"
+    [[ -n "$WINDOW_LINE" ]] || FAIL_DETAIL="$FAIL_DETAIL 未枚举到窗口;"
+    [[ $SELFTEST_FAILED -eq 0 ]] || FAIL_DETAIL="$FAIL_DETAIL 自检未通过：${SELFTEST_FAIL_DETAIL:-见 selftest-*.log};"
+    echo "::error title=macOS 冒烟失败::${FAIL_DETAIL}"
 fi
 
 echo

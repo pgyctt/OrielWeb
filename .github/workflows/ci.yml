@@ -340,6 +340,10 @@ jobs:
           $demo = "samples/OrielDemo/bin/Release/net10.0/win-x64/OrielDemo.exe"
           # 主题只跑一次：Windows 上没有像 GTK_THEME 那样可靠的"造值"入口（改注册表会影响 runner
           # 的其它状态），所以这里只验证"读得到 + 事件通道通"，深/浅判得对由 smoke-linux 的双路径覆盖。
+          # 六个模式**都跑完**再报失败：一次运行就能看出"只有一个模式挂了"还是"全挂了"，
+          # 而结论行会汇总成一条 GitHub 注解（注解用 API 就能读到，见本步骤末尾的说明）。
+          $failures = @()
+          $summary = @()
           foreach ($mode in @("nav", "ipc", "clipboard", "theme", "capability", "multiwindow")) {
             $out = "$env:RUNNER_TEMP\selftest-$mode.out.txt"
             $err = "$env:RUNNER_TEMP\selftest-$mode.err.txt"
@@ -354,8 +358,9 @@ jobs:
               $last = Select-String -Path $out -Pattern '^(NAV|IPC|CLIPBOARD|THEME|CAPABILITY|MULTIWINDOW)-SELFTEST: ' | Select-Object -Last 1
               if ($last) { $verdict = $last.Line }
             }
+            $summary += "[$mode] $(if ($verdict) { $verdict } else { "无结论行（退出码 $($p.ExitCode)）" })"
             if ($verdict -notmatch 'PASS') {
-              throw "selftest $mode 未通过（结论行：$(if ($verdict) { $verdict } else { '无' })）"
+              $failures += $mode
             }
           }
 
@@ -374,10 +379,24 @@ jobs:
           Write-Output "----- 单实例：第二实例 exit=$($secondary.ExitCode)（$([int]$sw.Elapsed.TotalSeconds)s）首实例 exit=$($primary.ExitCode) -----"
           if (Test-Path "$env:RUNNER_TEMP\si-primary.log") { Get-Content "$env:RUNNER_TEMP\si-primary.log" -Encoding UTF8 | Write-Output }
           if (Test-Path "$env:RUNNER_TEMP\si-secondary.log") { Get-Content "$env:RUNNER_TEMP\si-secondary.log" -Encoding UTF8 | Write-Output }
-          if ($secondary.ExitCode -ne 0) { throw "第二个实例退出码非 0：$($secondary.ExitCode)" }
-          if ($sw.Elapsed.TotalSeconds -ge 10) { throw "第二个实例没有立即退出" }
-          $primaryLog = Get-Content "$env:RUNNER_TEMP\si-primary.log" -Encoding UTF8 -Raw
-          if ($primaryLog -notmatch 'SINGLE-INSTANCE: PASS') { throw "首实例没有收到激活请求" }
+          $siError = ""
+          if ($secondary.ExitCode -ne 0) {
+            $siError = "第二个实例退出码非 0：$($secondary.ExitCode)"
+          } elseif ($sw.Elapsed.TotalSeconds -ge 10) {
+            $siError = "第二个实例没有立即退出（$([int]$sw.Elapsed.TotalSeconds)s）"
+          } else {
+            $primaryLog = Get-Content "$env:RUNNER_TEMP\si-primary.log" -Encoding UTF8 -Raw
+            if ($primaryLog -notmatch 'SINGLE-INSTANCE: PASS') { $siError = "首实例没有收到激活请求" }
+          }
+
+          # 失败原因写成 GitHub 注解：注解用 API 就能读到（/check-runs/<job>/annotations），
+          # 不必登录去翻日志——2026-10-02 排查这次失败时，日志要 token（403）而注解不要，
+          # 这个差别直接决定了问题能不能在本地查下去。所以"失败就留一条注解"是可诊断性的一部分。
+          if ($siError) { Write-Output "::error title=Windows 单实例::$siError" }
+          if ($failures.Count -gt 0) { Write-Output "::error title=Windows 冒烟自检::$($summary -join ' | ')" }
+          if ($failures.Count -gt 0 -or $siError) {
+            throw "自检未通过：模式=$(if ($failures.Count -gt 0) { $failures -join ', ' } else { '全部通过' })，单实例=$siError"
+          }
 
   smoke-macos:
     runs-on: macos-latest
