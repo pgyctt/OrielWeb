@@ -213,7 +213,9 @@ for mode in nav ipc clipboard theme capability multiwindow; do
         :
     else
         SELFTEST_FAILED=1
-        SELFTEST_FAIL_DETAIL="${SELFTEST_FAIL_DETAIL:+$SELFTEST_FAIL_DETAIL }[$mode] ${selftest_verdict:-无结论行}（退出码 ${selftest_code}）"
+        # 该模式日志的末尾几行一并带上：注解要能自证，否则还得回去翻 artifact 或整段日志
+        fail_tail="$(grep -v '^[[:space:]]*$' "$selftest_log" | tail -n 2 | tr '\n' ' ' | tr -s ' ')"
+        SELFTEST_FAIL_DETAIL="${SELFTEST_FAIL_DETAIL:+$SELFTEST_FAIL_DETAIL }[$mode] ${selftest_verdict:-无结论行}（退出码 ${selftest_code}）：${fail_tail:0:300}"
         echo "    （未读到 PASS 结论行，按失败处理）"
     fi
 done

@@ -367,6 +367,10 @@ jobs:
             $summary += "[$mode] $(if ($verdict) { $verdict } else { "无结论行（退出码 $($p.ExitCode)）" })"
             if ($verdict -notmatch 'PASS') {
               $failures += $mode
+              # 失败模式的日志尾巴也进注解：注解不需要 token 就能读，日志需要
+              $tail = (Get-Content $out -Encoding UTF8 -ErrorAction SilentlyContinue |
+                       Where-Object { $_.Trim() } | Select-Object -Last 2) -join ' / '
+              if ($tail) { $summary += " << $tail" }
             }
           }
 

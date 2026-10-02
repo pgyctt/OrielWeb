@@ -119,22 +119,7 @@ internal static class NavSelfTest
     {
         // 看门狗：自检是无人值守路径，卡住时不能永远挂着。它在计时器线程上触发，
         // 所以收尾动作必须经 PostToUiThread 回到 UI 线程（窗口 API 不能跨线程调用）。
-        _watchdog = new Timer(
-            _ =>
-            {
-                lock (Gate)
-                {
-                    if (_finished)
-                    {
-                        return;
-                    }
-                    Failures.Add("导航自检超时：90 秒内没有走完全部步骤");
-                }
-                _window?.PostToUiThread(Finish);
-            },
-            null,
-            TimeSpan.FromSeconds(90),
-            Timeout.InfiniteTimeSpan);
+        _watchdog = new Timer(_ => OnTimeout(), null, TimeSpan.FromSeconds(90), Timeout.InfiniteTimeSpan);
 
         // 首次加载发生在后端 CreateWindow 内部，可能早于本类订阅事件——所以不做"首次一定收到
         // starting"的断言，只把计数当基线；后面每一步都断言事件确实又发生了。
@@ -142,6 +127,7 @@ internal static class NavSelfTest
 
         _startingBeforeStep = Volatile.Read(ref _startingCount);
         _step = 1;
+        Console.WriteLine("[nav-selftest] step=1：页面内跳转（location.href → about.html）");
         _ = _window.EvaluateJs($"location.href='{AboutUrl}'");
     }
 
@@ -229,6 +215,7 @@ internal static class NavSelfTest
     {
         _startingBeforeStep = Volatile.Read(ref _startingCount);
         _step++;
+        Console.WriteLine($"[nav-selftest] step={_step}");
     }
 
     private static void CheckStartingSeen(string description)
@@ -245,6 +232,71 @@ internal static class NavSelfTest
         {
             Failures.Add(description);
         }
+    }
+
+    /// <summary>超时收尾：**先问页面"你现在停在哪"，再判失败**。</summary>
+    /// <remarks>
+    /// 这一步是刻意的，因为它区分两种完全不同的病：
+    ///   * 页面自报的 location 还是首页 → 那次 <c>location.href</c> 根本没生效（求值 / 脚本通道的问题）；
+    ///   * 已经是目标页 → 导航确实发生了，是宿主没把事件报上来。
+    /// 2026-10-02 macOS 冒烟里只看到"首次加载"那一对 starting/completed，两种解释都成立，而日志里
+    /// 没有能分辨它们的信息——所以把这条诊断加进来，让下一次失败自己说清楚（而不是再猜一轮）。
+    /// </remarks>
+    private static void OnTimeout()
+    {
+        lock (Gate)
+        {
+            if (_finished)
+            {
+                return;
+            }
+        }
+
+        _window?.PostToUiThread(() =>
+        {
+            lock (Gate)
+            {
+                if (_finished)
+                {
+                    return;
+                }
+            }
+
+            _ = ProbeThenFinish();
+        });
+    }
+
+    private static async Task ProbeThenFinish()
+    {
+        // 探针自己也要有超时：否则"求值挂住"会让自检连失败都报不出来（只能等外层 150 秒被 kill）。
+        // 而"挂住 / 抛错 / 正常返回"三种结果正好各自指向不同的病。
+        string where;
+        Task<string> probe = _window!.EvaluateJs("location.href + ' | ' + document.title");
+        if (await Task.WhenAny(probe, Task.Delay(TimeSpan.FromSeconds(5))) != probe)
+        {
+            where = "(求值 5 秒未返回：EvaluateJs 在这台机器上挂住了)";
+        }
+        else
+        {
+            try
+            {
+                // EvaluateJs 回的是 JSON 编码串（WebView2 风格），原样打出来就能读
+                where = await probe;
+            }
+            catch (Exception ex)
+            {
+                where = $"({ex.GetType().Name}: {ex.Message})";
+            }
+        }
+
+        lock (Gate)
+        {
+            Failures.Add(
+                $"导航自检超时：90 秒内没有走完全部步骤（停在第 {_step} 步；" +
+                $"页面自报 location|title={where}；累计 starting={Volatile.Read(ref _startingCount)} 次）");
+        }
+
+        Finish();
     }
 
     private static void Finish()

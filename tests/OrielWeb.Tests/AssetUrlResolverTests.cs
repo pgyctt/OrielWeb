@@ -81,4 +81,35 @@ public sealed class AssetUrlResolverTests : IDisposable
     [InlineData("")]
     public void MalformedUrls_AreRejected(string url)
         => Assert.Null(AssetUrlResolver.TryResolveLocalFile(url, Host, _root));
+
+    [Fact]
+    public void FileUrlPrefix_MatchesTheUrlTheEnginesAreHanded()
+    {
+        // 这条钉住 2026-10-02 那次 macOS 冒烟红：解压目录在 ~/Library/Application Support 下（带空格），
+        // 引擎加载的 URL 是 ...Application%20Support...，而可信前缀当年是手拼的（原样空格）→
+        // 逐字节的 StartsWith 永远配不上 → 页面把自己的门禁拒了 → window.oriel 不存在 →
+        // 依赖它的功能全部静默失效（macOS 的 ExecuteScriptAsync 还要靠页面回环，于是连求值都一起死）。
+        string directory = Path.Combine(Path.GetTempPath(), "Oriel Web 带空格 and 中文", "www");
+        string prefix = AssetUrlResolver.ToFileUrlPrefix(directory);
+
+        Assert.DoesNotContain(' ', prefix);
+        Assert.EndsWith("/", prefix, StringComparison.Ordinal);
+
+        // 后端交给引擎的正是这个写法（见 LinuxWindowHost / MacOSWindowHost 的 new Uri(本地文件).AbsoluteUri）
+        string page = new Uri(Path.Combine(directory, "index.html")).AbsoluteUri;
+        Assert.StartsWith(prefix, page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FileUrlPrefix_BuiltByHandDoesNotMatch()
+    {
+        // 反证：把当年那行手拼的写法拿出来对照——不是"看着差不多"，是真的配不上。
+        // 留这条是为了让后来者看见"为什么不能手拼"，而不是把 ToFileUrlPrefix 当洁癖。
+        string directory = Path.Combine(Path.GetTempPath(), "Oriel Web");
+        string handwritten = "file://" + directory.Replace('\\', '/').TrimEnd('/') + "/";
+        string page = new Uri(Path.Combine(directory, "index.html")).AbsoluteUri;
+
+        Assert.False(page.StartsWith(handwritten, StringComparison.Ordinal));
+        Assert.StartsWith(AssetUrlResolver.ToFileUrlPrefix(directory), page, StringComparison.Ordinal);
+    }
 }

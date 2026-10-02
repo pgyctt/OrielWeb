@@ -66,4 +66,20 @@ internal static class AssetUrlResolver
 
         return File.Exists(full) ? full : null;
     }
+
+    /// <summary>
+    /// 本地目录 → <c>file://</c> URL 前缀（末尾带分隔符）。
+    /// </summary>
+    /// <remarks>
+    /// <b>必须与导航时用的是同一套构造</b>（各平台后端用的是 <c>new Uri(本地文件).AbsoluteUri</c>）。
+    /// 为什么这点值得单开一个方法：不可信来源**根本不安装桥接脚本**，而"可信"是逐字节的
+    /// <c>StartsWith</c>——一边转义、一边手拼，就会在路径含特殊字符时永远配不上。
+    /// 2026-10-02 的 macOS 冒烟就是这么坏的：解压目录在 <c>~/Library/Application Support/</c> 下，
+    /// 页面 URL 是 <c>...Application%20Support...</c>，前缀却是原样的空格 → 页面把自己的门禁拒了 →
+    /// <c>window.oriel</c> 不存在 → 依赖它的功能全部静默失效。而 macOS 的 <c>ExecuteScriptAsync</c>
+    /// 恰好靠页面回环完成（见 MacOSWindowHost），于是连"求值"都被一起拖死，症状是
+    /// "自检第 1 步发出后一个事件都没有"。Linux 侥幸没中：它的解压目录不含空格。
+    /// </remarks>
+    public static string ToFileUrlPrefix(string directory)
+        => new Uri(Path.GetFullPath(directory) + Path.DirectorySeparatorChar).AbsoluteUri;
 }

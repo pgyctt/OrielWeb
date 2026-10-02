@@ -432,8 +432,12 @@ public sealed class OrielApp : IDisposable
             // Linux/macOS 上内嵌资源的 https 虚拟主机注册不了，导航前会被改写成 file:// 本地路径
             // （见 AssetUrlResolver）。所以解压目录也必须是可信来源——
             // 不加这一条，页面会被**自己的**门禁拒掉，表现为"什么命令都没反应"。
-            Guard.AddTrustedPrefix(
-                "file://" + _assetDirectory.Replace('\\', '/').TrimEnd('/') + "/");
+            //
+            // 前缀必须走 ToFileUrlPrefix（= 与导航同款的 new Uri(...).AbsoluteUri 转义），
+            // 不能手拼 "file://" + 路径：URL 里的空格是 %20，手拼出来的是空格，StartsWith 配不上。
+            // macOS 的解压目录带 "Application Support"，所以那里必然不匹配（Linux 侥幸没中，
+            // 它的目录不含空格）——2026-10-02 的 macOS 冒烟红就是这么来的。
+            Guard.AddTrustedPrefix(AssetUrlResolver.ToFileUrlPrefix(_assetDirectory));
         }
 
         _windows.EnsureCapacity(_builder.PendingWindows.Count);
