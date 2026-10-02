@@ -34,30 +34,67 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
     .Run();                 // 或 .Build() 拿到 OrielApp 自己控制生命周期
 ```
 
-| 方法 | 说明 |
+所有方法都返回 builder 自身（可链式），失败方式一律是**抛异常**（参数错就立刻抛，不静默降级）。
+
+| 方法（真实签名） | 说明 |
 |---|---|
-| `UseEmbeddedAssets(host, resourcePrefix)` | 启用内嵌前端资源：程序集内嵌资源经 `https://<host>/` 提供（默认 host `app.oriel`，默认前缀 `程序集名.wwwroot.`） |
-| `UseJsonContext(ctx)` | 注册 STJ 源生成上下文：DTO 命令参数/返回值的 AOT 安全序列化入口。**按应用实例持有**，不写全局静态状态 |
-| `AddCommands<T>()` / `AddCommands<T>(factory)` | 注册含 `[OrielCommand]` 的类型（惰性单例）。命令实例**共享**，所有 invoke 作用在同一实例上 → **命令方法必须线程安全** |
-| `AddWindow(configure, onCreated)` | 加窗口；`onCreated` 在 `Run()` 之前回调，用于订阅 `Loaded`/`Closing` |
-| `UseDebug(bool = true)` | 打开 DevTools（三平台的实现见下） |
-| `SingleInstance(id, onActivate)` | 单实例：第二个实例通知首实例后**立即以 0 退出**（不建窗） |
-| `UseCapabilities(configure)` | 声明页面可调用的命令（见 §4） |
-| `AddTray(configure)` | 启用系统托盘（应用级，最多一个） |
-| `UseShell(configure)` | Shell 集成的 scheme 白名单（默认只放行 `http`/`https`/`mailto`） |
-| `UseAutoStartId(id)` | 覆盖开机自启的标识（默认取可执行文件名） |
-| `UseNotificationAppId(id)` | 覆盖系统通知的应用标识（Windows AUMID / Linux `--app-name`；默认取入口程序集名） |
-| `UseUserDataFolder(path)` | 覆盖 WebView2 用户数据目录（默认 `%LOCALAPPDATA%\OrielWeb\WebView2`） |
-| `OnWebView2RuntimeMissing(handler)` | 自定义"运行时缺失"的提示与引导（不注册时库弹默认错误框） |
+| `Oriel.CreateBuilder(string[]? args = null)` | 入口。`args` 只是透传给应用自己（库不解析命令行）；`Run()` 之外还有 `Build()` 拿 `OrielApp` |
+| `UseEmbeddedAssets(string host = "app.oriel", string? resourcePrefix = null)` | 启用内嵌前端资源：程序集内嵌资源经 `https://<host>/` 提供。默认前缀是 `程序集名.wwwroot.`；用 `LogicalName` 写显式分隔符时前缀变成 `程序集名.wwwroot/`（见 README 的"内嵌页面资源"） |
+| `UseJsonContext(JsonSerializerContext context)` | 注册 STJ 源生成上下文：DTO 命令参数/返回值的 AOT 安全序列化入口。**按应用实例持有**，不写全局静态状态 |
+| `AddCommands<T>() where T : new()`<br>`AddCommands<T>(Func<T> factory)` | 注册含 `[OrielCommand]` 的类型（惰性单例；`factory` 用于需要构造参数的命令类）。命令实例**共享**，所有 invoke 作用在同一实例上 → **命令方法必须线程安全**；同名命令在启动时报冲突 |
+| `AddWindow(Action<OrielWindowOptions>? configure = null)`<br>`AddWindow(Action<OrielWindowOptions>? configure, Action<WebviewWindow> onCreated)` | 加窗口。`onCreated` 在 `Run()` 之前回调，用于订阅 `Loaded`/`Closing` 这类"必须早于建窗订阅"的事件 |
+| `UseDebug(bool debug = true)`；`bool Debug { get; }` | 打开 DevTools（三平台的实现与前置条件见 §1 末与 §13） |
+| `UseUserDataFolder(string path)` | 覆盖 WebView2 用户数据目录（默认 `%LOCALAPPDATA%\OrielWeb\WebView2`）。**同一进程的所有窗口共享一个 WebView2 环境**——否则第二个窗口起不来 |
+| `SingleInstance(string id, Action<WebviewWindow?>? onActivate = null)` | 单实例（见 §6，含三态判定与运行期目录） |
+| `UseCapabilities(Action<OrielCapabilityOptions>? configure = null)` | 声明页面可调用的命令与可信来源（见 §4） |
+| `UseShell(Action<OrielShellOptions>? configure = null)` | Shell 集成的 scheme 白名单（见 §7） |
+| `AddTray(Action<OrielTrayOptions>? configure = null)` | 启用系统托盘（应用级，最多一个；见 §7） |
+| `UseAutoStartId(string id)` | 覆盖开机自启的标识（默认取可执行文件名；同一标识在多份构建之间会串，必须显式分开） |
+| `UseNotificationAppId(string appId)` | 覆盖系统通知的应用标识（Windows AUMID / Linux `--app-name`；默认取入口程序集名） |
+| `OnWebView2RuntimeMissing(Action<OrielWebView2RuntimeMissingEventArgs> handler)` | 自定义"运行时缺失"的提示与引导（不注册时库弹默认错误框；事件参数里有下载地址） |
+| `Build()` → `OrielApp`；`Run()` | `Run()` = `Build().Run()`；`Build()` 让你自己控制生命周期（配合 `OrielApp.Quit()`） |
 
-### 窗口选项（`OrielWindowOptions`，`AddWindow` 的 configure 里链式调用）
+### 窗口选项（`OrielWindowOptions`）
 
-`WithTitle(string)`、`WithSize(int, int)`、`WithMinSize(int, int)`、`WithFrameless()`、`WithHidden()`、
-`WithUrl(string)`、`WithIcon(string path)`、`WithConsoleForwarding()`、`Centered()`、`Debug` 属性。
+`AddWindow` 的 `configure` 里链式调用；也可以直接设属性。**左边是默认值**：
 
-`OrielApp`：`Theme` / `ThemeChanged`、`Windows`、`CreateWindow(configure, onCreated)`、`Tray`、
-`NotificationsSupported`、`IsAutoStartEnabled` / `SetAutoStart(bool)`、`OpenExternal(url)`、
-`RevealInFileManager(path)`、`PostToMainThread(Action)`。
+| 属性 | 默认 | 链式写法 |
+|---|---|---|
+| `string Title` | `"Oriel"` | `WithTitle(string)` |
+| `int Width` / `int Height` | `1000` / `700` | `WithSize(int, int)` |
+| `int? MinWidth` / `int? MinHeight` | `null`（不限制） | `WithMinSize(int, int)` |
+| `int? X` / `int? Y` | `null` | `At(int, int)`（顺带把 `Center` 置 false） |
+| `bool Center` | `true` | `Centered(bool = true)` |
+| `bool Resizable` | `true` | `WithResizable(bool = true)` |
+| `bool Fullscreen` / `bool OnTop` / `bool Maximized` | 均 `false` | `WithFullscreen()` / `WithOnTop()` / `WithMaximized()`（各带 `bool = true`） |
+| `bool Frameless` | `false` | `WithFrameless(bool = true)`（无边框，见 §2） |
+| `bool Hidden` | `false` | `WithHidden(bool = true)`（窗口不上屏，页面照常加载、IPC 照常往返） |
+| `string? Url` | `null` | `WithUrl(string)`（`null` = 内嵌资源首页） |
+| `string? Icon` | `null` | `WithIcon(string path)`。`null` 时：Windows 从 exe 取图标，Linux/macOS 回落到随产物分发的 `app.png` |
+| `bool Debug` | `false` | `WithDebug(bool = true)` |
+| `bool ConsoleForwarding` | `false` | `WithConsoleForwarding(bool = true)`（页面 console → `ConsoleMessage` 事件） |
+| `OrielContextMenuPolicy ContextMenuPolicy` | `Editing` | `WithContextMenuPolicy(OrielContextMenuPolicy)`（见 §10） |
+| `string? DragRegionSelector` | `null` | `WithDragRegion(string selector)`（宿主指定拖动区域，见 §2；空/空白会抛） |
+
+### `OrielApp`
+
+| 成员（真实签名） | 说明 |
+|---|---|
+| `IReadOnlyList<WebviewWindow> Windows` | 当前存活窗口；关闭的窗口会自动摘除 |
+| `WebviewWindow CreateWindow(Action<OrielWindowOptions>? configure = null, Action<WebviewWindow>? onCreated = null)` | 运行时新建窗口（见 §1 的多窗口说明）。**只能在 `Run()` 之后调**，否则抛 `InvalidOperationException` |
+| `OrielTheme Theme` | `Light` / `Dark`；后端未就绪时返回 `Light` |
+| `event Action<OrielTheme>? ThemeChanged` | 系统主题变化（见 §6） |
+| `void PostToMainThread(Action action)` | 把动作切回 UI 线程（`await` 之后碰窗口必须经它） |
+| `void Quit()` | 请求退出：结束消息循环、让 `Run()` 返回。**不是 `Environment.Exit`**——`Run()` 返回后该做的清理仍会执行 |
+| `OrielTray? Tray` | 当前托盘（未启用为 `null`） |
+| `bool RemoveTray()` / `OrielTray? RestoreTray()` | 移除 / 重建托盘（返回是否成功 / 新托盘） |
+| `bool NotificationsSupported` | 这个环境能不能发系统通知 |
+| `bool ShowNotification(OrielNotificationOptions)`<br>`bool ShowNotification(string title, string? body = null)` | 发通知；返回系统是否接受 |
+| `bool IsAutoStartEnabled` / `bool EnableAutoStart(IReadOnlyList<string>? arguments = null)` / `bool DisableAutoStart()` | 开机自启的查询与开关（`arguments` 是随自启一起传的参数） |
+| `bool OpenExternal(string url)` | 用系统默认程序打开（受 §7 的 scheme 白名单约束；被拒或不支持返回 `false`） |
+| `bool RevealInFileManager(string path)` | 在文件管理器里定位文件 |
+| `bool OpenWithDefaultApp(string path)` | 用默认程序打开本地文件 |
+| `void Run()` / `void Dispose()` | 进入消息循环 / 释放（幂等；托盘是系统级资源，退出前必须释放） |
 
 ### 多窗口
 
@@ -82,19 +119,59 @@ WebviewWindow second = app.CreateWindow(
 
 ### `WebviewWindow`
 
-| 分组 | 成员 |
-|---|---|
-| 显隐与状态 | `Show()` `Hide()` `Close()` `Focus()` `Maximize()` `Minimize()` `Restore()` `SetFullscreen(bool)` `SetOnTop(bool)` `IsMaximized` `ToggleMaximize()` `ToggleFullscreen()` `ToggleOnTop()` |
-| 几何与外观 | `SetTitle` `SetResizable` `SetMinSize` `MoveTo` `Resize` `Center` |
-| 导航 | `GoBack` `GoForward` `Reload` `CanGoBack` `CanGoForward` |
-| 拖动 | `BeginDrag()` `BeginDragStreaming(px,py,wx,wy,ww,wh,sh)` `DragTo(dx,dy)` `EndDrag()` |
-| IPC | `EmitEvent(name, json)` `EmitEvent<T>(name, payload, JsonTypeInfo<T>)` `EvaluateJs(script)` `PostToUiThread(Action)` |
-| 对话框 | `ShowMessage` `ShowOpenFileDialog` `ShowSaveFileDialog` `ShowFolderDialog` |
-| 菜单 | `ShowContextMenu(items)` `ContextMenuPolicy` |
-| 事件 | `Loaded` `Closing` `Closed` `TitleChanged` `MaximizedChanged` `NavigationStarting` `NavigationCompleted` `ConsoleMessage` `MessageReceived` `ContextMenuItemClicked` `FileDropped` |
+窗口门面。所有方法**必须在 UI 线程调用**（`await` 之后要碰窗口就经 `PostToUiThread`）；每个窗口一套独立的页面会话。
 
-事件参数类型：`OrielNavigationCompletedEventArgs`（`Success`/`Url`/`Error`）、`OrielConsoleMessageEventArgs`（`Level`/`Text`）、
-`OrielMessageReceivedEventArgs`（`Name`/`Json`）、`OrielFileDropEventArgs`、`OrielCloseRequestEventArgs`（`Cancel`）。
+| 成员（真实签名） | 返回 / 说明 |
+|---|---|
+| `OrielApp App { get; }` | 所属应用 |
+| **显隐与状态** | |
+| `Show()` `Hide()` `Close()` `Focus()` | `Close()` 会先触发 `Closing`（可取消） |
+| `Maximize()` `Minimize()` `Restore()` | — |
+| `SetFullscreen(bool enabled)` `SetOnTop(bool enabled)` | — |
+| `bool IsMaximized { get; }` / `bool ToggleMaximize()` | 切换后是否最大化（页面据此换图标） |
+| `bool ToggleFullscreen()` / `bool ToggleOnTop()` | 切换后的状态 |
+| **几何与外观** | |
+| `SetTitle(string title)` / `SetResizable(bool enabled)` | — |
+| `SetMinSize(int width, int height)` | — |
+| `MoveTo(int x, int y)` / `Resize(int width, int height)` / `Center()` | 坐标是**屏幕**坐标（应用像素；HiDPI 不要折算，见 §2） |
+| **拖动** | |
+| `BeginDrag()` | Windows：进入原生模态拖动（**阻塞到松开鼠标**） |
+| `BeginDragStreaming(double px, double py, double wx, double wy, double ww, double wh, double sh)` | macOS/Linux 的流式拖动起点；参数含义见 §2。**库自己接管标题栏拖动时走的就是它** |
+| `DragTo(double dx, double dy)` / `EndDrag()` | 增量（CSS 点，y 向下为正）/ 收尾 |
+| **导航** | |
+| `bool CanGoBack { get; }` / `bool CanGoForward { get; }` | — |
+| `GoBack()` `GoForward()` `Reload()` | 无历史时为空操作 |
+| **IPC** | |
+| `void EmitEvent(string name, string jsonPayload)`<br>`void EmitEvent<T>(string name, T payload, JsonTypeInfo<T> typeInfo)` | 宿主 → 页面（页面侧 `oriel.on(name, handler)`） |
+| `Task<string> EvaluateJs(string script)` | 在页面当前文档上下文执行 JS，回 **JSON 编码**的结果串（WebView2 风格）。**边界**：macOS 这条路经页面回环完成，桥接没装上时它**永不完成**（不可信来源就是这样，见 §4） |
+| `void PostToUiThread(Action action)` | 已在 UI 线程则直接执行 |
+| **窗口命令与菜单** | |
+| `ShowContextMenu(IReadOnlyList<OrielMenuItem> items)` | 弹应用自己的上下文菜单（见 §10） |
+| `OrielContextMenuPolicy ContextMenuPolicy { get; set; }` | 运行期改，**下次右键即生效**（见 §10） |
+| **对话框** | |
+| `ShowMessage(string text, string? title = null, OrielMessageBoxIcon icon = OrielMessageBoxIcon.Info)` | 模态，阻塞到用户关闭 |
+| `string[] ShowOpenFileDialog(OrielOpenFileDialogOptions options)` | 多选；取消返回空数组 |
+| `string? ShowOpenFileDialog(string? title = null, string? filter = null, string? initialDirectory = null)` | 单选；取消返回 `null` |
+| `string? ShowSaveFileDialog(OrielSaveFileDialogOptions options)`<br>`string? ShowSaveFileDialog(string? title = null, string? filter = null, string? defaultExtension = null)` | 取消返回 `null` |
+| `string? ShowFolderDialog(string? title = null, string? initialDirectory = null)` | 取消返回 `null`。Windows 的文件夹选择器**不支持初始目录**（已知取舍） |
+
+事件（`+=` 订阅；第二列就是回调参数）：
+
+| 事件 | 参数 | 触发时机 |
+|---|---|---|
+| `event Action? Loaded` | — | 首次加载完成（每窗口一次） |
+| `event Action<OrielCloseRequestEventArgs>? Closing` | `bool Cancel { get; set; }` | 关闭前；置 `Cancel = true` 阻止关闭 |
+| `event Action? Closed` | — | 窗口已关闭 |
+| `event Action<string>? TitleChanged` | 新标题 | 标题变化（含页面 `<title>` 与 `SetTitle`） |
+| `event Action<bool>? MaximizedChanged` | 是否最大化 | 最大化状态变化 |
+| `event Action<string>? NavigationStarting` | 目标 URL | 每次导航开始 |
+| `event Action<OrielNavigationCompletedEventArgs>? NavigationCompleted` | `bool Success` / `string Url` / `string? Error` | 每次导航结束；失败看 `Error` |
+| `event Action<OrielConsoleMessageEventArgs>? ConsoleMessage` | `string Level` / `string Text` | 页面 console（需 `ConsoleForwarding`） |
+| `event Action<OrielMessageReceivedEventArgs>? MessageReceived` | `string Name` / `string Json` | 页面 `postMessage` 上来 |
+| `event Action<string>? ContextMenuItemClicked` | 被点菜单项的 `Id` | 应用自己的上下文菜单（见 §10） |
+| `event Action<OrielFileDropEventArgs>? FileDropped` | `IReadOnlyList<string> Paths` | 拖入文件/文件夹（见 §9） |
+
+`OrielMessageBoxIcon`：`Info`（默认）/ `Warning` / `Error` / `Question`。
 
 > **命令线程模型**：命令执行在**后台线程**（不阻塞 UI 消息循环），回执由分发器切回 UI 线程投递。
 > 命令内要碰窗口时经 `OrielApp.PostToMainThread(...)`；应用自己的异步流程在 `await` 之后要用
@@ -202,6 +279,18 @@ window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
 > **为什么不用反射分发**：`[OrielCommand]` 的路由由 Roslyn 源生成器在编译期生成 switch，
 > 运行期零反射——Native AOT 下反射需要保留大量元数据，而这条路径一次都不会用到。
 >
+> **`win.` 前缀是保留的**：内建窗口命令先于应用路由匹配，应用自定义的同名命令会被**静默遮蔽**
+> （注册表只查"路由之间是否重名"，它不知道内建的存在），所以不会在启动时报错。见 §2 与 §4。
+
+命令侧会用到的公开类型：
+
+| 类型 | 用途 |
+|---|---|
+| `[OrielCommand(string name)]` | 标在命令方法上，`Name` 就是页面 `oriel.invoke` 用的名字；静态方法与实例方法都支持（实例模式见 `AddCommands<T>`）。**命令方法必须线程安全**——实例是共享的 |
+| `OrielJson`（静态） | 命令里读 `JsonElement args` 的助手：`RequireArgElement` / `TryGetArgElement` / `RequireArgKind` / `GetRequiredArg<T>(args, name, jsonContext)` / `GetOptionalArg<T>(…)` / `WriteResult(writer, value, jsonContext)`。缺参数时报的是**带参数名与期望类型**的消息，而不是把 `null` 当默认值用 |
+| `OrielIpcException` | 命令里 `throw` 它，页面侧那个 Promise reject 收到的就是它的 `Message`（抛别的异常则给通用失败文本） |
+| `OrielCommandRegistry.AddRouter(IOrielCommandRouter)` | 手写路由的注册点。`IOrielCommandRouter`（`CommandNames` / `TargetType` / `RequiresTarget` / `Route(name)` / `InvokeAsync(...)`）由 `OrielWeb.Generators` 为每个 `[OrielCommand]` 类型生成——不用源生成器时才需要自己实现 |
+>
 > **失败导航必须报出原因**：三个引擎"接受的失败目标"各不相同（同源缺失页 / 环回端口 / 保留 TLD 各有差异），
 > 且都会静默改写不接受的形态，所以自检里逐个试候选目标，任一真的上报失败即算通过。
 
@@ -285,12 +374,30 @@ app.ThemeChanged += t => { };
 oriel.on('theme.changed', (t) => document.documentElement.dataset.theme = t);
 ```
 
+`OrielTheme` 只有 `Light` / `Dark` 两个值：它表达**当前实际是哪个**，不是"跟随系统 / 手工指定"的偏好——
+偏好由系统设置决定，库只负责读取并上报变更。后端未就绪时 `app.Theme` 返回 `Light`。
+
+### 单实例
+
 ```csharp
 builder.SingleInstance("com.example.myapp", win => { /* 首实例被唤醒 */ });
 ```
 
-> **单实例的判定不能用"命名管道能否创建成功"**：管道名冲突与"已经有实例在跑"是两件事，
-> 用一个**独占文件锁**判定、再用命名管道通知，才是可靠的形态。
+| 方面 | 行为 |
+|---|---|
+| 默认 | **完全可选**：不调用 `SingleInstance` 时，`Run()` 里那段整块跳过——不建锁文件、不建管道、不监听，就是普通的多实例应用 |
+| 判定时机 | **建窗之前**（否则第二个实例会先闪一个窗口再退出） |
+| 第二个实例 | 已把激活请求发给首实例（探活那条连接本身就是判定手段）→ 打印 `SINGLE-INSTANCE-SECONDARY: 已有实例，已通知并退出`（脚本 grep 的契约标记）→ 直接返回，**不进消息循环、退出码 0** |
+| 首实例 | 收到通知后在 UI 线程把窗口 `Show()` + `Focus()`；再调用你的 `onActivate`（不传就只做默认激活，参数是首窗口，没有则为 `null`） |
+| 判定结果 | 是**三态**而不是 bool：`Acquired` / `AlreadyRunning` / `Unavailable`。`Unavailable`（锁文件建不出来：只读目录、磁盘满、沙箱拦截…）**倾向于照常启动**——静默不启动比多开一个窗口难排查得多 |
+| 身份 | `id` 由你给（任意字符串，内部哈希成管道名，并与用户名一起哈希）。不同 id 彼此不影响；**想运行期放行第二个实例，只有换 id 这一条路**（没有"关掉同一个 id"的 API） |
+| 通知载荷 | 库自己**不发载荷**（`TryNotifyPrimary` 与 `ListenAsync` 都留着 payload 的位置，但 `OrielApp` 传空串、监听侧也忽略）→ "第二次启动带了文件路径要在已有窗口打开"这类需求得应用自己另开通道 |
+| 锁与运行期目录 | 锁是**独占文件句柄**，进程退出（哪怕崩溃）由操作系统释放，不留要手工清理的陈旧状态。目录优先 `XDG_RUNTIME_DIR`，否则 `<临时目录>/orielweb-<用户名>`，Unix 上权限收到 `0700`（防同机其他用户抢占可预测的锁名） |
+| 顺序 | 必须配在 `Build()` / `Run()` 之前 |
+
+> **单实例的判定不能用"命名管道能否创建成功"**：管道名冲突与"已经有实例在跑"是两件事——
+> Unix 上 .NET 会先删掉旧 socket 再绑定，于是两个进程都会以为自己才是首实例（实测就是这样：
+> 两边都在等对方）。用一个**独占文件锁**判定、再用命名管道通知，才是可靠的形态。
 >
 > **主题检测每个平台都要看两处**：Windows 注册表 + `WM_SETTINGCHANGE`（`ImmersiveColorSet`）；
 > Linux `GtkSettings` + `notify::`；macOS `NSUserDefaults` + 系统通知。只查一处会在"启动时已是深色"或
@@ -303,8 +410,30 @@ builder.SingleInstance("com.example.myapp", win => { /* 首实例被唤醒 */ })
 | 托盘 | `builder.AddTray(o => { o.Tooltip = "…"; o.MenuOnClick = true; })` → `app.Tray` | 菜单项复用同一套 `OrielMenuItem`；`MenuOnClick` 让左键也弹菜单（手动验证时有用） |
 | 通知 | `app.ShowNotification(title, body)` | 返回 `bool`：**提交失败**才是实现问题，"已提交但没显示"是系统设置问题。点击回调**不提供**（三平台都拿不到） |
 | 窗口上下文菜单 | `window.ShowContextMenu(items)` | 三平台都支持（Windows 阻塞、另两个异步）；菜单构建按平台抽成共享类 |
-| Shell | `app.OpenExternal(url)`、`app.RevealInFileManager(path)` | **默认拒绝式的 scheme 白名单**（`http`/`https`/`mailto`），可 `UseShell` 扩展 |
-| 开机自启 | `app.SetAutoStart(true)` / `IsAutoStartEnabled` | Windows 写 HKCU 的 Run 键、macOS 写 LaunchAgent plist（不调 `launchctl load`，避免立刻又拉起一个）、Linux 写 autostart `.desktop` |
+| Shell | `app.OpenExternal(url)`、`app.RevealInFileManager(path)`、`app.OpenWithDefaultApp(path)` | **默认拒绝式的 scheme 白名单**（`http`/`https`/`mailto`），可 `UseShell` 扩展；被拒或不支持时返回 `false` |
+| 开机自启 | `app.EnableAutoStart(arguments = null)` / `app.DisableAutoStart()` / `app.IsAutoStartEnabled` | Windows 写 HKCU 的 Run 键、macOS 写 LaunchAgent plist（不调 `launchctl load`，避免立刻又拉起一个）、Linux 写 autostart `.desktop`。标识默认取可执行文件名，`UseAutoStartId` 覆盖（多份构建共用一个标识会互相串） |
+
+托盘（`OrielTrayOptions` / `OrielTray`）：
+
+| 成员 | 说明 |
+|---|---|
+| `OrielTrayOptions.IconPath` / `Tooltip` / `MenuOnClick` | 图标路径；悬停文本（默认 `"OrielWeb"`）；左键是否也弹菜单 |
+| `OrielTray.Tooltip` / `IconPath` / `IsVisible` | 运行期读写 |
+| `OrielTray.SetIcon(string? iconPath)` / `Show()` / `Hide()` | 换图标 / 显隐 |
+| `OrielTray.SetMenu(IReadOnlyList<OrielMenuItem>)` / `ClearMenu()` | 整份替换菜单 / 清空 |
+| `event Action? Clicked` | 图标被点（**没配菜单时**才有意义；配了 `MenuOnClick` 就直接弹菜单） |
+| `event Action<string>? MenuItemClicked` | 菜单项被点，参数是该项的 `Id` |
+| `event Action<string>? RawEvent` | 平台原样事件（排查用，各平台载荷不同） |
+
+通知（`OrielNotificationOptions`）：
+
+| 成员 | 说明 |
+|---|---|
+| `Title` / `Body` / `IconPath` | 标题（多平台加粗显示，不可为空）/ 正文 / 附加图标（部分平台忽略） |
+| `Id` | 通知身份（Windows 上是 toast 的 `Tag`）。**不用于点击回传**——点击上报功能已整体移除 |
+
+shell（`OrielShellOptions`）：`AllowedSchemes`（默认 `http` / `https` / `mailto`）、静态 `DefaultSchemes`、
+链式 `WithScheme(string)`。
 
 菜单项与 role：
 
@@ -339,6 +468,14 @@ string? folder = window.ShowFolderDialog("选择目录");
 - Windows 走 `GetOpenFileNameW` / `SHBrowseForFolderW`（**老 API**：`IFileOpenDialog` 是 COM 接口，
   为一个文件夹对话框引入 COM 互操作不划算；代价是**文件夹选择不支持初始目录**）。
 - 保存时若输入没有扩展名，库按 `DefaultExtension` 补上（三平台不会替我们做同一件事）。
+- 第二个参数那条 `"图片|*.png;*.jpg"` 是 Win32 风格的过滤器串，内部由 `OrielFileFilter.Parse(string?)`
+  转成列表；要精确控制就传选项对象。取消的返回约定见 §1（`string?` 为 `null`，多选为**空数组**）。
+
+| 选项（真实成员） | 适用 |
+|---|---|
+| `OrielOpenFileDialogOptions`：`Title` / `Filters` / `InitialDirectory` / `AllowMultiple` | 打开 |
+| `OrielSaveFileDialogOptions`：`Title` / `Filters` / `InitialDirectory` / `DefaultExtension` / `DefaultFileName` | 保存 |
+| `OrielFileFilter`：`Name` / `Patterns`；静态 `Of(string name, params string[] patterns)`、`AllFiles`、`Parse(string?)` | 两者共用 |
 
 ## 9. 文件拖放
 
@@ -365,9 +502,26 @@ window.ContextMenuPolicy = OrielContextMenuPolicy.Editing;  // Editing（默认�
 
 | 值 | 行为 |
 |---|---|
-| `Editing` | 只留剪切/复制/粘贴。**Windows 是过滤式**（订阅 `ContextMenuRequested` 按名字保留三项）；**macOS/Linux 是接管式**：自己弹一个只含三项的菜单，编辑命令走引擎的原生通道 |
-| `Native` | 平台原样 |
-| `Disabled` | 完全不弹 |
+| `Editing`（默认，值 0） | 只留剪切/复制/粘贴。**Windows 是过滤式**（订阅 `ContextMenuRequested` 按名字保留三项）；**macOS/Linux 是接管式**：自己弹一个只含三项的菜单，编辑命令走引擎的原生通道 |
+| `Native`（1） | 平台原样 |
+| `Disabled`（2） | 完全不弹 |
+
+应用自己的菜单用 `window.ShowContextMenu(items)` 弹，点击从 `window.ContextMenuItemClicked`（参数是项的 `Id`）回来。
+
+`OrielMenuItem`（成员与三个工厂）：
+
+| 成员 | 说明 |
+|---|---|
+| `Id` / `Label` | 标识（点击事件带的就是它）/ 显示文本 |
+| `Role` | 平台角色（用 `OrielMenuRole.*` 填），由库翻译成各平台的原生行为 |
+| `Accelerator` | 加速键文本，如 `"CmdOrCtrl+Shift+A"`；由 `OrielAccelerator.TryParse` 解析。各平台能表达的子集不同（Linux 托盘菜单只有一层等） |
+| `IsSeparator` / `Enabled`（默认 true）/ `Checked` | 分隔线 / 是否可点 / 勾选态 |
+| `Items` | 子菜单（一份菜单能嵌几层由平台决定，见 `OrielMenuItem` 的文档注释） |
+| `static Separator()` / `static Item(string id, string label)` / `static RoleItem(string role)` | 三个工厂 |
+
+`OrielMenuRole` 的全部取值（17 个常量）：`About` `Quit` `Hide` `HideOthers` `ShowAll`（应用级）；
+`Undo` `Redo` `Cut` `Copy` `Paste` `SelectAll` `Delete`（编辑级）；`Minimize` `Zoom` `Close` `Front`
+`ToggleFullScreen`（窗口级）。
 
 > **为什么 macOS/Linux 是接管而不是"就地增删引擎菜单"**：后者在 WebKitGTK 4.1 上会破坏内存
 > （连点右键几次就崩），所以改成自己弹菜单、编辑命令经 `webkit_web_view_execute_editing_command` 走引擎。
