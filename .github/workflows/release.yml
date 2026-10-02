@@ -90,19 +90,36 @@ jobs:
         run: |
           # 与 ci.yml 同一个钉法：vpk 的产物形态随版本变，升级要显式做
           dotnet tool install --global vpk --version 1.2.*
-          $env:PATH = "$env:PATH;$env:USERPROFILE\.dotnet\tools"
+          # dotnet 全局工具落在 <家目录>/.dotnet/tools，而"家目录"与 PATH 分隔符三平台各不相同：
+          # 原先写的 "$env:USERPROFILE\.dotnet\tools" 在 macOS/Linux 上 $env:USERPROFILE 是空的、
+          # PATH 用的也是 ':' 而不是 ';'——拼出来的条目根本不是 vpk 所在的位置。
+          $env:PATH = @($env:PATH, (Join-Path $HOME '.dotnet/tools')) -join [IO.Path]::PathSeparator
+          if (-not (Get-Command vpk -ErrorAction SilentlyContinue)) { throw "vpk 不在 PATH 上" }
 
           $packDir = 'dist/demo'
           $extra = @()
           if ('${{ runner.os }}' -eq 'macOS') { $packDir = 'dist/OrielDemo.app' }
-          if ('${{ runner.os }}' -eq 'Windows') { $extra += @('--mainExe', 'OrielDemo.exe', '--msi') }
-          $icon = if ('${{ runner.os }}' -eq 'Windows') { 'samples/OrielDemo/app.ico' } else { 'samples/OrielDemo/app.png' }
+          if ('${{ runner.os }}' -eq 'Windows') {
+            $extra += @('--mainExe', 'OrielDemo.exe', '--msi', '--icon', 'samples/OrielDemo/app.ico')
+          }
+          if ('${{ runner.os }}' -eq 'Linux') { $extra += @('--icon', 'samples/OrielDemo/app.png') }
+          # macOS 刻意不给 --icon：vpk 在 macOS 上认的是 .icns（我们只有 .ico/.png），
+          # 而 --icon 并非必填（--help 里只有 --packDir 标了 REQ）——图标该由 .app 自己带；
+          # 真应用要图标就用 app.png 生成 .icns 放进 bundle（见 README 的打包一节）。
+          # 2026-10-02：第一次带 .png 跑 macOS 打包就折在这一步。
 
-          vpk pack --packId OrielDemo --packVersion "${{ steps.version.outputs.value }}" `
+          $output = vpk pack --packId OrielDemo --packVersion "${{ steps.version.outputs.value }}" `
             --packTitle "Oriel Demo" --packAuthors "OrielWeb Contributors" `
-            --packDir $packDir --outputDir dist/releases --icon $icon `
-            --skip-updates -x -y @extra
-          if ($LASTEXITCODE -ne 0) { throw "vpk pack 失败（退出码 $LASTEXITCODE）" }
+            --packDir $packDir --outputDir dist/releases --skip-updates -x -y @extra 2>&1
+          $code = $LASTEXITCODE
+          $output | ForEach-Object { Write-Output $_ }
+          if ($code -ne 0) {
+            # vpk 的失败原因只在它自己的输出里，而日志要 token 才能读——注解不用。
+            # 把最后几行拼进注解，下一次失败就能直接看到原因（与 ci.yml 的冒烟步骤同一个理由）。
+            $tail = ($output | Where-Object { "$_".Trim() } | Select-Object -Last 3) -join ' / '
+            Write-Output "::error title=vpk pack 失败（${{ runner.os }}，退出码 $code）::$tail"
+            throw "vpk pack 失败（退出码 $code）"
+          }
 
           # 更新包（*.nupkg）与更新清单（releases.*.json / assets.*.json / RELEASES*）都不要：
           # 本仓库不发更新源，清单还会指向一个已被删掉的包
