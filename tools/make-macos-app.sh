@@ -31,7 +31,13 @@ APP="$OUT/$NAME.app"
 [[ -f "$EXE" ]] || { echo "找不到要打包的可执行文件：$EXE" >&2; exit 1; }
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+# Contents/Resources 必须先建出来，哪怕先放空：Velopack 的 macOS 打包器要往
+# <app>/Contents/Resources/sq.version 写版本标记，并且**假定这个目录已经存在**。
+# 2026-10-02 实测：缺它时 vpk pack 直接抛
+#   System.IO.DirectoryNotFoundException: Could not find a part of the path
+#   '.../velopack/temp.1/Oriel Demo.app/Contents/Resources/sq.version'
+# 真实的 .app 几乎都有 Resources 目录，所以这是它默认成立的前提，不是它的缺陷。
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$EXE" "$APP/Contents/MacOS/$NAME"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
