@@ -249,7 +249,7 @@ pwsh tools/publish.ps1 -Bundle
 
 # 也可以分开：先发布，再让 vpk 消费产物
 pwsh tools/publish.ps1
-vpk pack --packId OrielDemo --packVersion 0.1.3 --packDir dist/win-x64 \
+vpk pack --packId OrielDemo --packVersion 0.1.4 --packDir dist/win-x64 \
   --packTitle "Oriel Demo" --mainExe OrielDemo.exe --icon samples/OrielDemo/app.ico --msi
 ```
 
