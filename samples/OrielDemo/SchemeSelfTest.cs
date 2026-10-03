@@ -10,9 +10,9 @@ namespace OrielDemo;
 /// <para>
 /// 为什么需要它：三平台的自定义 scheme 能力并不对称，而且不对称的部分**恰好是看不见的**。
 /// Windows 有 <c>CoreWebView2CustomSchemeRegistration.TreatAsSecure</c>、Linux 有
-/// <c>webkit_security_manager_register_uri_scheme_as_secure</c>，**macOS 的公开 API 里没有对应开关**。
-/// 也就是说 <c>window.isSecureContext</c>（连带 <c>crypto.subtle</c> 这类只在安全上下文可用的 API）
-/// 在 macOS 上是什么值，没人量过。以前这类事实全靠"上游文档说"，那是猜测。
+/// <c>webkit_security_manager_register_uri_scheme_as_secure</c>，**macOS 的公开 API 里没有对应开关**——
+/// 所以 <c>window.isSecureContext</c>（连带 <c>crypto.subtle</c> 这类只在安全上下文可用的 API）
+/// 在 macOS 上是什么值，一度只能从上游文档推断。
 /// </para>
 /// <para>
 /// 断言什么、只报告什么（这条分界线是刻意的）：
@@ -26,6 +26,13 @@ namespace OrielDemo;
 ///     于是没人再看它。所以它们进日志 + 进 GitHub 注解（注解**不需要 token** 就能读，
 ///     而 CI 日志需要——2026-10-02 排查 macOS 冒烟时，正是这个差别决定了问题能不能查下去）。</item>
 /// </list>
+/// <para>
+/// <b>2026-10-03 的实测基线</b>（CI 跑出来的，三平台一致）：
+/// <c>origin=oriel://app.oriel secure=true subtle=true storage=ok fetch=ok:200:949</c>。
+/// 也就是说 macOS 的自定义 scheme 同样落在安全上下文里——那条"没有公开开关"的不对称**没有兑现**，
+/// 但它是被量出来的，不是被假设的。这条基线现在每轮 CI 复核：哪天某个平台翻成别的值，
+/// 注解会先变，而不是等到用户报告"我的页面用不了 SubtleCrypto"。
+/// </para>
 /// </remarks>
 internal static class SchemeSelfTest
 {

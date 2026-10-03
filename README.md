@@ -223,8 +223,9 @@ MIME 由库按扩展名给出（自定义 scheme 下引擎不再替你推断，�
 - 事实探针：`--selftest scheme` 打印页面来源与"来源决定的能力"（`isSecureContext`、`crypto.subtle`、
   `localStorage`、相对路径 `fetch`），并写成一条 GitHub 注解（注解读得出来、日志要 token）。
   它断言两条设计承诺——来源必须是 `oriel://<host>`、相对 `fetch` 必须取得到资源——其余**如实报告**：
-  三平台的自定义 scheme 能力并不对称，macOS 更是没有"标记为安全上下文"的公开开关，
-  这类事实必须被**量**出来，而不是从上游文档推断。
+  三平台的自定义 scheme 能力并不对称（macOS 没有"标记为安全上下文"的公开开关），所以这些事实是
+  **量**出来的、不是从上游文档推断的。2026-10-03 的实测基线三平台一致：
+  `origin=oriel://app.oriel secure=true subtle=true storage=ok fetch=ok:200:949`。
 
 ## 能力一览
 
