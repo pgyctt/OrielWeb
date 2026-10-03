@@ -14,9 +14,13 @@
 
       场景 A 零配置     samples/OrielMinimal（csproj 里一行 EmbeddedResource 都没有）
                         → 资源名必须是显式分隔符形式：OrielMinimal.wwwroot/app.min.js
-      场景 B 旧写法     同一个工程加回手写的 <EmbeddedResource Include="wwwroot\**\*" />
-                        → 必须仍是兼容反推形式，且**不能**同时出现显式形式
-                          （同时出现就说明 targets 没跳过、同一批文件被嵌了两次）
+      场景 B1 自己声明  同一个工程加回手写的 <EmbeddedResource Include="wwwroot\**\*" />
+                        **带** LogicalName="OrielMinimal.wwwroot/%(RecursiveDir)%(Filename)%(Extension)"
+                        → 受支持：targets 跳过自动内嵌，资源名与零配置逐字符一致，不重复嵌入
+      场景 B2 旧写法    同一个工程加上述那一行但**不带** LogicalName
+                        → 必须**构建失败**（ORIELWEB001）并给出正确写法。
+                          旧写法已删除：资源名无法区分"目录"与"含点的文件名"，库猜不准，
+                          而猜错的表现是运行期白屏——与其静默，不如在构建期就拦下。
       场景 C 显式关闭   同一个工程加 -p:OrielWebEmbeddedAssets=false
                         → 一条 wwwroot 资源都不该有
 
@@ -80,6 +84,22 @@ function Show-Resources {
 function ConvertTo-NormalizedNames {
     param([string[]] $Names)
     return @($Names | ForEach-Object { $_.Replace('\', '/') })
+}
+
+# 期望构建**失败**的版本：返回构建日志供断言（成功反而说明该报的错没报）。
+function Invoke-SampleBuildExpectFailure {
+    param(
+        [string] $ProjectDir,
+        [string] $Label,
+        [string[]] $ExtraArguments = @()
+    )
+
+    $buildLog = (& dotnet build $ProjectDir -c Release -v:n @ExtraArguments 2>&1 | Out-String)
+    if ($LASTEXITCODE -eq 0) {
+        throw "$Label：期望构建失败，但它成功了——该拦的写法没被拦下。"
+    }
+
+    return $buildLog
 }
 
 function Invoke-SampleBuild {
@@ -191,7 +211,7 @@ try {
     Test-Assert ($a.Resources -contains 'OrielMinimal.wwwroot/index.html') `
         '普通文件 index.html 正常嵌入'
     Test-Assert (-not ($a.Resources -contains 'OrielMinimal.wwwroot.app.min.js')) `
-        '没有出现兼容反推形式的资源名'
+        '没有出现按 "." 反推路径的资源名（那种形式已不再支持）'
     Test-Assert ($a.BuildLog -match '已自动内嵌') `
         '构建日志里能看到"已自动内嵌"的说明'
 
@@ -207,16 +227,43 @@ try {
     Test-Assert ($raw -match 'OrielBuildConfiguration[\x00-\x20]Release') `
         '消费方程序集带上 OrielBuildConfiguration=Release 元数据（能力模型取 Debug/Release 的第一条路径）'
 
-    # ── 场景 B：旧写法保持兼容 ──────────────────────────────────────
+    # ── 场景 B1：自己声明，带 LogicalName（受支持）──────────────────
     Write-Host ''
-    Write-Host '--- 4. 场景 B：旧写法（手写 EmbeddedResource，不写 LogicalName）---' -ForegroundColor Cyan
+    Write-Host '--- 4. 场景 B1：自己声明（带 LogicalName）---' -ForegroundColor Cyan
+    $ownDir = Join-Path $temp 'own'
+    New-SampleCopy -TargetDir $ownDir
+
+    $ownCsproj = Join-Path $ownDir 'OrielMinimal.csproj'
+    $ownItem = @'
+  <ItemGroup>
+    <!-- 自己声明也可以，但必须带 LogicalName（显式 '/' 分隔符） -->
+    <EmbeddedResource Include="wwwroot\**\*"
+                      LogicalName="OrielMinimal.wwwroot/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>
+'@
+    $csprojText = Get-Content $ownCsproj -Raw -Encoding utf8
+    Set-Content -Path $ownCsproj -NoNewline -Encoding utf8 -Value $csprojText.Replace('</Project>', $ownItem)
+
+    $b1 = Invoke-SampleBuild -ProjectDir $ownDir -Label '场景 B1'
+    Show-Resources -Names $b1.Resources
+
+    Test-Assert ($b1.Resources -contains 'OrielMinimal.wwwroot/app.min.js') `
+        '自己声明（带 LogicalName）时资源名与零配置逐字符一致'
+    Test-Assert ($b1.BuildLog -match '跳过自动内嵌') `
+        '构建日志里能看到"跳过自动内嵌"（说明没有重复嵌入同一批文件）'
+
+    # ── 场景 B2：旧写法（不带 LogicalName）——已删除，必须构建失败 ──
+    Write-Host ''
+    Write-Host '--- 5. 场景 B2：旧写法（不带 LogicalName）应当构建失败 ---' -ForegroundColor Cyan
     $legacyDir = Join-Path $temp 'legacy'
     New-SampleCopy -TargetDir $legacyDir
 
     $legacyCsproj = Join-Path $legacyDir 'OrielMinimal.csproj'
     $legacyItem = @'
   <ItemGroup>
-    <!-- 旧写法：不写 LogicalName -->
+    <!-- 旧写法：不写 LogicalName（2026-10-03 起不再支持） -->
     <EmbeddedResource Include="wwwroot\**\*" />
   </ItemGroup>
 
@@ -225,19 +272,16 @@ try {
     $csprojText = Get-Content $legacyCsproj -Raw -Encoding utf8
     Set-Content -Path $legacyCsproj -NoNewline -Encoding utf8 -Value $csprojText.Replace('</Project>', $legacyItem)
 
-    $b = Invoke-SampleBuild -ProjectDir $legacyDir -Label '场景 B'
-    Show-Resources -Names $b.Resources
+    $legacyLog = Invoke-SampleBuildExpectFailure -ProjectDir $legacyDir -Label '场景 B2'
 
-    Test-Assert ($b.Resources -contains 'OrielMinimal.wwwroot.app.min.js') `
-        '旧写法仍是兼容反推形式（行为完全没变）'
-    Test-Assert (-not ($b.Resources -contains 'OrielMinimal.wwwroot/app.min.js')) `
-        '没有同时嵌一份显式形式（证明 targets 检测到已声明并跳过，没有重复嵌入）'
-    Test-Assert ($b.BuildLog -match '跳过自动内嵌') `
-        '构建日志里能看到"跳过自动内嵌"的说明'
+    Test-Assert ($legacyLog -match 'ORIELWEB001') `
+        '旧写法在构建期就被拦下（错误码 ORIELWEB001），而不是留到运行期变成白屏'
+    Test-Assert ($legacyLog -match 'LogicalName') `
+        '错误信息里给出了正确写法（带 LogicalName 的自声明）'
 
     # ── 场景 C：显式关闭 ────────────────────────────────────────────
     Write-Host ''
-    Write-Host '--- 5. 场景 C：OrielWebEmbeddedAssets=false ---' -ForegroundColor Cyan
+    Write-Host '--- 6. 场景 C：OrielWebEmbeddedAssets=false ---' -ForegroundColor Cyan
     $offDir = Join-Path $temp 'off'
     New-SampleCopy -TargetDir $offDir
 
@@ -267,5 +311,5 @@ if ($failures.Count -gt 0) {
     exit 1
 }
 
-Write-Host '验证通过：包内 build logic 按约定工作，旧写法保持兼容。' -ForegroundColor Green
+Write-Host '验证通过：包内 build logic 按约定工作；旧写法（不带 LogicalName）在构建期被拦下。' -ForegroundColor Green
 exit 0

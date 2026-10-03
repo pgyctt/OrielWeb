@@ -23,10 +23,11 @@
 
     ── 三条约定 ────────────────────────────────────────────────────
     1. **默认开启**，但消费方已经自己声明过 wwwroot 资源时**跳过**（幂等）。
-       不跳过的话同一批文件会被嵌两次，且两份的 LogicalName 不同
-       （一份显式分隔符、一份兼容反推），资源表里会同时出现 app.js 与 app/min.js。
-    2. **旧写法保持兼容**：已经手写 <EmbeddedResource> 的项目行为完全不变——
-       走的就是上面第 1 条的"跳过"分支。
+       不跳过的话同一批文件会被嵌两次（一份自动、一份自己声明），资源表里会同时出现两条
+       指向同一份文件的资源，命中哪一条取决于写法。
+    2. **自己声明也行，但必须带 LogicalName**（显式 '/' 分隔符）：走上面第 1 条的"跳过"分支。
+       不带 LogicalName 的旧写法**不再支持**，构建期直接报 ORIELWEB001——
+       那种资源名无法区分"目录"与"含点的文件名"，库猜不准，而猜错的表现是运行期白屏。
     3. 可用 <OrielWebEmbeddedAssets>false</OrielWebEmbeddedAssets> 整体关掉。
 
     ── 为什么"注入"在求值期，而"跳过判定"在执行期 ────────────────────
@@ -100,6 +101,11 @@
       <_OrielWebForeignWwwroot Include="@(EmbeddedResource)"
                                Condition="'%(EmbeddedResource.OrielWebAutoEmbed)' != 'true'
                                           and $([System.String]::Copy('%(EmbeddedResource.FullPath)').Replace('\','/').Contains('/wwwroot/'))" />
+      <!-- 其中**没写 LogicalName** 的那部分 = 已删除的旧写法。
+           与上面那份分开，是因为两者的下场相反：带 LogicalName 的自声明是**受支持**的路径（跳过自动内嵌），
+           不带的那份要直接报错。混在一个集合里会让"跳过"的条件顺带把错误也触发。 -->
+      <_OrielWebLegacyWwwroot Include="@(_OrielWebForeignWwwroot)"
+                              Condition="'%(_OrielWebForeignWwwroot.LogicalName)' == ''" />
     </ItemGroup>
 
     <PropertyGroup>
@@ -110,13 +116,23 @@
       <EmbeddedResource Remove="@(_OrielWebInjected)" />
     </ItemGroup>
 
+    <!-- 旧写法（不写 LogicalName）现在直接报错，而不是让它在运行期变成"页面白屏、宿主无异常"。
+         为什么是 Error 而不是 Warning：那种资源名里的 '.' 到底算目录还是算文件名的一部分，
+         从名字上根本无法区分（app.min.js 与 app/min.js 的资源名一模一样），库只能猜——猜错的表现是
+         加载不到资源。既然无法正确解释，就不要装作能解释。
+         作用域限定在"自动内嵌开启"时：若这个 wwwroot 是给别的东西用的，
+         设 <OrielWebEmbeddedAssets>false</OrielWebEmbeddedAssets> 即可（那时本目标不再判定）。 -->
+    <Error Condition="'$(OrielWebEmbeddedAssets)' != 'false' and '@(_OrielWebLegacyWwwroot)' != ''"
+           Code="ORIELWEB001"
+           Text="OrielWeb: 检测到 @(_OrielWebLegacyWwwroot->Count()) 个不带 LogicalName 的 wwwroot 内嵌资源（旧写法，已不再支持）。请删掉那行 &lt;EmbeddedResource Include=&quot;wwwroot\**\*&quot; /&gt;，让本包自动内嵌；要自己声明就必须带 LogicalName=&quot;$(AssemblyName).wwwroot/%(RecursiveDir)%(Filename)%(Extension)&quot;。若这些资源与本库无关，请设 &lt;OrielWebEmbeddedAssets&gt;false&lt;/OrielWebEmbeddedAssets&gt;。" />
+
     <!-- 诊断信息：让"到底嵌没嵌、为什么跳过"直接看得见，而不是让人去猜资源名。
          重要性用 normal 而不是 low：MSBuild 只在 detailed 及以上才显示 low，
          而 -v:n 是最常用的排障档位——用 low 等于这条信息在排障时恰好不出现。
          默认的 dotnet build（minimal）仍然看不到它，不会污染正常构建输出。 -->
     <Message Importance="normal"
              Condition="'$(_OrielWebSkipAutoEmbed)' == 'true'"
-             Text="OrielWeb: 项目已自行声明 @(_OrielWebForeignWwwroot->Count()) 个 wwwroot 资源，跳过自动内嵌（旧写法保持原样）。" />
+             Text="OrielWeb: 项目已自行声明 @(_OrielWebForeignWwwroot->Count()) 个 wwwroot 资源（带 LogicalName），跳过自动内嵌。" />
     <Message Importance="normal"
              Condition="'$(_OrielWebSkipAutoEmbed)' != 'true' and '@(_OrielWebInjected)' != ''"
              Text="OrielWeb: 已自动内嵌 @(_OrielWebInjected->Count()) 个 wwwroot 资源（LogicalName 用显式 '/' 分隔符，含点文件名不会再被推错路径）。" />

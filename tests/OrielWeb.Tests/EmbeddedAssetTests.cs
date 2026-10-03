@@ -3,117 +3,114 @@ using Xunit;
 namespace OrielWeb.Tests;
 
 /// <summary>
-/// 内嵌资源名 → 相对路径的映射（<see cref="EmbeddedAssetStore"/>）。
+/// 内嵌资源名 → 相对路径的映射，以及请求路径的归一（<see cref="EmbeddedAssetStore"/>）。
 /// </summary>
 /// <remarks>
 /// 这段映射以前是"静默写错路径"的源头：含点的文件名（<c>app.min.js</c>）被当成目录分隔，
-/// 解压到 <c>app/min.js</c>，页面按原 URL 请求就是 404 白屏，而宿主侧没有任何异常。
-/// 两套约定（显式分隔符 / 兼容反推）与它们的判定方式都在这里钉住。
+/// 页面按原 URL 请求就是 404 白屏，而宿主侧没有任何异常。2026-10-03 起只认一种约定
+/// （显式 <c>/</c> 分隔符），旧写法直接报错——这里把"只认哪一种""旧形式会怎样"
+/// 以及"请求路径的边界在哪"都钉住。
 /// </remarks>
 public sealed class EmbeddedAssetTests
 {
     private static string Normalize(string relative)
         => relative.Replace('/', Path.DirectorySeparatorChar);
 
-    // ---- 约定判定：前缀自己说明用的是哪一种 ----
+    // ---- 约定判定：只有显式分隔符这一种 ----
 
     [Fact]
-    public void Convention_ExplicitPrefixWhenResourcesUseSlash()
+    public void Convention_ExplicitPrefix_WhenResourcesUseSlash()
     {
         // LogicalName 写法：资源名形如 MyApp.wwwroot/assets/img/logo.svg
-        var (prefix, explicitSeparators) = EmbeddedAssetStore.ResolveConvention(
-            ["MyApp.wwwroot/index.html", "MyApp.wwwroot/assets/img/logo.svg"], "MyApp", null);
-
-        Assert.Equal("MyApp.wwwroot/", prefix);
-        Assert.True(explicitSeparators);
-    }
-
-    [Fact]
-    public void Convention_LegacyPrefixWhenResourcesUseDots()
-    {
-        var (prefix, explicitSeparators) = EmbeddedAssetStore.ResolveConvention(
-            ["MyApp.wwwroot.index.html", "MyApp.wwwroot.assets.img.logo.svg"], "MyApp", null);
-
-        Assert.Equal("MyApp.wwwroot.", prefix);
-        Assert.False(explicitSeparators);
+        Assert.Equal(
+            "MyApp.wwwroot/",
+            EmbeddedAssetStore.ResolveConvention(
+                ["MyApp.wwwroot/index.html", "MyApp.wwwroot/assets/img/logo.svg"], "MyApp", null));
     }
 
     [Fact]
     public void Convention_ExplicitWinsEvenForFlatLayout()
     {
-        // 平铺目录下显式写法**看不出分隔符**（只有 MyApp.wwwroot/app.min.js 这种名字），
-        // 这正是以前漏掉的一类：只按"资源名里有没有分隔符"判断，会把它当成兼容写法反推成 app/min.js。
-        var (prefix, explicitSeparators) = EmbeddedAssetStore.ResolveConvention(
-            ["MyApp.wwwroot/index.html", "MyApp.wwwroot/app.min.js"], "MyApp", null);
-
-        Assert.Equal("MyApp.wwwroot/", prefix);
-        Assert.True(explicitSeparators);
+        // 平铺目录下显式写法**看不出分隔符**（名字里只有 MyApp.wwwroot/app.min.js 这种）——
+        // 这正是旧实现漏掉的一类：它按"资源名里有没有分隔符"判断，于是把 app.min.js 反推成 app/min.js。
+        // 现在判定只看前缀，前缀自己就说明了约定。
+        Assert.Equal(
+            "MyApp.wwwroot/",
+            EmbeddedAssetStore.ResolveConvention(
+                ["MyApp.wwwroot/index.html", "MyApp.wwwroot/app.min.js"], "MyApp", null));
     }
 
     [Fact]
-    public void Convention_OverridePrefixDecidesByItsOwnShape()
+    public void Convention_OverrideMustEndWithSeparator()
     {
-        var explicitOverride = EmbeddedAssetStore.ResolveConvention(
-            ["assets/img/logo.svg"], "MyApp", "assets/");
-        Assert.Equal("assets/", explicitOverride.Prefix);
-        Assert.True(explicitOverride.ExplicitSeparators);
+        Assert.Equal(
+            "assets/",
+            EmbeddedAssetStore.ResolveConvention(["assets/img/logo.svg"], "MyApp", "assets/"));
 
-        var legacyOverride = EmbeddedAssetStore.ResolveConvention(
-            ["assets.img.logo.svg"], "MyApp", "assets.");
-        Assert.Equal("assets.", legacyOverride.Prefix);
-        Assert.False(legacyOverride.ExplicitSeparators);
+        // 以 '.' 结尾的自定义前缀意味着"资源名里的 '.' 是目录分隔"——那正是猜不准的那件事，直接拒绝。
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => EmbeddedAssetStore.ResolveConvention(["assets.img.logo.svg"], "MyApp", "assets."));
+        Assert.Contains("resourcePrefix", ex.Message, StringComparison.Ordinal);
     }
 
-    // ---- 映射：显式约定 ----
+    [Fact]
+    public void Convention_LegacyResources_AreRejectedWithGuidance()
+    {
+        // 只剩旧写法时，报的是"你用了一个已删除的写法"，而不是笼统的"没找到资源"——
+        // 后者的排查方向会跑到资源名上，而问题在 csproj 那一行上。
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => EmbeddedAssetStore.ResolveConvention(["MyApp.wwwroot.index.html"], "MyApp", null));
+
+        Assert.Contains("不再支持", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("LogicalName", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Convention_NoResources_ReturnsTheExpectedPrefix()
+    {
+        // 一条资源都没有时不在这里抛：措辞统一的"没找到资源"由 Create 负责（它对使用者更有用，
+        // 因为那条消息会说清"什么都不用写，targets 会嵌"）。
+        Assert.Equal("MyApp.wwwroot/", EmbeddedAssetStore.ResolveConvention([], "MyApp", null));
+    }
+
+    // ---- 映射：只翻译分隔符，'.' 永远属于文件名 ----
 
     [Theory]
     [InlineData("index.html", "index.html")]
-    // 关键回归：平铺目录下的含点文件名不再被拆成目录
-    [InlineData("app.min.js", "app.min.js")]
+    [InlineData("app.min.js", "app.min.js")]                  // 关键回归：含点文件名不再被拆成目录
     [InlineData("vendor.bundle.js", "vendor.bundle.js")]
     [InlineData("logo.dark.svg", "logo.dark.svg")]
     [InlineData("assets/img/logo.svg", "assets/img/logo.svg")]
     [InlineData("a.b/c.d.js", "a.b/c.d.js")]
     [InlineData("deep/nested/dir/file.txt", "deep/nested/dir/file.txt")]
-    public void ExplicitConvention_KeepsDotsInFileNames(string suffix, string expected)
-    {
-        Assert.Equal(Normalize(expected), EmbeddedAssetStore.MapResourceToPath(suffix, explicitSeparators: true));
-    }
+    [InlineData("readme", "readme")]
+    public void DotsStayInFileNames(string suffix, string expected)
+        => Assert.Equal(Normalize(expected), EmbeddedAssetStore.MapResourceToPath(suffix));
 
     [Fact]
-    public void ExplicitConvention_AcceptsBackslashToo()
+    public void BackslashSeparatorsAreTranslated()
     {
         // MSBuild 的 %(RecursiveDir) 在 Windows 上给的是反斜杠，混合分隔符也要能处理
-        Assert.Equal(
-            Normalize("assets/img/logo.svg"),
-            EmbeddedAssetStore.MapResourceToPath(@"assets\img/logo.svg", explicitSeparators: true));
+        Assert.Equal(Normalize("assets/img/logo.svg"), EmbeddedAssetStore.MapResourceToPath(@"assets\img/logo.svg"));
     }
 
-    // ---- 映射：兼容约定（保留既有行为，但把已知限制写死） ----
+    // ---- 请求路径归一：真正的边界在这里，不在 URI 解析 ----
 
     [Theory]
-    [InlineData("index.html", "index.html")]
-    [InlineData("assets.img.logo.svg", "assets/img/logo.svg")]
-    [InlineData("sub.page.html", "sub/page.html")]
-    public void LegacyConvention_TreatsDotsAsDirectories(string suffix, string expected)
-    {
-        Assert.Equal(Normalize(expected), EmbeddedAssetStore.MapResourceToPath(suffix, explicitSeparators: false));
-    }
+    [InlineData("../outside.html")]
+    [InlineData("sub/../../outside.html")]
+    [InlineData("..")]
+    [InlineData("sub/..")]
+    public void NormalizeRequestPath_RejectsDotSegments(string path)
+        => Assert.Null(EmbeddedAssetStore.NormalizeRequestPath(path));
 
-    [Fact]
-    public void LegacyConvention_IsAmbiguousForDottedFileNames()
-    {
-        // 已知限制：兼容写法下 app.min.js 与 app/min.js 的资源名完全一样，无法从名字区分。
-        // 这个用例把限制钉死，避免以后有人以为"反推逻辑还能修"——要用含点文件名就换显式写法。
-        Assert.Equal(
-            Normalize("app/min.js"),
-            EmbeddedAssetStore.MapResourceToPath("app.min.js", explicitSeparators: false));
-    }
-
-    [Fact]
-    public void NoDotAtAll_ReturnsAsIs()
-    {
-        Assert.Equal("readme", EmbeddedAssetStore.MapResourceToPath("readme", explicitSeparators: false));
-        Assert.Equal("readme", EmbeddedAssetStore.MapResourceToPath("readme", explicitSeparators: true));
-    }
+    [Theory]
+    [InlineData(null, "index.html")]
+    [InlineData("", "index.html")]
+    [InlineData("/", "index.html")]
+    [InlineData("/sub/", "sub/index.html")]
+    [InlineData("/sub/page.html", "sub/page.html")]
+    [InlineData("a%20b/c.js", "a b/c.js")]
+    public void NormalizeRequestPath_ResolvesTheUsualForms(string? path, string expected)
+        => Assert.Equal(expected, EmbeddedAssetStore.NormalizeRequestPath(path));
 }

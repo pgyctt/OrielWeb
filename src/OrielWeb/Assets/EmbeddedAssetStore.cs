@@ -59,18 +59,17 @@ internal sealed class EmbeddedAssetStore
 
         string assemblyName = assembly.GetName().Name ?? "app";
         string[] names = assembly.GetManifestResourceNames();
-        var convention = ResolveConvention(names, assemblyName, resourcePrefixOverride);
+        string prefix = ResolveConvention(names, assemblyName, resourcePrefixOverride);
 
         var resources = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (string name in names)
         {
-            if (!name.StartsWith(convention.Prefix, StringComparison.Ordinal))
+            if (!name.StartsWith(prefix, StringComparison.Ordinal))
             {
                 continue;
             }
 
-            string relative = MapResourceToPath(name[convention.Prefix.Length..], convention.ExplicitSeparators)
-                .Replace('\\', '/');
+            string relative = MapResourceToPath(name[prefix.Length..]).Replace('\\', '/');
 
             // 同一个相对路径出现两次（大小写不同、或两种约定混用）时保首个：后者是命名事故，
             // 与其静默覆盖，不如让先声明的那个稳定胜出。
@@ -80,9 +79,10 @@ internal sealed class EmbeddedAssetStore
         if (resources.Count == 0)
         {
             throw new InvalidOperationException(
-                $"未找到前缀为 '{convention.Prefix}' 的内嵌资源：请在 csproj 配置 " +
-                "<EmbeddedResource Include=\"wwwroot\\**\\*\" />（见 README「快速开始」），" +
-                "或为 UseEmbeddedAssets 显式指定 resourcePrefix。");
+                $"未找到前缀为 '{prefix}' 的内嵌资源。正确做法是**什么都不写**——" +
+                "包内的 buildTransitive/OrielWeb.targets 会把 wwwroot 自动内嵌（见 README「快速开始」）；" +
+                "自己声明时则必须带 LogicalName=\"<程序集名>.wwwroot/%(RecursiveDir)%(Filename)%(Extension)\"，" +
+                "或为 UseEmbeddedAssets 显式指定以 '/' 结尾的 resourcePrefix。");
         }
 
         return new EmbeddedAssetStore(assembly, resources);
@@ -155,34 +155,60 @@ internal sealed class EmbeddedAssetStore
     }
 
     /// <summary>
-    /// 判定资源名用的是哪种约定：前缀是 <c>&lt;程序集名&gt;.wwwroot/</c>（显式分隔符，推荐）
-    /// 还是 <c>&lt;程序集名&gt;.wwwroot.</c>（兼容写法）。
+    /// 判定资源名前缀：<c>&lt;程序集名&gt;.wwwroot/</c>（显式分隔符）。
     /// </summary>
     /// <remarks>
-    /// <b>前缀自己就说明用的是哪一种</b>，所以这里不需要（也不能）靠资源名去猜。
-    /// 这一点很关键：<c>wwwroot/app.min.js</c> 与 <c>wwwroot/app/min.js</c> 在两种约定下
-    /// 生成的资源名一模一样，只有前缀（<c>/</c> 还是 <c>.</c>）能区分它们。
-    /// 早先只按"资源名里有没有分隔符"判断，导致**平铺目录下的含点文件名**
-    /// （<c>app.min.js</c>、<c>vendor.bundle.js</c>）仍然被反推成 <c>app/min.js</c>。
+    /// <para>
+    /// 只有这一种约定。以前还认"不带 <c>LogicalName</c>"的旧写法（资源名形如
+    /// <c>MyApp.wwwroot.app.min.js</c>），靠"最后一个 <c>.</c> 是扩展名"反推目录——那个反推在
+    /// 文件名主干含 <c>.</c> 时**必然出错**（<c>app.min.js</c> 被推成 <c>app/min.js</c>，
+    /// 页面 404 白屏而宿主侧没有任何异常），而且从资源名上无法与"嵌套目录"区分开。
+    /// 2026-10-03 起不再兼容：撞见旧形式直接抛异常并指路，而不是继续猜。
+    /// </para>
+    /// <para>
+    /// <b>前缀自己就说明用的是哪一种</b>，所以这里不需要（也不能）靠资源名去猜：
+    /// <c>wwwroot/app.min.js</c> 与 <c>wwwroot/app/min.js</c> 在旧约定下生成的资源名一模一样，
+    /// 只有前缀（<c>/</c> 还是 <c>.</c>）能区分它们。
+    /// </para>
     /// </remarks>
-    internal static (string Prefix, bool ExplicitSeparators) ResolveConvention(
+    internal static string ResolveConvention(
         string[] resourceNames, string assemblyName, string? resourcePrefixOverride)
     {
         if (resourcePrefixOverride is { Length: > 0 } custom)
         {
-            return (custom, IsExplicitSeparatorPrefix(custom));
+            if (!IsExplicitSeparatorPrefix(custom))
+            {
+                throw new InvalidOperationException(
+                    $"UseEmbeddedAssets 的 resourcePrefix「{custom}」不是显式分隔符形式：" +
+                    "它必须以 '/' 结尾（如 \"MyApp.wwwroot/\"）。不带分隔符的旧形式已不再支持——" +
+                    "那种形式下 app.min.js 与 app/min.js 的资源名完全一样，只能靠猜，而猜错的表现是页面白屏。");
+            }
+
+            return custom;
         }
 
-        string explicitPrefix = $"{assemblyName}.wwwroot/";
-        if (Array.Exists(resourceNames, name => name.StartsWith(explicitPrefix, StringComparison.Ordinal)))
+        string prefix = $"{assemblyName}.wwwroot/";
+        if (Array.Exists(resourceNames, name => name.StartsWith(prefix, StringComparison.Ordinal)))
         {
-            return (explicitPrefix, true);
+            return prefix;
         }
 
-        return ($"{assemblyName}.wwwroot.", false);
+        // 走到这里通常是旧写法：报"你用的是已删除的形式"，而不是笼统的"没找到资源"——
+        // 后者会让人去翻资源名，而这里的问题在 csproj 的写法上。
+        string legacyPrefix = $"{assemblyName}.wwwroot.";
+        if (Array.Exists(resourceNames, name => name.StartsWith(legacyPrefix, StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                $"检测到旧写法内嵌资源（前缀 '{legacyPrefix}'）：不带 LogicalName 的 " +
+                "<EmbeddedResource Include=\"wwwroot\\**\\*\" /> 已不再支持。请删掉那一行，" +
+                "让包内的 buildTransitive/OrielWeb.targets 自动内嵌（零配置）；" +
+                "要自己声明就必须带 LogicalName=\"" + $"{assemblyName}.wwwroot/" + "%(RecursiveDir)%(Filename)%(Extension)\"。");
+        }
+
+        return prefix;
     }
 
-    /// <summary>前缀自身是否声明了"显式分隔符"约定（以 <c>/</c> 或 <c>\</c> 结尾）。</summary>
+    /// <summary>前缀自身是否声明了"显式分隔符"（以 <c>/</c> 或 <c>\</c> 结尾）。</summary>
     private static bool IsExplicitSeparatorPrefix(string prefix)
         => prefix[^1] == '/' || prefix[^1] == '\\';
 
@@ -190,51 +216,16 @@ internal sealed class EmbeddedAssetStore
     /// 资源名后缀 → 相对路径。
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// <b>推荐写法（显式分隔符）</b>：用 <c>LogicalName</c> 让资源名自带路径分隔符，
-    /// 此时 <c>.</c> 就只是文件名的一部分，不存在任何歧义：
-    /// </para>
-    /// <code>
-    /// &lt;EmbeddedResource Include="wwwroot\**\*"
-    ///                   LogicalName="$(AssemblyName).wwwroot/%(RecursiveDir)%(Filename)%(Extension)" /&gt;
-    /// </code>
-    /// <para>
-    /// <b>兼容写法</b>：<c>Include="wwwroot\**\*"</c> 不加 <c>LogicalName</c> 时，MSBuild 会把
-    /// <c>%(RecursiveDir)</c> 里的分隔符压成 <c>.</c>，于是只能靠"最后一个 <c>.</c> 是扩展名"反推目录。
-    /// 这个反推在**文件名主干或目录名含 <c>.</c>** 时必然出错，而且从资源名上无法与"嵌套目录"区分开：
-    /// <list type="bullet">
-    ///   <item><c>assets/img/logo.svg</c> → <c>assets.img.logo.svg</c> → <c>assets/img/logo.svg</c> ✅</item>
-    ///   <item><c>app.min.js</c> → <c>app.min.js</c> → <c>app/min.js</c> ❌（会静默 404 白屏）</item>
-    /// </list>
-    /// 含点文件名的工程请改用上面的 <c>LogicalName</c> 写法。
-    /// </para>
+    /// 只做分隔符翻译：资源名里的 <c>.</c> 一律是文件名的一部分
+    /// （<c>app.min.js</c> 就是 <c>app.min.js</c>，不是 <c>app/min.js</c>）——这正是
+    /// <c>LogicalName</c> 带显式 <c>/</c> 的意义所在。旧写法那套"反推目录"已删除，见
+    /// <see cref="ResolveConvention"/>。
     /// </remarks>
     /// <param name="resourceSuffix">去掉前缀之后的资源名。</param>
-    /// <param name="explicitSeparators">
-    /// 该资源集是否使用显式分隔符约定（由 <see cref="ResolveConvention"/> 判定）。
-    /// </param>
-    internal static string MapResourceToPath(string resourceSuffix, bool explicitSeparators)
-    {
-        // 显式约定，或资源名里本来就带分隔符 → '.' 一律是文件名的一部分，只需翻译分隔符
-        if (explicitSeparators
-            || resourceSuffix.Contains('/')
-            || resourceSuffix.Contains('\\'))
-        {
-            return resourceSuffix
-                .Replace('\\', Path.DirectorySeparatorChar)
-                .Replace('/', Path.DirectorySeparatorChar);
-        }
-
-        // 兼容写法：只能靠"最后一个 '.' 是扩展名"反推
-        var extensionIndex = resourceSuffix.LastIndexOf('.');
-        if (extensionIndex < 0)
-        {
-            return resourceSuffix.Replace('.', Path.DirectorySeparatorChar);
-        }
-
-        var stem = resourceSuffix[..extensionIndex].Replace('.', Path.DirectorySeparatorChar);
-        return stem + resourceSuffix[extensionIndex..];
-    }
+    internal static string MapResourceToPath(string resourceSuffix)
+        => resourceSuffix
+            .Replace('\\', Path.DirectorySeparatorChar)
+            .Replace('/', Path.DirectorySeparatorChar);
 }
 
 /// <summary>一件内嵌资源：它的资源名与按扩展名推断的内容类型。</summary>

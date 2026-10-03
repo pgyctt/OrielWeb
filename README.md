@@ -123,23 +123,30 @@ OrielWeb: 已自动内嵌 12 个 wwwroot 资源（LogicalName 用显式 '/' 分�
 | 情形 | 行为 |
 |---|---|
 | 项目里没有 `wwwroot`，或里面没有文件 | 启动时**抛异常**并说明该怎么配（不是静默白屏） |
-| 项目自己写了 `<EmbeddedResource Include="wwwroot\**\*" />`（**旧写法**，不带 `LogicalName`） | targets 检测到后**跳过**自动内嵌，旧行为原样保留（日志会说明）。所以旧项目升级后不会因为"两种写法并存"而重复嵌入 |
-| 不想要自动内嵌 | `<OrielWebEmbeddedAssets>false</OrielWebEmbeddedAssets>`，然后自己声明资源（此时用 `UseEmbeddedAssets` 的第二个参数指定资源前缀） |
+| 项目自己声明 `wwwroot` 资源（**带** `LogicalName`） | targets 检测到后**跳过**自动内嵌（日志会说明），资源名与自动内嵌逐字符一致，不会重复嵌入 |
+| 项目写了 `<EmbeddedResource Include="wwwroot\**\*" />`（**旧写法**，不带 `LogicalName`） | **构建期报错 `ORIELWEB001`**。那种资源名无法区分"目录"与"含点的文件名"，库猜不准——删掉那行即可 |
+| 不想要自动内嵌 | `<OrielWebEmbeddedAssets>false</OrielWebEmbeddedAssets>`，然后自己声明资源（必须带 `LogicalName`，并用 `UseEmbeddedAssets` 的第二个参数指定资源前缀） |
 
 > 上面那条"检测到就让位"的逻辑不是多余的：若没有它，同一个文件被两种方式各内嵌一次，页面会同时存在
-> `app.js` 与 `app/min.js` 两条资源（最终命中哪一条取决于写法），MSBuild 还可能直接报
-> `CS1508 已使用资源标识符`。
+> 两条指向同一份文件的资源，MSBuild 还可能直接报 `CS1508 已使用资源标识符`。
 
-> **为什么还认旧写法**：那是本库早期文档教的写法，直接不认会让已有项目升级后白屏。但它有上面那个含点文件名的坑，
-> 所以新项目请走零配置（示例 `samples/OrielMinimal` 就是零配置；`samples/OrielDemo` 刻意保留旧写法当回归案例，
-> `tools/verify-pack.ps1` 的"场景 B"钉住它保持旧行为）。
+> **仓库内用 `ProjectReference` 的工程要自己声明**：`build/` 与 `buildTransitive/` 是 NuGet 包的机制，
+> 只随包分发——`ProjectReference` 不带它们。所以本仓库的 `samples/OrielDemo` 自己写了带 `LogicalName`
+> 的那一行，而零配置只有从**包**消费时才生效（`samples/OrielMinimal` 与 `tools/verify-pack.ps1` 走的
+> 就是那条路）。踩这个坑的症状是启动即 `未找到前缀为 '…wwwroot/' 的内嵌资源`。
+
+> **旧写法为什么被删掉**（2026-10-03）：不带 `LogicalName` 时 MSBuild 会把 `%(RecursiveDir)` 里的分隔符压成 `.`，
+> 于是 `app.min.js` 与 `app/min.js` 生成的资源名**完全一样**——库只能靠"最后一个 `.` 是扩展名"去猜，
+> 而猜错的表现是页面 404 白屏、宿主侧毫无异常。既然无法正确解释，就不要装作能解释：这种写法现在在**构建期**
+> 被 `ORIELWEB001` 拦下，错误信息里直接给出正确写法。回归证据是 `tools/verify-pack.ps1` 的场景 B1
+> （带 `LogicalName` 的自声明受支持）与 B2（旧写法必须构建失败）。
 
 ### C# 侧的开关
 
 ```csharp
 .UseEmbeddedAssets()                                  // 默认：host 是 app.oriel（即 oriel://app.oriel/），资源前缀按程序集名推断
 .UseEmbeddedAssets("myapp.local")                     // 换 host（于是页面在 oriel://myapp.local/ 下）
-.UseEmbeddedAssets("app.oriel", "MyApp.wwwroot.")     // 显式指定资源名前缀（自定义内嵌方式时用）
+.UseEmbeddedAssets("app.oriel", "MyApp.wwwroot/")     // 显式指定资源名前缀（自己声明资源时用；必须以 '/' 结尾）
 ```
 
 ### 运行期：资源怎么交给页面
@@ -211,9 +218,10 @@ MIME 由库按扩展名给出（自定义 scheme 下引擎不再替你推断，�
 
 ### 验证账
 
-- `tools/verify-pack.ps1`（CI 的 `test` job 每轮跑）造三种消费形态并断言资源名：
-  **A 零配置** → 显式分隔符形式（`MyApp.wwwroot/app.min.js`，不被反推成 `app/min.js`）；
-  **B 旧写法** → 反推形式，且 targets 确实跳过了（不含显式形式，证明没有重复嵌入）；
+- `tools/verify-pack.ps1`（CI 的 `test` job 每轮跑）造四种消费形态并断言资源名：
+  **A 零配置** → 显式分隔符形式（`MyApp.wwwroot/app.min.js`，不会被拆成 `app/min.js`）；
+  **B1 自带 `LogicalName` 的自声明** → 与零配置逐字符一致，且 targets 确实跳过了（没有重复嵌入）；
+  **B2 旧写法（不带 `LogicalName`）** → **构建失败**并给出正确写法（错误码 `ORIELWEB001`）；
   **C `-p:OrielWebEmbeddedAssets=false`** → 一条 wwwroot 资源都没有。
 - 单测：`AssetUrlTests`（默认首页、query/fragment、子目录、`oriel://` 与兼容别名、相似域名不命中、
   `..` 折叠与编码斜杠被拒、MIME 表）、`EmbeddedAssetTests`（两种资源名约定的推断，以及"含点文件名在旧写法下

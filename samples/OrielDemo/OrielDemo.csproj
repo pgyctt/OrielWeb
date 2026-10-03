@@ -31,13 +31,17 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- 前端资源内嵌进程序集，启动时解压并由虚拟主机 https://app.oriel/ 提供。
+    <!-- 前端资源内嵌进程序集，运行期由自定义 scheme oriel://app.oriel/ 提供。
 
-         **这一行是刻意保留的旧写法**（不带 LogicalName）：它是包内 buildTransitive/OrielWeb.targets
-         那条"消费方已自行声明就跳过"路径的回归案例（见 README「快速开始」与 tools/verify-pack.ps1）。
-         新项目不要照抄——让 targets 去嵌，或者自己写就必须带 LogicalName。
-         tools/verify-pack.ps1 的"场景 B"就是钉住它保持旧行为。 -->
-    <EmbeddedResource Include="wwwroot\**\*" />
+         **为什么这里要自己声明，而不是"零配置"**：本工程用 ProjectReference 引用库，而包的
+         build/ 与 buildTransitive/ **不随 ProjectReference 分发**（那是 NuGet 包的机制），
+         所以仓库内的示例拿不到自动内嵌——零配置只在从包消费时生效，见 samples/OrielMinimal
+         与 tools/verify-pack.ps1 的场景 A。
+
+         自己声明就必须带 LogicalName 的显式 '/' 分隔符（下面这行与 targets 自动生成的那行逐字符一致）。
+         不带 LogicalName 的旧写法已删除：构建期会报 ORIELWEB001。 -->
+    <EmbeddedResource Include="wwwroot\**\*"
+                      LogicalName="$(AssemblyName).wwwroot/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

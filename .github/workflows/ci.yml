@@ -42,7 +42,8 @@ jobs:
 
       - name: Package build logic (in-package MSBuild targets)
         # 包内 buildTransitive/OrielWeb.targets 的消费链路：打包 → 零配置消费工程 → 断言
-        # wwwroot 资源名（含 app.min.js 这类含点文件名）→ 旧写法不重复嵌入 → 可显式关掉。
+        # wwwroot 资源名（含 app.min.js 这类含点文件名）→ 自带 LogicalName 的自声明不重复嵌入
+        # → 旧写法（不带 LogicalName）必须在构建期被 ORIELWEB001 拦下 → 可显式关掉。
         # 不接进来的话，改动 targets 只能等发布后在某个消费方那里以"页面 404 白屏"的形式暴露——
         # 那正是这份 targets 要消灭的静默失败。脚本自带断言与退出码。
         shell: pwsh
