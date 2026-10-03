@@ -52,7 +52,7 @@ internal static class Program
     /// <c>--selftest</c> 认得的名字。加一个自检只需在这里加名字 + 在 Main 里加一行判定。
     /// </summary>
     private static readonly string[] SelfTestNames =
-        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow"];
+        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme"];
 
     /// <summary>本次请求的自检名字是否就是 <paramref name="name"/>（忽略大小写与首尾空白）。</summary>
     private static bool IsSelfTest(string? requested, string name)
@@ -104,6 +104,10 @@ internal static class Program
         var capabilitySelfTest = IsSelfTest(selfTest, "capability");
         // multiwindow：运行时新建窗口 → 每个窗口各一套会话 → 关掉一个不退出 → win.close 只关发起者
         var multiWindowSelfTest = IsSelfTest(selfTest, "multiwindow");
+
+        // scheme：打印页面来源与"来源决定的能力"（isSecureContext / crypto.subtle / localStorage /
+        // 相对路径 fetch），并断言其中两条（见 SchemeSelfTest 的分界线）
+        var schemeSelfTest = IsSelfTest(selfTest, "scheme");
         // --manual-check：手动验证操作台（停在那里等人点，不自动退出）。
         // 与 --selftest shell 的分工：那个是给 CI 的无人断言，这个是给人看的——
         // 每项做成按钮，托管侧的回调（托盘菜单项、通知点击、快捷键、拖放）回显到页面。
@@ -113,7 +117,8 @@ internal static class Program
         // 想看 Todo 示例页（"怎么用本库写应用"的示范）加 --todo；跑无人自检时也不用它，
         // 免得两种模式去争同一个托盘。
         bool anySelfTest = navSelfTest || ipcSelfTest || themeSelfTest
-            || singleInstanceSelfTest || shellSelfTest || capabilitySelfTest || multiWindowSelfTest;
+            || singleInstanceSelfTest || shellSelfTest || capabilitySelfTest || multiWindowSelfTest
+            || schemeSelfTest;
         var manualCheck = !anySelfTest && !args.Contains("--todo");
 
         // 主题自检需要 OrielApp（主题是应用级的），所以这里显式 Build 再 Run；
@@ -187,6 +192,10 @@ internal static class Program
                 {
                     MultiWindowSelfTest.Attach(win);
                 }
+                if (schemeSelfTest)
+                {
+                    SchemeSelfTest.Attach(win, AssetHost);
+                }
             });
 
         if (singleInstanceSelfTest)
@@ -238,7 +247,8 @@ internal static class Program
             || (singleInstanceSelfTest && SingleInstanceSelfTest.Failed)
             || (shellSelfTest && ShellSelfTest.Failed)
             || (capabilitySelfTest && CapabilitySelfTest.Failed)
-            || (multiWindowSelfTest && MultiWindowSelfTest.Failed))
+            || (multiWindowSelfTest && MultiWindowSelfTest.Failed)
+            || (schemeSelfTest && SchemeSelfTest.Failed))
         {
             Environment.ExitCode = 1;
         }

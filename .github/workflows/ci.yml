@@ -174,17 +174,17 @@ jobs:
         # 它们不影响判定，最终以脚本末尾的机器结论为准。
         run: xvfb-run -a bash tools/verify-linux.sh --backend x11 --out "$RUNNER_TEMP/linux-verify-out"
 
-      - name: Self-tests (navigation / IPC / capability / multiwindow)
+      - name: Self-tests (navigation / IPC / capability / multiwindow / origin probe)
         # 机器断言：导航（跳转 / 后退 / 前进 / 刷新 / 失败）、IPC（console 转发、postMessage、
         # EmitEvent 闭环）、能力模型与多窗口。都不依赖人眼，以日志里的结论行判定。
         # xvfb 里没有窗口管理器，但这些都不经过 WM，所以在这条路径上有效。
         run: |
           demo=samples/OrielDemo/bin/Release/net10.0/linux-x64/publish/OrielDemo
-          for mode in nav ipc capability multiwindow; do
+          for mode in nav ipc capability multiwindow scheme; do
             log="$RUNNER_TEMP/selftest-$mode.log"
             xvfb-run -a "$demo" --selftest "$mode" > "$log" 2>&1
             code=$?
-            verdict="$(grep -E '^(NAV|IPC|CAPABILITY|MULTIWINDOW)-SELFTEST: ' "$log" | tail -1 || true)"
+            verdict="$(grep -E '^(NAV|IPC|CAPABILITY|MULTIWINDOW|SCHEME)-SELFTEST: ' "$log" | tail -1 || true)"
             echo "----- selftest $mode（退出码 $code）$verdict -----"
             sed 's/^/  /' "$log"
             # 判定以日志里的结论行为准（与 macOS 一致）：应用的退出方式各平台不同，
@@ -328,7 +328,7 @@ jobs:
           if ($leftover) { throw "release 目录里还有不该有的文件：$($leftover.Name -join ', ')" }
           Write-Output "OK：只留安装产物（$((Get-ChildItem dist/releases -File).Name -join ', ')）"
 
-      - name: Self-tests (navigation / IPC / theme / capability / multiwindow)
+      - name: Self-tests (navigation / IPC / theme / capability / multiwindow / origin probe)
         # 与 Linux 同款断言（见 smoke-linux 的说明）。刻意用 Start-Process 而不是 & 调用，两个原因：
         #  1) pwsh 的 $LASTEXITCODE 在 & 调用之后仍可能是上一条原生命令的值、甚至未定义（$null），
         #     而 $null -ne 0 为真——第一次接进来时就是这样被误报成失败的（步骤 1 秒内失败）；
@@ -349,7 +349,7 @@ jobs:
           # 而结论行会汇总成一条 GitHub 注解（注解用 API 就能读到，见本步骤末尾的说明）。
           $failures = @()
           $summary = @()
-          foreach ($mode in @("nav", "ipc", "theme", "capability", "multiwindow")) {
+          foreach ($mode in @("nav", "ipc", "theme", "capability", "multiwindow", "scheme")) {
             $out = "$env:RUNNER_TEMP\selftest-$mode.out.txt"
             $err = "$env:RUNNER_TEMP\selftest-$mode.err.txt"
             $p = Start-Process -FilePath $demo -ArgumentList @("--selftest", $mode) -Wait -PassThru `
@@ -360,7 +360,7 @@ jobs:
             # 判定以日志里的结论行为准（与 Linux / macOS 一致），退出码只作为附加信息。
             $verdict = ""
             if (Test-Path $out) {
-              $last = Select-String -Path $out -Pattern '^(NAV|IPC|THEME|CAPABILITY|MULTIWINDOW)-SELFTEST: ' | Select-Object -Last 1
+              $last = Select-String -Path $out -Pattern '^(NAV|IPC|THEME|CAPABILITY|MULTIWINDOW|SCHEME)-SELFTEST: ' | Select-Object -Last 1
               if ($last) { $verdict = $last.Line }
             }
             $summary += "[$mode] $(if ($verdict) { $verdict } else { "无结论行（退出码 $($p.ExitCode)）" })"
