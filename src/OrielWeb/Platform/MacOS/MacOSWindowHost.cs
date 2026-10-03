@@ -36,7 +36,10 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     /// </summary>
     internal WebviewWindow Window => _window;
     private readonly MacOSPlatformBackend _backend;
-    private readonly string? _assetDirectory;
+    private readonly EmbeddedAssetStore? _assets;
+
+    /// <summary>oriel:// 的 scheme 处理器（挂在 config 上，必须活到 webview 销毁）。</summary>
+    private nint _assetSchemeHandler;
     private readonly MacOSWebMessageHandler _messageHandler;
 
     private nint _nsWindow;
@@ -194,13 +197,13 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
             app, ObjCRuntime.Sel("sendAction:to:from:"), ObjCRuntime.Sel(selectorName), 0, 0);
     }
 
-    internal MacOSWindowHost(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, MacOSPlatformBackend backend)
+    internal MacOSWindowHost(WebviewWindow window, OrielWindowOptions options, OrielApp app, EmbeddedAssetStore? assets, MacOSPlatformBackend backend)
     {
         _window = window;
         _options = options;
         _app = app;
         _backend = backend;
-        _assetDirectory = assetDirectory;
+        _assets = assets;
         _title = options.Title;
         // 策略是可写属性（运行时能改），初值取自 options
         ContextMenuPolicy = options.ContextMenuPolicy;
@@ -381,6 +384,17 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
             true);
         ObjCRuntime.SendVoidObj(userContentController, ObjCRuntime.Sel("addUserScript:"), userScript);
 
+        // oriel:// 的处理器必须挂在 config 上，且必须在创建 webview **之前**（见 MacOSObjCClasses）。
+        if (_assets is not null)
+        {
+            _assetSchemeHandler = MacOSObjCClasses.CreateAssetSchemeHandler(_assets, _app.AssetHost);
+            ObjCRuntime.SendVoidObjObj(
+                config,
+                ObjCRuntime.Sel("setURLSchemeHandler:forURLScheme:"),
+                _assetSchemeHandler,
+                ObjCRuntime.MakeNSString(AssetUrl.Scheme));
+        }
+
         _webview = ObjCRuntime.SendIdDouble4Obj(
             ObjCRuntime.SendId(clsWKWebView, ObjCRuntime.Sel("alloc")),
             ObjCRuntime.Sel("initWithFrame:configuration:"),
@@ -481,51 +495,33 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     {
         if (_options.Url is { Length: > 0 } externalUrl)
         {
-            // 内嵌资源的虚拟主机 URL（https://&lt;AssetHost&gt;/…）在 macOS 上没有引擎支持：WKWebView 的
-            // WKURLSchemeHandler 只能注册**自定义** scheme，而 https 是保留 scheme。原样交出去会变成一次
-            // 真实的网络请求，DNS 解析失败后渲染错误页——就是一片空白。这里映射回解压目录里的本地文件，
-            // 与 Windows 的虚拟主机映射语义对齐。
-            if (AssetUrlResolver.TryResolveLocalFile(externalUrl, _app.AssetHost, _assetDirectory) is { } localFile)
-            {
-                LoadLocalFile(localFile);
-                return;
-            }
-
-            // URLWithString: 同样要 NSString*，不是 char*
-            var url = ObjCRuntime.SendIdObj(
-                ObjCRuntime.GetClass("NSURL"),
-                ObjCRuntime.Sel("URLWithString:"),
-                ObjCRuntime.MakeNSString(externalUrl));
-            var request = ObjCRuntime.SendIdObj(ObjCRuntime.GetClass("NSURLRequest"), ObjCRuntime.Sel("requestWithURL:"), url);
-            ObjCRuntime.SendVoidObj(_webview, ObjCRuntime.Sel("loadRequest:"), request);
+            // 内嵌资源交给 WKWebView 的 oriel:// 处理器（见 MacOSAssetScheme）；兼容别名
+            // https://<host>/… 在这里被归一成 oriel://，于是页面来源与 Windows/Linux 一致。
+            // （旧实现把 https:// 映射成解压目录里的 file:// 本地文件：那要求资源必须落盘，
+            // 而且 loadFileURL:allowingReadAccessToURL: 的读权限是"按目录"给的，多一层坑。）
+            NavigateCore(AssetUrl.TryResolve(externalUrl, _app.AssetHost, out string relative)
+                ? AssetUrl.ForHost(_app.AssetHost, relative)
+                : externalUrl);
             return;
         }
 
         // 内嵌资产首页
-        if (_assetDirectory is not null)
+        if (_assets is not null)
         {
-            LoadLocalFile(Path.Combine(_assetDirectory, "index.html"));
+            NavigateCore(AssetUrl.DefaultDocument(_app.AssetHost));
         }
     }
 
-    /// <summary>
-    /// 用 <c>loadFileURL:allowingReadAccessToURL:</c> 加载本地文件。读权限限定在资源目录内——只把一个
-    /// <c>file://</c> URL 交给 <c>loadRequest:</c> 是不够的：那样没有读权限，页面引用的同目录资源
-    /// （styles.css、app.js）会被 WKWebView 拦下，页面同样只剩空白。
-    /// </summary>
-    private void LoadLocalFile(string filePath)
+    private void NavigateCore(string url)
     {
-        var fileUrl = ObjCRuntime.SendIdObjBool(
+        // URLWithString: 要 NSString*，不是 char*（把 char* 当 NSString* 传会在
+        // CoreFoundation 的 __CF_IS_OBJC 里 trap，真机 CI 上实测过）。
+        var nsUrl = ObjCRuntime.SendIdObj(
             ObjCRuntime.GetClass("NSURL"),
-            ObjCRuntime.Sel("fileURLWithPath:isDirectory:"),
-            ObjCRuntime.MakeNSString(filePath),
-            false);
-        var accessUrl = ObjCRuntime.SendIdObjBool(
-            ObjCRuntime.GetClass("NSURL"),
-            ObjCRuntime.Sel("fileURLWithPath:isDirectory:"),
-            ObjCRuntime.MakeNSString(_assetDirectory!),
-            true);
-        ObjCRuntime.SendVoidObjObj(_webview, ObjCRuntime.Sel("loadFileURL:allowingReadAccessToURL:"), fileUrl, accessUrl);
+            ObjCRuntime.Sel("URLWithString:"),
+            ObjCRuntime.MakeNSString(url));
+        var request = ObjCRuntime.SendIdObj(ObjCRuntime.GetClass("NSURLRequest"), ObjCRuntime.Sel("requestWithURL:"), nsUrl);
+        ObjCRuntime.SendVoidObj(_webview, ObjCRuntime.Sel("loadRequest:"), request);
     }
 
     private void HideStandardButton(nint buttonKind)
@@ -558,6 +554,8 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         MacOSObjCClasses.RemoveScriptHandler(_scriptHandler);
         MacOSObjCClasses.RemoveDropView(_dropView);
         MacOSObjCClasses.RemoveUIDelegate(_uiDelegate);
+        MacOSObjCClasses.RemoveAssetSchemeHandler(_assetSchemeHandler);
+        _assetSchemeHandler = 0;
         _nsWindowDelegate = 0;
         _navigationDelegate = 0;
         _scriptHandler = 0;

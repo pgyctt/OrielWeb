@@ -227,6 +227,36 @@ internal static unsafe partial class ObjCRuntime
     internal static nint MakeNSString(string value)
         => SendIdUtf8(GetClass("NSString"), Sel("stringWithUTF8String:"), value);
 
+    // ---- 协议与追加的 msgSend 签名（oriel:// 的应答需要）----
+
+    /// <summary>按名字取协议对象（如 <c>WKURLSchemeHandler</c>）。</summary>
+    [LibraryImport(ObjCLib, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial nint objc_getProtocol(string name);
+
+    /// <summary>
+    /// 给类声明一个协议。
+    /// </summary>
+    /// <remarks>
+    /// 不是形式主义：<c>[WKWebViewConfiguration setURLSchemeHandler:forURLScheme:]</c> 会检查
+    /// <c>conformsToProtocol:</c>，没声明就抛 <c>NSInvalidArgumentException</c>——而托管侧看到的是
+    /// "建窗崩了"，很难联想到协议。
+    /// </remarks>
+    [LibraryImport(ObjCLib)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool class_addProtocol(nint cls, nint protocol);
+
+    /// <summary>两个整数参数（如 <c>+[NSData dataWithBytes:length:]</c>）。</summary>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendIdNintNint(nint self, nint sel, nint a, nint b);
+
+    /// <summary>对象 + 整数 + 对象（如 <c>+[NSError errorWithDomain:code:userInfo:]</c>）。</summary>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendIdObjNintObj(nint self, nint sel, nint obj, nint integer, nint tail);
+
+    /// <summary>对象 + 整数 + 两个对象（如 <c>-[NSHTTPURLResponse initWithURL:statusCode:HTTPVersion:headerFields:]</c>）。</summary>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendIdObjNintObjObj(nint self, nint sel, nint a, nint integer, nint b, nint c);
+
     /// <summary>[[NSString UTF8String]] → 托管字符串（指针仅在当前调用/池内有效，立即复制）。</summary>
     internal static string ToManagedString(nint nsString)
     {

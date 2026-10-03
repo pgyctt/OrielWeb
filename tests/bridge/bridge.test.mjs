@@ -39,8 +39,8 @@ const injectedVersion = '9.8.7';
 /** 测试用的令牌（对应 C# 侧 OrielIpcToken.Generate：32 位小写十六进制）。 */
 const injectedToken = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
 
-/** 测试用的可信来源前缀（对应 OrielIpcGuard 自动加入的内嵌资源虚拟主机）。 */
-const trustedPrefixes = ['https://app.oriel/'];
+/** 测试用的可信来源前缀（对应 OrielIpcGuard 自动加入的内嵌资源来源：自定义 scheme）。 */
+const trustedPrefixes = ['oriel://app.oriel/'];
 
 /** 测试用的注入值（对应 C# 侧 OrielSystemSnapshot 与拖动默认值）。 */
 const injectedDoubleClickMs = 477;
@@ -324,18 +324,18 @@ test('安全：不可信来源下桥接完全不安装', () => {
 });
 
 test('安全：来源按前缀比较，近似域名不算可信', () => {
-    // 前缀是 'https://app.oriel/'（末尾带斜杠），所以把 host 拼进自己域名里这种样子不会命中
+    // 前缀是 'oriel://app.oriel/'（末尾带斜杠），所以把 host 拼进自己域名里这种样子不会命中
     const env = loadBridge(
         buildScript(bridges[0]),
         bridges[0].channel,
-        { href: 'https://app.oriel.evil.com/index.html' });
+        { href: 'oriel://app.oriel.evil.com/index.html' });
 
     assert.equal(env.window.oriel, undefined);
 });
 
 test('安全：可信前缀为多份时，任一份命中即安装', () => {
     // AllowOrigin 追加的开发期来源（如 Vite dev server）走的是同一条判定
-    const trusted = ['https://app.oriel/', 'http://localhost:5173/'];
+    const trusted = ['oriel://app.oriel/', 'http://localhost:5173/'];
     const env = loadBridge(
         buildScript(bridges[0], { trusted }),
         bridges[0].channel,

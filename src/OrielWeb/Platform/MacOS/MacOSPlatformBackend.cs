@@ -104,9 +104,9 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
 
     // ---- IPlatformBackend ----
 
-    public IWindowBackend CreateWindow(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory)
+    public IWindowBackend CreateWindow(WebviewWindow window, OrielWindowOptions options, OrielApp app, EmbeddedAssetStore? assets)
     {
-        var host = new MacOSWindowHost(window, options, app, assetDirectory, this);
+        var host = new MacOSWindowHost(window, options, app, assets, this);
         _aliveWindows++;
         // 构造函数只装配宿主，真正的 NSWindow 创建（initWithContentRect → 挂 delegate/webview → orderFront）在这里完成。
         // Windows 后端的建窗在静态工厂内完成，Linux/macOS 后端是实例方法，必须显式调用。

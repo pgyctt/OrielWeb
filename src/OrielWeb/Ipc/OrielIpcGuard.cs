@@ -33,7 +33,7 @@ internal sealed class OrielIpcGuard
 
     /// <param name="options">能力配置；null 表示应用没有调用 UseCapabilities。</param>
     /// <param name="isDebugBuild">消费方是否为 Debug 构建（见 <see cref="OrielBuildConfiguration"/>）。</param>
-    /// <param name="assetHost">内嵌资源的虚拟主机名（<c>UseEmbeddedAssets</c> 的 host 参数）。</param>
+    /// <param name="assetHost">内嵌资源的 host（<c>UseEmbeddedAssets</c> 的 host 参数）。</param>
     internal OrielIpcGuard(OrielCapabilityOptions? options, bool isDebugBuild, string assetHost)
     {
         _options = options;
@@ -41,9 +41,11 @@ internal sealed class OrielIpcGuard
         Token = OrielIpcToken.Generate();
 
         // 内嵌资源自动可信：页面本来就是应用自己的那一份。
-        // Windows 上就是这个 https 虚拟主机；Linux/macOS 上会被改写成 file://，
-        // 那份前缀由 OrielApp 在解压之后补进来（那时才知道目录在哪）。
-        AddTrustedPrefix($"https://{assetHost}/");
+        // 三平台的来源都是自定义 scheme oriel://<host>/（见 Assets/AssetUrl.cs）——
+        // 以前是"Windows 的 https 虚拟主机 + Linux/macOS 解压目录的 file:// 前缀"两条，
+        // 现在一条。前缀用 AssetUrl 生成，避免手拼与页面实际 URL 出现逐字节差异
+        // （2026-10-02 的 macOS 冒烟就是被"空格 vs %20"这种差异搞红的）。
+        AddTrustedPrefix(AssetUrl.TrustedPrefix(assetHost));
 
         if (options is { } configured)
         {
@@ -63,7 +65,7 @@ internal sealed class OrielIpcGuard
     /// <summary>是否已显式配置过能力。</summary>
     internal bool IsConfigured => _options is not null;
 
-    /// <summary>追加一个可信来源（URL 前缀）。Linux/macOS 的 <c>file://</c> 解压目录由此进来。</summary>
+    /// <summary>追加一个可信来源（URL 前缀）。<c>UseCapabilities(AllowOrigin)</c> 放行的开发期来源由此进来。</summary>
     internal void AddTrustedPrefix(string prefix)
     {
         if (!string.IsNullOrEmpty(prefix))

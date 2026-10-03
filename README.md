@@ -44,7 +44,7 @@ internal static class Program
     private static void Main(string[] args)
     {
         Oriel.CreateBuilder(args)
-            .UseEmbeddedAssets()                    // https://app.oriel/ ← wwwroot/**
+            .UseEmbeddedAssets()                    // oriel://app.oriel/ ← wwwroot/**
             .UseJsonContext(AppJsonContext.Default) // STJ 源生成上下文（DTO）
             .AddCommands<TodoCommands>()            // [OrielCommand] 命令类
             .UseCapabilities(c => c.Allow("todo.*"))// 页面能调哪些命令（Release 下不写就一律拒绝）
@@ -98,8 +98,8 @@ internal partial class AppJsonContext : JsonSerializerContext;
 
 ## 内嵌页面资源
 
-前端资源**编译进程序集**，运行期由库解压出来再交给引擎加载。发布产物里没有 `wwwroot` 文件夹，但页面照常工作，
-而且默认**零配置**。
+前端资源**编译进程序集**，运行期由库通过自定义 scheme `oriel://<host>/…` 直接交给引擎加载
+（**不写盘**，也不再解压到任何目录）。发布产物里没有 `wwwroot` 文件夹，但页面照常工作，而且默认**零配置**。
 
 ### 零配置是怎么来的
 
@@ -126,8 +126,8 @@ OrielWeb: 已自动内嵌 12 个 wwwroot 资源（LogicalName 用显式 '/' 分�
 | 项目自己写了 `<EmbeddedResource Include="wwwroot\**\*" />`（**旧写法**，不带 `LogicalName`） | targets 检测到后**跳过**自动内嵌，旧行为原样保留（日志会说明）。所以旧项目升级后不会因为"两种写法并存"而重复嵌入 |
 | 不想要自动内嵌 | `<OrielWebEmbeddedAssets>false</OrielWebEmbeddedAssets>`，然后自己声明资源（此时用 `UseEmbeddedAssets` 的第二个参数指定资源前缀） |
 
-> 上面那条"检测到就让位"的逻辑不是多余的：若没有它，同一个文件被两种方式各内嵌一次，解压目录里会出现
-> `app.js` 与 `app/min.js` 并存（页面最终引用到哪一个取决于写法），MSBuild 还可能直接报
+> 上面那条"检测到就让位"的逻辑不是多余的：若没有它，同一个文件被两种方式各内嵌一次，页面会同时存在
+> `app.js` 与 `app/min.js` 两条资源（最终命中哪一条取决于写法），MSBuild 还可能直接报
 > `CS1508 已使用资源标识符`。
 
 > **为什么还认旧写法**：那是本库早期文档教的写法，直接不认会让已有项目升级后白屏。但它有上面那个含点文件名的坑，
@@ -137,60 +137,61 @@ OrielWeb: 已自动内嵌 12 个 wwwroot 资源（LogicalName 用显式 '/' 分�
 ### C# 侧的开关
 
 ```csharp
-.UseEmbeddedAssets()                                  // 默认：虚拟主机 app.oriel，资源前缀按程序集名推断
-.UseEmbeddedAssets("myapp.local")                     // 换虚拟主机名（Windows 上就是 https://myapp.local/）
+.UseEmbeddedAssets()                                  // 默认：host 是 app.oriel（即 oriel://app.oriel/），资源前缀按程序集名推断
+.UseEmbeddedAssets("myapp.local")                     // 换 host（于是页面在 oriel://myapp.local/ 下）
 .UseEmbeddedAssets("app.oriel", "MyApp.wwwroot.")     // 显式指定资源名前缀（自定义内嵌方式时用）
 ```
 
-### 运行期：解压到哪、什么时候
+### 运行期：资源怎么交给页面
 
-资源在 `Run()` 里、**建窗之前一次性解压**到：
+三平台统一走自定义 scheme `oriel://<host>/…`，**资源留在程序集里**，由各平台的 scheme 处理器按需应答：
 
 ```
-<LocalApplicationData>/OrielWeb/<程序集名>/www      （Windows 上是 %LocalAppData%\OrielWeb\...）
+oriel://app.oriel/index.html          （默认 host 是 app.oriel）
 ```
 
-- **每个进程启动都会递归清空并重建**这个目录。否则上一版里有、这一版已删掉的文件会继续被服务——表现为
-  "改了页面却没变化"，属于最难排查的一类问题。
-- 目录名里**没有** PID 或随机后缀：同一个应用同时开两个实例时，后启动的会先清空重建这份目录。
-  用 `builder.SingleInstance(id)` 启用单实例时不存在这个问题——单实例判定在解压**之前**，第二个实例直接返回。
-  多窗口（同进程）共用同一份目录，没有影响。
-- 清空之前会校验目标确实在 `OrielWeb` 自己的目录下：这条路径拼错一次的代价是**删掉用户别处的数据**。
-- 资源是编译进程序集的，所以**单文件 / Native AOT 发布**后依然取得到。之所以要解压到磁盘：三个平台的引擎
-  都只能"按目录或文件"提供服务。
+- **不落盘**：只读介质、容器、受限沙箱里都能跑；也不在用户目录里留一份可被篡改的前端文件。
+  由此消失的还有一整套麻烦——"启动时递归清空"、"代码里删了资源运行时还能访问到"、
+  "递归删除前必须校验路径否则删错数据"、"第二个实例先清空了前一个的目录"。
+- 资源是编译进程序集的，所以**单文件 / Native AOT 发布**后依然取得到。
+- 内容类型（MIME）**由库给**：自定义 scheme 没有引擎内置的"按扩展名推断"这一步，所以库里有一张
+  扩展名 → Content-Type 的表（见 `src/OrielWeb/Assets/MimeTypes.cs`）。
+  认不出来的扩展名一律 `application/octet-stream`，不做猜测。
 
 ### 三平台怎么把它交给引擎
 
 | 平台 | 通道 | 页面所在的来源 |
 |---|---|---|
-| Windows | WebView2 虚拟主机映射（`SetVirtualHostNameToFolderMapping`） | `https://<host>/…`——**同源 https**，与普通站点无异 |
-| Linux | 注册不了 `https`，导航前把 URL **改写成** `file://<解压目录>/…` | `file:///…` |
-| macOS | 同上，走 `loadFileURL:allowingReadAccessToURL:` | `file:///…` |
+| Windows | `WebResourceRequested` 拦截 + `CreateWebResourceResponse`（自定义 scheme 经 `CoreWebView2CustomSchemeRegistration` 登记为 `TreatAsSecure`） | `oriel://<host>/…` |
+| Linux | `webkit_web_context_register_uri_scheme` + `WebKitURISchemeRequest`（`register_uri_scheme_as_secure`） | `oriel://<host>/…` |
+| macOS | `WKURLSchemeHandler`（挂在 `WKWebViewConfiguration` 上，建 webview 之前） | `oriel://<host>/…` |
 
-> **为什么 Linux/macOS 不能也走虚拟主机**：`https` 是引擎的保留 scheme，注册自定义处理程序会被拒绝；早期版本
-> 直接把 `https://app.oriel/` 交给引擎，DNS 解析失败后渲染成错误页——症状是"窗口一片空白"，且没有任何报错。
+> **为什么不用 `file://`**：`file://` 是不透明来源，`fetch` 相对路径、`localStorage`、安全上下文这些全都要看
+> 引擎脸色，而且三平台并不一致；更麻烦的是它要求资源**必须真的在磁盘上**（macOS 还要用
+> `allowingReadAccessToURL:` 单独把读权限授予那个目录，少了它同目录的 `styles.css`/`app.js` 会被拦下，
+> 页面照样空白）。换成有 authority 的自定义 scheme 之后，URL、来源、安全上下文语义三平台一致。
 >
-> macOS 那一条还多一个细节：只给一个 `file://` URL **不够**（没有读权限，同目录的 `styles.css`/`app.js` 会被
-> WKWebView 拦下，页面照样空白），必须用 `allowingReadAccessToURL:` 把读权限限定在解压目录内。
->
-> 由此带来的一条实用推论：**页面的 origin 三平台并不相同**。库的可信来源判定按平台自动覆盖这两种形态；
-> 你自己的前端代码不要依赖 `location.origin` 的具体值。
+> **`https://<host>/…` 仍然接受**，作为兼容别名映射到同一份资源（0.2.0 及以前的文档与示例写的都是这个形态，
+> 直接不认会让已有项目白屏）。别名只影响"入参怎么解析"：页面真正的来源始终是 `oriel://`，所以可信前缀也只有
+> 这一条。**由此带来的一条实用推论**：页面 origin 现在是 `oriel://<host>`，你的前端代码不要依赖
+> `location.origin` 的具体值（开发期连 dev server 时它就是 `http://localhost:…`）。
 
 ### URL 怎么解析
 
-`https://<host>/…`（以及 Linux/macOS 上的 `file://<解压目录>/…`）由 `AssetUrlResolver` 映射到文件：
+`oriel://<host>/…`（以及兼容别名 `https://<host>/…`）由 `AssetUrl` 解析成资源相对路径：
 
 | 输入 | 结果 |
 |---|---|
-| `https://app.oriel/` 或任何以 `/` 结尾的空路径 | `index.html` |
+| `oriel://app.oriel/` 或任何以 `/` 结尾的空路径 | `index.html` |
 | `…/sub/page.html` | `sub/page.html`（子目录保持层级） |
 | `…/manual-check.html?v=2#top` | `manual-check.html`（query 与 fragment 不参与定位） |
-| `…/../secret`、绝对路径、`%2e%2e%2f` | **拒绝**（目录穿越防护） |
+| `…/../secret` | 被 URI 解析折叠成 `…/secret`——**这是 URI 规范的行为，不是防线**；真正的边界是资源表查表（查不到就是 404） |
+| `…/..%2Fsecret`（编码的斜杠不会被折叠） | **拒绝** |
 | `https://app.oriel.example.com/…` | **不命中**（host 精确相等，不做后缀匹配） |
 
 ### 默认首页与开发期
 
-窗口的 `Url` 没设时导航到解压目录里的 `index.html`（Windows 上是 `https://<host>/index.html`）。
+窗口的 `Url` 没设时导航到 `oriel://<host>/index.html`。
 
 开发期让页面指向 Vite 之类的 dev server 只需设 `Url`，**但要同时放行那个来源**——否则页面在库眼里是"外来的"，
 桥接脚本根本不会安装（见[安全与能力模型](docs/API.md#4-安全与能力模型)）：
@@ -200,13 +201,13 @@ OrielWeb: 已自动内嵌 12 个 wwwroot 资源（LogicalName 用显式 '/' 分�
 .UseCapabilities(c => c.AllowOrigin("http://localhost:5173/"))
 ```
 
-> 没有"指向磁盘上任意目录"的一等入口：macOS 上只有解压目录那条路带读权限，任意 `file://` 会落到无读权限的
-> 加载路径，同目录资源被拦。要这么干请自己起一个本地 http server，再按上面的方式放行来源。
+> 没有"指向磁盘上任意目录"的一等入口：内嵌资源是一条 scheme 内的资源表，不是"把某个目录挂上去"。
+> 要加载磁盘上的文件请自己起一个本地 http server，再按上面的方式放行来源。
 
 ### 不在 `wwwroot` 里的文件
 
 没有机制。要么放进 `wwwroot`（会被整体内嵌），要么由应用通过 `WithUrl` 指向外部服务。
-MIME 类型由各引擎按扩展名自行推断，库不做映射表。
+MIME 由库按扩展名给出（自定义 scheme 下引擎不再替你推断，表在 `src/OrielWeb/Assets/MimeTypes.cs`）。
 
 ### 验证账
 
@@ -214,15 +215,17 @@ MIME 类型由各引擎按扩展名自行推断，库不做映射表。
   **A 零配置** → 显式分隔符形式（`MyApp.wwwroot/app.min.js`，不被反推成 `app/min.js`）；
   **B 旧写法** → 反推形式，且 targets 确实跳过了（不含显式形式，证明没有重复嵌入）；
   **C `-p:OrielWebEmbeddedAssets=false`** → 一条 wwwroot 资源都没有。
-- 单测：`AssetUrlResolverTests`（默认首页、query/fragment、子目录、`../` 越界、相似域名不命中）、
-  `EmbeddedAssetTests`（两种资源名约定的推断，以及"含点文件名在旧写法下无法区分"这条限制）。
-- 真机：三平台的自检都从内嵌资源加载页面（`--selftest nav` 还覆盖了跨协议跳转被引擎改写这类细节）。
+- 单测：`AssetUrlTests`（默认首页、query/fragment、子目录、`oriel://` 与兼容别名、相似域名不命中、
+  `..` 折叠与编码斜杠被拒、MIME 表）、`EmbeddedAssetTests`（两种资源名约定的推断，以及"含点文件名在旧写法下
+  无法区分"这条限制）。
+- 真机：三平台的自检都从内嵌资源加载页面（`--selftest nav` 覆盖了"导航到不存在的页面应当失败"这类细节，
+  自定义 scheme 的 404 必须真的失败而不是返回一页空内容）。
 
 ## 能力一览
 
 | 能力 | 一句话 |
 |---|---|
-| 内嵌页面资源 | `wwwroot\**\*` 零配置自动内嵌；运行期解压后由各引擎的本地通道加载；可用 `UseEmbeddedAssets(host)` 改虚拟主机名、`OrielWebEmbeddedAssets=false` 关闭 |
+| 内嵌页面资源 | `wwwroot\**\*` 零配置自动内嵌；运行期由 `oriel://<host>/…` 直接应答（不落盘）；可用 `UseEmbeddedAssets(host)` 改 host、`OrielWebEmbeddedAssets=false` 关闭 |
 | 无边框窗口 | 自绘标题栏（拖动与双击由库接管，页面只标一个属性）；窗口命令 `win.*`（最小化/最大化/关闭/拖动/全屏/置顶/选文件/上下文菜单）由库内建，应用一行不写；窗口图标三平台各自落到真正的图标槽 |
 | 导航与 IPC | 前进/后退/刷新、导航事件（含失败原因）、`invoke`（有回执）/`postMessage`（单向）/`EmitEvent`（宿主→页面）/console 转发 |
 | 安全与能力模型 | 来源 + 令牌 + 按命令授权三层；不可信来源的页面根本拿不到桥接脚本 |

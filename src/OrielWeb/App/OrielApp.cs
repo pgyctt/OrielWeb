@@ -27,7 +27,7 @@ public sealed class OrielApp : IDisposable
     /// </summary>
     internal OrielIpcGuard Guard { get; }
 
-    /// <summary>内嵌资源使用的虚拟主机名（取自构建器 <c>UseEmbeddedAssets</c> 的 host 参数）。</summary>
+    /// <summary>内嵌资源使用的 host（页面来源即 <c>oriel://&lt;host&gt;/</c>；取自构建器 <c>UseEmbeddedAssets</c> 的 host 参数）。</summary>
     internal string AssetHost => _builder.AssetHost;
 
     /// <summary>「WebView2 运行时不可用」的处理回调（可能为 null，表示用库的默认提示）。</summary>
@@ -41,8 +41,8 @@ public sealed class OrielApp : IDisposable
 
     private readonly List<WebviewWindow> _windows = [];
 
-    /// <summary>内嵌资源的解压目录（未用内嵌资源时为 null）。运行时新建的窗口也用它。</summary>
-    private string? _assetDirectory;
+    /// <summary>内嵌资源表（未用内嵌资源时为 null）。运行时新建的窗口也用它。</summary>
+    private EmbeddedAssetStore? _assets;
 
     /// <summary>
     /// 运行时新建一个窗口（多窗口应用用）。
@@ -105,7 +105,7 @@ public sealed class OrielApp : IDisposable
             options.Debug = true;
         }
 
-        var backend = _backend!.CreateWindow(window, options, this, _assetDirectory);
+        var backend = _backend!.CreateWindow(window, options, this, _assets);
         window.Attach(backend);
         _windows.Add(window);
 
@@ -423,22 +423,13 @@ public sealed class OrielApp : IDisposable
             StartSingleInstanceListener();
         }
 
-        _assetDirectory = _builder.UseAssets
-            ? EmbeddedAssetExtractor.Extract(_builder.AssetResourcePrefix)
+        // 只建表，不动磁盘：三平台都由 scheme 处理器按需从程序集取流应答（见 EmbeddedAssetStore）。
+        // 这一步同时保留了"一个资源都没有就报配置错误"的行为（不是静默白屏）。
+        // 可信来源前缀不在这里补：oriel://<host>/ 由 OrielIpcGuard 的构造统一登记，
+        // 与 host 同源，少一处手拼路径的机会。
+        _assets = _builder.UseAssets
+            ? EmbeddedAssetStore.Create(_builder.AssetResourcePrefix)
             : null;
-
-        if (_assetDirectory is not null)
-        {
-            // Linux/macOS 上内嵌资源的 https 虚拟主机注册不了，导航前会被改写成 file:// 本地路径
-            // （见 AssetUrlResolver）。所以解压目录也必须是可信来源——
-            // 不加这一条，页面会被**自己的**门禁拒掉，表现为"什么命令都没反应"。
-            //
-            // 前缀必须走 ToFileUrlPrefix（= 与导航同款的 new Uri(...).AbsoluteUri 转义），
-            // 不能手拼 "file://" + 路径：URL 里的空格是 %20，手拼出来的是空格，StartsWith 配不上。
-            // macOS 的解压目录带 "Application Support"，所以那里必然不匹配（Linux 侥幸没中，
-            // 它的目录不含空格）——2026-10-02 的 macOS 冒烟红就是这么来的。
-            Guard.AddTrustedPrefix(AssetUrlResolver.ToFileUrlPrefix(_assetDirectory));
-        }
 
         _windows.EnsureCapacity(_builder.PendingWindows.Count);
         foreach (var (window, options) in _builder.PendingWindows)

@@ -28,7 +28,7 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     /// </summary>
     internal WebviewWindow Window => _window;
     private readonly LinuxPlatformBackend _backend;
-    private readonly string? _assetDirectory;
+    private readonly EmbeddedAssetStore? _assets;
     private readonly LinuxWebMessageHandler _messageHandler;
 
     private nint _gtkWindow;
@@ -169,13 +169,13 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         return true;
     }
 
-    internal LinuxWindowHost(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, LinuxPlatformBackend backend)
+    internal LinuxWindowHost(WebviewWindow window, OrielWindowOptions options, OrielApp app, EmbeddedAssetStore? assets, LinuxPlatformBackend backend)
     {
         _window = window;
         _options = options;
         _app = app;
         _backend = backend;
-        _assetDirectory = assetDirectory;
+        _assets = assets;
         _title = options.Title;
         // 策略是可写属性（运行时能改），初值取自 options
         ContextMenuPolicy = options.ContextMenuPolicy;
@@ -438,6 +438,13 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
             GtkNative.GtkWidgetSetSizeRequest(_gtkWindow, Math.Max(_minWidth, 1), Math.Max(_minHeight, 1));
         }
 
+        // oriel:// 的注册必须是"任何 webview 创建之前"——这里就是那一刻（本文件唯一建 view 的地方）。
+        // 放在导航时注册就晚了：首次导航已经在解析 URL，scheme 还没登记，引擎会当成未知协议。
+        if (_assets is not null)
+        {
+            LinuxAssetScheme.Register(_assets, App.AssetHost);
+        }
+
         _userContentManager = GtkNative.WebkitUserContentManagerNew();
         GtkNative.WebkitUserContentManagerRegisterScriptMessageHandler(_userContentManager, "oriel");
         _webview = GtkNative.WebkitWebViewNewWithUserContentManager(_userContentManager);
@@ -534,13 +541,12 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     {
         if (_options.Url is { Length: > 0 } externalUrl)
         {
-            // 内嵌资源的虚拟主机 URL（https://&lt;AssetHost&gt;/…）在 Linux 上没有引擎支持：WebKitGTK 只能
-            // 注册**自定义** scheme，而 https 是保留 scheme。原样交出去会变成一次真实的网络请求，
-            // DNS 解析失败后引擎渲染错误页——表现就是一片空白的窗口，且宿主侧收不到任何异常。
-            // 这里把它映射回解压目录里的本地文件，与 Windows 的虚拟主机映射语义对齐。
-            if (AssetUrlResolver.TryResolveLocalFile(externalUrl, _app.AssetHost, _assetDirectory) is { } localFile)
+            // 内嵌资源的 URL 交给引擎里的 oriel:// 处理器（见 LinuxAssetScheme），宿主不做"改写成
+            // 本地文件"那一步：那种改写要求资源落盘，而且会把页面来源变成 file://（不透明来源）。
+            // 兼容别名 https://<host>/… 也在这里被归一成 oriel://，于是页面来源三平台一致。
+            if (AssetUrl.TryResolve(externalUrl, _app.AssetHost, out string relative))
             {
-                GtkNative.WebkitWebViewLoadUri(_webview, new Uri(localFile).AbsoluteUri);
+                GtkNative.WebkitWebViewLoadUri(_webview, AssetUrl.ForHost(_app.AssetHost, relative));
                 return;
             }
 
@@ -548,10 +554,9 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
             return;
         }
 
-        if (_assetDirectory is not null)
+        if (_assets is not null)
         {
-            var indexHtml = Path.Combine(_assetDirectory, "index.html");
-            GtkNative.WebkitWebViewLoadUri(_webview, new Uri(indexHtml).AbsoluteUri);
+            GtkNative.WebkitWebViewLoadUri(_webview, AssetUrl.DefaultDocument(_app.AssetHost));
         }
     }
 

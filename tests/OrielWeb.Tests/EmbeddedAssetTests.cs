@@ -3,7 +3,7 @@ using Xunit;
 namespace OrielWeb.Tests;
 
 /// <summary>
-/// 内嵌资源名 → 相对路径的映射（<see cref="EmbeddedAssetExtractor"/>）。
+/// 内嵌资源名 → 相对路径的映射（<see cref="EmbeddedAssetStore"/>）。
 /// </summary>
 /// <remarks>
 /// 这段映射以前是"静默写错路径"的源头：含点的文件名（<c>app.min.js</c>）被当成目录分隔，
@@ -21,7 +21,7 @@ public sealed class EmbeddedAssetTests
     public void Convention_ExplicitPrefixWhenResourcesUseSlash()
     {
         // LogicalName 写法：资源名形如 MyApp.wwwroot/assets/img/logo.svg
-        var (prefix, explicitSeparators) = EmbeddedAssetExtractor.ResolveConvention(
+        var (prefix, explicitSeparators) = EmbeddedAssetStore.ResolveConvention(
             ["MyApp.wwwroot/index.html", "MyApp.wwwroot/assets/img/logo.svg"], "MyApp", null);
 
         Assert.Equal("MyApp.wwwroot/", prefix);
@@ -31,7 +31,7 @@ public sealed class EmbeddedAssetTests
     [Fact]
     public void Convention_LegacyPrefixWhenResourcesUseDots()
     {
-        var (prefix, explicitSeparators) = EmbeddedAssetExtractor.ResolveConvention(
+        var (prefix, explicitSeparators) = EmbeddedAssetStore.ResolveConvention(
             ["MyApp.wwwroot.index.html", "MyApp.wwwroot.assets.img.logo.svg"], "MyApp", null);
 
         Assert.Equal("MyApp.wwwroot.", prefix);
@@ -43,7 +43,7 @@ public sealed class EmbeddedAssetTests
     {
         // 平铺目录下显式写法**看不出分隔符**（只有 MyApp.wwwroot/app.min.js 这种名字），
         // 这正是以前漏掉的一类：只按"资源名里有没有分隔符"判断，会把它当成兼容写法反推成 app/min.js。
-        var (prefix, explicitSeparators) = EmbeddedAssetExtractor.ResolveConvention(
+        var (prefix, explicitSeparators) = EmbeddedAssetStore.ResolveConvention(
             ["MyApp.wwwroot/index.html", "MyApp.wwwroot/app.min.js"], "MyApp", null);
 
         Assert.Equal("MyApp.wwwroot/", prefix);
@@ -53,12 +53,12 @@ public sealed class EmbeddedAssetTests
     [Fact]
     public void Convention_OverridePrefixDecidesByItsOwnShape()
     {
-        var explicitOverride = EmbeddedAssetExtractor.ResolveConvention(
+        var explicitOverride = EmbeddedAssetStore.ResolveConvention(
             ["assets/img/logo.svg"], "MyApp", "assets/");
         Assert.Equal("assets/", explicitOverride.Prefix);
         Assert.True(explicitOverride.ExplicitSeparators);
 
-        var legacyOverride = EmbeddedAssetExtractor.ResolveConvention(
+        var legacyOverride = EmbeddedAssetStore.ResolveConvention(
             ["assets.img.logo.svg"], "MyApp", "assets.");
         Assert.Equal("assets.", legacyOverride.Prefix);
         Assert.False(legacyOverride.ExplicitSeparators);
@@ -77,7 +77,7 @@ public sealed class EmbeddedAssetTests
     [InlineData("deep/nested/dir/file.txt", "deep/nested/dir/file.txt")]
     public void ExplicitConvention_KeepsDotsInFileNames(string suffix, string expected)
     {
-        Assert.Equal(Normalize(expected), EmbeddedAssetExtractor.MapResourceToPath(suffix, explicitSeparators: true));
+        Assert.Equal(Normalize(expected), EmbeddedAssetStore.MapResourceToPath(suffix, explicitSeparators: true));
     }
 
     [Fact]
@@ -86,7 +86,7 @@ public sealed class EmbeddedAssetTests
         // MSBuild 的 %(RecursiveDir) 在 Windows 上给的是反斜杠，混合分隔符也要能处理
         Assert.Equal(
             Normalize("assets/img/logo.svg"),
-            EmbeddedAssetExtractor.MapResourceToPath(@"assets\img/logo.svg", explicitSeparators: true));
+            EmbeddedAssetStore.MapResourceToPath(@"assets\img/logo.svg", explicitSeparators: true));
     }
 
     // ---- 映射：兼容约定（保留既有行为，但把已知限制写死） ----
@@ -97,7 +97,7 @@ public sealed class EmbeddedAssetTests
     [InlineData("sub.page.html", "sub/page.html")]
     public void LegacyConvention_TreatsDotsAsDirectories(string suffix, string expected)
     {
-        Assert.Equal(Normalize(expected), EmbeddedAssetExtractor.MapResourceToPath(suffix, explicitSeparators: false));
+        Assert.Equal(Normalize(expected), EmbeddedAssetStore.MapResourceToPath(suffix, explicitSeparators: false));
     }
 
     [Fact]
@@ -107,13 +107,13 @@ public sealed class EmbeddedAssetTests
         // 这个用例把限制钉死，避免以后有人以为"反推逻辑还能修"——要用含点文件名就换显式写法。
         Assert.Equal(
             Normalize("app/min.js"),
-            EmbeddedAssetExtractor.MapResourceToPath("app.min.js", explicitSeparators: false));
+            EmbeddedAssetStore.MapResourceToPath("app.min.js", explicitSeparators: false));
     }
 
     [Fact]
     public void NoDotAtAll_ReturnsAsIs()
     {
-        Assert.Equal("readme", EmbeddedAssetExtractor.MapResourceToPath("readme", explicitSeparators: false));
-        Assert.Equal("readme", EmbeddedAssetExtractor.MapResourceToPath("readme", explicitSeparators: true));
+        Assert.Equal("readme", EmbeddedAssetStore.MapResourceToPath("readme", explicitSeparators: false));
+        Assert.Equal("readme", EmbeddedAssetStore.MapResourceToPath("readme", explicitSeparators: true));
     }
 }

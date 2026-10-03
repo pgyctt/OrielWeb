@@ -600,4 +600,144 @@ internal static unsafe class MacOSObjCClasses
         UIDelegateStates[instance] = host;
         return instance;
     }
+
+    // ---- oriel:// 的 scheme 处理器 ----
+    //
+    // 与 Windows 的 WebResourceRequested、Linux 的 WebKitURISchemeRequest 对应：把内嵌资源
+    // 直接交给引擎，不经过磁盘。挂在 WKWebViewConfiguration 上，所以必须在
+    // initWithFrame:configuration: **之前**注册（见 MacOSWindowHost.Create）。
+
+    private static nint s_assetSchemeHandlerClass;
+
+    private static readonly Dictionary<nint, (EmbeddedAssetStore Store, string Host)> AssetSchemeStates = [];
+
+    private static nint AssetSchemeHandlerClass => Ensure(ref s_assetSchemeHandlerClass, BuildAssetSchemeHandler);
+
+    private static nint BuildAssetSchemeHandler()
+    {
+        var cls = ObjCRuntime.objc_allocateClassPair(ObjCRuntime.GetClass("NSObject"), "OrielAssetSchemeHandler", 0);
+
+        // 协议必须显式声明：WebKit 会 conformsToProtocol: 检查（见 ObjCRuntime.class_addProtocol 的说明）。
+        ObjCRuntime.class_addProtocol(cls, ObjCRuntime.objc_getProtocol("WKURLSchemeHandler"));
+
+        AddMethod(cls, "webView:startURLSchemeTask:", &AssetSchemeStart, "v@:@@");
+        AddMethod(cls, "webView:stopURLSchemeTask:", &AssetSchemeStop, "v@:@@");
+        ObjCRuntime.objc_registerClassPair(cls);
+        return cls;
+    }
+
+    internal static nint CreateAssetSchemeHandler(EmbeddedAssetStore store, string host)
+    {
+        var instance = AllocInit(AssetSchemeHandlerClass);
+        AssetSchemeStates[instance] = (store, host);
+        return instance;
+    }
+
+    internal static void RemoveAssetSchemeHandler(nint instance) => AssetSchemeStates.Remove(instance);
+
+    /// <summary>WKURLSchemeTask 的失败码：<c>NSURLErrorFileDoesNotExist</c>。</summary>
+    private const int NsUrlErrorFileDoesNotExist = -1100;
+
+    private const int NsUrlErrorUnsupportedUrl = -1002;
+
+    [UnmanagedCallersOnly]
+    private static nint AssetSchemeStart(nint self, nint sel, nint webView, nint task)
+    {
+        // 约定：trampoline 必须全身 try/catch——托管异常穿越 ObjC 边界会 fail-fast 且不可捕获。
+        try
+        {
+            if (!AssetSchemeStates.TryGetValue(self, out var state))
+            {
+                return 0;
+            }
+
+            nint request = ObjCRuntime.SendId(task, ObjCRuntime.Sel("request"));
+            nint url = request == 0 ? 0 : ObjCRuntime.SendId(request, ObjCRuntime.Sel("URL"));
+            if (url == 0)
+            {
+                return 0;
+            }
+
+            string uri = ObjCRuntime.ToManagedString(ObjCRuntime.SendId(url, ObjCRuntime.Sel("absoluteString")));
+
+            if (!AssetUrl.TryResolve(uri, state.Host, out string relative))
+            {
+                AssetSchemeFail(task, NsUrlErrorUnsupportedUrl);
+                return 0;
+            }
+
+            if (!state.Store.TryGet(relative, out EmbeddedAsset asset))
+            {
+                // 404 必须是失败：自检里"导航到不存在的页面应当失败"那一步靠它。
+                AssetSchemeFail(task, NsUrlErrorFileDoesNotExist);
+                return 0;
+            }
+
+            byte[] payload;
+            using (Stream source = state.Store.Open(asset))
+            {
+                payload = new byte[source.Length];
+                source.ReadExactly(payload);
+            }
+
+            // dataWithBytes: 会复制，所以可以用 fixed 的托管数组，不必自己分配非托管内存。
+            nint data;
+            fixed (byte* buffer = payload)
+            {
+                data = ObjCRuntime.SendIdNintNint(
+                    ObjCRuntime.GetClass("NSData"),
+                    ObjCRuntime.Sel("dataWithBytes:length:"),
+                    (nint)buffer,
+                    payload.Length);
+            }
+
+            nint headers = ObjCRuntime.SendIdObjObj(
+                ObjCRuntime.GetClass("NSDictionary"),
+                ObjCRuntime.Sel("dictionaryWithObject:forKey:"),
+                ObjCRuntime.MakeNSString(asset.ContentType),
+                ObjCRuntime.MakeNSString("Content-Type"));
+
+            // HTTPVersion 给 "HTTP/1.1"：自定义 scheme 没有真实协议版本，但初始化器要这个参数。
+            nint response = ObjCRuntime.SendIdObjNintObjObj(
+                ObjCRuntime.SendId(ObjCRuntime.GetClass("NSHTTPURLResponse"), ObjCRuntime.Sel("alloc")),
+                ObjCRuntime.Sel("initWithURL:statusCode:HTTPVersion:headerFields:"),
+                url,
+                200,
+                ObjCRuntime.MakeNSString("HTTP/1.1"),
+                headers);
+
+            ObjCRuntime.SendVoidObj(task, ObjCRuntime.Sel("didReceiveResponse:"), response);
+            ObjCRuntime.SendVoidObj(task, ObjCRuntime.Sel("didReceiveData:"), data);
+            ObjCRuntime.SendVoid(task, ObjCRuntime.Sel("didFinish"));
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[OrielWeb] 应答内嵌资源失败：{ex}");
+            try
+            {
+                AssetSchemeFail(task, NsUrlErrorFileDoesNotExist);
+            }
+            catch (Exception inner)
+            {
+                System.Diagnostics.Debug.WriteLine($"[OrielWeb] 上报失败也失败了：{inner.Message}");
+            }
+        }
+
+        return 0;
+    }
+
+    [UnmanagedCallersOnly]
+    private static nint AssetSchemeStop(nint self, nint sel, nint webView, nint task) => 0;
+
+    private static void AssetSchemeFail(nint task, int code)
+    {
+        nint error = ObjCRuntime.SendIdObjNintObj(
+            ObjCRuntime.GetClass("NSError"),
+            ObjCRuntime.Sel("errorWithDomain:code:userInfo:"),
+            ObjCRuntime.MakeNSString("NSURLErrorDomain"),
+            code,
+            0);
+
+        ObjCRuntime.SendVoidObj(task, ObjCRuntime.Sel("didFailWithError:"), error);
+    }
 }

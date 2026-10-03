@@ -159,14 +159,17 @@ public sealed class CapabilityTests
     [Fact]
     public void TrustedPrefixIsRecorded()
     {
-        // 内嵌资源的虚拟主机自动可信（默认 host 是 app.oriel）
-        Assert.True(Guard().IsTrustedUrl("https://app.oriel/index.html"));
-        Assert.True(Guard().IsTrustedUrl("https://app.oriel/"));
+        // 内嵌资源的来源（自定义 scheme oriel://）自动可信（默认 host 是 app.oriel）
+        Assert.True(Guard().IsTrustedUrl("oriel://app.oriel/index.html"));
+        Assert.True(Guard().IsTrustedUrl("oriel://app.oriel/"));
+        // 兼容别名（0.2.0 及以前的写法）只影响"入参怎么解析"，页面真实来源仍是 oriel://，
+        // 所以 https://app.oriel/ 不该被算成可信来源——它谁也服务不了。
+        Assert.False(Guard().IsTrustedUrl("https://app.oriel/index.html"));
     }
 
     [Theory]
     // 前缀带斜杠，所以"把 host 拼进自己域名里"这种样子不会被误放行
-    [InlineData("https://app.oriel.evil.com/index.html")]
+    [InlineData("oriel://app.oriel.evil.com/index.html")]
     // 别的来源要显式放行才有（开发期连 dev server）
     [InlineData("http://localhost:5173/index.html")]
     [InlineData("about:blank")]
@@ -186,17 +189,16 @@ public sealed class CapabilityTests
     }
 
     [Fact]
-    public void ExtractedAssetDirectoryBecomesTrusted()
+    public void AddTrustedPrefixAppendsAnotherOrigin()
     {
-        // Linux/macOS 上内嵌资源的 https 虚拟主机注册不了，导航前会被改写成 file:// 本地路径；
-        // 不把解压目录补进可信来源，页面会被**自己的**门禁拒掉（表现为"什么命令都没反应"）。
+        // 显式追加的来源（开发期的 dev server 等）与内嵌资源走同一条前缀判定。
         OrielIpcGuard guard = Guard();
-        Assert.False(guard.IsTrustedUrl("file:///tmp/oriel-assets/index.html"));
+        Assert.False(guard.IsTrustedUrl("http://localhost:5173/index.html"));
 
-        guard.AddTrustedPrefix("file:///tmp/oriel-assets/");
+        guard.AddTrustedPrefix("http://localhost:5173/");
 
-        Assert.True(guard.IsTrustedUrl("file:///tmp/oriel-assets/index.html"));
-        Assert.False(guard.IsTrustedUrl("file:///tmp/oriel-assets-evil/index.html"));
+        Assert.True(guard.IsTrustedUrl("http://localhost:5173/index.html"));
+        Assert.False(guard.IsTrustedUrl("http://localhost:5173-evil/index.html"));
     }
 
     [Fact]

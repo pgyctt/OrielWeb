@@ -39,7 +39,7 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 | 方法（真实签名） | 说明 |
 |---|---|
 | `Oriel.CreateBuilder(string[]? args = null)` | 入口。`args` 只是透传给应用自己（库不解析命令行）；`Run()` 之外还有 `Build()` 拿 `OrielApp` |
-| `UseEmbeddedAssets(string host = "app.oriel", string? resourcePrefix = null)` | 启用内嵌前端资源：程序集内嵌资源经 `https://<host>/` 提供。默认前缀是 `程序集名.wwwroot.`；用 `LogicalName` 写显式分隔符时前缀变成 `程序集名.wwwroot/`（见 README 的"内嵌页面资源"） |
+| `UseEmbeddedAssets(string host = "app.oriel", string? resourcePrefix = null)` | 启用内嵌前端资源：程序集内嵌资源经自定义 scheme `oriel://<host>/` 提供（三平台一致，**不写盘**；`https://<host>/…` 作为兼容别名也被接受）。默认前缀是 `程序集名.wwwroot.`；用 `LogicalName` 写显式分隔符时前缀变成 `程序集名.wwwroot/`（见 README 的"内嵌页面资源"） |
 | `UseJsonContext(JsonSerializerContext context)` | 注册 STJ 源生成上下文：DTO 命令参数/返回值的 AOT 安全序列化入口。**按应用实例持有**，不写全局静态状态 |
 | `AddCommands<T>() where T : new()`<br>`AddCommands<T>(Func<T> factory)` | 注册含 `[OrielCommand]` 的类型（惰性单例；`factory` 用于需要构造参数的命令类）。命令实例**共享**，所有 invoke 作用在同一实例上 → **命令方法必须线程安全**；同名命令在启动时报冲突 |
 | `AddWindow(Action<OrielWindowOptions>? configure = null)`<br>`AddWindow(Action<OrielWindowOptions>? configure, Action<WebviewWindow> onCreated)` | 加窗口。`onCreated` 在 `Run()` 之前回调，用于订阅 `Loaded`/`Closing` 这类"必须早于建窗订阅"的事件 |
@@ -334,8 +334,9 @@ window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
 >
 > **为什么来源校验放在注入期**：这样"远程页面不接 IPC"是**结构性成立**的，
 > 不必依赖宿主侧每次再判一次，也不存在"远程页面拿到了令牌"这回事。
-> 注意 Linux/macOS 上内嵌资源的 `https://` 虚拟主机注册不了、导航前会被改写成 `file://`，
-> 所以解压目录也是可信前缀——少了这一条，页面会被**自己的**门禁拒掉，表现为"什么命令都没反应"。
+> 内嵌资源的来源（`oriel://<host>/`）自动可信——少了这一条，页面会被**自己的**门禁拒掉，
+> 表现为"什么命令都没反应"。前缀由 `AssetUrl.TrustedPrefix` 生成，与导航用的 URL 同源，
+> 免得手拼出"空格 vs `%20`"这类逐字节差异（2026-10-02 的 macOS 冒烟就是这么红的）。
 
 ## 5. 拖动与双击的实现边界
 

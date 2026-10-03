@@ -22,7 +22,7 @@ public sealed class OrielAppBuilder
     internal string? UserDataFolder { get; private set; }
     internal Dictionary<Type, Func<object>> TargetFactories { get; } = [];
 
-    /// <summary>启用内嵌前端资源：<paramref name="resourcePrefix"/> 为程序集内嵌资源名前缀（默认 "程序集名.wwwroot."），经 <paramref name="host"/> 虚拟主机提供。</summary>
+    /// <summary>启用内嵌前端资源：<paramref name="resourcePrefix"/> 为程序集内嵌资源名前缀（默认 "程序集名.wwwroot."），经自定义 scheme <c>oriel://&lt;host&gt;/</c> 提供（三平台一致，不写盘）。</summary>
     public OrielAppBuilder UseEmbeddedAssets(string host = "app.oriel", string? resourcePrefix = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(host);

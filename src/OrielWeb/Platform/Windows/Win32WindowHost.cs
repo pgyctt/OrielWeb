@@ -45,8 +45,11 @@ internal partial class Win32WindowHost : IWindowBackend
     internal readonly OrielWindowOptions _options;
     internal readonly OrielApp _app;
     internal readonly WindowsPlatformBackend _backend;
-    internal readonly string? _assetDirectory;
+    internal readonly EmbeddedAssetStore? _assets;
     internal readonly string _assetHost;
+
+    /// <summary>oriel:// 的请求拦截器（见 <see cref="Win32AssetScheme.Attach"/>）。必须持有引用。</summary>
+    private CoreWebView2WebResourceRequestedEventHandler? _assetSchemeHandler;
 
     private GCHandle _selfHandle;
     internal nint _hwnd;
@@ -95,15 +98,22 @@ internal partial class Win32WindowHost : IWindowBackend
     // （它只有 IsSuccess / WebErrorStatus / NavigationId），而事件参数要带上 URL，故在开始时缓存。
     private string _lastNavigationUri = string.Empty;
 
-    protected Win32WindowHost(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, WindowsPlatformBackend backend)
+    protected Win32WindowHost(WebviewWindow window, OrielWindowOptions options, OrielApp app, EmbeddedAssetStore? assets, WindowsPlatformBackend backend)
     {
         _window = window;
         _options = options;
         _app = app; _backend = backend;
-        _assetDirectory = assetDirectory;
+        _assets = assets;
         // 取自构建器 UseEmbeddedAssets(host)：此前硬编码 "app.oriel" 会使用户自定义 host 失效
-        // （虚拟主机映射到自定义 host，导航却指向 app.oriel → 白屏/404）
+        // （scheme 的 authority 与导航 URL 用的不是同一个 host → 白屏/404）
         _assetHost = app.AssetHost;
+
+        // 自定义 scheme 必须随**环境**创建登记，而环境是进程级共享、只建一次：
+        // 所以这里（建窗之前、第一个窗口构造时）登记，晚于此处的调用只会命中已存在的选项。
+        if (_assets is not null)
+        {
+            Win32AssetScheme.Prepare(_assetHost);
+        }
         // 策略是可写属性（运行时能改），所以把 options 里的初值取出来存进属性，而不是每次回头读 options
         ContextMenuPolicy = options.ContextMenuPolicy;
         _title = options.Title;
@@ -327,10 +337,10 @@ internal partial class Win32WindowHost : IWindowBackend
     /// 创建窗口：注册窗口类（幂等）→ CreateWindowExW（宿主经 lpParam 存入 GWLP_USERDATA，
     /// WndProc 据此取回实例）→ 触发 PostCreate（装配 WebView2）。
     /// </summary>
-    public static unsafe Win32WindowHost Create(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory, WindowsPlatformBackend backend)
+    public static unsafe Win32WindowHost Create(WebviewWindow window, OrielWindowOptions options, OrielApp app, EmbeddedAssetStore? assets, WindowsPlatformBackend backend)
     {
         EnsureWindowClass();
-        var host = new Win32WindowHost(window, options, app, assetDirectory, backend);
+        var host = new Win32WindowHost(window, options, app, assets, backend);
         host._selfHandle = GCHandle.Alloc(host);
 
         uint style = ComputeStyle(options);
@@ -840,14 +850,13 @@ internal partial class Win32WindowHost : IWindowBackend
             _webView = _controller.CoreWebView2
                 ?? throw new InvalidOperationException("获取 CoreWebView2 失败（返回 null）。");
 
-            // 内嵌资产 → 虚拟主机（同源 https，免 CORS）；版本化接口成员在包装层直达，
-            // 不需要 QueryInterface，也就没有"运行时过旧导致静默降级"的盲区
-            if (_assetDirectory is not null)
+            // 内嵌资源由 oriel:// 处理器应答（见 Win32AssetScheme）：旧实现是
+            // SetVirtualHostNameToFolderMapping(host, 解压目录, DENY_CORS)，那要求资源先落盘，
+            // 而且页面来源是 https 虚拟主机（与 Linux/macOS 的 file:// 不一致）。
+            if (_assets is not null)
             {
-                _webView.SetVirtualHostNameToFolderMapping(
-                    _assetHost,
-                    _assetDirectory,
-                    COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND.COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS);
+                // 返回的事件处理器必须存着：托管侧没人引用它时，拦截会静默失效（页面白屏但无报错）。
+                _assetSchemeHandler = Win32AssetScheme.Attach(_environment.Object, _webView.Object, _assets, _assetHost);
             }
 
             if (_webView.Settings is { } settings)
@@ -877,7 +886,12 @@ internal partial class Win32WindowHost : IWindowBackend
             _controller.IsVisible = true;
             UpdateBounds();
 
-            string url = _options.Url ?? $"https://{_assetHost}/index.html";
+            // 内嵌资源的 URL 归一成 oriel://（兼容别名 https://<host>/… 也在这里统一），
+            // 与 Linux/macOS 一样由 scheme 处理器应答。
+            string url = _options.Url is { Length: > 0 } requested
+                && AssetUrl.TryResolve(requested, _assetHost, out string relative)
+                    ? AssetUrl.ForHost(_assetHost, relative)
+                    : _options.Url ?? AssetUrl.DefaultDocument(_assetHost);
             _webView.Navigate(url);
         }
         catch (Exception ex)

@@ -21,6 +21,10 @@ internal static unsafe partial class GtkNative
     private const string Gdk = "libgdk-3.so.0";
     private const string GOject = "libgobject-2.0.so.0";
     private const string Glib = "libglib-2.0.so.0";
+    // GIO 与 GLib 是**两个库**：GInputStream 家族（含下面那个内存流）在 GIO 里。
+    // 2026-10-03 把 g_memory_input_stream_new_from_data 挂到 libglib 上，真机运行直接
+    // EntryPointNotFoundException（而且是在 scheme 回调里抛的，看起来像"页面加载崩了"）。
+    private const string Gio = "libgio-2.0.so.0";
     private const string WebKit = "libwebkit2gtk-4.1.so.0";
     private const string JSC = "libjavascriptcoregtk-4.1.so.0";
 
@@ -449,6 +453,80 @@ internal static unsafe partial class GtkNative
 
     [LibraryImport(JSC, EntryPoint = "jsc_value_to_string")]
     internal static partial nint JscValueToString(nint value);
+
+    // ---- 内嵌资源：自定义 scheme oriel:// ----
+    //
+    // 为什么是自定义 scheme 而不是 file://：见 Assets/AssetUrl.cs 与 EmbeddedAssetStore.cs。
+    // 这里只列一条最实际的差别——file:// 页面是不透明来源，fetch 相对路径、localStorage、
+    // 安全上下文全都要看引擎脸色且三平台不一致；oriel:// 有自己的 authority，来源稳定。
+
+    /// <summary>进程级的默认 WebKitWebContext。</summary>
+    /// <remarks>
+    /// scheme 必须注册在**任何 webview 创建之前**，所以调用点在 LinuxWindowHost.Create 里
+    /// 建 view 之前那一行；拿默认 context 是安全的（webview 也是用它）。
+    /// </remarks>
+    [LibraryImport(WebKit, EntryPoint = "webkit_web_context_get_default")]
+    internal static partial nint WebkitWebContextGetDefault();
+
+    /// <summary>
+    /// 注册自定义 scheme 的处理回调。
+    /// </summary>
+    /// <remarks>
+    /// C 侧回调签名是 <c>void (*)(WebKitURISchemeRequest* request, gpointer user_data)</c>——
+    /// 与 <c>LinuxSignalHandlers</c> 里的 trampoline 同一形态（<c>delegate* unmanaged</c> + <c>[UnmanagedCallersOnly]</c>）。
+    /// </remarks>
+    [LibraryImport(WebKit, EntryPoint = "webkit_web_context_register_uri_scheme", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial void WebkitWebContextRegisterUriScheme(nint context, string scheme, void* callback, nint userData, nint destroyNotify);
+
+    [LibraryImport(WebKit, EntryPoint = "webkit_web_context_get_security_manager")]
+    internal static partial nint WebkitWebContextGetSecurityManager(nint context);
+
+    /// <summary>
+    /// 把自定义 scheme 标记为安全来源。
+    /// </summary>
+    /// <remarks>
+    /// 自定义 scheme 默认**不是**安全上下文：<c>window.isSecureContext</c> 为假、
+    /// <c>crypto.subtle</c> 与部分存储 API 直接不可用。Linux 有这条公开开关可按；
+    /// macOS 的 WKWebView 没有对应 API（那边只能靠实测确认差异）——这条不对称是本库
+    /// 选择 scheme 方案时唯一需要背的账。
+    /// </remarks>
+    [LibraryImport(WebKit, EntryPoint = "webkit_security_manager_register_uri_scheme_as_secure", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial void WebkitSecurityManagerRegisterUriSchemeAsSecure(nint manager, string scheme);
+
+    /// <summary>请求的完整 URI（返回 gchar*，归 request 所有，不要释放）。</summary>
+    /// <remarks>
+    /// 用完整 URI 而不是 <c>get_path</c>：路径的百分号解码、query 与 fragment 的处理
+    /// 交给 <see cref="Uri"/>，与 Windows/macOS 两侧走的是同一套解析（AssetUrl）。
+    /// </remarks>
+    [LibraryImport(WebKit, EntryPoint = "webkit_uri_scheme_request_get_uri")]
+    internal static partial nint WebkitUriSchemeRequestGetUri(nint request);
+
+    /// <summary>用一段内存流应答请求（stream 交给 WebKit 异步读完，本函数返回后可释放我们自己那份引用）。</summary>
+    [LibraryImport(WebKit, EntryPoint = "webkit_uri_scheme_request_finish", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial void WebkitUriSchemeRequestFinish(nint request, nint stream, long streamLength, string contentType);
+
+    /// <summary>以错误结束请求（域必须是 WEBKIT_NETWORK_ERROR，见 LinuxAssetScheme）。</summary>
+    [LibraryImport(WebKit, EntryPoint = "webkit_uri_scheme_request_finish_error")]
+    internal static partial void WebkitUriSchemeRequestFinishError(nint request, nint error);
+
+    /// <summary>WEBKIT_NETWORK_ERROR 的 GQuark（<c>finish_error</c> 只认这个域）。</summary>
+    [LibraryImport(WebKit, EntryPoint = "webkit_network_error_quark")]
+    internal static partial uint WebkitNetworkErrorQuark();
+
+    /// <summary>从一段内存建输入流；<paramref name="destroyNotify"/> 非空时，流销毁时会用它释放那段内存。</summary>
+    [LibraryImport(Gio, EntryPoint = "g_memory_input_stream_new_from_data")]
+    internal static partial nint GMemoryInputStreamNewFromData(nint data, nint length, nint destroyNotify);
+
+    [LibraryImport(Glib, EntryPoint = "g_error_new_literal", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial nint GErrorNewLiteral(uint domain, int code, string message);
+
+    /// <summary>释放 GError。</summary>
+    /// <remarks>
+    /// <c>webkit_uri_scheme_request_finish_error</c> 的 error 参数是 "in"（GIR 里 transfer-ownership
+    /// 为 none），WebKit 只读不接管——不释放就是每次 404 漏一块，释放两次则会崩。
+    /// </remarks>
+    [LibraryImport(Glib, EntryPoint = "g_error_free")]
+    internal static partial void GErrorFree(nint error);
 
     // ---- GtkSettings（系统主题）----
 

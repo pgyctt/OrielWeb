@@ -92,7 +92,7 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
     /// </remarks>
     internal Task<IComObject<ICoreWebView2Environment>?> GetEnvironmentAsync(string? browserFolder)
         => _environment ??= Functions.CreateCoreWebView2EnvironmentWithOptionsAsync(
-            browserFolder, _userDataFolder, null);
+            browserFolder, _userDataFolder, Win32AssetScheme.EnvironmentOptions);
 
     // ---- 系统主题 ----
     // 应用级（而非窗口级）：主题是系统状态，与具体窗口无关。
@@ -138,9 +138,9 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
 
     // ---- IPlatformBackend ----
 
-    public IWindowBackend CreateWindow(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory)
+    public IWindowBackend CreateWindow(WebviewWindow window, OrielWindowOptions options, OrielApp app, EmbeddedAssetStore? assets)
     {
-        var host = Win32WindowHost.Create(window, options, app, assetDirectory, this);
+        var host = Win32WindowHost.Create(window, options, app, assets, this);
 
         Interlocked.Increment(ref _aliveWindows);
 

@@ -114,7 +114,7 @@ internal static class TestHarness
     public const string Prefix = "OrielWeb.Tests.";
 
     /// <summary>内嵌资源虚拟主机的页面 URL——默认可信来源，入站校验要靠它。</summary>
-    public const string TrustedUrl = "https://app.oriel/index.html";
+    public const string TrustedUrl = "oriel://app.oriel/index.html";
 
     /// <summary>构造 { __oriel:'invoke', id, name, args, token } 消息并执行分发，返回回执 JSON 文档。</summary>
     /// <remarks>

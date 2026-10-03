@@ -43,11 +43,10 @@ public sealed class OrielCapabilityOptions
     }
 
     /// <summary>
-    /// 追加一个可信来源：<b>URL 前缀</b>，如 <c>https://app.oriel/</c> 或 <c>http://localhost:5173/</c>。
+    /// 追加一个可信来源：<b>URL 前缀</b>，如 <c>oriel://app.oriel/</c> 或 <c>http://localhost:5173/</c>。
     /// </summary>
     /// <remarks>
-    /// 内嵌资源的来源（<c>https://&lt;host&gt;/</c>，以及 Linux/macOS 上被改写的
-    /// <c>file://&lt;解压目录&gt;/</c>）**自动**可信，不必在这里写。
+    /// 内嵌资源的来源（<c>oriel://&lt;host&gt;/</c>）**自动**可信，不必在这里写。
     /// 这里只用来放行你自己加载的其它来源——典型场景是开发期连 Vite dev server。
     ///
     /// 除这里列出的来源之外，桥接脚本**根本不会安装**：远程页面里连 <c>window.oriel</c> 都不存在，

@@ -147,7 +147,11 @@ internal interface IPlatformBackend : IDisposable
     /// 而不是让它以原生崩溃或静默无效的形式暴露（见 <see cref="OrielApp.CreateWindow"/>）。
     /// </remarks>
     bool IsOnUiThread();
-    IWindowBackend CreateWindow(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory);
+    /// <remarks>
+    /// <c>assets</c> 是内嵌资源表（<c>UseEmbeddedAssets</c> 未启用时为 null）：后端用本平台的
+    /// scheme 处理器按需应答，**不再写盘**——所以这里传的是资源表而不是当年的"解压目录"。
+    /// </remarks>
+    IWindowBackend CreateWindow(WebviewWindow window, OrielWindowOptions options, OrielApp app, EmbeddedAssetStore? assets);
 
     /// <summary>创建托盘图标（应用级，最多一个）。</summary>
     ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app);

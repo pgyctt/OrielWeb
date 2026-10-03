@@ -15,8 +15,8 @@
         assets/img/logo.svg  → assets.img.logo.svg → assets/img/logo.svg   ✅
         app.min.js           → app.min.js          → app/min.js            ❌
 
-    推错时解压不报错，页面按原 URL 请求就是 404 白屏。详见
-     src/OrielWeb/Assets/EmbeddedAssetExtractor.cs。
+    推错时不报错，页面按原 URL 请求就是 404 白屏。详见
+     src/OrielWeb/Assets/EmbeddedAssetStore.cs。
 
     这里把那一行搬进包：消费方只写 <PackageReference Include="OrielWeb" /> 即可，
     LogicalName 固定用带 '/' 的显式分隔符形式，'.' 从此只是文件名的一部分。
@@ -24,7 +24,7 @@
     ── 三条约定 ────────────────────────────────────────────────────
     1. **默认开启**，但消费方已经自己声明过 wwwroot 资源时**跳过**（幂等）。
        不跳过的话同一批文件会被嵌两次，且两份的 LogicalName 不同
-       （一份显式分隔符、一份兼容反推），解压目录里会出现 app.js 与 app/min.js 并存。
+       （一份显式分隔符、一份兼容反推），资源表里会同时出现 app.js 与 app/min.js。
     2. **旧写法保持兼容**：已经手写 <EmbeddedResource> 的项目行为完全不变——
        走的就是上面第 1 条的"跳过"分支。
     3. 可用 <OrielWebEmbeddedAssets>false</OrielWebEmbeddedAssets> 整体关掉。

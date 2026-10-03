@@ -135,9 +135,9 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
         }
     }
 
-    public IWindowBackend CreateWindow(WebviewWindow window, OrielWindowOptions options, OrielApp app, string? assetDirectory)
+    public IWindowBackend CreateWindow(WebviewWindow window, OrielWindowOptions options, OrielApp app, EmbeddedAssetStore? assets)
     {
-        var host = new LinuxWindowHost(window, options, app, assetDirectory, this);
+        var host = new LinuxWindowHost(window, options, app, assets, this);
         _aliveWindows++;
         // 构造函数只装配宿主，真正的 GTK 窗口（gtk_window_new → show_all → 首次导航）在这里创建。
         // Windows 后端的建窗在静态工厂内完成，Linux/macOS 后端是实例方法，必须显式调用。
