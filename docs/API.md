@@ -69,7 +69,7 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 | `bool Fullscreen` / `bool OnTop` / `bool Maximized` | 均 `false` | `WithFullscreen()` / `WithOnTop()` / `WithMaximized()`（各带 `bool = true`） |
 | `bool Frameless` | `false` | `WithFrameless(bool = true)`（无边框，见 §2） |
 | `bool Hidden` | `false` | `WithHidden(bool = true)`（窗口不上屏，页面照常加载、IPC 照常往返） |
-| `string? Url` | `null` | `WithUrl(string)`（`null` = 内嵌资源首页） |
+| `string? Url` | `null` | `WithUrl(string)`。`null` = 内嵌资源首页（`oriel://<host>/index.html`）；指向内嵌资源时写 `oriel://<host>/…`（`https://<host>/…` 是兼容别名，导航前会归一） |
 | `string? Icon` | `null` | `WithIcon(string path)`。`null` 时：Windows 从 exe 取图标，Linux/macOS 回落到随产物分发的 `app.png` |
 | `bool Debug` | `false` | `WithDebug(bool = true)` |
 | `bool ConsoleForwarding` | `false` | `WithConsoleForwarding(bool = true)`（页面 console → `ConsoleMessage` 事件） |
@@ -107,7 +107,7 @@ WebviewWindow second = app.CreateWindow(
 
 | 语义 | 说明 |
 |---|---|
-| 一个应用、多个窗口 | 内嵌资源目录、可信来源、IPC 令牌与能力配置都继承**应用级**的那些；页面各有一份，命令与门禁共用 |
+| 一个应用、多个窗口 | 内嵌资源表（不落盘）、可信来源、IPC 令牌与能力配置都继承**应用级**的那些；页面各有一份，命令与门禁共用 |
 | `win.*` 只作用到发起者 | 内建窗口命令按"发起调用的那个窗口"路由，多窗口下不会打错窗口 |
 | 关掉一个不退出 | 所有窗口都关掉之后消息循环才结束（Windows 由存活窗口计数归零触发 `WM_QUIT`，macOS 由 `applicationShouldTerminateAfterLastWindowClosed:` 回答） |
 | `Windows` 会自动摘除已关闭的窗口 | 摘除发生在公共 `Closed` 事件**之前**：处理器里读到的列表不含刚关掉的那个 |
@@ -624,9 +624,10 @@ sudo apt-get install -y fonts-noto-cjk   # 中文界面必需，否则渲染成�
 
 | 手段 | 覆盖 |
 |---|---|
-| 单测（`tests/OrielWeb.Tests`） | 分发器与回执协议、能力模型、内建窗口命令表、资源 URL 解析、文件/Shell/对话框的纯函数、快照回退与数值格式化 |
+| 单测（`tests/OrielWeb.Tests`） | 分发器与回执协议、能力模型、内建窗口命令表、资源 URL 解析与请求路径归一（含穿越拒绝）、资源名约定、文件/Shell/对话框的纯函数、快照回退与数值格式化 |
 | 桥接测试（`tests/bridge/bridge.test.mjs`） | 三平台共用脚本的行为一致性：就绪、事件、往返、回执、超时、不可信来源不安装、每条出站消息带令牌 |
-| 无人自检（`OrielDemo --selftest <名字>`） | `nav` `ipc` `theme` `single-instance` `shell` `capability` `multiwindow`——自己驱动页面、打印结论行、以退出码表达成败 |
+| 无人自检（`OrielDemo --selftest <名字>`） | `nav` `ipc` `theme` `single-instance` `shell` `capability` `multiwindow` `scheme`——自己驱动页面、打印结论行、以退出码表达成败 |
+| 事实探针（`--selftest scheme`） | 打印页面来源与"来源决定的能力"（`isSecureContext`、`crypto.subtle`、`localStorage`、相对路径 `fetch`）并写成 GitHub 注解。只断言两条设计承诺（来源是 `oriel://<host>`、相对 `fetch` 取得到资源），其余**如实报告**：三平台的自定义 scheme 能力并不对称，那些值是被量出来的而不是推断的。2026-10-03 三平台基线一致：`origin=oriel://app.oriel secure=true subtle=true storage=ok fetch=ok:200:949` |
 | 手动验证操作台（直接运行 demo） | 托盘、通知、对话框、拖放、右键菜单、图标等**只能人眼**判定项，每项都写了预期 |
 | Velopack 打包 | Windows **每 push** 跑（`vpk pack` 成功、安装产物齐备、更新包与清单按约定已删）；Linux/macOS 只在 release 跑（三平台各自的产物形态见 §12） |
 
@@ -643,3 +644,7 @@ sudo apt-get install -y fonts-noto-cjk   # 中文界面必需，否则渲染成�
 失败时，CI 里的冒烟步骤与打包步骤都会把原因写成 **GitHub 注解**（各自检模式的结论行、`vpk` 自己的
 报错），而不是只留一个"exit code 1"：注解用 GitHub API 就能读到，作业日志需要 token——这个差别
 决定了排查能不能在不登录的情况下做完（2026-10-02 的几次事故都是靠它定位的）。
+
+注解不只用于失败：`--selftest scheme` 每轮都会把三平台的"来源与来源决定的能力"作为 notice 写进去，
+于是那些**没人能靠推理确定**的平台事实（比如 macOS 的自定义 scheme 算不算安全上下文）在 CI 上是
+可读的、可对比的，而不是等用户报告"我的页面用不了 SubtleCrypto"。
