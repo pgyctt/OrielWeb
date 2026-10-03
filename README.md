@@ -28,8 +28,9 @@ dotnet add package OrielWeb
     <PublishAot>true</PublishAot>               <!-- 原生单文件发布 -->
     <ApplicationIcon>app.ico</ApplicationIcon>  <!-- Windows 的任务栏图标 -->
   </PropertyGroup>
-  <!-- 就这些。wwwroot 下的前端资源由包内的 buildTransitive/OrielWeb.targets 自动内嵌，
-       细节见「内嵌页面资源」一节。 -->
+  <!-- 就这些。wwwroot 下的前端资源由包内的 buildTransitive/OrielWeb.targets 自动内嵌（零配置）。
+       注意这一条只在**从包**消费时生效：build/ 与 buildTransitive/ 不随 ProjectReference 分发，
+       那种工程要自己写一行带 LogicalName 的声明——见「内嵌页面资源」一节。 -->
 </Project>
 ```
 
@@ -99,7 +100,8 @@ internal partial class AppJsonContext : JsonSerializerContext;
 ## 内嵌页面资源
 
 前端资源**编译进程序集**，运行期由库通过自定义 scheme `oriel://<host>/…` 直接交给引擎加载
-（**不写盘**，也不再解压到任何目录）。发布产物里没有 `wwwroot` 文件夹，但页面照常工作，而且默认**零配置**。
+（**不写盘**，也不再解压到任何目录）。发布产物里没有 `wwwroot` 文件夹，但页面照常工作；
+从 **NuGet 包**消费时默认**零配置**（本仓库内用 `ProjectReference` 的工程要自己声明一行，原因见下）。
 
 ### 零配置是怎么来的
 
@@ -134,6 +136,9 @@ OrielWeb: 已自动内嵌 12 个 wwwroot 资源（LogicalName 用显式 '/' 分�
 > 只随包分发——`ProjectReference` 不带它们。所以本仓库的 `samples/OrielDemo` 自己写了带 `LogicalName`
 > 的那一行，而零配置只有从**包**消费时才生效（`samples/OrielMinimal` 与 `tools/verify-pack.ps1` 走的
 > 就是那条路）。踩这个坑的症状是启动即 `未找到前缀为 '…wwwroot/' 的内嵌资源`。
+>
+> 这类工程既然不导入 targets，构建期那道 `ORIELWEB001` 也拦不到它——**运行期**会以"检测到旧写法内嵌资源"
+> 报出来并给出正确写法。那条运行期检查就是为这条路径留的安全网。
 
 > **旧写法为什么被删掉**（2026-10-03）：不带 `LogicalName` 时 MSBuild 会把 `%(RecursiveDir)` 里的分隔符压成 `.`，
 > 于是 `app.min.js` 与 `app/min.js` 生成的资源名**完全一样**——库只能靠"最后一个 `.` 是扩展名"去猜，
@@ -224,8 +229,8 @@ MIME 由库按扩展名给出（自定义 scheme 下引擎不再替你推断，�
   **B2 旧写法（不带 `LogicalName`）** → **构建失败**并给出正确写法（错误码 `ORIELWEB001`）；
   **C `-p:OrielWebEmbeddedAssets=false`** → 一条 wwwroot 资源都没有。
 - 单测：`AssetUrlTests`（默认首页、query/fragment、子目录、`oriel://` 与兼容别名、相似域名不命中、
-  `..` 折叠与编码斜杠被拒、MIME 表）、`EmbeddedAssetTests`（两种资源名约定的推断，以及"含点文件名在旧写法下
-  无法区分"这条限制）。
+  `..` 折叠与编码斜杠被拒、MIME 表）、`EmbeddedAssetTests`（只认显式 `/` 分隔符这一种约定、自定义前缀必须以
+  `/` 结尾、旧形式报错并指路、请求路径归一与穿越拒绝）。
 - 真机：三平台的自检都从内嵌资源加载页面（`--selftest nav` 覆盖了"导航到不存在的页面应当失败"这类细节，
   自定义 scheme 的 404 必须真的失败而不是返回一页空内容）。
 - 事实探针：`--selftest scheme` 打印页面来源与"来源决定的能力"（`isSecureContext`、`crypto.subtle`、
@@ -239,7 +244,7 @@ MIME 由库按扩展名给出（自定义 scheme 下引擎不再替你推断，�
 
 | 能力 | 一句话 |
 |---|---|
-| 内嵌页面资源 | `wwwroot\**\*` 零配置自动内嵌；运行期由 `oriel://<host>/…` 直接应答（不落盘）；可用 `UseEmbeddedAssets(host)` 改 host、`OrielWebEmbeddedAssets=false` 关闭 |
+| 内嵌页面资源 | `wwwroot\**\*` 从包消费时零配置自动内嵌；运行期由 `oriel://<host>/…` 直接应答（不落盘）；可用 `UseEmbeddedAssets(host)` 改 host、`OrielWebEmbeddedAssets=false` 关闭 |
 | 无边框窗口 | 自绘标题栏（拖动与双击由库接管，页面只标一个属性）；窗口命令 `win.*`（最小化/最大化/关闭/拖动/全屏/置顶/选文件/上下文菜单）由库内建，应用一行不写；窗口图标三平台各自落到真正的图标槽 |
 | 导航与 IPC | 前进/后退/刷新、导航事件（含失败原因）、`invoke`（有回执）/`postMessage`（单向）/`EmitEvent`（宿主→页面）/console 转发 |
 | 安全与能力模型 | 来源 + 令牌 + 按命令授权三层；不可信来源的页面根本拿不到桥接脚本 |
