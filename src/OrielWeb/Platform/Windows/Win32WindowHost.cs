@@ -371,6 +371,18 @@ internal partial class Win32WindowHost : IWindowBackend
         }
         host._hwnd = hwnd;
 
+        // 尺寸语义统一为逻辑像素（与 Linux/macOS 的 WithSize/MinSize 同语义）：Windows 在
+        // Per-Monitor-V2 下按**窗口所在显示器**的 DPI 折算，否则 150%/200% 屏上窗口小一半。
+        // 时机在窗口已建、尚未显示（PostCreate 才 ShowWindow）——用户看不到这次修正。
+        uint initialDpi = Win32.GetDpiForWindow(hwnd);
+        if (initialDpi != 96)
+        {
+            _ = Win32.SetWindowPos(
+                hwnd, 0, 0, 0,
+                ScaleLogical(options.Width, initialDpi), ScaleLogical(options.Height, initialDpi),
+                Win32Constants.SWP_NOMOVE | Win32Constants.SWP_NOZORDER | Win32Constants.SWP_NOACTIVATE);
+        }
+
         // WithIcon：覆盖窗口类带来的（exe）图标
         if (!string.IsNullOrEmpty(options.Icon))
         {
@@ -731,8 +743,10 @@ internal partial class Win32WindowHost : IWindowBackend
                     info->ptMaxPosition.Y = monitorInfo.rcWork.Top;
                 }
 
-                if (_minWidth > 0) info->ptMinTrackSize.X = _minWidth;
-                if (_minHeight > 0) info->ptMinTrackSize.Y = _minHeight;
+                // 最小尺寸同样按逻辑点折算（与 Create 的尺寸语义统一一致）
+                uint dpi = Win32.GetDpiForWindow(hwnd);
+                if (_minWidth > 0) info->ptMinTrackSize.X = ScaleLogical(_minWidth, dpi);
+                if (_minHeight > 0) info->ptMinTrackSize.Y = ScaleLogical(_minHeight, dpi);
                 return 0;
             }
 
@@ -1559,8 +1573,16 @@ internal partial class Win32WindowHost : IWindowBackend
 
     public void Resize(int width, int height)
     {
-        Win32.SetWindowPos(_hwnd, 0, 0, 0, width, height, Win32Constants.SWP_NOMOVE | Win32Constants.SWP_NOZORDER | Win32Constants.SWP_NOACTIVATE);
+        // width/height 是逻辑点（与窗口选项同语义），按当前窗口 DPI 折算
+        uint dpi = Win32.GetDpiForWindow(_hwnd);
+        Win32.SetWindowPos(
+            _hwnd, 0, 0, 0,
+            ScaleLogical(width, dpi), ScaleLogical(height, dpi),
+            Win32Constants.SWP_NOMOVE | Win32Constants.SWP_NOZORDER | Win32Constants.SWP_NOACTIVATE);
     }
+
+    /// <summary>逻辑点 → 物理像素（96 DPI 基准）。尺寸语义统一的换算入口，见 Create 里的注释。</summary>
+    private static int ScaleLogical(int logical, uint dpi) => (int)Math.Round(logical * dpi / 96.0);
 
     public void Center()
     {
