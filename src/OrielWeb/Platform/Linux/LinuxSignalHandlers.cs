@@ -160,6 +160,8 @@ internal static unsafe class LinuxSignalHandlers
             if (WindowStates.TryGetValue(widget, out var host))
             {
                 host.ScheduleMaximizedSync();
+                // 同一信号顺带回灌全屏：WM 侧的原生全屏路径（快捷键/菜单）不经过 SetFullscreen
+                host.SyncFullscreenState();
             }
         }
         catch

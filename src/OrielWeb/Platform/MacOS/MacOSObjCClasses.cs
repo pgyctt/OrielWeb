@@ -106,6 +106,11 @@ internal static unsafe class MacOSObjCClasses
         // 原生路径的最大化/还原（系统菜单 Zoom、脚本等）不经过 win.toggleMaximize，
         // 只能靠 resize 回调发现——isZoomed 的真实变化由宿主比对后上报（见 SyncMaximizedState）。
         AddMethod(cls, "windowDidResize:", &WindowDidResize, "v@:@");
+        // 原生路径的全屏进出（绿钮、ESC、系统菜单）同样不经过 SetFullscreen/ToggleFullscreen：
+        // 不回灌的话 _isFullscreen 会与真实状态相反，下一次 Toggle 行为颠倒
+        // （Linux 由 window-state-event 回灌；Windows 全屏只经 API 发起，无此问题）。
+        AddMethod(cls, "windowDidEnterFullScreen:", &WindowDidEnterFullScreen, "v@:@");
+        AddMethod(cls, "windowDidExitFullScreen:", &WindowDidExitFullScreen, "v@:@");
         ObjCRuntime.objc_registerClassPair(cls);
         return cls;
     }
@@ -161,6 +166,42 @@ internal static unsafe class MacOSObjCClasses
         {
             // 异常不得穿越 ObjC 边界；状态同步失败不影响窗口本身
             System.Diagnostics.Debug.WriteLine($"[OrielWeb] windowDidResize: 抛出异常：{ex}");
+        }
+        return 0;
+    }
+
+    [UnmanagedCallersOnly]
+    private static nint WindowDidEnterFullScreen(nint self, nint sel, nint notification)
+    {
+        try
+        {
+            if (WindowDelegateStates.TryGetValue(self, out var host))
+            {
+                host.OnNativeFullscreenChanged(true);
+            }
+        }
+        catch (Exception ex)
+        {
+            // 异常不得穿越 ObjC 边界；状态同步失败不影响窗口本身
+            System.Diagnostics.Debug.WriteLine($"[OrielWeb] windowDidEnterFullScreen: 抛出异常：{ex}");
+        }
+        return 0;
+    }
+
+    [UnmanagedCallersOnly]
+    private static nint WindowDidExitFullScreen(nint self, nint sel, nint notification)
+    {
+        try
+        {
+            if (WindowDelegateStates.TryGetValue(self, out var host))
+            {
+                host.OnNativeFullscreenChanged(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            // 异常不得穿越 ObjC 边界；状态同步失败不影响窗口本身
+            System.Diagnostics.Debug.WriteLine($"[OrielWeb] windowDidExitFullScreen: 抛出异常：{ex}");
         }
         return 0;
     }

@@ -782,6 +782,20 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     }
 
     /// <summary>
+    /// 全屏状态回灌：WM 侧的原生全屏路径（快捷键/系统菜单）不经过 <see cref="SetFullscreen"/>，
+    /// 不回灌的话 <c>_isFullscreen</c> 会与真实状态相反，下一次 Toggle/SetFullscreen 行为颠倒。
+    /// 与 maximize 共用 window-state-event 这个时机（macOS 由窗口委托的 didEnter/ExitFullScreen
+    /// 回灌；Windows 全屏只经 API 发起，无此问题）。
+    /// </summary>
+    internal void SyncFullscreenState()
+    {
+        if (WindowAlive)
+        {
+            _isFullscreen = GtkNative.GtkWindowIsFullscreen(_gtkWindow);
+        }
+    }
+
+    /// <summary>
     /// 安排一次"下一轮主循环再读最大化状态"。由 <c>window-state-event</c> 的 trampoline 调用。
     /// </summary>
     /// <remarks>

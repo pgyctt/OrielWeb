@@ -127,6 +127,10 @@ internal static unsafe partial class GtkNative
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool GtkWindowIsMaximized(nint window);
 
+    [LibraryImport(Gtk, EntryPoint = "gtk_window_is_fullscreen")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool GtkWindowIsFullscreen(nint window);
+
     [LibraryImport(Gtk, EntryPoint = "gtk_window_fullscreen")]
     internal static partial void GtkWindowFullscreen(nint window);
 

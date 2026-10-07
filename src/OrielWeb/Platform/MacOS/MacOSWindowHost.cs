@@ -725,6 +725,22 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         }
     }
 
+    /// <summary>
+    /// 原生全屏路径回灌（绿钮、ESC、系统菜单的进出全屏不经过 <see cref="SetFullscreen"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 不回灌的话 <c>_isFullscreen</c> 会与真实状态相反，下一次 Toggle/SetFullscreen 行为颠倒——
+    /// Linux 由 window-state-event 回灌（SyncFullscreenState）、Windows 全屏只经 API 发起
+    /// 无此问题，macOS 是最后一个缺口（评审 P2-9）。
+    /// </remarks>
+    internal void OnNativeFullscreenChanged(bool isFullscreen)
+    {
+        if (_isFullscreen != isFullscreen)
+        {
+            _isFullscreen = isFullscreen;
+        }
+    }
+
     public bool ToggleFullscreen()
     {
         SetFullscreen(!_isFullscreen);
