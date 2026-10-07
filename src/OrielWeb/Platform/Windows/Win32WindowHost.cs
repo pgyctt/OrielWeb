@@ -377,8 +377,21 @@ internal partial class Win32WindowHost : IWindowBackend
             ApplyExplicitIcon(hwnd, options.Icon);
         }
 
-        host.SetupComposition();
-        host.PostCreate();
+        try
+        {
+            host.SetupComposition();
+            host.PostCreate();
+        }
+        catch
+        {
+            // 窗口已经建出来了：中段失败（如 DComp 设备创建不了）必须收掉 HWND 与根引用，
+            // 否则窗口残留、WndProc 还在经 GWLP_USERDATA 把消息路由给这个半成品宿主。
+            // 先 DestroyWindow（同步触发 WM_DESTROY，此刻 GCHandle 仍有效），再释放根引用。
+            _ = Win32.DestroyWindow(hwnd);
+            host._selfHandle.Free();
+            throw;
+        }
+
         return host;
     }
 
