@@ -702,9 +702,9 @@ internal partial class Win32WindowHost : IWindowBackend
                 _controller?.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON.COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
                 return 0;
 
-            case Win32Constants.WM_KILLFOCUS:
-                _controller?.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON.COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
-                break;
+            // WM_KILLFOCUS 刻意不处理（曾经与 SETFOCUS 同款 MoveFocus，已删）：失焦时把焦点
+            // 塞回组合宿主是反向操作。WebView2 组合托管的标准做法是只在 SETFOCUS 时移交——
+            // KILLFOCUS 也移交的话，失焦后页面的 caret/选区高亮与 IME 状态可能错乱。
 
             case Win32Constants.WM_SIZE:
                 UpdateBounds();
