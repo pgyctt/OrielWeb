@@ -254,7 +254,7 @@ MIME 由库按扩展名给出（自定义 scheme 下引擎不再替你推断，�
 | 文件拖放 | 拖入文件/文件夹 → 本地路径列表 + 事件 |
 | 内建右键菜单 | 默认只留剪切/复制/粘贴，可切平台原样或完全禁用 |
 | 多窗口 | `app.CreateWindow(...)` 运行时新建窗口；关掉一个窗口应用不退出，`app.Windows` 自动摘除已关闭的窗口 |
-| 打包与更新 | 交给 **Velopack**（`vpk`）：Windows 出 Setup.exe / .msi / Portable.zip，Linux 出 AppImage，macOS 出 Setup.pkg / Portable.zip；`pwsh tools/publish.ps1 -Bundle` 一条命令出全套。**应用自更新尚未接入**（见下） |
+| 打包与更新 | 交给 **Velopack**（`vpk`）：Windows 出 Setup.exe / .msi / Portable.zip，Linux 出 AppImage，macOS 出 Setup.pkg / Portable.zip；Windows 上 `pwsh tools/publish.ps1 -Bundle` 一条命令出全套（macOS 的 .app 组装走 release.yml / `tools/make-macos-app.sh`，Linux 用 `tools/wsl_publish.ps1`）。**应用自更新尚未接入**（见下） |
 
 各项的用法、平台差异与**为什么这么设计**见 [docs/API.md](docs/API.md)。
 

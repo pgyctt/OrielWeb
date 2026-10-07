@@ -232,8 +232,17 @@ if ($Bundle) {
         $PackVersion = $Matches[1]
     }
 
-    # 图标按平台给：Windows 认 .ico，另两个平台认 .png（同一个图标的两种导出）
-    $iconRel = if ($Runtime -like 'win-*') { 'samples/OrielDemo/app.ico' } else { 'samples/OrielDemo/app.png' }
+    # 本脚本只覆盖 Windows 打包：macOS 的 .app 组装（tools/make-macos-app.sh）只能在 macOS 上做，
+    # 且 vpk 在 macOS 上只认 .icns——"给 osx-* 传 .png 图标"这条矛盾路径第一次跑就折过
+    # （2026-10-02）。Linux 的打包由 tools/wsl_publish.ps1（WSL）负责。显式挡下，
+    # 而不是让 vpk 在中途以更隐晦的方式失败。
+    if ($Runtime -notlike 'win-*') {
+        throw "-Bundle 目前只支持 Windows RID（收到 $Runtime）。" +
+              "macOS 走 release.yml 的 make-macos-app.sh 流程，Linux 走 tools/wsl_publish.ps1。"
+    }
+
+    # Windows 认 .ico（跨平台图标导出的另一半 .png 只在 macOS 的 .app 流程里用）
+    $iconRel = 'samples/OrielDemo/app.ico'
 
     $releasesDir = Join-Path $outputRoot "$Runtime-releases"
     $packArgs = @(
