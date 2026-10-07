@@ -707,6 +707,10 @@ internal static unsafe class MacOSObjCClasses
                 headers);
 
             ObjCRuntime.SendVoidObj(task, ObjCRuntime.Sel("didReceiveResponse:"), response);
+            // alloc/init 产生的 +1 归我们：didReceiveResponse: 之后 WebKit 自己 retain 了它，
+            // 不 release 就是每个子资源请求漏一个 NSHTTPURLResponse——图片多的页面一次加载
+            // 漏几十个。同函数里便捷构造（dictionaryWithObject:forKey: 等）是 autoreleased，不在此列。
+            ObjCRuntime.objc_release(response);
             ObjCRuntime.SendVoidObj(task, ObjCRuntime.Sel("didReceiveData:"), data);
             ObjCRuntime.SendVoid(task, ObjCRuntime.Sel("didFinish"));
         }
