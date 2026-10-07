@@ -30,7 +30,8 @@
     <!-- 包内 build logic：消费方不必再手写 <EmbeddedResource> + LogicalName，
          也不会踩到"含点文件名被静默解压到错误路径"那个坑。理由见文件头。
          放 buildTransitive\（不是 build\）：**间接引用者也能吃到**——
-         应用 → 引用一个带 wwwroot 的类库 → 那个类库的资源也会被正确嵌入。
+         应用 → 引用一个带 wwwroot 的类库 → 那个类库的资源也会被正确嵌入，
+         运行期与入口程序集的站点合并提供（同一相对路径入口优先，见 EmbeddedAssetStore.Create）。
          文件名必须是 <PackageId>.targets，NuGet 只自动导入这个名字。 -->
     <None Include="buildTransitive\OrielWeb.targets" Pack="True" PackagePath="buildTransitive\" Visible="false" />
   </ItemGroup>

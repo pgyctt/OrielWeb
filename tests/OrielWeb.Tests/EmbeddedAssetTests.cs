@@ -1,3 +1,4 @@
+using System.Reflection;
 using Xunit;
 
 namespace OrielWeb.Tests;
@@ -113,4 +114,45 @@ public sealed class EmbeddedAssetTests
     [InlineData("a%20b/c.js", "a b/c.js")]
     public void NormalizeRequestPath_ResolvesTheUsualForms(string? path, string expected)
         => Assert.Equal(expected, EmbeddedAssetStore.NormalizeRequestPath(path));
+
+    // ---- 多程序集合并：入口与类库的 wwwroot 合并成一棵站点，入口优先 ----
+
+    private static readonly Assembly TestAssembly = typeof(EmbeddedAssetTests).Assembly;
+
+    [Fact]
+    public void Collect_MergesLibraryResourcesIntoTheSameSite()
+    {
+        var table = new Dictionary<string, (Assembly Source, string ResourceName)>(StringComparer.OrdinalIgnoreCase);
+        EmbeddedAssetStore.CollectResources(TestAssembly, ["App.wwwroot/index.html"], "App.wwwroot/", table);
+        EmbeddedAssetStore.CollectResources(TestAssembly, ["MyLib.wwwroot/css/site.css", "MyLib.wwwroot/logo.svg"], "MyLib.wwwroot/", table);
+
+        Assert.Equal(3, table.Count);
+        Assert.Equal("MyLib.wwwroot/css/site.css", table["css/site.css"].ResourceName);
+        Assert.Equal("MyLib.wwwroot/logo.svg", table["logo.svg"].ResourceName);
+    }
+
+    [Fact]
+    public void Collect_EntryWinsWhenLibraryShipsTheSamePath()
+    {
+        // 类库与入口都提供同一路径：入口先收集、TryAdd 先到先得——类库不能劫持应用的首页。
+        var table = new Dictionary<string, (Assembly Source, string ResourceName)>(StringComparer.OrdinalIgnoreCase);
+        EmbeddedAssetStore.CollectResources(TestAssembly, ["App.wwwroot/index.html"], "App.wwwroot/", table);
+        EmbeddedAssetStore.CollectResources(TestAssembly, ["MyLib.wwwroot/index.html"], "MyLib.wwwroot/", table);
+
+        Assert.Equal("App.wwwroot/index.html", table["index.html"].ResourceName);
+    }
+
+    [Fact]
+    public void Collect_IgnoresResourcesOutsideTheConvention()
+    {
+        // 只收 "<程序集名>.wwwroot/" 前缀：别的用途的内嵌资源、旧写法（点分隔）一律不进表——
+        // 后者是 fail closed：不被服务，也不会把路径猜错。
+        var table = new Dictionary<string, (Assembly Source, string ResourceName)>(StringComparer.OrdinalIgnoreCase);
+        EmbeddedAssetStore.CollectResources(TestAssembly,
+            ["Unrelated.Resource", "MyLib.wwwroot.old/legacy.html", "MyLib.wwwroot/js/app.js"],
+            "MyLib.wwwroot/", table);
+
+        var hit = Assert.Single(table);
+        Assert.Equal("MyLib.wwwroot/js/app.js", hit.Value.ResourceName);
+    }
 }

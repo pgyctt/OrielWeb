@@ -24,20 +24,23 @@ namespace OrielWeb;
 /// </remarks>
 internal sealed class EmbeddedAssetStore
 {
-    /// <summary>相对路径 → 内嵌资源名。</summary>
+    /// <summary>相对路径 → 持有资源的程序集 + 内嵌资源名。</summary>
     /// <remarks>
+    /// <para>
     /// 比较用 <see cref="StringComparer.OrdinalIgnoreCase"/>：旧的落盘实现在 Windows/macOS 上
     /// 天然大小写不敏感，只有 Linux 敏感，于是同一份前端资源在三个平台上的行为并不一致。
     /// 归一成"一律不敏感"后，<c>&lt;img src="Logo.PNG"&gt;</c> 这种写法不会再只在 Linux 上 404。
     /// 代价是两个只差大小写的资源名会撞车（先到先得）——这本来就是不该有的命名。
+    /// </para>
+    /// <para>
+    /// 值里带**来源程序集**：类库的 wwwroot 会与入口的合并进同一张表（见 <see cref="Create"/>），
+    /// 取流时必须回自己的程序集拿，而不是无脑找入口程序集。
+    /// </para>
     /// </remarks>
-    private readonly Dictionary<string, string> _resources;
+    private readonly Dictionary<string, (Assembly Source, string ResourceName)> _resources;
 
-    private readonly Assembly _assembly;
-
-    private EmbeddedAssetStore(Assembly assembly, Dictionary<string, string> resources)
+    private EmbeddedAssetStore(Dictionary<string, (Assembly Source, string ResourceName)> resources)
     {
-        _assembly = assembly;
         _resources = resources;
     }
 
@@ -48,21 +51,67 @@ internal sealed class EmbeddedAssetStore
     internal int Count => _resources.Count;
 
     /// <summary>
-    /// 扫描入口程序集的内嵌资源，建立"相对路径 → 资源名"的表。
+    /// 扫描入口程序集与**已加载的引用程序集**（类库）的内嵌资源，建立"相对路径 → 资源"的表。
     /// </summary>
-    /// <param name="resourcePrefixOverride"><c>UseEmbeddedAssets</c> 的第二个参数；null 表示按程序集名推断。</param>
-    /// <exception cref="InvalidOperationException">一个资源都没找到（这是配置错误，不是"空站点"）。</exception>
+    /// <param name="resourcePrefixOverride"><c>UseEmbeddedAssets</c> 的第二个参数；null 表示按程序集名推断。只作用于入口程序集。</param>
+    /// <remarks>
+    /// <para>
+    /// 类库也能带 wwwroot：包内 targets 对**每个**消费项目同样生效，类库的资源名前缀是
+    /// **类库自己的程序集名**。运行期把入口与各类库的 wwwroot 合并成**一棵站点**，
+    /// 同一相对路径由入口程序集优先（<c>TryAdd</c> 先到先得）——类库不能劫持应用的首页。
+    /// </para>
+    /// <para>
+    /// 引用程序集走 <c>AppDomain.CurrentDomain.GetAssemblies()</c>：只枚举**已加载**的，
+    /// 不按名强制加载（AOT/裁剪下按名加载不可靠）。应用只要用过类库里的任何类型
+    /// （命令类、选项类……）它就已在场；仅在 csproj 里 PackageReference 却从不触及其类型的
+    /// 极端用法不在覆盖范围。资源清单是元数据，<see cref="Assembly.GetManifestResourceNames"/>
+    /// 在 AOT 下可用。
+    /// </para>
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">入口与所有已加载程序集加起来一个资源都没找到（这是配置错误，不是"空站点"）。</exception>
     public static EmbeddedAssetStore Create(string? resourcePrefixOverride)
     {
-        var assembly = Assembly.GetEntryAssembly()
+        var entry = Assembly.GetEntryAssembly()
             ?? throw new InvalidOperationException("无法确定入口程序集。");
 
-        string assemblyName = assembly.GetName().Name ?? "app";
-        string[] names = assembly.GetManifestResourceNames();
-        string prefix = ResolveConvention(names, assemblyName, resourcePrefixOverride);
+        var resources = new Dictionary<string, (Assembly Source, string ResourceName)>(StringComparer.OrdinalIgnoreCase);
 
-        var resources = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (string name in names)
+        // 入口程序集先行：只有它可以走自定义 resourcePrefix，且同路径冲突时它优先。
+        string entryName = entry.GetName().Name ?? "app";
+        string[] entryNames = entry.GetManifestResourceNames();
+        string entryPrefix = ResolveConvention(entryNames, entryName, resourcePrefixOverride);
+        CollectResources(entry, entryNames, entryPrefix, resources);
+
+        // 已加载的引用程序集（类库）：固定按 <程序集名>.wwwroot/ 约定收集。
+        // 按名排序让合并顺序确定（跨次运行一致）；动态程序集与名字取不到的跳过。
+        var others = AppDomain.CurrentDomain.GetAssemblies()
+            .Where(a => !ReferenceEquals(a, entry) && !a.IsDynamic)
+            .Select(a => (Assembly: a, Name: a.GetName().Name))
+            .Where(t => !string.IsNullOrEmpty(t.Name))
+            .OrderBy(t => t.Name, StringComparer.Ordinal);
+        foreach (var (assembly, name) in others)
+        {
+            CollectResources(assembly, assembly.GetManifestResourceNames(), $"{name}.wwwroot/", resources);
+        }
+
+        if (resources.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"入口程序集与已加载的引用程序集里都没有找到 wwwroot 内嵌资源（入口约定前缀 '{entryPrefix}'）。" +
+                "正确做法是**什么都不写**——包内的 buildTransitive/OrielWeb.targets 会把 wwwroot 自动内嵌（见 README「快速开始」）；" +
+                "自己声明时则必须带 LogicalName=\"<程序集名>.wwwroot/%(RecursiveDir)%(Filename)%(Extension)\"，" +
+                "或为 UseEmbeddedAssets 显式指定以 '/' 结尾的 resourcePrefix。");
+        }
+
+        return new EmbeddedAssetStore(resources);
+    }
+
+    /// <summary>把一个程序集里命中前缀的资源收进表：同路径已在表里时**保留先来的**（先到先得，见 <see cref="Create"/>）。</summary>
+    internal static void CollectResources(
+        Assembly source, string[] resourceNames, string prefix,
+        Dictionary<string, (Assembly Source, string ResourceName)> resources)
+    {
+        foreach (string name in resourceNames)
         {
             if (!name.StartsWith(prefix, StringComparison.Ordinal))
             {
@@ -71,21 +120,10 @@ internal sealed class EmbeddedAssetStore
 
             string relative = MapResourceToPath(name[prefix.Length..]).Replace('\\', '/');
 
-            // 同一个相对路径出现两次（大小写不同、或两种约定混用）时保首个：后者是命名事故，
-            // 与其静默覆盖，不如让先声明的那个稳定胜出。
-            resources.TryAdd(relative, name);
+            // 同一个相对路径出现两次（大小写不同、两种约定混用、或入口与类库都提供同一文件）时
+            // 保首个：后者是命名事故，与其静默覆盖，不如让先声明的那个稳定胜出。
+            resources.TryAdd(relative, (source, name));
         }
-
-        if (resources.Count == 0)
-        {
-            throw new InvalidOperationException(
-                $"未找到前缀为 '{prefix}' 的内嵌资源。正确做法是**什么都不写**——" +
-                "包内的 buildTransitive/OrielWeb.targets 会把 wwwroot 自动内嵌（见 README「快速开始」）；" +
-                "自己声明时则必须带 LogicalName=\"<程序集名>.wwwroot/%(RecursiveDir)%(Filename)%(Extension)\"，" +
-                "或为 UseEmbeddedAssets 显式指定以 '/' 结尾的 resourcePrefix。");
-        }
-
-        return new EmbeddedAssetStore(assembly, resources);
     }
 
     /// <summary>
@@ -102,20 +140,21 @@ internal sealed class EmbeddedAssetStore
         asset = default;
 
         string? relative = NormalizeRequestPath(requestPath);
-        if (relative is null || !_resources.TryGetValue(relative, out string? resourceName))
+        if (relative is null || !_resources.TryGetValue(relative, out (Assembly Source, string ResourceName) hit))
         {
             return false;
         }
 
-        asset = new EmbeddedAsset(resourceName, MimeTypes.ForPath(relative));
+        asset = new EmbeddedAsset(hit.Source, hit.ResourceName, MimeTypes.ForPath(relative));
         return true;
     }
 
     /// <summary>打开一件资源的内容流（每次调用都是新流，可并发读）。</summary>
     /// <exception cref="InvalidOperationException">资源名在表里却有取不出来（程序集被裁剪等）。</exception>
     internal Stream Open(in EmbeddedAsset asset)
-        => _assembly.GetManifestResourceStream(asset.ResourceName)
-           ?? throw new InvalidOperationException($"内嵌资源缺失：{asset.ResourceName}");
+        => asset.Source.GetManifestResourceStream(asset.ResourceName)
+           ?? throw new InvalidOperationException(
+               $"内嵌资源缺失：{asset.Source.GetName().Name}/{asset.ResourceName}");
 
     /// <summary>
     /// URL 的 path → 资源表的键。返回 <c>null</c> 表示这个路径按"不存在"处理。
@@ -228,7 +267,8 @@ internal sealed class EmbeddedAssetStore
             .Replace('/', Path.DirectorySeparatorChar);
 }
 
-/// <summary>一件内嵌资源：它的资源名与按扩展名推断的内容类型。</summary>
-/// <param name="ResourceName">程序集里的内嵌资源名（<see cref="EmbeddedAssetStore"/> 查表得来）。</param>
+/// <summary>一件内嵌资源：持有它的程序集、资源名与按扩展名推断的内容类型。</summary>
+/// <param name="Source">持有这份资源的程序集（入口程序集，或某个带 wwwroot 的引用类库）。</param>
+/// <param name="ResourceName">该程序集里的内嵌资源名（<see cref="EmbeddedAssetStore"/> 查表得来）。</param>
 /// <param name="ContentType">应答时用的 Content-Type（含 charset，见 <see cref="MimeTypes"/>）。</param>
-internal readonly record struct EmbeddedAsset(string ResourceName, string ContentType);
+internal readonly record struct EmbeddedAsset(Assembly Source, string ResourceName, string ContentType);
