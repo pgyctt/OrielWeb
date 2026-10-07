@@ -1,6 +1,7 @@
 name: release
 
-# 发布：推送 v* 标签（或手动触发，需选一个 v* 标签的 ref）。
+# 发布：推送 v* 标签（或手动触发——只有选了 v* 标签 ref 才会真正发布，
+# 其余 ref 下 publish job 直接跳过）。
 # 产物：GitHub Release（NuGet 包 + 三平台 demo 单文件）+ nuget.org。
 # 前置：仓库 Secrets 里配置 NUGET_API_KEY（nuget.org 的 Push API Key）；
 #       未配置时工作流在最后一步失败，但 Release 资产已在上传完毕（推 NuGet 放在最后）。
@@ -19,6 +20,12 @@ on:
 permissions:
   # 上传 Release 资产需要写权限
   contents: write
+
+# 快速连推两个 tag 时不并发跑：两次运行的同名 Release 资产会互相覆盖
+# （NuGet 侧另有 --skip-duplicate 兜底）。排队串行即可，不取消进行中的那次。
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   demo:
@@ -210,6 +217,10 @@ jobs:
   publish:
     # 等三个平台的 demo 都产出再汇总：needs 保证任一平台失败就不会发出半套资产
     needs: [demo]
+    # workflow_dispatch 可以从任意分支 ref 触发：发布链只对 v* 标签生效。不加这条，
+    # 手动触发会把未打 tag 的版本照常发上 nuget.org——下面的版本闸步骤只在 tag ref 下
+    # 运行，拦不住那条路。非 tag ref 时本 job 显示为 skipped，属预期。
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
