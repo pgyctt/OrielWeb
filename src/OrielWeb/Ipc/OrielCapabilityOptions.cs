@@ -46,17 +46,61 @@ public sealed class OrielCapabilityOptions
     /// 追加一个可信来源：<b>URL 前缀</b>，如 <c>oriel://app.oriel/</c> 或 <c>http://localhost:5173/</c>。
     /// </summary>
     /// <remarks>
+    /// <para>
     /// 内嵌资源的来源（<c>oriel://&lt;host&gt;/</c>）**自动**可信，不必在这里写。
     /// 这里只用来放行你自己加载的其它来源——典型场景是开发期连 Vite dev server。
-    ///
+    /// </para>
+    /// <para>
+    /// 前缀在这里**归一化**：解析为绝对 URL、自动补尾斜杠（<c>http://localhost:5173</c> →
+    /// <c>http://localhost:5173/</c>）。这不是美化——可信判定是逐字节前缀匹配，缺尾斜杠时
+    /// 该前缀会命中 <c>http://localhost:5173.evil.com/</c>，形似域名即可白拿整套桥接与令牌。
+    /// 裸 host（漏写 scheme）、带 query/fragment 的形式直接拒绝，不让它静默变成一个
+    /// 匹配不到任何真实页面 URL 的死前缀。归一化同时喂给宿主侧判定与注入脚本的
+    /// <c>__ORIEL_TRUSTED__</c>（两者都消费这份列表），不会出现两侧标准不一。
+    /// </para>
+    /// <para>
     /// 除这里列出的来源之外，桥接脚本**根本不会安装**：远程页面里连 <c>window.oriel</c> 都不存在，
     /// 而不是"装上了再拦"。这也是为什么不需要担心"远程页面拿到令牌"。
+    /// </para>
     /// </remarks>
     public OrielCapabilityOptions AllowOrigin(string urlPrefix)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(urlPrefix);
-        AllowedOrigins.Add(urlPrefix);
+        AllowedOrigins.Add(NormalizeOrigin(urlPrefix));
         return this;
+    }
+
+    /// <summary>可信来源前缀的归一化：绝对 URL + 去掉 query/fragment + 保证以 <c>/</c> 结尾。</summary>
+    internal static string NormalizeOrigin(string urlPrefix)
+    {
+        // "localhost:5173" 这种笔误会被 Uri 读成 scheme=localhost、没有 host——
+        // 正是必须拒绝的那类输入，而不是当成功解析。
+        if (!Uri.TryCreate(urlPrefix, UriKind.Absolute, out Uri? uri) || uri is null || uri.Host.Length == 0)
+        {
+            throw new ArgumentException(
+                $"AllowOrigin 的「{urlPrefix}」不是可判定的绝对 URL。常见笔误是漏掉 scheme" +
+                "（\"localhost:5173\" 会被读成 scheme=localhost）——请写成 \"http://localhost:5173/\" 这样的完整形式。",
+                nameof(urlPrefix));
+        }
+
+        // 可信判定是 URL 前缀匹配：带 query/fragment 的"前缀"匹配不到任何真实页面 URL，
+        // 留着只会让人以为配了却没生效。
+        if (uri.Query.Length > 0 || uri.Fragment.Length > 0)
+        {
+            throw new ArgumentException(
+                $"AllowOrigin 的「{urlPrefix}」不能带 query 或 fragment（可信判定是前缀匹配，" +
+                "带 query 的前缀匹配不到真实页面 URL）。",
+                nameof(urlPrefix));
+        }
+
+        // 前缀必须以 '/' 结尾：这是安全边界，见 AllowOrigin 的 remarks。
+        string path = uri.AbsolutePath;
+        if (!path.EndsWith('/'))
+        {
+            path += "/";
+        }
+
+        return $"{uri.Scheme}://{uri.Authority}{path}";
     }
 
     // "是否显式配置过"由 OrielAppBuilder 判断（Capabilities 非 null 即算），

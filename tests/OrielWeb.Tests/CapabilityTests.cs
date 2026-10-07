@@ -189,6 +189,39 @@ public sealed class CapabilityTests
     }
 
     [Fact]
+    public void AllowedOriginIsNormalizedWithTrailingSlash()
+    {
+        // 缺尾斜杠是最常见的笔误：不归一的话 "http://localhost:5173" 会逐字节命中
+        // "http://localhost:5173.evil.com/"——形似域名即可白拿整套桥接与令牌。
+        var options = new OrielCapabilityOptions().AllowOrigin("http://localhost:5173");
+        OrielIpcGuard guard = Guard(options);
+
+        Assert.True(guard.IsTrustedUrl("http://localhost:5173/index.html"));
+        Assert.False(guard.IsTrustedUrl("http://localhost:5173.evil.com/index.html"));
+    }
+
+    [Fact]
+    public void AllowedOriginSubPathIsNormalizedToo()
+    {
+        // 子路径前缀同样补尾斜杠："…/app" 不该命中 "…/app.evil.com/"。
+        var options = new OrielCapabilityOptions().AllowOrigin("http://localhost:5173/app");
+        OrielIpcGuard guard = Guard(options);
+
+        Assert.True(guard.IsTrustedUrl("http://localhost:5173/app/index.html"));
+        Assert.False(guard.IsTrustedUrl("http://localhost:5173/app.evil.com/"));
+    }
+
+    [Theory]
+    // 没有 scheme：Uri 会把它读成 scheme=localhost、没有 host——正是必须拒绝的笔误
+    [InlineData("localhost:5173")]
+    // 带 query 的"前缀"匹配不到任何真实页面 URL，留着只会让人以为配了却没生效
+    [InlineData("http://localhost:5173?x=1")]
+    [InlineData("http://localhost:5173/#top")]
+    [InlineData("not a url")]
+    public void AllowedOriginRejectsUnusablePrefixes(string prefix)
+        => Assert.Throws<ArgumentException>(() => new OrielCapabilityOptions().AllowOrigin(prefix));
+
+    [Fact]
     public void AddTrustedPrefixAppendsAnotherOrigin()
     {
         // 显式追加的来源（开发期的 dev server 等）与内嵌资源走同一条前缀判定。
