@@ -497,7 +497,13 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
             _ = GtkNative.GtkWindowSetIconFromFile(_gtkWindow, _options.Icon, 0);
         }
 
-        if (_options.Center)
+        if (_options.X is not null || _options.Y is not null)
+        {
+            // At(x,y)（与 Windows/macOS 对齐）：map 之前发出的 move 请求会被窗口管理器
+            // 当作初始位置。只给一维时另一维传 -1（GTK 的"保持现状"值）。
+            GtkNative.GtkWindowMove(_gtkWindow, _options.X ?? -1, _options.Y ?? -1);
+        }
+        else if (_options.Center)
         {
             GtkNative.GtkWindowSetPosition(_gtkWindow, GtkWinPosCenter);
         }

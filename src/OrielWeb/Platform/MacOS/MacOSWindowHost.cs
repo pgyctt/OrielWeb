@@ -449,7 +449,21 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
                 _options.MinHeight ?? 0);
         }
 
-        ObjCRuntime.SendVoid(_nsWindow, ObjCRuntime.Sel("center"));
+        if (_options.X is not null || _options.Y is not null)
+        {
+            // At(x,y)：顶左角落在屏幕逻辑坐标 (x,y)——与 Windows（CreateWindowExW 的 x/y）
+            // 语义对齐。At 一次给两个值，这里按可空处理只是防御只给一维的写法。
+            double maxY = ScreenMaxY();
+            ObjCRuntime.SendVoidDouble2(
+                _nsWindow,
+                ObjCRuntime.Sel("setFrameTopLeftPoint:"),
+                _options.X.GetValueOrDefault(),
+                maxY - _options.Y.GetValueOrDefault());
+        }
+        else if (_options.Center)
+        {
+            ObjCRuntime.SendVoid(_nsWindow, ObjCRuntime.Sel("center"));
+        }
 
         if (!_options.Hidden)
         {
@@ -751,10 +765,43 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
 
     public void MoveTo(int x, int y)
     {
-        // x/y 按 cocoa 左下角坐标处理（与 Windows/Linux 的左上角原点语义相反）
-        _cocoaX = x;
-        _cocoaY = y;
-        ObjCRuntime.SendVoidDouble2(_nsWindow, ObjCRuntime.Sel("setFrameOrigin:"), _cocoaX, _cocoaY);
+        // API.md 的契约：屏幕坐标（应用像素、**左上角**原点）。cocoa 是左下角原点且 y 向上，
+        // 顶左点 (x, y_app) 的 cocoa Y = maxY - y_app；setFrameTopLeftPoint 直接按顶左语义
+        // 落位，连窗口高度都不需要。（旧实现把 x/y 当左下角坐标原样喂给 setFrameOrigin:，
+        // 与公共契约相反——同文件 BeginDragStreaming 的 sh - wy - wh 才是契约本意。）
+        double maxY = ScreenMaxY();
+        ObjCRuntime.SendVoidDouble2(_nsWindow, ObjCRuntime.Sel("setFrameTopLeftPoint:"), x, maxY - y);
+    }
+
+    /// <summary>
+    /// 主屏高度的上沿（cocoa 点、y 向上坐标系的最大 Y）。"左上角原点"契约换算成 cocoa
+    /// 坐标时要用它。NSRect 是结构体：msgSend 直取要走 stret（x86_64）/ 隐式 sret（arm64），
+    /// 绑定里没有那条路——改走 KVC：<c>valueForKey:@"frame"</c> 得到 NSValue，再
+    /// <c>getValue:</c> 按指针读出四个 double（origin.x/y、size.w/h）。
+    /// </summary>
+    private double ScreenMaxY()
+    {
+        nint screen = ObjCRuntime.SendId(ObjCRuntime.GetClass("NSScreen"), ObjCRuntime.Sel("mainScreen"));
+        nint boxed = screen == 0
+            ? 0
+            : ObjCRuntime.SendIdObj(screen, ObjCRuntime.Sel("valueForKey:"), ObjCRuntime.MakeNSString("frame"));
+        if (boxed == 0)
+        {
+            return 0;
+        }
+
+        nint buffer = System.Runtime.InteropServices.Marshal.AllocHGlobal(32);
+        try
+        {
+            ObjCRuntime.SendVoidObj(boxed, ObjCRuntime.Sel("getValue:"), buffer);
+            // Marshal 没有 ReadDouble：按 8 字节整数读出再按位转回 double（IEEE 754 直通）
+            return BitConverter.Int64BitsToDouble(System.Runtime.InteropServices.Marshal.ReadInt64(buffer, 8))    // origin.y
+                 + BitConverter.Int64BitsToDouble(System.Runtime.InteropServices.Marshal.ReadInt64(buffer, 24)); // size.height
+        }
+        finally
+        {
+            System.Runtime.InteropServices.Marshal.FreeHGlobal(buffer);
+        }
     }
 
     public void Resize(int width, int height)
