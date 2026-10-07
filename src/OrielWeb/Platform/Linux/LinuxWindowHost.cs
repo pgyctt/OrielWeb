@@ -583,6 +583,10 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         _webview = 0;
         _userContentManager = 0;
 
+        // 页面回环随文档一起消失：挂起的 ExecuteScriptAsync 在这里立刻失败，
+        // 而不是让调用方的 await 永不返回。
+        _messageHandler.FailPendingEvals("ExecuteScript 中止：窗口已销毁，页面回环不会再返回结果。");
+
         Closed?.Invoke();
         _backend.OnWindowDestroyed();
     }
@@ -590,6 +594,10 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     internal void OnLoadStarted()
     {
         _failedSinceLoadStart = false;
+
+        // 导航开始即原文档开始卸载：它注入的回环脚本不会再回执，先清掉挂起的 eval。
+        _messageHandler.FailPendingEvals("ExecuteScript 中止：页面正在离开原文档，回环结果不会再返回。");
+
         RaiseNavigationStarting(CurrentUri());
     }
 

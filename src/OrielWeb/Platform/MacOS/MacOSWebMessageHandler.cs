@@ -123,6 +123,27 @@ internal sealed class MacOSWebMessageHandler : IIpcReplySink
 
     internal void RegisterEval(int id, TaskCompletionSource<string> completion) => _pendingEvals[id] = completion;
 
+    /// <summary>
+    /// 把所有未完成的 ExecuteScript 回环标记失败并清空。
+    /// </summary>
+    /// <remarks>
+    /// 回环依赖**原文档**里的 <c>_evalScriptDone</c>：页面导航离开原文档、或窗口销毁后，
+    /// 回执可能永远不会再来——不清理的话 <c>ExecuteScriptAsync</c> 的 Task 永久挂起，
+    /// 调用方的 await 无声无息地等死。入口见 <see cref="MacOSWindowHost.OnWindowWillClose"/>
+    /// 与 <c>OnNavigationStarted</c>。
+    /// </remarks>
+    internal void FailPendingEvals(string reason)
+    {
+        // Keys 是快照；TryRemove 保证"清空"与"迟到回执"并发时只有一方拿到 completion。
+        foreach (int id in _pendingEvals.Keys)
+        {
+            if (_pendingEvals.TryRemove(id, out var completion))
+            {
+                completion.TrySetException(new InvalidOperationException(reason));
+            }
+        }
+    }
+
     /// <summary>读字符串属性；缺失或类型不符时返回空串（页面数据不可信，一律按可缺席处理）。</summary>
     private static string ReadString(JsonElement root, string name)
         => root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
