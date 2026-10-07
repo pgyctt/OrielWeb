@@ -958,6 +958,12 @@ internal partial class Win32WindowHost : IWindowBackend
 
     private void OnWebMessageReceived(object? sender, ICoreWebView2WebMessageReceivedEventArgs args)
     {
+        // 逐消息来源（纵深加固）：WebView2 给的"发消息的文档 URI"比顶级导航 URL 快照准——
+        // 服务器重定向不触发 NavigationStarting、provisional 期间有新旧文档窗口期、子帧消息
+        // 也各有来源。快照（CurrentUrl）降级为兜底。
+        string? messageOrigin = args.Source;
+        string? originUrl = string.IsNullOrEmpty(messageOrigin) ? CurrentUrl : messageOrigin;
+
         string? json = args.WebMessageAsJson;
         if (string.IsNullOrEmpty(json))
         {
@@ -981,11 +987,11 @@ internal partial class Win32WindowHost : IWindowBackend
                 case "invoke":
                     // 门禁在分发器里做：它有回执通道，能把"为什么被拒"送回页面，
                     // 而不是让那个 Promise 干等到 30 秒超时。
-                    _ = DispatchInvokeAsync(root.Clone());
+                    _ = DispatchInvokeAsync(root.Clone(), originUrl);
                     break;
                 case "console":
                     // 只有开启 console 转发时页面才会发这类消息（hook 由桥接脚本注入决定）
-                    if (Accept(root))
+                    if (Accept(root, originUrl))
                     {
                         RaiseConsoleMessage(ReadStringProperty(root, "level"), ReadStringProperty(root, "text"));
                     }
@@ -993,7 +999,7 @@ internal partial class Win32WindowHost : IWindowBackend
                 case "message":
                     // 单向消息没有命令名，因此只过来源与令牌那一层；
                     // 命令授权（allow/deny）只管 invoke，原因见 OrielCapabilityOptions。
-                    if (Accept(root))
+                    if (Accept(root, originUrl))
                     {
                         RaiseMessageReceived(
                             ReadStringProperty(root, "name"),
@@ -1014,10 +1020,10 @@ internal partial class Win32WindowHost : IWindowBackend
             ? value.GetString() ?? string.Empty
             : string.Empty;
 
-    /// <summary>入站消息的来源 + 令牌校验（命令授权不在这里，见分发器）。</summary>
-    private bool Accept(JsonElement root)
+    /// <summary>入站消息的来源 + 令牌校验（命令授权不在这里，见分发器）。originUrl 为逐消息来源，null 时退回快照。</summary>
+    private bool Accept(JsonElement root, string? originUrl)
     {
-        if (App.Guard.TryAccept(CurrentUrl, root, out string? rejection))
+        if (App.Guard.TryAccept(originUrl ?? CurrentUrl, root, out string? rejection))
         {
             return true;
         }
@@ -1026,12 +1032,12 @@ internal partial class Win32WindowHost : IWindowBackend
         return false;
     }
 
-    private async Task DispatchInvokeAsync(JsonElement message)
+    private async Task DispatchInvokeAsync(JsonElement message, string? originUrl)
     {
         try
         {
             await App.Dispatcher
-                .HandleInvokeAsync(message, new UiThreadReplySink(this), CurrentUrl, _window)
+                .HandleInvokeAsync(message, new UiThreadReplySink(this), originUrl ?? CurrentUrl, _window)
                 .ConfigureAwait(true);
         }
         catch (Exception ex)

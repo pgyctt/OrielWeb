@@ -93,6 +93,18 @@ internal sealed class OrielIpcGuard
         return false;
     }
 
+    /// <summary>
+    /// 逐消息来源（形如 <c>scheme://host[:port]</c> 的 origin）是否可信。
+    /// </summary>
+    /// <remarks>
+    /// origin 没有路径：拼上 "/" 后与可信前缀走同一条 StartsWith 判定——相当于
+    /// "authority 相同即可信"。因此**子路径级**的可信前缀（如 <c>http://host/app/</c>）在
+    /// 只有 origin 可用时不会被确认（保守拒绝）；能给完整 URL 的平台（Windows 的
+    /// <c>WebMessageReceived.Source</c>）走 <see cref="IsTrustedUrl"/>，路径语义不受影响。
+    /// </remarks>
+    internal bool IsTrustedOrigin(string? origin)
+        => !string.IsNullOrEmpty(origin) && IsTrustedUrl(origin.TrimEnd('/') + "/");
+
     /// <summary>页面回带的令牌是否与本次进程的令牌一致。</summary>
     internal bool TokenMatches(string? presented) => OrielIpcToken.Equals(Token, presented);
 

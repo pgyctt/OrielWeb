@@ -18,8 +18,12 @@ internal sealed class MacOSWebMessageHandler : IIpcReplySink
         _host = host;
     }
 
-    /// <summary>由 ObjC trampoline 调用（UI 线程）。json 为页面 postMessage 的字符串。</summary>
-    public int OnScriptMessage(string json)
+    /// <summary>
+    /// 由 ObjC trampoline 调用（UI 线程）。json 为页面 postMessage 的字符串；
+    /// <paramref name="messageOrigin"/> 是逐消息来源（frameInfo.securityOrigin，无路径的
+    /// origin），取不到时为 null——那时退回顶级导航 URL 快照。
+    /// </summary>
+    public int OnScriptMessage(string json, string? messageOrigin)
     {
         try
         {
@@ -39,17 +43,17 @@ internal sealed class MacOSWebMessageHandler : IIpcReplySink
                 case "invoke":
                     // 门禁在分发器里做：它有回执通道，能把"为什么被拒"送回页面，
                     // 而不是让那个 Promise 干等到 30 秒超时。
-                    _ = DispatchInvokeAsync(root.Clone());
+                    _ = DispatchInvokeAsync(root.Clone(), messageOrigin);
                     break;
                 case "evalResult":
-                    if (Accept(root))
+                    if (Accept(root, messageOrigin))
                     {
                         CompleteEval(root);
                     }
                     break;
                 case "console":
                     // 只有窗口选项打开了 console 转发，注入的桥接脚本才会发这类消息
-                    if (Accept(root))
+                    if (Accept(root, messageOrigin))
                     {
                         _host.RaiseConsoleMessage(ReadString(root, "level"), ReadString(root, "text"));
                     }
@@ -57,7 +61,7 @@ internal sealed class MacOSWebMessageHandler : IIpcReplySink
                 case "message":
                     // 单向消息没有命令名，因此只过来源与令牌那一层；
                     // 命令授权（allow/deny）只管 invoke，原因见 OrielCapabilityOptions。
-                    if (Accept(root))
+                    if (Accept(root, messageOrigin))
                     {
                         _host.RaiseMessageReceived(
                             ReadString(root, "name"),
@@ -73,10 +77,17 @@ internal sealed class MacOSWebMessageHandler : IIpcReplySink
         return 0;
     }
 
+    /// <summary>
+    /// 逐消息来源优先（纵深加固）；origin 没有路径，拼上 "/" 后与可信前缀走同一条判定。
+    /// 取不到时退回顶级导航 URL 快照。
+    /// </summary>
+    private string? OriginUrl(string? messageOrigin)
+        => string.IsNullOrEmpty(messageOrigin) ? _host.CurrentUrl : messageOrigin.TrimEnd('/') + "/";
+
     /// <summary>入站消息的来源 + 令牌校验（命令授权不在这里，见分发器）。</summary>
-    private bool Accept(JsonElement root)
+    private bool Accept(JsonElement root, string? messageOrigin)
     {
-        if (_host.App.Guard.TryAccept(_host.CurrentUrl, root, out string? rejection))
+        if (_host.App.Guard.TryAccept(OriginUrl(messageOrigin), root, out string? rejection))
         {
             return true;
         }
@@ -85,11 +96,11 @@ internal sealed class MacOSWebMessageHandler : IIpcReplySink
         return false;
     }
 
-    private async Task DispatchInvokeAsync(JsonElement message)
+    private async Task DispatchInvokeAsync(JsonElement message, string? messageOrigin)
     {
         try
         {
-            await _host.App.Dispatcher.HandleInvokeAsync(message, this, _host.CurrentUrl, _host.Window).ConfigureAwait(false);
+            await _host.App.Dispatcher.HandleInvokeAsync(message, this, OriginUrl(messageOrigin), _host.Window).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

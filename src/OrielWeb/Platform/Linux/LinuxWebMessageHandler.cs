@@ -73,7 +73,16 @@ internal sealed class LinuxWebMessageHandler : IIpcReplySink
         return 0;
     }
 
-    /// <summary>入站消息的来源 + 令牌校验（命令授权不在这里，见分发器）。</summary>
+    /// <summary>
+    /// 入站消息的来源 + 令牌校验（命令授权不在这里，见分发器）。
+    /// </summary>
+    /// <remarks>
+    /// 来源用"顶级导航 URL 快照"（<see cref="LinuxWindowHost.CurrentUrl"/>）：WebKitGTK 的
+    /// 经典 script-message 信号（WebKitJavascriptResult）不带 frame 信息，逐消息来源拿不到——
+    /// 这是与 Windows（WebMessageReceived.Source）/macOS（frameInfo.securityOrigin）的已知
+    /// 差距：第一层防线（注入期自检，不可信页面不装桥）与第三层（令牌）仍完整，第二层退化为
+    /// 快照判定。
+    /// </remarks>
     private bool Accept(JsonElement root)
     {
         if (_host.App.Guard.TryAccept(_host.CurrentUrl, root, out string? rejection))

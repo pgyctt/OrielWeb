@@ -187,13 +187,47 @@ internal static unsafe class MacOSObjCClasses
             // JS 侧 postMessage 的是 JSON 字符串
             var body = ObjCRuntime.SendId(message, ObjCRuntime.Sel("body"));
             var json = ObjCRuntime.ToManagedString(body);
-            handler.OnScriptMessage(json);
+            handler.OnScriptMessage(json, ReadMessageOrigin(message));
         }
         catch
         {
             // 消息处理异常不外泄（外泄 = 进程 fail-fast）
         }
         return 0;
+    }
+
+    /// <summary>
+    /// 逐消息来源（纵深加固）：<c>WKScriptMessage.frameInfo.securityOrigin</c> 的
+    /// <c>protocol://host[:port]</c>。securityOrigin 自 macOS 10.15 才有——用
+    /// respondsToSelector 探测，对象缺失/系统过旧一律返回 null，调用方退回顶级导航
+    /// URL 快照。来源信息缺失不能演变成拒绝服务。
+    /// </summary>
+    private static string? ReadMessageOrigin(nint message)
+    {
+        nint frameInfo = ObjCRuntime.SendId(message, ObjCRuntime.Sel("frameInfo"));
+        if (frameInfo == 0
+            || !ObjCRuntime.SendBoolRetObj(
+                frameInfo, ObjCRuntime.Sel("respondsToSelector:"), ObjCRuntime.Sel("securityOrigin")))
+        {
+            return null;
+        }
+
+        nint origin = ObjCRuntime.SendId(frameInfo, ObjCRuntime.Sel("securityOrigin"));
+        if (origin == 0)
+        {
+            return null;
+        }
+
+        string? protocol = ObjCRuntime.ToManagedString(ObjCRuntime.SendId(origin, ObjCRuntime.Sel("protocol")));
+        string? host = ObjCRuntime.ToManagedString(ObjCRuntime.SendId(origin, ObjCRuntime.Sel("host")));
+        if (string.IsNullOrEmpty(protocol) || string.IsNullOrEmpty(host))
+        {
+            return null;
+        }
+
+        // WKSecurityOrigin.port 是 NSUInteger（SendId 按 nint 取回）；默认端口的 origin 不带端口段
+        nint port = ObjCRuntime.SendId(origin, ObjCRuntime.Sel("port"));
+        return port > 0 ? $"{protocol}://{host}:{port}" : $"{protocol}://{host}";
     }
 
     // ---- WKNavigationDelegate ----

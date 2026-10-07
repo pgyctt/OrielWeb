@@ -201,6 +201,22 @@ public sealed class CapabilityTests
     }
 
     [Fact]
+    public void MessageOriginTrustFollowsAuthority()
+    {
+        // macOS 的逐消息来源是 origin（无路径）：拼上 "/" 后与可信前缀同一条判定——
+        // authority 命中即可信，形似域名与陌生来源不命中；null（来源取不到）一律不可信。
+        OrielIpcGuard guard = Guard();
+
+        Assert.True(guard.IsTrustedOrigin("oriel://app.oriel"));
+        Assert.False(guard.IsTrustedOrigin("oriel://app.oriel.evil.com"));
+        Assert.False(guard.IsTrustedOrigin("http://localhost:5173"));
+        Assert.False(guard.IsTrustedOrigin(null));
+
+        var options = new OrielCapabilityOptions().AllowOrigin("http://localhost:5173/");
+        Assert.True(Guard(options).IsTrustedOrigin("http://localhost:5173"));
+    }
+
+    [Fact]
     public void AllowedOriginSubPathIsNormalizedToo()
     {
         // 子路径前缀同样补尾斜杠："…/app" 不该命中 "…/app.evil.com/"。
