@@ -79,8 +79,33 @@ internal static unsafe class LinuxAssetScheme
     }
 
     /// <summary>引擎来取一件内嵌资源（主线程回调）。</summary>
+    /// <remarks>
+    /// GLib 直接调用的 trampoline：托管异常逃逸的结果是运行时 fail-fast、**整个进程终止**
+    /// （macOS 侧 <c>AssetSchemeStart</c> 的注释讲的是同一件事）。所以全身 try/catch，
+    /// 兜底给引擎一次"失败"应答——最坏情形是这一件资源加载失败，而不是进程陪葬。
+    /// </remarks>
     [UnmanagedCallersOnly]
     private static void OnRequest(nint request, nint userData)
+    {
+        try
+        {
+            HandleRequest(request);
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                FinishWithError(request, $"内嵌资源应答失败：{ex.Message}");
+            }
+            catch (Exception inner)
+            {
+                // 到这里说明错误应答自身也失败了（理论上是互操作层崩坏），除了调试输出别无可为
+                System.Diagnostics.Debug.WriteLine($"[OrielWeb] oriel:// 错误应答也失败了：{inner.Message}");
+            }
+        }
+    }
+
+    private static void HandleRequest(nint request)
     {
         EmbeddedAssetStore? store;
         string? host;
