@@ -115,7 +115,7 @@ internal sealed class OrielCommandDispatcher
             }
             catch (Exception ex)
             {
-                ReplyError(sink, id, ex.Message);
+                ReplyError(sink, id, DescribeForPage(name, ex));
             }
             return;
         }
@@ -134,8 +134,29 @@ internal sealed class OrielCommandDispatcher
         }
         catch (Exception ex)
         {
-            ReplyError(sink, id, ex.Message);
+            ReplyError(sink, id, DescribeForPage(name, ex));
         }
+    }
+
+    /// <summary>
+    /// 异常 → 回给页面的错误文案：**只透传 <see cref="OrielIpcException"/>**。
+    /// </summary>
+    /// <remarks>
+    /// 非 IPC 异常（IOException、SocketException……）的 Message 常含内部路径、主机名、端点，
+    /// 原样回传等于给（可能被 XSS 的）页面一个探测内部的放大器；API.md「IPC」章对使用者的
+    /// 承诺也一直是"只有 OrielIpcException 的 Message 原样到达页面，其余给通用失败文本"——
+    /// 这里让代码兑现这句话。参数校验错误（缺参数、类型不符）由 <see cref="OrielJson"/> 抛
+    /// <see cref="OrielIpcException"/>，不受影响。命令名可以进文案：它是页面自己发来的。
+    /// </remarks>
+    private static string DescribeForPage(string name, Exception ex)
+    {
+        if (ex is OrielIpcException)
+        {
+            return ex.Message;
+        }
+
+        System.Diagnostics.Debug.WriteLine($"[OrielWeb] 命令 '{name}' 执行失败（详情不透传页面）：{ex}");
+        return $"命令 '{name}' 执行失败。";
     }
 
     private static JsonElement ReadId(JsonElement message)

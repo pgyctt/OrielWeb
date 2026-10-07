@@ -67,6 +67,11 @@ public sealed partial class TestCommands
     [OrielCommand("t.fail")]
     public void Fail() => throw new OrielIpcException("boom");
 
+    // 非受控异常：验证分发器的净化承诺——只有 OrielIpcException 的 Message 原样到页面，
+    // 其余异常（Message 可能含内部路径）给通用文案
+    [OrielCommand("t.crash")]
+    public void Crash() => throw new InvalidOperationException("内部路径 C:\\secret\\db.sqlite 打不开");
+
     [OrielCommand("t.counter")]
     public int Counter() => Interlocked.Increment(ref _counter);
 

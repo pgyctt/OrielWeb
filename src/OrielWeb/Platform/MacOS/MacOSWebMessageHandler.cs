@@ -93,7 +93,10 @@ internal sealed class MacOSWebMessageHandler : IIpcReplySink
         }
         catch (Exception ex)
         {
-            PostJson($"{{\"__oriel\":\"result\",\"id\":0,\"ok\":false,\"error\":{JsonText.EncodeString(ex.Message)}}}");
+            // 分发器内部已按命令捕获并净化；能到这里的是分发器之外的意外。
+            // 同样不透传 ex.Message（可能含内部路径），文案与分发器保持同一口径。
+            System.Diagnostics.Debug.WriteLine($"[OrielWeb] IPC 分发意外失败：{ex}");
+            PostJson($"{{\"__oriel\":\"result\",\"id\":0,\"ok\":false,\"error\":\"命令执行失败。\"}}");
         }
     }
 

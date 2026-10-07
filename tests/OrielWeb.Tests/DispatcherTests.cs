@@ -182,6 +182,24 @@ public sealed class DispatcherTests
     }
 
     [Fact]
+    public async Task UncontrolledException_IsSanitizedBeforeReachingPage()
+    {
+        // API.md 的承诺：只有 OrielIpcException 的 Message 原样到达页面；其余异常的
+        // Message 可能含内部路径/主机名，一律给通用文案，细节只进宿主调试输出。
+        var (reply, _) = await DispatchAsync(CreateDispatcher(), "t.crash", null);
+        var root = reply.RootElement;
+
+        Assert.False(root.GetProperty("ok").GetBoolean());
+        string error = root.GetProperty("error").GetString()!;
+        Assert.Contains("执行失败", error, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret", error, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("InvalidOperationException", error, StringComparison.OrdinalIgnoreCase);
+
+        // 净化不能破坏协议：id 原样回写
+        Assert.Equal(1, root.GetProperty("id").GetInt32());
+    }
+
+    [Fact]
     public async Task MissingRequiredArg_ErrorReply()
     {
         var (reply, _) = await DispatchAsync(CreateDispatcher(), "t.echo", new { });
