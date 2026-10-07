@@ -32,6 +32,9 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     private readonly LinuxWebMessageHandler _messageHandler;
 
     private nint _gtkWindow;
+
+    /// <summary>窗口销毁后句柄已清零；门面在 Closed 之后迟到的调用经各 IWindowBackend 入口的这个守卫直接放弃。</summary>
+    private bool WindowAlive => _gtkWindow != 0;
     private nint _webview;
     private nint _userContentManager;
     private volatile bool _loadedRaised;
@@ -201,7 +204,7 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     event Action<OrielMessageReceivedEventArgs>? IWindowBackend.MessageReceived { add => MessageReceived += value; remove => MessageReceived -= value; }
     event Action<string>? IWindowBackend.ContextMenuItemClicked { add => ContextMenuItemClicked += value; remove => ContextMenuItemClicked -= value; }
 
-    public bool IsMaximized => GtkNative.GtkWindowIsMaximized(_gtkWindow);
+    public bool IsMaximized => WindowAlive && GtkNative.GtkWindowIsMaximized(_gtkWindow);
 
     // ---- 导航操作（WebKitGTK 内建历史；无历史时调用是空操作）----
     // _webview 在 destroy 之后被置 0，判空是必需的：这些调用不能对已销毁的 webview 下手。
@@ -583,6 +586,15 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         _webview = 0;
         _userContentManager = 0;
 
+        // GTK 对象多半已随 destroy 链 finalize：句柄清零后，门面迟到的调用走
+        // IWindowBackend 各入口的 WindowAlive 守卫（no-op），而不是对悬空指针发消息。
+        _gtkWindow = 0;
+
+        // 保留的上下文菜单（编辑菜单）一并释放：GtkMenu._bindings 的 GCHandle 根住捕获
+        // host 的闭包，不释放的话上面的注册表清理白做——整棵 host 对象树跟着菜单漏掉。
+        _contextMenu?.Dispose();
+        _contextMenu = null;
+
         // 页面回环随文档一起消失：挂起的 ExecuteScriptAsync 在这里立刻失败，
         // 而不是让调用方的 await 永不返回。
         _messageHandler.FailPendingEvals("ExecuteScript 中止：窗口已销毁，页面回环不会再返回结果。");
@@ -694,15 +706,45 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     // ------------------------------------------------------------------
     // IWindowBackend
     // ------------------------------------------------------------------
-    public void Show() => GtkNative.GtkWidgetShowAll(_gtkWindow);
-    public void Hide() => GtkNative.GtkWidgetHide(_gtkWindow);
-    public void Close() => GtkNative.GtkWindowClose(_gtkWindow);
-    public void Focus() => GtkNative.GtkWindowPresent(_gtkWindow);
-    public void Maximize() => GtkNative.GtkWindowMaximize(_gtkWindow);
-    public void Minimize() => GtkNative.GtkWindowIconify(_gtkWindow);
+    public void Show()
+    {
+        if (!WindowAlive) { return; }
+        GtkNative.GtkWidgetShowAll(_gtkWindow);
+    }
+
+    public void Hide()
+    {
+        if (!WindowAlive) { return; }
+        GtkNative.GtkWidgetHide(_gtkWindow);
+    }
+
+    public void Close()
+    {
+        if (!WindowAlive) { return; }
+        GtkNative.GtkWindowClose(_gtkWindow);
+    }
+
+    public void Focus()
+    {
+        if (!WindowAlive) { return; }
+        GtkNative.GtkWindowPresent(_gtkWindow);
+    }
+
+    public void Maximize()
+    {
+        if (!WindowAlive) { return; }
+        GtkNative.GtkWindowMaximize(_gtkWindow);
+    }
+
+    public void Minimize()
+    {
+        if (!WindowAlive) { return; }
+        GtkNative.GtkWindowIconify(_gtkWindow);
+    }
 
     public void Restore()
     {
+        if (!WindowAlive) { return; }
         if (GtkNative.GtkWindowIsMaximized(_gtkWindow))
         {
             GtkNative.GtkWindowUnmaximize(_gtkWindow);
@@ -715,6 +757,7 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
 
     public bool ToggleMaximize()
     {
+        if (!WindowAlive) { return false; }
         bool willBeMaximized = !GtkNative.GtkWindowIsMaximized(_gtkWindow);
         if (willBeMaximized)
         {
@@ -816,7 +859,7 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
 
     public void SetFullscreen(bool enabled)
     {
-        if (enabled == _isFullscreen)
+        if (!WindowAlive || enabled == _isFullscreen)
         {
             return;
         }
@@ -839,6 +882,7 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
 
     public void SetOnTop(bool enabled)
     {
+        if (!WindowAlive) { return; }
         _isOnTop = enabled;
         GtkNative.GtkWindowSetKeepAbove(_gtkWindow, enabled);
     }
@@ -852,23 +896,39 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     public void SetTitle(string title)
     {
         _title = title;
+        if (!WindowAlive) { return; }
         GtkNative.GtkWindowSetTitle(_gtkWindow, title);
     }
 
-    public void SetResizable(bool enabled) => GtkNative.GtkWindowSetResizable(_gtkWindow, enabled);
+    public void SetResizable(bool enabled)
+    {
+        if (!WindowAlive) { return; }
+        GtkNative.GtkWindowSetResizable(_gtkWindow, enabled);
+    }
 
     public void SetMinSize(int width, int height)
     {
         _minWidth = width;
         _minHeight = height;
+        if (!WindowAlive) { return; }
         GtkNative.GtkWidgetSetSizeRequest(_gtkWindow, Math.Max(width, 0), Math.Max(height, 0));
     }
 
-    public void MoveTo(int x, int y) => GtkNative.GtkWindowMove(_gtkWindow, x, y);
-    public void Resize(int width, int height) => GtkNative.GtkWindowResize(_gtkWindow, width, height);
+    public void MoveTo(int x, int y)
+    {
+        if (!WindowAlive) { return; }
+        GtkNative.GtkWindowMove(_gtkWindow, x, y);
+    }
+
+    public void Resize(int width, int height)
+    {
+        if (!WindowAlive) { return; }
+        GtkNative.GtkWindowResize(_gtkWindow, width, height);
+    }
 
     public void Center()
     {
+        if (!WindowAlive) { return; }
         var screen = GtkNative.GtkWindowGetScreen(_gtkWindow);
         var screenW = GtkNative.GdkScreenGetWidth(screen);
         var screenH = GtkNative.GdkScreenGetHeight(screen);

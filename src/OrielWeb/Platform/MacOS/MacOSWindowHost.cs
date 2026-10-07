@@ -562,6 +562,11 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         _dropView = 0;
         _uiDelegate = 0;
 
+        // 保留的上下文菜单一并释放：MacOSMenu.s_handlers 的条目与 ObjC handler 实例
+        // 不释放会滞留到进程结束（注册表同样被 GCHandle 根住）。
+        _contextMenu?.Dispose();
+        _contextMenu = null;
+
         // 页面回环随文档一起消失：挂起的 ExecuteScriptAsync 在这里立刻失败，
         // 而不是让调用方的 await 永不返回。
         _messageHandler.FailPendingEvals("ExecuteScript 中止：窗口已销毁，页面回环不会再返回结果。");
