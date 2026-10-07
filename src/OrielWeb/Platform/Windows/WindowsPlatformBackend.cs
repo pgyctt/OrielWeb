@@ -50,7 +50,8 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
 
         // Win32 消息循环本身没有 SynchronizationContext：安装后，await 的续体会被 Post 回
         // UI 线程队列，这是 WebView2 生成绑定异步装配（Task 化）能正确工作的前提。
-        Win32SynchronizationContext.Install(PostToMainThread);
+        // （与 Linux/macOS 共用 MainThreadSynchronizationContext，三平台续体语义一致。）
+        MainThreadSynchronizationContext.Install(PostToMainThread);
 
         // 主题：记下初值（否则"启动时已是深色"会漏报一次），并让静态 WndProc 能回调到本实例
         // （消息窗口的 WndProc 必须是静态的，见 MessageWindowProc）。
