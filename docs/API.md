@@ -39,7 +39,7 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 | 方法（真实签名） | 说明 |
 |---|---|
 | `Oriel.CreateBuilder(string[]? args = null)` | 入口。`args` 只是透传给应用自己（库不解析命令行）；`Run()` 之外还有 `Build()` 拿 `OrielApp` |
-| `UseEmbeddedAssets(string host = "app.oriel", string? resourcePrefix = null)` | 启用内嵌前端资源：程序集内嵌资源经自定义 scheme `oriel://<host>/` 提供（三平台一致，**不写盘**；`https://<host>/…` 作为兼容别名也被接受）。默认前缀是 `程序集名.wwwroot/`（显式 `/` 分隔符）。自己声明资源时必须用同一种形式：不带 `LogicalName` 的旧写法已删除，构建期报 `ORIELWEB001`（见 README 的"内嵌页面资源"） |
+| `UseEmbeddedAssets(string host = "app.oriel", string? resourcePrefix = null)` | 启用内嵌前端资源：程序集内嵌资源经自定义 scheme `oriel://<host>/` 提供（三平台一致，**不写盘**；`https://<host>/…` 作为兼容别名也被接受）。默认前缀是 `程序集名.wwwroot/`（显式 `/` 分隔符）。自己声明资源时必须用同一种形式：不带 `LogicalName` 的旧写法已删除，构建期报 `ORIELWEB001`（见 README 的"内嵌页面资源"）。**已知边界**：引用类库的 wwwroot 会与入口合并提供（同路径入口优先）；每请求整份驻留内存且不支持 Range——wwwroot 只放小静态资源，媒体类不可用；资源不存在时 Windows 回真实 HTTP 404（导航成功），Linux/macOS 按导航失败上报（引擎能力差异） |
 | `UseJsonContext(JsonSerializerContext context)` | 注册 STJ 源生成上下文：DTO 命令参数/返回值的 AOT 安全序列化入口。**按应用实例持有**，不写全局静态状态 |
 | `AddCommands<T>() where T : new()`<br>`AddCommands<T>(Func<T> factory)` | 注册含 `[OrielCommand]` 的类型（惰性单例；`factory` 用于需要构造参数的命令类）。命令实例**共享**，所有 invoke 作用在同一实例上 → **命令方法必须线程安全**；同名命令在启动时报冲突 |
 | `AddWindow(Action<OrielWindowOptions>? configure = null)`<br>`AddWindow(Action<OrielWindowOptions>? configure, Action<WebviewWindow> onCreated)` | 加窗口。`onCreated` 在 `Run()` 之前回调，用于订阅 `Loaded`/`Closing` 这类"必须早于建窗订阅"的事件 |
@@ -61,9 +61,9 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 | 属性 | 默认 | 链式写法 |
 |---|---|---|
 | `string Title` | `"Oriel"` | `WithTitle(string)` |
-| `int Width` / `int Height` | `1000` / `700` | `WithSize(int, int)` |
-| `int? MinWidth` / `int? MinHeight` | `null`（不限制） | `WithMinSize(int, int)` |
-| `int? X` / `int? Y` | `null` | `At(int, int)`（顺带把 `Center` 置 false） |
+| `int Width` / `int Height` | `1000` / `700` | `WithSize(int, int)`。**逻辑像素**（三平台一致）：Windows 在 Per-Monitor-V2 下按窗口 DPI 折算 |
+| `int? MinWidth` / `int? MinHeight` | `null`（不限制） | `WithMinSize(int, int)`（同上，逻辑像素） |
+| `int? X` / `int? Y` | `null` | `At(int, int)`（顺带把 `Center` 置 false）。窗口**左上角**落在屏幕逻辑坐标 (x,y)——三平台一致（Linux 在 map 前发出 move 请求，最终落点由窗口管理器确认） |
 | `bool Center` | `true` | `Centered(bool = true)` |
 | `bool Resizable` | `true` | `WithResizable(bool = true)` |
 | `bool Fullscreen` / `bool OnTop` / `bool Maximized` | 均 `false` | `WithFullscreen()` / `WithOnTop()` / `WithMaximized()`（各带 `bool = true`） |
@@ -84,7 +84,7 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 | `WebviewWindow CreateWindow(Action<OrielWindowOptions>? configure = null, Action<WebviewWindow>? onCreated = null)` | 运行时新建窗口（见 §1 的多窗口说明）。**只能在 `Run()` 之后调**，否则抛 `InvalidOperationException` |
 | `OrielTheme Theme` | `Light` / `Dark`；后端未就绪时返回 `Light` |
 | `event Action<OrielTheme>? ThemeChanged` | 系统主题变化（见 §6） |
-| `void PostToMainThread(Action action)` | 把动作切回 UI 线程（`await` 之后碰窗口必须经它） |
+| `void PostToMainThread(Action action)` | 把动作切回 UI 线程（应用自己的后台线程要用它；IPC 命令里 `await` 之后已在 UI 线程，无需再切，见下方线程模型） |
 | `void Quit()` | 请求退出：结束消息循环、让 `Run()` 返回。**不是 `Environment.Exit`**——`Run()` 返回后该做的清理仍会执行 |
 | `OrielTray? Tray` | 当前托盘（未启用为 `null`） |
 | `bool RemoveTray()` / `OrielTray? RestoreTray()` | 移除 / 重建托盘（返回是否成功 / 新托盘） |
@@ -133,7 +133,7 @@ WebviewWindow second = app.CreateWindow(
 | **几何与外观** | |
 | `SetTitle(string title)` / `SetResizable(bool enabled)` | — |
 | `SetMinSize(int width, int height)` | — |
-| `MoveTo(int x, int y)` / `Resize(int width, int height)` / `Center()` | 坐标是**屏幕**坐标（应用像素；HiDPI 不要折算，见 §2） |
+| `MoveTo(int x, int y)` / `Resize(int width, int height)` / `Center()` | 坐标是**屏幕**坐标、**左上角**原点（应用像素；HiDPI 不要折算，见 §2）——`MoveTo` 的原点语义三平台一致 |
 | **拖动** | |
 | `BeginDrag()` | Windows：进入原生模态拖动（**阻塞到松开鼠标**） |
 | `BeginDragStreaming(double px, double py, double wx, double wy, double ww, double wh, double sh)` | macOS/Linux 的流式拖动起点；参数含义见 §2。**库自己接管标题栏拖动时走的就是它** |
@@ -143,7 +143,7 @@ WebviewWindow second = app.CreateWindow(
 | `GoBack()` `GoForward()` `Reload()` | 无历史时为空操作 |
 | **IPC** | |
 | `void EmitEvent(string name, string jsonPayload)`<br>`void EmitEvent<T>(string name, T payload, JsonTypeInfo<T> typeInfo)` | 宿主 → 页面（页面侧 `oriel.on(name, handler)`） |
-| `Task<string> EvaluateJs(string script)` | 在页面当前文档上下文执行 JS，回 **JSON 编码**的结果串（WebView2 风格）。**边界**：macOS 这条路经页面回环完成，桥接没装上时它**永不完成**（不可信来源就是这样，见 §4） |
+| `Task<string> EvaluateJs(string script)` | 在页面当前文档上下文执行 JS，回 **JSON 编码**的结果串（WebView2 风格）。**边界**：macOS/Linux 这条路经页面回环完成，桥接没装上时它会等到超时或失败（不可信来源就是这样，见 §4）；页面导航离开原文档或窗口销毁时以异常立即失败，不会永久挂起 |
 | `void PostToUiThread(Action action)` | 已在 UI 线程则直接执行 |
 | **窗口命令与菜单** | |
 | `ShowContextMenu(IReadOnlyList<OrielMenuItem> items)` | 弹应用自己的上下文菜单（见 §10） |
@@ -173,9 +173,14 @@ WebviewWindow second = app.CreateWindow(
 
 `OrielMessageBoxIcon`：`Info`（默认）/ `Warning` / `Error` / `Question`。
 
-> **命令线程模型**：命令执行在**后台线程**（不阻塞 UI 消息循环），回执由分发器切回 UI 线程投递。
-> 命令内要碰窗口时经 `OrielApp.PostToMainThread(...)`；应用自己的异步流程在 `await` 之后要用
-> `WebviewWindow.PostToUiThread(...)`——**GTK 与 AppKit 只允许在各自的主线程调用窗口 API，从线程池调用会直接崩**。
+> **命令线程模型**：命令从 UI 线程进入；`await` 之后的续体**回到 UI 线程**（三平台一致——
+> 三平台都安装了基于主线程队列的 `SynchronizationContext`）。因此命令里 `await` 之后可以直接
+> 碰窗口与平台对象。两个代价写明：① `await` 之间的同步段与 `await` 之后的 CPU 密集工作会
+> **占用 UI 线程**——重活请自行 `Task.Run` 后把结果切回来；② 并发调用仍然可能交叠（第一个
+> 命令 `await` 时 UI 线程就能处理下一个 invoke），**共享命令实例的方法仍须线程安全**。
+> 应用自己的后台线程碰窗口仍要走 `OrielApp.PostToMainThread(...)` /
+> `WebviewWindow.PostToUiThread(...)`——**GTK 与 AppKit 只允许在各自的主线程调用窗口 API**。
+> 另：三平台的 `SynchronizationContext.Send` 都实现为 Post（异步），**不可依赖同步完成**。
 
 ## 2. 无边框窗口
 
@@ -318,7 +323,7 @@ window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
 
 | 层 | 挡什么 |
 |---|---|
-| 来源 | 只有内嵌资源（与 `AllowOrigin` 放行的来源）算可信。**其它来源里桥接脚本根本不安装**——远程页面里连 `window.oriel` 都不存在，而不是"装上了再拦" |
+| 来源 | 只有内嵌资源（与 `AllowOrigin` 放行的来源）算可信。**其它来源里桥接脚本根本不安装**——远程页面里连 `window.oriel` 都不存在，而不是"装上了再拦"。宿主侧逐消息校验时优先用**逐消息来源**（Windows `WebMessageReceived.Source`、macOS `frameInfo.securityOrigin`），顶级导航 URL 快照只作兜底；Linux 的经典 script-message 信号不带 frame 信息，用快照判定（第一层注入期自检与第三层令牌不受影响） |
 | 令牌 | 每进程一个 128 位随机串，随脚本注入、每条入站消息回带。挡的是"不是本应用注入的脚本也往通道里塞消息"，**不是**防网络攻击的凭据（消息不经过网络） |
 | 命令授权 | 按 allow/deny 名单判定命令名 |
 
