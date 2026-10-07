@@ -8,6 +8,9 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.13.0" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" PrivateAssets="all" />
+    <!-- 诊断测试（GeneratorDiagnosticsTests）要用 Roslyn API 在内存编译里跑生成器：
+         生成器项目自己的 Roslyn 包是 PrivateAssets，不会流到这里，所以单独引一份（版本对齐 4.11）。 -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
@@ -15,6 +18,9 @@
     <!-- 源生成器不随 ProjectReference 传递：测试程序集要生成自己的命令路由 -->
     <ProjectReference Include="..\..\src\OrielWeb.Generators\OrielWeb.Generators.csproj"
                       OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
+    <!-- 诊断测试（GeneratorDiagnosticsTests）要在内存编译里跑真生成器：
+         再引一份当普通库，输出目录里有 dll 可反射加载。同一项目两条引用、元数据不同，MSBuild 允许。 -->
+    <ProjectReference Include="..\..\src\OrielWeb.Generators\OrielWeb.Generators.csproj" />
   </ItemGroup>
 
 </Project>

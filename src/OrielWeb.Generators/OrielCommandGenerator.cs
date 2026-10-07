@@ -24,9 +24,9 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
         var commands = context.SyntaxProvider.ForAttributeWithMetadataName(
             "OrielWeb.Ipc.OrielCommandAttribute",
             predicate: static (node, _) => node is MethodDeclarationSyntax,
-            transform: static (context, token) => Transform(context, token));
+            transform: Transform);
 
-        context.RegisterSourceOutput(commands.Collect(), static (context, models) => Emit(context, models));
+        context.RegisterSourceOutput(commands.Collect(), Emit);
     }
 
     // ------------------------------------------------------------------
@@ -54,20 +54,150 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
         bool IsStatic,
         bool NeedsAwait,
         bool HasResult,
-        ImmutableArray<CommandParameter> Parameters);
+        ImmutableArray<CommandParameter> Parameters,
+        Location Location);
 
-    private static CommandModel? Transform(GeneratorAttributeSyntaxContext context, CancellationToken token)
+    /// <summary>
+    /// 单个 [OrielCommand] 的处理结果：成功时带 <see cref="Model"/>；失败/告警时带编译期诊断
+    /// （ORIELWEB1xx，见 <see cref="Diagnostics"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 诊断在 transform 里就地创建（<see cref="Diagnostic.Create"/>）：FAWMN 的 transform 拿不到
+    /// <see cref="SourceProductionContext"/>，让管线承载诊断再在 RegisterSourceOutput 里统一上报
+    /// 是最直接的路线。Location 是引用相等——会削弱增量缓存命中，但本管线本来就是 Collect 后
+    /// 整文件重生成（见 <see cref="Initialize"/>），粒度不受影响。
+    /// </remarks>
+    private sealed record GeneratorOutput(
+        CommandModel? Model,
+        ImmutableArray<Diagnostic> Diagnostics,
+        Location Location);
+
+    // ------------------------------------------------------------------
+    // 编译期诊断（ORIELWEB1xx：与 targets 的构建错误 ORIELWEB001 同一前缀、不同编号段）
+    // 此前这些形态要么被静默吞掉（空白名 → 前端"未知命令"），要么变成生成文件里的
+    // CS 错误（定位在 .g.cs，无法指回用户代码）。全部映射回用户方法所在的位置。
+    // ------------------------------------------------------------------
+
+    private static class Diagnostics
+    {
+        private const string Category = "OrielWeb";
+
+        /// <summary>命令名不是可用的字符串常量（非字符串 / 空白 / 含换行与控制字符）。</summary>
+        public static readonly DiagnosticDescriptor InvalidCommandName = new(
+            "ORIELWEB101", "命令名不可用",
+            "[OrielCommand] 的命令名「{0}」不可用：{1}",
+            Category, DiagnosticSeverity.Error, isEnabledByDefault: true);
+
+        /// <summary>同程序集内两个 [OrielCommand] 同名（跨程序集的冲突只能靠运行期启动检查兜底）。</summary>
+        public static readonly DiagnosticDescriptor DuplicateCommandName = new(
+            "ORIELWEB102", "命令名冲突",
+            "命令「{0}」同时声明于 {1}：运行期启动时会抛冲突异常（OrielCommandRegistry）——编译期改掉其中一个名字。",
+            Category, DiagnosticSeverity.Error, isEnabledByDefault: true);
+
+        /// <summary>命令方法的可访问性不足以被生成的路由调用。</summary>
+        public static readonly DiagnosticDescriptor InaccessibleCommandMethod = new(
+            "ORIELWEB103", "命令方法不可访问",
+            "{0} 的可访问性是 {1}：生成的路由无法调用它。请改为 public 或 internal。",
+            Category, DiagnosticSeverity.Error, isEnabledByDefault: true);
+
+        /// <summary>宿主类型是泛型：未绑定的类型参数无法生成路由。</summary>
+        public static readonly DiagnosticDescriptor GenericHostType = new(
+            "ORIELWEB104", "命令宿主不能是泛型类型",
+            "{0} 所在的 {1} 是泛型类型：未绑定的类型参数无法生成路由。请用非泛型类承载命令。",
+            Category, DiagnosticSeverity.Error, isEnabledByDefault: true);
+
+        /// <summary>ref/out 参数：IPC 参数按值从页面传入，不支持宿主侧回写。</summary>
+        public static readonly DiagnosticDescriptor RefOrOutParameter = new(
+            "ORIELWEB105", "命令参数不支持 ref/out",
+            "{0} 的参数 {1} 带 {2}：IPC 参数按值从页面传入，不支持回写。",
+            Category, DiagnosticSeverity.Error, isEnabledByDefault: true);
+
+        /// <summary>win 保留前缀：内建窗口命令先于应用路由，应用同名命令注册成功但永不可达。</summary>
+        public static readonly DiagnosticDescriptor ReservedPrefix = new(
+            "ORIELWEB106", "命令名落在保留前缀 win",
+            "命令「{0}」以保留前缀 win 开头：内建窗口命令先于应用路由，它注册成功但永不可达，请换个前缀",
+            Category, DiagnosticSeverity.Warning, isEnabledByDefault: true);
+    }
+
+    private static GeneratorOutput Transform(GeneratorAttributeSyntaxContext context, CancellationToken token)
     {
         var method = (IMethodSymbol)context.TargetSymbol;
         var attribute = context.Attributes[0];
-        if (attribute.ConstructorArguments.Length != 1
-            || attribute.ConstructorArguments[0].Value is not string commandName
-            || string.IsNullOrWhiteSpace(commandName))
+        var location = context.TargetNode.GetLocation();
+
+        // ---- 命令名：必须是字符串常量、非空白、不含控制字符 ----
+        // 语义路径为主；语法回环为兜底——内存编译等最小引用集宿主下，AttributeData 能解析出
+        // 构造函数，ConstructorArguments 却可能是空数组（诊断测试实测），从语法取字面量等价可靠
+        // （Token.ValueText 已按转义规则解码，与 TypedConstant.Value 一致）。
+        string? rawName;
+        if (attribute.ConstructorArguments.Length == 1)
         {
-            return null;
+            rawName = attribute.ConstructorArguments[0].Value as string;
+        }
+        else if (attribute.ApplicationSyntaxReference?.GetSyntax() is AttributeSyntax attributeSyntax
+                 && attributeSyntax.ArgumentList is { Arguments.Count: 1 }
+                 && attributeSyntax.ArgumentList.Arguments[0].Expression is LiteralExpressionSyntax literal
+                 && literal.Token.Value is string literalName)
+        {
+            // 注意：这里不能用列表模式（[{ ... }]）——它依赖 System.Index，生成器面向 netstandard2.0
+            rawName = literalName;
+        }
+        else
+        {
+            rawName = null;
         }
 
+        if (rawName is null)
+        {
+            return Fail(location, Diagnostics.InvalidCommandName, "<不可解析>",
+                "命令名必须是一个字符串常量参数（非字符串 / 多参构造不受支持）。");
+        }
+
+        if (string.IsNullOrWhiteSpace(rawName))
+        {
+            return Fail(location, Diagnostics.InvalidCommandName, rawName,
+                "空白名字等于没有名字——页面按它调用命令。此前这种写法被静默丢弃，前端只会得到\"未知命令\"。");
+        }
+
+        if (rawName.Any(char.IsControl))
+        {
+            return Fail(location, Diagnostics.InvalidCommandName, rawName,
+                "含换行/控制字符——写进生成的字符串字面量会变成定位不到的 CS 错误。");
+        }
+
+        var diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
+        if (rawName.StartsWith("win.", StringComparison.Ordinal))
+        {
+            // 内建窗口命令先于应用路由（见 OrielCommandDispatcher）：应用同名命令注册成功但
+            // 永不可达，此前只靠文档约束。Warning 而非 Error：不阻断构建，但必须让人看见。
+            diagnostics.Add(Diagnostic.Create(Diagnostics.ReservedPrefix, location, rawName));
+        }
+
+        // ---- 宿主与方法本身的可用性：这几类此前会变成生成文件里的 CS 错误（定位在 .g.cs）----
         var containingType = method.ContainingType;
+        if (containingType.IsGenericType)
+        {
+            return Fail(location, Diagnostics.GenericHostType,
+                method.ToDisplayString(),
+                containingType.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat));
+        }
+
+        var accessibility = method.DeclaredAccessibility;
+        if (accessibility is not (Accessibility.Public or Accessibility.Internal or Accessibility.ProtectedOrInternal))
+        {
+            return Fail(location, Diagnostics.InaccessibleCommandMethod,
+                method.ToDisplayString(), accessibility.ToString());
+        }
+
+        foreach (var parameter in method.Parameters)
+        {
+            if (parameter.RefKind is RefKind.Ref or RefKind.Out)
+            {
+                return Fail(location, Diagnostics.RefOrOutParameter,
+                    method.ToDisplayString(), parameter.Name, parameter.RefKind.ToString().ToLowerInvariant());
+            }
+        }
+
         string typeDisplay = containingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
         string typeSafe = MakeSafeIdentifier(containingType);
 
@@ -105,16 +235,23 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
             hasResult = method.ReturnsVoid ? false : true;
         }
 
-        return new CommandModel(
-            commandName,
+        var model = new CommandModel(
+            rawName,
             typeDisplay,
             typeSafe,
             method.Name,
             method.IsStatic,
             needsAwait,
             hasResult,
-            parameters);
+            parameters,
+            location);
+
+        return new GeneratorOutput(model, diagnostics.ToImmutable(), location);
     }
+
+    /// <summary>构造一条失败结果：不再产出模型，诊断指回用户方法的位置。</summary>
+    private static GeneratorOutput Fail(Location location, DiagnosticDescriptor descriptor, params object?[] args)
+        => new(null, ImmutableArray.Create(Diagnostic.Create(descriptor, location, args)), location);
 
     /// <summary>
     /// 判断参数能否走"直出强类型读取"。仅覆盖语义无歧义的基元类型；
@@ -220,11 +357,38 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
     // 产出
     // ------------------------------------------------------------------
 
-    private static void Emit(SourceProductionContext context, ImmutableArray<CommandModel?> models)
+    private static void Emit(SourceProductionContext context, ImmutableArray<GeneratorOutput> outputs)
     {
+        // transform 阶段就地创建的诊断在这里统一上报（ORIELWEB1xx）
+        foreach (var output in outputs)
+        {
+            foreach (var diagnostic in output.Diagnostics)
+            {
+                context.ReportDiagnostic(diagnostic);
+            }
+        }
+
+        var models = outputs
+            .Where(o => o.Model is not null)
+            .Select(o => o.Model!)
+            .ToImmutableArray();
+
+        // 同名冲突（同程序集内）：原先只在运行期 ModuleInitializer 抛异常——启动即崩且不指向
+        // 源码位置。编译期对每个声明各报一条。跨**程序集**的冲突这里看不见，运行期检查仍是
+        // 必要的安全网（见 OrielCommandRegistry.AddRouter）。
+        foreach (var duplicate in models
+                     .GroupBy(m => m.CommandName, StringComparer.Ordinal)
+                     .Where(g => g.Count() > 1))
+        {
+            string owners = string.Join("、", duplicate.Select(m => m.TypeDisplay));
+            foreach (var model in duplicate)
+            {
+                context.ReportDiagnostic(Diagnostic.Create(
+                    Diagnostics.DuplicateCommandName, model.Location, model.CommandName, owners));
+            }
+        }
+
         var valid = models
-            .Where(m => m is not null)
-            .Select(m => m!)
             .GroupBy(m => m.TypeNameSafe)
             .ToImmutableList();
 

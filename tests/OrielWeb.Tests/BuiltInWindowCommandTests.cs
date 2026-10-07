@@ -161,6 +161,10 @@ public sealed class BuiltInWindowCommandTests
 /// </remarks>
 public sealed partial class ShadowWindowCommands
 {
+    // 故意落在保留前缀：本用例验证的就是"被内建静默遮蔽"这一行为。
+    // 生成器会对 win. 前缀发 ORIELWEB106 警告（评审 P3：遮蔽不该无人知晓）——这里是有意的。
+#pragma warning disable ORIELWEB106
     [OrielCommand("win.minimize")]
+#pragma warning restore ORIELWEB106
     public static string Minimize() => "shadowed";
 }
