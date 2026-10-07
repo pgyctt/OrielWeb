@@ -616,6 +616,16 @@ internal partial class Win32WindowHost : IWindowBackend
         {
             case Win32Constants.WM_NCCALCSIZE:
             {
+                // 仅无边框窗口把客户区铺满整个窗口（见下段注释）。framed 窗口（库默认，
+                // WS_OVERLAPPEDWINDOW）必须交回 DefWindowProc：不判 Frameless 会把系统标题栏与
+                // 边框整个压没，且全客户区下 DefWindowProc 对 WM_NCHITTEST 只回 HTCLIENT，
+                // 原生边缘 resize 一并丢失——Linux（gtk_window_set_decorated）与 macOS
+                // （StyleTitled）的 framed 模式都是原生装饰，这里对齐。
+                if (!_options.Frameless)
+                {
+                    break;
+                }
+
                 // 无边框窗口：客户区等于整个窗口，四周不留任何系统边框。
                 // 之所以不再需要"让出边框换热区"（见 API.md 的历史记录）：窗口是
                 // WS_EX_NOREDIRECTIONBITMAP + DirectComposition 宿主，WebView2 是合成树里的视觉
@@ -641,7 +651,8 @@ internal partial class Win32WindowHost : IWindowBackend
             case Win32Constants.WM_NCHITTEST:
             {
                 // 组合宿主下 WebView 不再是子窗口，系统终于会把这条消息送到本窗口。
-                // 客户区已铺满整个窗口，边缘的调整大小语义必须在此显式补回。
+                // 无边框窗口的客户区铺满整个窗口，边缘的调整大小语义必须在此显式补回；
+                // framed 窗口的 NC 区与命中测试由 DefWindowProc 原生处理，不进这个分支。
                 if (_options.Frameless && _options.Resizable)
                 {
                     nint hit = HitTestResizeBorder(lParam);
