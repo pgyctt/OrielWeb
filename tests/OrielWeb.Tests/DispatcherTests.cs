@@ -217,6 +217,62 @@ public sealed class DispatcherTests
         Assert.Contains("AddCommands", reply.RootElement.GetProperty("error").GetString());
     }
 
+    // ---- 门禁端到端：安全模型与分发器之间的接缝（门禁单测与分发单测各自覆盖不到的组合） ----
+
+    [Fact]
+    public async Task WrongToken_IsRejectedEndToEnd()
+    {
+        // 手写消息带一个"别的进程"的令牌：DispatchAsync 默认替你填对的那个，测拒绝要显式给错的
+        var dispatcher = CreateDispatcher();
+        var sink = new TestSink();
+        const string message =
+            """{ "__oriel": "invoke", "id": 5, "name": "t.echo", "args": null, "token": "deadbeef" }""";
+        using var doc = JsonDocument.Parse(message);
+        await dispatcher.HandleInvokeAsync(doc.RootElement.Clone(), sink, TestHarness.TrustedUrl);
+
+        var reply = JsonDocument.Parse(sink.Replies[0]).RootElement;
+        Assert.False(reply.GetProperty("ok").GetBoolean());
+        Assert.Contains("令牌", reply.GetProperty("error").GetString());
+        // 拒绝路径同样原样回写 id：页面的 pending 要能对上并立即失败
+        Assert.Equal(5, reply.GetProperty("id").GetInt32());
+    }
+
+    [Fact]
+    public async Task UntrustedOrigin_IsRejectedEndToEnd()
+    {
+        var (reply, _) = await TestHarness.DispatchAsync(
+            CreateDispatcher(), "t.echo", new { text = "hi" },
+            documentUrl: "https://evil.example/index.html");
+
+        Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Contains("来源", reply.RootElement.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task UnauthorizedAndUnknownCommands_HaveDistinguishableRejections()
+    {
+        // 授权先于路由查找，所以"未知命令"只有通过授权才能到达路由层。两种文案的对照是：
+        // 命令存在但不在 Allow 名单（指向 UseCapabilities，配置问题）vs 通过授权但没有对应
+        // 路由（指向 [OrielCommand]，代码问题）——混同会让排查方向跑偏。
+        var restricted = new OrielCommandDispatcher(
+            new Dictionary<Type, Func<object>> { [typeof(TestCommands)] = () => new TestCommands() },
+            TestJsonContext.Default,
+            new OrielIpcGuard(new OrielCapabilityOptions().Allow("other.*"), isDebugBuild: false, "app.oriel"));
+
+        var (unauthorized, _) = await DispatchAsync(restricted, "t.echo", null);
+        Assert.False(unauthorized.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Contains("Allow", unauthorized.RootElement.GetProperty("error").GetString());
+
+        var permissive = CreateDispatcher(); // Allow("*")：命令名全放行，才能走到路由查找
+        var (unknown, _) = await DispatchAsync(permissive, "nope.missing", null);
+        Assert.False(unknown.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Contains("未知命令", unknown.RootElement.GetProperty("error").GetString());
+
+        Assert.NotEqual(
+            unauthorized.RootElement.GetProperty("error").GetString(),
+            unknown.RootElement.GetProperty("error").GetString());
+    }
+
     // ---- 协议形状 ----
 
     [Fact]
