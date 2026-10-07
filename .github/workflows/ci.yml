@@ -105,6 +105,11 @@ jobs:
       - name: Compile for linux-x64
         run: dotnet build src/OrielWeb/OrielWeb.csproj -r linux-x64 -c Release --no-self-contained
 
+      - name: Compile for linux-arm64
+        # README 的平台矩阵声称 arm64"编译通过"：没有这条线，该状态只能靠未入库的手动操作
+        # 维持，会静默退化。IL 交叉编译（不做 AOT，成本极低）足够把"还能不能编译"钉住。
+        run: dotnet build src/OrielWeb/OrielWeb.csproj -r linux-arm64 -c Release --no-self-contained
+
       - name: Publish AOT Linux
         run: dotnet publish samples/OrielDemo -c Release -r linux-x64 -v minimal
 
