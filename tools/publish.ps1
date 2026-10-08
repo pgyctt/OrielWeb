@@ -49,6 +49,10 @@
     交给 vpk 的版本号（semver2，三段）。缺省从根 Directory.Build.props 的 <Version> 读。
     四段的写法（如 1.2.3.4）会被截成三段——vpk 不接受四段。
 
+.PARAMETER NoPause
+    跳过脚本结尾的等待。CI（$env:CI）与非交互调用本来就不会停，这个开关给其它自动化用——
+    裸的 Pause 会把流水线挂住。
+
 .EXAMPLE
     pwsh tools/publish.ps1 -Bundle
     在本机发布并出安装包与更新包。
@@ -87,7 +91,10 @@ param(
     # 发布完成后用 Velopack 打包成安装包（见 .PARAMETER Bundle）
     [switch]$Bundle,
 
-    [string]$PackVersion
+    [string]$PackVersion,
+
+    # 结尾那个 Pause 只给"双击/交互运行"留：CI（$env:CI）自动跳过，其它自动化用这个开关关掉。
+    [switch]$NoPause
 )
 
 Set-StrictMode -Version Latest
@@ -289,4 +296,8 @@ if ($Bundle) {
     }
 }
 
-Pause
+# 交互运行时停一下，方便从资源管理器/双击运行时看结果；CI 与非交互自动化不该被这一下堵住
+# （评审 P3：结尾的裸 Pause 会挂住流水线）。
+if (-not $NoPause -and -not $env:CI) {
+    Pause
+}

@@ -114,7 +114,10 @@ param(
 
     [string]$PackVersion,
 
-    [switch]$DryRun
+    [switch]$DryRun,
+
+    # 结尾那个 Pause 只给交互运行留：CI（$env:CI）自动跳过，其它自动化用这个开关关掉。
+    [switch]$NoPause
 )
 
 Set-StrictMode -Version Latest
@@ -478,4 +481,8 @@ vpk pack --packId OrielDemo --packVersion "__VERSION__" --packTitle "Oriel Demo"
     }
 }
 
-Pause
+# 交互运行时停一下，方便看结果；CI 与非交互自动化不该被这一下堵住
+# （评审 P3：结尾的裸 Pause 会挂住流水线）。
+if (-not $NoPause -and -not $env:CI) {
+    Pause
+}

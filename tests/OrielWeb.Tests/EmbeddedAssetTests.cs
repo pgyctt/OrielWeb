@@ -155,4 +155,25 @@ public sealed class EmbeddedAssetTests
         var hit = Assert.Single(table);
         Assert.Equal("MyLib.wwwroot/js/app.js", hit.Value.ResourceName);
     }
+
+    // ---- UseEmbeddedAssets 的 host 校验（评审 P3：非法字符原来的症状是白屏、宿主无异常） ----
+
+    [Theory]
+    [InlineData("app.oriel")]
+    [InlineData("my-app.local")]
+    [InlineData("app_1.oriel")]
+    [InlineData("127.0.0.1")]
+    public void Host_ValidCharacters_AreAccepted(string host)
+        => Assert.Equal(host, Oriel.CreateBuilder().UseEmbeddedAssets(host).AssetHost);
+
+    [Theory]
+    [InlineData("app oriel")]  // 空格
+    [InlineData("app/oriel")]  // 斜杠
+    [InlineData("应用.oriel")]   // 非 ASCII
+    [InlineData("app:oriel")]  // 带端口号的写法
+    public void Host_InvalidCharacters_ThrowAndNameTheCharacter(string host)
+    {
+        var exception = Assert.Throws<ArgumentException>(() => Oriel.CreateBuilder().UseEmbeddedAssets(host));
+        Assert.Contains(host, exception.Message, StringComparison.Ordinal);
+    }
 }

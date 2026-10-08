@@ -164,8 +164,24 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
             return;
         }
 
-        while (Win32.GetMessageW(out var message, 0, 0, 0) > 0)
+        while (true)
         {
+            int result = Win32.GetMessageW(out var message, 0, 0, 0);
+            if (result == 0)
+            {
+                return; // WM_QUIT：正常退出
+            }
+
+            if (result == -1)
+            {
+                // GetMessageW 的 -1（出错）与 0（WM_QUIT）是两回事：以前一并用 `> 0` 落出循环，
+                // 应用"毫无理由地退出"且不留痕迹。这里记一笔，并补上退出消息——同线程上还有
+                // 别的消息循环在跑时（多窗口、嵌套会话）它才等到 WM_QUIT 而不是静默落空（评审 P3）。
+                System.Diagnostics.Debug.WriteLine("[OrielWeb] GetMessageW 失败，消息循环退出。");
+                Win32.PostQuitMessage(1);
+                return;
+            }
+
             Win32.TranslateMessage(ref message);
             Win32.DispatchMessageW(ref message);
         }
@@ -223,6 +239,13 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         }
 
         _environment = null;
+
+        // 设置变化的回调走静态 s_current（消息窗口的 WndProc 必须静态）：不清空的话，
+        // 同一进程里重建后端会把主题事件继续送到这个已释放的实例上（评审 P3）。
+        if (ReferenceEquals(s_current, this))
+        {
+            s_current = null;
+        }
     }
 
     // ---- 消息窗口 ----

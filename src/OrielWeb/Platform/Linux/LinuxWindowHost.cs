@@ -9,7 +9,8 @@ namespace OrielWeb.Platform.Linux;
 /// <summary>
 /// Linux 窗口宿主：GTK3 窗口 + WebKitGTK WebView。
 /// IPC 回执/ExecuteScript 走页面回环消息（与 macOS 同一模式）。
-/// 注意：GTK3 坐标为设备像素；HiDPI 缩放下的拖动偏移为已知限制（M4）。
+/// 注意：GDK 给的坐标**已经是应用像素**（与页面 CSS 像素同一套坐标系），不要自行乘缩放；
+/// Wayland 下窗口移动必须交给合成器（见 API.md §2 的拖动与 HiDPI 说明）。
 /// </summary>
 internal sealed partial class LinuxWindowHost : IWindowBackend
 {
@@ -251,7 +252,9 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     /// </summary>
     /// <remarks>
     /// <b>弹出是异步的</b>（GTK 立即返回，用户之后才选），所以菜单对象留到下一次弹出前才释放——
-    /// 不能像 Windows 那样"弹完即抛"。窗口销毁时随进程一并回收（一个菜单对象的开销可忽略）。
+    /// 不能像 Windows 那样"弹完即抛"。窗口销毁时由 <see cref="OnWindowDestroyed"/> 释放：
+    /// GtkMenu 的 GCHandle 根住的是捕获了本宿主的闭包，漏掉它整棵宿主对象树都回收不了
+    /// （评审 P2-8 修的就是这条链）。
     /// </remarks>
     public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items)
     {
@@ -536,12 +539,12 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     }
 
     /// <summary>
-    /// 注入给页面的宿主事实快照（见 <see cref="OrielSystemSnapshot"/>）：系统双击间隔与缩放。
+    /// 注入给拖动实现（桥接脚本）的宿主事实快照（见 <see cref="OrielSystemSnapshot"/>）：系统双击间隔。
     /// </summary>
     /// <remarks>
-    /// 缩放读**默认显示器**的（而不是窗口的）：脚本在导航之前注册，那一刻窗口可能还没 realize。
-    /// 取不到时返回 0，由 <see cref="OrielSystemSnapshot.Normalize"/> 兜底成 1.0。
-    /// 多屏不同缩放下这是"按主屏算"的近似值——页面侧有自己的 <c>window.devicePixelRatio</c> 可自校。
+    /// 取的是 <c>gtk-double-click-time</c>；取不到时返回 0，由
+    /// <see cref="OrielSystemSnapshot.Normalize"/> 统一兜底。快照里**没有**缩放——GDK 的坐标已经是
+    /// 应用像素（见 API.md §2 的 HiDPI 说明），拖动不需要再折一次。
     /// </remarks>
     private static OrielSystemSnapshot ReadSystemSnapshot()
         => OrielSystemSnapshot.Normalize(LinuxPlatformBackend.ReadDoubleClickTimeMs());
@@ -1055,6 +1058,14 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
                  ")}catch(e){return 'E:'+String(e)}})()))";
         PostToMainThread(() =>
         {
+            // 投递与执行之间窗口可能已被销毁：带着 0 句柄去调 GTK 只会得到 critical 警告
+            // （GTK 的函数都要求非空对象）。与 PushEventOnUi / PostWebMessageOnUi 同款判空——
+            // 挂起的 eval 已由销毁/导航路径清掉，调用方的 Task 不会因此永久挂起。
+            if (_webview == 0)
+            {
+                return;
+            }
+
             GtkNative.WebkitWebViewEvaluateJavaScript(
                 _webview, js, -1, 0, 0, 0, 0, 0);
         });

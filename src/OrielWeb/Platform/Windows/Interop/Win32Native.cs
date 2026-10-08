@@ -254,7 +254,12 @@ internal struct RECT
     public int Bottom;
 }
 
-/// <summary>WM_NCCALCSIZE 的 lParam（wParam 非 0 时）。rgrc0 传入为窗口矩形，返回时须为客户区矩形。</summary>
+/// <summary><c>TrackMouseEvent</c> 的参数：<c>dwFlags = TME_LEAVE</c> 时，指针离开 <c>hwndTrack</c> 会收到一次 WM_MOUSELEAVE。</summary>
+/// <remarks>
+/// 这里曾经挂着 WM_NCCALCSIZE 的 lParam 说明（复制粘贴残留，评审 P3）——那句属于
+/// <see cref="NCCALCSIZE_PARAMS"/>。托管侧只用 <c>cbSize</c> / <c>dwFlags</c> / <c>hwndTrack</c>，
+/// <c>dwHoverTime</c> 只有 <c>TME_HOVER</c> 才用得到。
+/// </remarks>
 [StructLayout(LayoutKind.Sequential)]
 internal struct TRACKMOUSEEVENT
 {

@@ -52,6 +52,16 @@ internal partial class Win32WindowHost : IWindowBackend
     private CoreWebView2WebResourceRequestedEventHandler? _assetSchemeHandler;
 
     private GCHandle _selfHandle;
+
+    /// <summary>窗口是否已交付给应用（<see cref="Create"/> 成功返回时才置位）。</summary>
+    /// <remarks>
+    /// 创建期失败时 <see cref="Create"/> 也会 <c>DestroyWindow</c> 收尾，那条路径不能触发
+    /// 面向应用的副作用：后端的 <c>_aliveWindows</c> 是在 <c>Create</c> **成功之后**才自增的
+    /// （见 WindowsPlatformBackend.CreateWindow），这里若照常自减会把计数打成负数，进而误发
+    /// <c>PostQuitMessage</c>；`Closed` 也不该为"应用从没见过的窗口"触发。见评审 2026-10-08 发现 1。
+    /// </remarks>
+    private bool _handedOff;
+
     internal nint _hwnd;
 
     private IComObject<ICoreWebView2Environment>? _environment;
@@ -371,16 +381,33 @@ internal partial class Win32WindowHost : IWindowBackend
         }
         host._hwnd = hwnd;
 
-        // 尺寸语义统一为逻辑像素（与 Linux/macOS 的 WithSize/MinSize 同语义）：Windows 在
-        // Per-Monitor-V2 下按**窗口所在显示器**的 DPI 折算，否则 150%/200% 屏上窗口小一半。
+        // 尺寸与位置统一为逻辑像素（与 Linux/macOS 的 WithSize/At 同语义）：Windows 在
+        // Per-Monitor-V2 下按**窗口所在显示器**的 DPI 折算。不折算的后果是 150%/200% 屏上
+        // 窗口只有一半大，`At(x,y)` 也只落到应有落点的几分之一——位置此前漏了折算（评审
+        // 2026-10-08 发现 2），尺寸与位置现在共用 LogicalPixels 这一个入口。
         // 时机在窗口已建、尚未显示（PostCreate 才 ShowWindow）——用户看不到这次修正。
         uint initialDpi = Win32.GetDpiForWindow(hwnd);
         if (initialDpi != 96)
         {
-            _ = Win32.SetWindowPos(
-                hwnd, 0, 0, 0,
-                ScaleLogical(options.Width, initialDpi), ScaleLogical(options.Height, initialDpi),
-                Win32Constants.SWP_NOMOVE | Win32Constants.SWP_NOZORDER | Win32Constants.SWP_NOACTIVATE);
+            int physicalWidth = LogicalPixels.ToPhysical(options.Width, initialDpi);
+            int physicalHeight = LogicalPixels.ToPhysical(options.Height, initialDpi);
+
+            // 位置只在显式给了 At(x,y) 时才动：没给时窗口保持系统摆位（或稍后由 Center 摆），
+            // 用 SWP_NOMOVE 保住它。At 一次给两维，缺一维按"没给位置"处理。
+            if (options.X is int atX && options.Y is int atY)
+            {
+                _ = Win32.SetWindowPos(
+                    hwnd, 0,
+                    LogicalPixels.ToPhysical(atX, initialDpi), LogicalPixels.ToPhysical(atY, initialDpi),
+                    physicalWidth, physicalHeight,
+                    Win32Constants.SWP_NOZORDER | Win32Constants.SWP_NOACTIVATE);
+            }
+            else
+            {
+                _ = Win32.SetWindowPos(
+                    hwnd, 0, 0, 0, physicalWidth, physicalHeight,
+                    Win32Constants.SWP_NOMOVE | Win32Constants.SWP_NOZORDER | Win32Constants.SWP_NOACTIVATE);
+            }
         }
 
         // WithIcon：覆盖窗口类带来的（exe）图标
@@ -398,12 +425,16 @@ internal partial class Win32WindowHost : IWindowBackend
         {
             // 窗口已经建出来了：中段失败（如 DComp 设备创建不了）必须收掉 HWND 与根引用，
             // 否则窗口残留、WndProc 还在经 GWLP_USERDATA 把消息路由给这个半成品宿主。
-            // 先 DestroyWindow（同步触发 WM_DESTROY，此刻 GCHandle 仍有效），再释放根引用。
+            // DestroyWindow **同步**触发 WM_DESTROY → OnWindowDestroyedCore，那里已经放掉根引用、
+            // 并按"未交付"跳过了应用可见的副作用；这里的调用只是幂等兜底——重复 Free 会抛
+            // InvalidOperationException，把真正的失败原因顶掉（评审 2026-10-08 发现 1）。
             _ = Win32.DestroyWindow(hwnd);
-            host._selfHandle.Free();
+            host.FreeSelfHandle();
             throw;
         }
 
+        // 交付：此后销毁才触发 Closed 与后端窗口计数（见 _handedOff 的说明）。
+        host._handedOff = true;
         return host;
     }
 
@@ -743,10 +774,10 @@ internal partial class Win32WindowHost : IWindowBackend
                     info->ptMaxPosition.Y = monitorInfo.rcWork.Top;
                 }
 
-                // 最小尺寸同样按逻辑点折算（与 Create 的尺寸语义统一一致）
+                // 最小尺寸同样按逻辑像素折算（与 Create/Resize 共用 LogicalPixels 这一个入口）
                 uint dpi = Win32.GetDpiForWindow(hwnd);
-                if (_minWidth > 0) info->ptMinTrackSize.X = ScaleLogical(_minWidth, dpi);
-                if (_minHeight > 0) info->ptMinTrackSize.Y = ScaleLogical(_minHeight, dpi);
+                if (_minWidth > 0) info->ptMinTrackSize.X = LogicalPixels.ToPhysical(_minWidth, dpi);
+                if (_minHeight > 0) info->ptMinTrackSize.Y = LogicalPixels.ToPhysical(_minHeight, dpi);
                 return 0;
             }
 
@@ -807,9 +838,36 @@ internal partial class Win32WindowHost : IWindowBackend
         _dcompTarget = null;
         _dcompDevice = null;
 
-        Closed?.Invoke();
-        _selfHandle.Free();
-        _backend.OnWindowDestroyed();
+        // 只有已在 Create 里交付给应用的窗口才触发这两件事：创建期失败的清理路径也走这里
+        // （DestroyWindow → WM_DESTROY），但那时后端计数还没自增、应用也没见过这个窗口。
+        if (_handedOff)
+        {
+            Closed?.Invoke();
+            _backend.OnWindowDestroyed();
+        }
+
+        // GWLP_USERDATA 指向的根引用随下面这句失效：不清零的话，紧随 WM_DESTROY 的
+        // WM_NCDESTROY 会让 WindowProc 去 GCHandle.FromIntPtr 一个已释放的句柄、抛异常，
+        // 再被它自己的 catch 吞掉——那条 catch 是兜底，不该被当成常规路径（评审 P3）。
+        _ = Win32.SetWindowLongPtrW(_hwnd, Win32Constants.GWLP_USERDATA, 0);
+        FreeSelfHandle();
+    }
+
+    /// <summary>
+    /// 释放根引用（幂等）。
+    /// </summary>
+    /// <remarks>
+    /// WM_DESTROY 与 <see cref="Create"/> 的失败清理两条路都会走到这里：先到的那个放掉句柄，
+    /// 后到的必须安静跳过——<c>GCHandle.Free()</c> 二次调用会抛
+    /// <c>InvalidOperationException("Handle is not initialized.")</c>，在失败清理里会把真正的
+    /// 失败原因顶掉（评审 2026-10-08 发现 1）。
+    /// </remarks>
+    private void FreeSelfHandle()
+    {
+        if (_selfHandle.IsAllocated)
+        {
+            _selfHandle.Free();
+        }
     }
 
     /// <summary>组合宿主不接收系统的光标设置，需把 WebView 当前光标自行应用到窗口。</summary>
@@ -1023,13 +1081,8 @@ internal partial class Win32WindowHost : IWindowBackend
     /// <summary>入站消息的来源 + 令牌校验（命令授权不在这里，见分发器）。originUrl 为逐消息来源，null 时退回快照。</summary>
     private bool Accept(JsonElement root, string? originUrl)
     {
-        if (App.Guard.TryAccept(originUrl ?? CurrentUrl, root, out string? rejection))
-        {
-            return true;
-        }
-
-        OrielIpcGuard.Report(rejection);
-        return false;
+        // 拒绝的记账在门禁内部（Debug 输出 + IpcRejected 事件），这里只返回结论。
+        return App.Guard.TryAccept(originUrl ?? CurrentUrl, root, out _);
     }
 
     private async Task DispatchInvokeAsync(JsonElement message, string? originUrl)
@@ -1171,11 +1224,12 @@ internal partial class Win32WindowHost : IWindowBackend
     internal string? CurrentUrl => _lastNavigationUri;
 
     /// <summary>
-    /// 注入给页面的宿主事实快照（见 <see cref="OrielSystemSnapshot"/>）：系统双击间隔与缩放。
+    /// 注入给拖动实现（桥接脚本）的宿主事实快照（见 <see cref="OrielSystemSnapshot"/>）：系统双击间隔。
     /// </summary>
     /// <remarks>
-    /// 缩放取的是**窗口所在显示器**的 DPI（<c>GetDpiForWindow</c>）而不是主屏——多屏不同缩放下，
-    /// 窗口在哪个屏上就该按哪个屏算。句柄无效时它返回 0，由 <see cref="OrielSystemSnapshot.Normalize"/> 兜底。
+    /// 快照里**没有**缩放：拖动与双击用的都是页面 CSS 像素（Win32 侧同理，坐标到页面之前已经换算过），
+    /// 再注入一份 scale 只会诱导页面自己折算一次。取不到时返回 0，由
+    /// <see cref="OrielSystemSnapshot.Normalize"/> 兜底。
     /// </remarks>
     private static OrielSystemSnapshot ReadSystemSnapshot()
         => OrielSystemSnapshot.Normalize((int)Win32.GetDoubleClickTime());
@@ -1574,21 +1628,25 @@ internal partial class Win32WindowHost : IWindowBackend
 
     public void MoveTo(int x, int y)
     {
-        Win32.SetWindowPos(_hwnd, 0, x, y, 0, 0, Win32Constants.SWP_NOSIZE | Win32Constants.SWP_NOZORDER | Win32Constants.SWP_NOACTIVATE);
+        // x/y 是屏幕逻辑坐标（API.md 的契约，三平台一致），按当前窗口 DPI 折算成物理像素——
+        // 与 Resize/最小尺寸共用 LogicalPixels（评审 2026-10-08 发现 2：此前只有尺寸折算）。
+        uint dpi = Win32.GetDpiForWindow(_hwnd);
+        Win32.SetWindowPos(
+            _hwnd, 0,
+            LogicalPixels.ToPhysical(x, dpi), LogicalPixels.ToPhysical(y, dpi),
+            0, 0,
+            Win32Constants.SWP_NOSIZE | Win32Constants.SWP_NOZORDER | Win32Constants.SWP_NOACTIVATE);
     }
 
     public void Resize(int width, int height)
     {
-        // width/height 是逻辑点（与窗口选项同语义），按当前窗口 DPI 折算
+        // width/height 是逻辑像素（与窗口选项同语义），按当前窗口 DPI 折算
         uint dpi = Win32.GetDpiForWindow(_hwnd);
         Win32.SetWindowPos(
             _hwnd, 0, 0, 0,
-            ScaleLogical(width, dpi), ScaleLogical(height, dpi),
+            LogicalPixels.ToPhysical(width, dpi), LogicalPixels.ToPhysical(height, dpi),
             Win32Constants.SWP_NOMOVE | Win32Constants.SWP_NOZORDER | Win32Constants.SWP_NOACTIVATE);
     }
-
-    /// <summary>逻辑点 → 物理像素（96 DPI 基准）。尺寸语义统一的换算入口，见 Create 里的注释。</summary>
-    private static int ScaleLogical(int logical, uint dpi) => (int)Math.Round(logical * dpi / 96.0);
 
     public void Center()
     {

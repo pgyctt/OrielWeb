@@ -7,12 +7,13 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
-## Unreleased
+## 0.3.1 - 2026-10-08
 
 第三轮全面评审（[docs/REVIEW-2026-10-05.md](REVIEW-2026-10-05.md)）后的修复批次。
 
 ### 新增
 
+- **`OrielApp.IpcRejected` 事件**（`OrielIpcRejectedEventArgs`）：入站 IPC 被门禁拒绝时触发，带层级（`Source` / `Token` / `Command`）、原因、文档 URL 与命令名。Release 下拒绝原本只写 `Debug.WriteLine`，宿主无从观测；非 `invoke` 的消息被拒时页面也没有任何反馈，只有这个事件能看到。
 - **源生成器编译期诊断 ORIELWEB101–106**：空白/含控制字符命令名、同程序集内同名命令、不可访问的命令方法、泛型宿主类、`ref`/`out` 参数此前要么被静默吞掉、要么变成生成文件里定位不了的 CS 错误，现在全部在编译期指回用户方法；`win.` 保留前缀给出警告（应用同名命令会被内建静默遮蔽）。
 - **逐消息来源纵深加固**（IPC 安全第二层）：Windows 用 `WebMessageReceived.Source`、macOS 用 `frameInfo.securityOrigin`（10.15+，缺失时优雅回退）判定发消息文档的真实来源，顶级导航 URL 快照降级为兜底。Linux 的经典 script-message 信号不带 frame 信息，保持快照判定（已知差距，注入期自检与令牌两层不受影响）。
 - Linux/macOS 的 async IPC 命令 `await` 之后**回 UI 线程**：与 Windows 语义一致，命令里 `await` 后可直接操作窗口与平台对象。
@@ -26,6 +27,10 @@
 
 ### 修复
 
+- **[审核发现] Windows 窗口位置语义**：`At`/`MoveTo` 与尺寸统一按窗口 DPI 折算（与 `Resize`、另两个平台一致）——此前只有尺寸折算，150%/200% 屏上位置会偏。
+- **[审核发现] Windows 创建期失败的收尾**：`Create` 中段抛异常时不再二次释放根引用（此前会把真正的失败原因顶成 `InvalidOperationException`），也不再对"应用从没见过的窗口"触发 `Closed` 与窗口计数（此前计数会被打成负数并误发退出消息）。
+- **[P3 批次] 生命周期收尾与一致性**：Linux `ExecuteScriptAsync` 的投递闭包补 `_webview == 0` 判断；Linux/macOS 的窗口计数改在建窗**成功之后**自增（此前 `Create` 抛异常会让计数虚高、把"全关退出"的时点推早）；Win32 销毁时清零 `GWLP_USERDATA`（不再靠 WndProc 的兜底 catch 过日子）；`WindowsPlatformBackend.Dispose` 清空静态 `s_current`；`GetMessageW` 失败时不再静默退出消息循环；MIME 表补 `.m4a/.m4v/.aac/.flac/.heic/.avifs`。
+- **[P3 批次] 参数与协议容错**：`UseEmbeddedAssets` 的 host 做字符校验（此前含空格/斜杠时症状是白屏且宿主无异常）；`gtk_window_get_position` 的签名改回 GTK3 的 `void`；回执层对非整数 `id` 不再让异常逃逸（此前那条 eval 会干等到 30 秒超时）；包内 targets 的 wwwroot 判定改为大小写不敏感（目录写成 `WWWRoot` 时不再漏报）。
 - **[P1] IPC 异常净化**：只有 `OrielIpcException` 的 `Message` 原样回传页面，其余异常回通用文案（此前与 API.md 承诺不符，非受控异常的内部路径可被页面探测）。
 - **[P1] Windows 默认（framed）窗口**：`WM_NCCALCSIZE` 不再压掉非客户区——系统标题栏/边框与原生边缘 resize 恢复（此前默认路径窗口无标题栏且无法拖边调整大小）。
 - **[P1] Linux/macOS `EvaluateJs` 挂死**：窗口销毁或页面导航离开原文档时，挂起的 ExecuteScript 立即以明确异常失败，不再永久挂起。

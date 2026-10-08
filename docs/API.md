@@ -39,7 +39,7 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 | 方法（真实签名） | 说明 |
 |---|---|
 | `Oriel.CreateBuilder(string[]? args = null)` | 入口。`args` 只是透传给应用自己（库不解析命令行）；`Run()` 之外还有 `Build()` 拿 `OrielApp` |
-| `UseEmbeddedAssets(string host = "app.oriel", string? resourcePrefix = null)` | 启用内嵌前端资源：程序集内嵌资源经自定义 scheme `oriel://<host>/` 提供（三平台一致，**不写盘**；`https://<host>/…` 作为兼容别名也被接受）。默认前缀是 `程序集名.wwwroot/`（显式 `/` 分隔符）。自己声明资源时必须用同一种形式：不带 `LogicalName` 的旧写法已删除，构建期报 `ORIELWEB001`（见 README 的"内嵌页面资源"）。**已知边界**：引用类库的 wwwroot 会与入口合并提供（同路径入口优先）；每请求整份驻留内存且不支持 Range——wwwroot 只放小静态资源，媒体类不可用；资源不存在时 Windows 回真实 HTTP 404（导航成功），Linux/macOS 按导航失败上报（引擎能力差异） |
+| `UseEmbeddedAssets(string host = "app.oriel", string? resourcePrefix = null)` | 启用内嵌前端资源：程序集内嵌资源经自定义 scheme `oriel://<host>/` 提供（三平台一致，**不写盘**；`https://<host>/…` 作为兼容别名也被接受）。默认前缀是 `程序集名.wwwroot/`（显式 `/` 分隔符）。自己声明资源时必须用同一种形式：不带 `LogicalName` 的旧写法已删除，构建期报 `ORIELWEB001`（见 README 的"内嵌页面资源"）。`host` 只接受字母、数字、`-`、`_`、`.`（会被拼进页面来源并逐字节参与可信前缀判定，其他字符在构建期直接抛）。**已知边界**：引用类库的 wwwroot 会与入口合并提供（同路径入口优先）；每请求整份驻留内存且不支持 Range——wwwroot 只放小静态资源，媒体类不可用；资源不存在时 Windows 回真实 HTTP 404（导航成功），Linux/macOS 按导航失败上报（引擎能力差异）；路径只做**一次** URL 解码，字面含 `%` 的文件名（URL 里得写成 `%2520` 之类）实际按解码后的名字查找（`%2520 ≡ %20`）；Linux 的 `oriel://` 处理器是**进程级单例**（scheme 每进程只能注册一次），同进程并发两个不同 host 的应用会互踩——按单进程单应用使用 |
 | `UseJsonContext(JsonSerializerContext context)` | 注册 STJ 源生成上下文：DTO 命令参数/返回值的 AOT 安全序列化入口。**按应用实例持有**，不写全局静态状态 |
 | `AddCommands<T>() where T : new()`<br>`AddCommands<T>(Func<T> factory)` | 注册含 `[OrielCommand]` 的类型（惰性单例；`factory` 用于需要构造参数的命令类）。命令实例**共享**，所有 invoke 作用在同一实例上 → **命令方法必须线程安全**；同名命令在启动时报冲突 |
 | `AddWindow(Action<OrielWindowOptions>? configure = null)`<br>`AddWindow(Action<OrielWindowOptions>? configure, Action<WebviewWindow> onCreated)` | 加窗口。`onCreated` 在 `Run()` 之前回调，用于订阅 `Loaded`/`Closing` 这类"必须早于建窗订阅"的事件 |
@@ -69,7 +69,7 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 | `bool Fullscreen` / `bool OnTop` / `bool Maximized` | 均 `false` | `WithFullscreen()` / `WithOnTop()` / `WithMaximized()`（各带 `bool = true`） |
 | `bool Frameless` | `false` | `WithFrameless(bool = true)`（无边框，见 §2） |
 | `bool Hidden` | `false` | `WithHidden(bool = true)`（窗口不上屏，页面照常加载、IPC 照常往返） |
-| `string? Url` | `null` | `WithUrl(string)`。`null` = 内嵌资源首页（`oriel://<host>/index.html`）；指向内嵌资源时写 `oriel://<host>/…`（`https://<host>/…` 是兼容别名，导航前会归一） |
+| `string? Url` | `null` | `WithUrl(string)`。`null` = 内嵌资源首页（`oriel://<host>/index.html`）；指向内嵌资源时写 `oriel://<host>/…`（`https://<host>/…` 是兼容别名，导航前会归一）。**已知边界**：别名只在**窗口初始 URL** 上归一；页面运行期自己跳到 `https://<host>/…` 不会被改写——那是真网络请求，且来源不可信（桥接不会安装） |
 | `string? Icon` | `null` | `WithIcon(string path)`。`null` 时：Windows 从 exe 取图标，Linux/macOS 回落到随产物分发的 `app.png` |
 | `bool Debug` | `false` | `WithDebug(bool = true)` |
 | `bool ConsoleForwarding` | `false` | `WithConsoleForwarding(bool = true)`（页面 console → `ConsoleMessage` 事件） |
@@ -84,6 +84,7 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 | `WebviewWindow CreateWindow(Action<OrielWindowOptions>? configure = null, Action<WebviewWindow>? onCreated = null)` | 运行时新建窗口（见 §1 的多窗口说明）。**只能在 `Run()` 之后调**，否则抛 `InvalidOperationException` |
 | `OrielTheme Theme` | `Light` / `Dark`；后端未就绪时返回 `Light` |
 | `event Action<OrielTheme>? ThemeChanged` | 系统主题变化（见 §6） |
+| `event Action<OrielIpcRejectedEventArgs>? IpcRejected` | 入站 IPC 被门禁拒绝（见 §4）。Release 下拒绝原本只写调试输出，宿主无从观测 |
 | `void PostToMainThread(Action action)` | 把动作切回 UI 线程（应用自己的后台线程要用它；IPC 命令里 `await` 之后已在 UI 线程，无需再切，见下方线程模型） |
 | `void Quit()` | 请求退出：结束消息循环、让 `Run()` 返回。**不是 `Environment.Exit`**——`Run()` 返回后该做的清理仍会执行 |
 | `OrielTray? Tray` | 当前托盘（未启用为 `null`） |
@@ -133,7 +134,7 @@ WebviewWindow second = app.CreateWindow(
 | **几何与外观** | |
 | `SetTitle(string title)` / `SetResizable(bool enabled)` | — |
 | `SetMinSize(int width, int height)` | — |
-| `MoveTo(int x, int y)` / `Resize(int width, int height)` / `Center()` | 坐标是**屏幕**坐标、**左上角**原点（应用像素；HiDPI 不要折算，见 §2）——`MoveTo` 的原点语义三平台一致 |
+| `MoveTo(int x, int y)` / `Resize(int width, int height)` / `Center()` | 坐标是**屏幕**坐标、**左上角**原点（**逻辑像素**：HiDPI 下由库按窗口 DPI 折算，调用方不要预折算，见 §2）——`MoveTo` 的原点语义三平台一致 |
 | **拖动** | |
 | `BeginDrag()` | Windows：进入原生模态拖动（**阻塞到松开鼠标**） |
 | `BeginDragStreaming(double px, double py, double wx, double wy, double ww, double wh, double sh)` | macOS/Linux 的流式拖动起点；参数含义见 §2。**库自己接管标题栏拖动时走的就是它** |
@@ -324,11 +325,17 @@ window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
 | 层 | 挡什么 |
 |---|---|
 | 来源 | 只有内嵌资源（与 `AllowOrigin` 放行的来源）算可信。**其它来源里桥接脚本根本不安装**——远程页面里连 `window.oriel` 都不存在，而不是"装上了再拦"。宿主侧逐消息校验时优先用**逐消息来源**（Windows `WebMessageReceived.Source`、macOS `frameInfo.securityOrigin`），顶级导航 URL 快照只作兜底；Linux 的经典 script-message 信号不带 frame 信息，用快照判定（第一层注入期自检与第三层令牌不受影响） |
-| 令牌 | 每进程一个 128 位随机串，随脚本注入、每条入站消息回带。挡的是"不是本应用注入的脚本也往通道里塞消息"，**不是**防网络攻击的凭据（消息不经过网络） |
+| 令牌 | 每个应用实例一个 128 位随机串（同进程创建多个 `OrielApp` 时各一份），随脚本注入、每条入站消息回带。挡的是"不是本应用注入的脚本也往通道里塞消息"，**不是**防网络攻击的凭据（消息不经过网络） |
 | 命令授权 | 按 allow/deny 名单判定命令名 |
 
 被拒绝时页面侧那个 Promise 会 **reject 并带上原因**（"落进了 Deny 名单"还是"不在 Allow 名单里"），
 而不是让它等到超时——"点了没反应"和"这个命令没被授权"必须能分开。
+
+宿主侧也有观测点：`OrielApp.IpcRejected`（`OrielIpcRejectedEventArgs`：`Layer` = `Source` / `Token` /
+`Command`、`Reason`、`DocumentUrl`、`CommandName`）。它存在的理由很具体：Release 下拒绝只进调试输出，
+宿主什么都看不到，而"按钮点了没反应"最常见的成因正是被门禁拦下；另外**非 `invoke` 的消息**
+（`message` / `console` / `evalResult`）被拒时页面侧没有任何反馈，只有这个事件能看到。
+事件在收到消息的线程上**同步**触发（Windows 是 UI 线程，Linux/macOS 是各自主线程），回调里别做重活。
 
 > **为什么 `win.*` 要开一个后门**：Release 下未配置即拒绝这条规则若把它一起拒掉，
 > 无边框窗口会**直接变成关不掉的窗口**（自绘标题栏，没有系统标题栏可替代，用户只能去任务管理器）。

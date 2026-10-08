@@ -85,13 +85,8 @@ internal sealed class LinuxWebMessageHandler : IIpcReplySink
     /// </remarks>
     private bool Accept(JsonElement root)
     {
-        if (_host.App.Guard.TryAccept(_host.CurrentUrl, root, out string? rejection))
-        {
-            return true;
-        }
-
-        OrielIpcGuard.Report(rejection);
-        return false;
+        // 拒绝的记账在门禁内部（Debug 输出 + IpcRejected 事件），这里只返回结论。
+        return _host.App.Guard.TryAccept(_host.CurrentUrl, root, out _);
     }
 
     private async Task DispatchInvokeAsync(JsonElement message)
@@ -111,9 +106,15 @@ internal sealed class LinuxWebMessageHandler : IIpcReplySink
 
     private void CompleteEval(JsonElement root)
     {
-        var id = root.TryGetProperty("id", out var idElement) && idElement.ValueKind == JsonValueKind.Number
-            ? idElement.GetInt32()
-            : 0;
+        // id 是**页面可伪造**的字段：非整数（1.5、1e30）会让 GetInt32() 抛 FormatException /
+        // OverflowException，而 OnScriptMessage 只接 JsonException——异常会一路逃到 GTK 的
+        // trampoline，那条 eval 就永远等不到回执（表现为 30s 超时，评审 P3）。
+        // 读不出合法整数就直接丢弃：它本来也匹配不上任何挂起项（桥接脚本的 seq 是自增整数）。
+        if (!root.TryGetProperty("id", out var idElement) || !idElement.TryGetInt32(out int id))
+        {
+            return;
+        }
+
         var json = root.TryGetProperty("json", out var jsonElement) && jsonElement.ValueKind == JsonValueKind.String
             ? jsonElement.GetString()
             : null;

@@ -142,10 +142,14 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
     public IWindowBackend CreateWindow(WebviewWindow window, OrielWindowOptions options, OrielApp app, EmbeddedAssetStore? assets)
     {
         var host = new LinuxWindowHost(window, options, app, assets, this);
-        _aliveWindows++;
+
         // 构造函数只装配宿主，真正的 GTK 窗口（gtk_window_new → show_all → 首次导航）在这里创建。
         // Windows 后端的建窗在静态工厂内完成，Linux/macOS 后端是实例方法，必须显式调用。
         host.Create();
+
+        // 计数在建窗**成功之后**才自增：Create 抛异常时窗口并不存在，先自增会让计数虚高、
+        // 把"最后一个窗口关闭 → 退出"的时点推早（评审 P3）。销毁侧的自减与之对称。
+        _aliveWindows++;
         return host;
     }
 

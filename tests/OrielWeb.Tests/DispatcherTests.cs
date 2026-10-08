@@ -237,6 +237,61 @@ public sealed class DispatcherTests
         Assert.Equal(5, reply.GetProperty("id").GetInt32());
     }
 
+    // ---- 拒绝的观测点：OrielApp.IpcRejected 的数据来源（评审 P3：Release 下原本零可观测） ----
+
+    [Fact]
+    public async Task Rejection_TokenLayer_IsReported()
+    {
+        var dispatcher = CreateDispatcher();
+        var seen = new List<OrielIpcRejectedEventArgs>();
+        dispatcher.Guard.Rejected += seen.Add;
+
+        await TestHarness.DispatchAsync(dispatcher, "t.echo", new { text = "x" }, token: "deadbeef");
+
+        var rejected = Assert.Single(seen);
+        Assert.Equal(OrielIpcRejectionLayer.Token, rejected.Layer);
+        Assert.Equal(TestHarness.TrustedUrl, rejected.DocumentUrl);
+        Assert.Null(rejected.CommandName);
+    }
+
+    [Fact]
+    public async Task Rejection_SourceLayer_IsReportedWithDocument()
+    {
+        var dispatcher = CreateDispatcher();
+        var seen = new List<OrielIpcRejectedEventArgs>();
+        dispatcher.Guard.Rejected += seen.Add;
+
+        await TestHarness.DispatchAsync(
+            dispatcher, "t.echo", new { text = "x" }, documentUrl: "http://localhost:5173/index.html");
+
+        var rejected = Assert.Single(seen);
+        Assert.Equal(OrielIpcRejectionLayer.Source, rejected.Layer);
+        Assert.Equal("http://localhost:5173/index.html", rejected.DocumentUrl);
+    }
+
+    [Fact]
+    public async Task Rejection_CommandLayer_CarriesCommandNameAndDocument()
+    {
+        // 命令授权层只有分发器同时知道命令名与文档 URL（门禁的 TryAuthorize 拿不到 URL）
+        var guard = new OrielIpcGuard(
+            new OrielCapabilityOptions().Allow("t.echo"), isDebugBuild: false, "app.oriel");
+        var dispatcher = new OrielCommandDispatcher(
+            new Dictionary<Type, Func<object>> { [typeof(TestCommands)] = () => new TestCommands() },
+            TestJsonContext.Default, guard);
+        var seen = new List<OrielIpcRejectedEventArgs>();
+        guard.Rejected += seen.Add;
+
+        var (reply, _) = await DispatchAsync(dispatcher, "t.add", new { a = 1, b = 2 });
+
+        Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
+        var rejected = Assert.Single(seen);
+        Assert.Equal(OrielIpcRejectionLayer.Command, rejected.Layer);
+        Assert.Equal("t.add", rejected.CommandName);
+        Assert.Equal(TestHarness.TrustedUrl, rejected.DocumentUrl);
+        // 事件里的原因与回给页面的文案是同一条：宿主排障与页面看到的解释不会两套
+        Assert.Equal(reply.RootElement.GetProperty("error").GetString(), rejected.Reason);
+    }
+
     [Fact]
     public async Task UntrustedOrigin_IsRejectedEndToEnd()
     {

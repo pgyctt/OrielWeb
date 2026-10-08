@@ -64,6 +64,16 @@ internal static class MimeTypes
         [".mp4"] = "video/mp4",
         [".webm"] = "video/webm",
         [".webmanifest"] = "application/manifest+json" + TextUtf8,
+
+        // 苹果/流媒体常见格式（评审 P3：此前落 octet-stream，<audio>/<video> 会因类型不符拒绝播放）。
+        // .avifs（AVIF 序列）没有注册的 MIME，按 image/avif 给——它至少是可渲染的图片类型，
+        // 而不是"未识别 → 交给下载"。
+        [".m4a"] = "audio/mp4",
+        [".m4v"] = "video/x-m4v",
+        [".aac"] = "audio/aac",
+        [".flac"] = "audio/flac",
+        [".heic"] = "image/heic",
+        [".avifs"] = "image/avif",
     };
 
     /// <summary>按路径的扩展名给出 Content-Type。</summary>

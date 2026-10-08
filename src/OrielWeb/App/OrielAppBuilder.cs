@@ -23,9 +23,27 @@ public sealed class OrielAppBuilder
     internal Dictionary<Type, Func<object>> TargetFactories { get; } = [];
 
     /// <summary>启用内嵌前端资源：<paramref name="resourcePrefix"/> 为程序集内嵌资源名前缀（默认 "程序集名.wwwroot/"，必须以 '/' 结尾），经自定义 scheme <c>oriel://&lt;host&gt;/</c> 提供（三平台一致，不写盘）。</summary>
+    /// <remarks>
+    /// <paramref name="host"/> 会被拼进页面来源 <c>oriel://&lt;host&gt;/</c>（以及兼容别名
+    /// <c>https://&lt;host&gt;/</c>），并且在门禁里逐字节参与可信前缀判定，因此只接受
+    /// host 允许的字符：字母、数字、<c>-</c>、<c>.</c>、<c>_</c>。含空格/斜杠/中文等字符时
+    /// 过去的症状是**页面白屏、宿主侧无异常**（来源拼出来不是合法 URL，导航直接失败），
+    /// 现在在构建期就抛出来并指出是哪个字符（评审 P3）。
+    /// </remarks>
     public OrielAppBuilder UseEmbeddedAssets(string host = "app.oriel", string? resourcePrefix = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(host);
+
+        foreach (char c in host)
+        {
+            if (!char.IsAsciiLetterOrDigit(c) && c is not ('-' or '.' or '_'))
+            {
+                throw new ArgumentException(
+                    $"UseEmbeddedAssets 的 host「{host}」含非法字符「{c}」：它要拼进 oriel://<host>/，只能用字母、数字、'-'、'.'、'_'。",
+                    nameof(host));
+            }
+        }
+
         UseAssets = true;
         AssetHost = host;
         AssetResourcePrefix = resourcePrefix;

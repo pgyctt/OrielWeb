@@ -23,9 +23,24 @@ public sealed class OrielApp : IDisposable
     internal OrielCommandDispatcher Dispatcher { get; }
 
     /// <summary>
-    /// 入站 IPC 的门禁（来源 / 令牌 / 命令授权）。每个应用实例一个，令牌每进程随机生成一次。
+    /// 入站 IPC 的门禁（来源 / 令牌 / 命令授权）。每个应用实例一个——令牌也随之每实例一份
+    /// （比"每进程一个"更严，见 <see cref="OrielIpcToken"/>）。
     /// </summary>
     internal OrielIpcGuard Guard { get; }
+
+    /// <summary>
+    /// 入站 IPC 被门禁拒绝时触发（来源 / 令牌 / 命令授权三层都有）。
+    /// </summary>
+    /// <remarks>
+    /// 用于宿主侧记账与排障：拒绝原本只在 <c>Debug.WriteLine</c> 里留痕，Release 下宿主
+    /// 什么都看不到。事件在收到消息的线程上**同步**触发（Windows 是 UI 线程，Linux/macOS
+    /// 是各自的主线程），回调里不要做重活或阻塞。
+    /// </remarks>
+    public event Action<OrielIpcRejectedEventArgs>? IpcRejected
+    {
+        add => Guard.Rejected += value;
+        remove => Guard.Rejected -= value;
+    }
 
     /// <summary>内嵌资源使用的 host（页面来源即 <c>oriel://&lt;host&gt;/</c>；取自构建器 <c>UseEmbeddedAssets</c> 的 host 参数）。</summary>
     internal string AssetHost => _builder.AssetHost;

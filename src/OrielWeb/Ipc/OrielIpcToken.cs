@@ -4,7 +4,8 @@ using System.Text;
 namespace OrielWeb.Ipc;
 
 /// <summary>
-/// 每次进程启动生成一次的 IPC 令牌。
+/// 每个应用实例生成一次的 IPC 令牌（同一个进程里创建多个 <see cref="OrielApp"/> 时各有一份，
+/// 比"每进程一个"更严）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -14,7 +15,7 @@ namespace OrielWeb.Ipc;
 /// <para>
 /// 它**不是**防网络攻击的凭据——消息不经过网络，攻击者要拿到令牌得先能在这个进程的地址空间里
 /// 执行代码，那时令牌已经不重要了。所以这里不做过期、不做刷新、也不做按文档轮换，
-/// 只做"每进程一个、够随机、比较固定时长"。
+/// 只做"每个应用实例一个、够随机、比较固定时长"。
 /// </para>
 /// </remarks>
 internal static class OrielIpcToken

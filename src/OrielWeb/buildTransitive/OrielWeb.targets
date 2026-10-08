@@ -97,10 +97,11 @@
                          Condition="'%(EmbeddedResource.OrielWebAutoEmbed)' == 'true'" />
       <!-- 消费方自己声明的 wwwroot 资源：不带标记，且落在某个 wwwroot 目录下。
            用 FullPath 而不是 Identity：消费方可能写相对路径也可能写绝对路径。
-           分隔符先归一成 '/'，免得同一件事在 Windows 与 Unix 上写成两种判断。 -->
+           分隔符先归一成 '/'、再统一小写，免得同一件事在 Windows 与 Unix 上、或目录写成
+           `WWWRoot` 时被写成不同的判断（大小写漏报是评审 P3 的条目）。 -->
       <_OrielWebForeignWwwroot Include="@(EmbeddedResource)"
                                Condition="'%(EmbeddedResource.OrielWebAutoEmbed)' != 'true'
-                                          and $([System.String]::Copy('%(EmbeddedResource.FullPath)').Replace('\','/').Contains('/wwwroot/'))" />
+                                          and $([System.String]::Copy('%(EmbeddedResource.FullPath)').Replace('\','/').ToLowerInvariant().Contains('/wwwroot/'))" />
       <!-- 其中**没写 LogicalName** 的那部分 = 已删除的旧写法。
            与上面那份分开，是因为两者的下场相反：带 LogicalName 的自声明是**受支持**的路径（跳过自动内嵌），
            不带的那份要直接报错。混在一个集合里会让"跳过"的条件顺带把错误也触发。 -->

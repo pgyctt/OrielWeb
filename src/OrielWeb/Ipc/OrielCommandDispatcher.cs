@@ -66,9 +66,9 @@ internal sealed class OrielCommandDispatcher
         }
 
         // 门禁一、二（来源 + 令牌）先于任何解析：不信任的消息连命令名都不该被读出来。
+        // 拒绝的记账（Debug 输出 + IpcRejected 事件）在门禁内部，这里只把原因回给页面。
         if (!_guard.TryAccept(documentUrl, message, out string? rejection))
         {
-            OrielIpcGuard.Report(rejection);
             ReplyError(sink, ReadId(message), rejection ?? "IPC 消息被拒绝。");
             return;
         }
@@ -92,8 +92,9 @@ internal sealed class OrielCommandDispatcher
         // 门禁三（命令授权）：来源与令牌都对，不代表这个命令就该被调用。
         if (!_guard.TryAuthorize(name, out string? denialReason))
         {
-            OrielIpcGuard.Report(denialReason);
-            ReplyError(sink, id, denialReason ?? "命令未被授权。");
+            string reason = denialReason ?? "命令未被授权。";
+            _guard.Report(OrielIpcRejectionLayer.Command, reason, documentUrl, name);
+            ReplyError(sink, id, reason);
             return;
         }
 
