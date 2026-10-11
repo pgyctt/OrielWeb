@@ -7,6 +7,28 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
+## Unreleased
+
+下游反馈（[docs/FEEDBACK-2026-10-11.md](FEEDBACK-2026-10-11.md)，一个真实工业上位机的迁移复盘）后的修复批次。
+
+### 新增
+
+- **`OrielDiagnostics.Reported`（库内诊断通道）**：进程级事件，库自己的告警与失败留痕都走它（IPC 被拒、shell 路径被拒、单实例锁不可用、托盘/通知失败、原生 trampoline 兜底异常……）。它取代了 `Debug.WriteLine`——后者带 `[Conditional("DEBUG")]`、条件在**调用方程序集的编译期**求值，于是发布包里这些调用**根本不存在**（实测 0.3.1 的 Release 程序集里 `[OrielWeb]` 命中 0）。无订阅者时不构造参数、不分配；有订阅者时逐个调用并各自兜异常。**全库 74 处调用点已迁移。**
+- **`OrielApp.CommandInvoked` / `CommandFailed`**：应用命令的执行观测——命令名、耗时、成功与否（前者），失败时异常**原样**带出（后者，只给宿主，页面拿到的仍是净化文案）。内建 `win.*` 不计入（拖动期间高频，会淹没"哪条命令慢"）。
+- **`OrielWindowOptions.Zoom` / `WithZoom(bool = true)`**：关掉用户手势缩放（Ctrl/Cmd + 滚轮、Ctrl/Cmd + 加减号/0、触摸板捏合）。宿主侧设引擎专有开关（Windows `IsZoomControlEnabled` + `IsPinchZoomEnabled`、macOS `allowsMagnification`），文档层再由桥接脚本做捕获期拦截——**Linux 的 WebKitGTK 没有等价单开关，靠的正是那道拦截**。
+- **`OrielApp.IsSecondaryInstance`**：`Build()` 之后即可查询"本实例是不是第二个实例"。
+
+### 变更（破坏性 / 行为可见）
+
+- **单实例判定从 `Run()` 提前到 `Build()`**：宿主可以在装配配置/数据库/设备连接**之前**分流第二实例（此前第二实例会先把这些副作用跑一遍）。代价是 `Build()` 不再纯构造（会抢一次进程级锁）；接收"激活请求"的管道仍在 `Run()` 建立，因此 `Build()` 与 `Run()` 之间到达的第二实例会被正确判定并退出，但它的激活请求送不进来。
+- **`SingleInstance` 的 `onActivate` 签名**：`Action<WebviewWindow?>` → `Action<WebviewWindow?, IReadOnlyList<string>>`，第二实例的启动参数（`Oriel.CreateBuilder(args)` 的那份）随激活请求带回，用于"用命令行让已运行的程序打开某个页面"。
+
+### 修复
+
+- **[反馈 P1-6] `UseJsonContext` 的边界写清**：只有 POCO 参数/返回值真正需要它；命令用 `JsonElement` 收/发时生成器原样透传 payload，不必把 DTO 搬进上下文。
+- **[反馈 P1-2 / P1-4] 两处已知取舍/边界写进 API.md**：Windows 边缘调整大小的厚度与生效条件（系统默认值、`Frameless && Resizable`、全屏/最大化不生效）；托盘气泡（`NIF_INFO`）**不做**的理由与后果（toast 可被"专注助手/权限"关掉，而"关闭即入托"的场景需要可见反馈）。
+- **[反馈 P2-2 / P2-3 / P2-4 / P2-5] 文档补全**：`onCreated` 是配置期回调（访问 `App`/`Show` 会抛 `InvalidOperationException`，不是返回 null）；`win.` 只保留**命令名**段（事件名不受限）；13 个 `With*` 方法补 XML 文档，并说明 XML 文档包含 `internal` 成员；首帧闸门的推荐做法（`WithHidden` + 页面就绪消息 + 超时兜底）。
+
 ## 0.3.1 - 2026-10-08
 
 第三轮全面评审（[docs/REVIEW-2026-10-05.md](REVIEW-2026-10-05.md)）后的修复批次。

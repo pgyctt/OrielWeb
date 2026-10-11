@@ -292,6 +292,64 @@ public sealed class DispatcherTests
         Assert.Equal(reply.RootElement.GetProperty("error").GetString(), rejected.Reason);
     }
 
+    // ---- 命令观测：哪条命令慢、哪条在失败（下游反馈 2026-10-11 的 P0-3 / P1-5） ----
+
+    [Fact]
+    public async Task CommandInvoked_ReportsNameDurationAndResult()
+    {
+        var dispatcher = CreateDispatcher();
+        var seen = new List<OrielCommandInvokedEventArgs>();
+        dispatcher.Invoked += seen.Add;
+
+        await DispatchAsync(dispatcher, "t.echo", new { text = "x" });
+
+        var invoked = Assert.Single(seen);
+        Assert.Equal("t.echo", invoked.Name);
+        Assert.True(invoked.Succeeded);
+        Assert.Equal(TestHarness.TrustedUrl, invoked.DocumentUrl);
+        Assert.True(invoked.Duration >= TimeSpan.Zero);
+    }
+
+    [Fact]
+    public async Task CommandFailed_CarriesRawExceptionWhileThePageStaysSanitized()
+    {
+        var dispatcher = CreateDispatcher();
+        var failed = new List<OrielCommandFailedEventArgs>();
+        var invoked = new List<OrielCommandInvokedEventArgs>();
+        dispatcher.Failed += failed.Add;
+        dispatcher.Invoked += invoked.Add;
+
+        var (reply, _) = await DispatchAsync(dispatcher, "t.crash", null);
+
+        Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
+        string pageError = reply.RootElement.GetProperty("error").GetString()!;
+
+        // 宿主拿到原异常（含内部细节）、页面拿到的仍是净化文案：两者刻意不同
+        var args = Assert.Single(failed);
+        Assert.Equal("t.crash", args.Name);
+        Assert.IsType<InvalidOperationException>(args.Exception);
+        Assert.Contains("secret", args.Exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("secret", pageError, StringComparison.OrdinalIgnoreCase);
+
+        // 失败的调用同样算"完成"（成功率由 Succeeded 统计）
+        Assert.False(Assert.Single(invoked).Succeeded);
+    }
+
+    [Fact]
+    public async Task BuiltInCommands_AreExcludedFromCommandObservation()
+    {
+        // win.* 是库内建的（拖动期间每秒几十条）：混进观测只会淹没"哪条命令慢"
+        var dispatcher = CreateDispatcher();
+        var seen = new List<OrielCommandInvokedEventArgs>();
+        dispatcher.Invoked += seen.Add;
+        var window = new BuiltInWindowCommandTests.FakeWindow();
+
+        await TestHarness.DispatchAsync(dispatcher, "win.minimize", null, window: window);
+
+        Assert.Single(window.Calls);
+        Assert.Empty(seen);
+    }
+
     [Fact]
     public async Task UntrustedOrigin_IsRejectedEndToEnd()
     {

@@ -146,7 +146,7 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
         if (icon == 0)
         {
             // 新图标加载失败：保留原图标而不是把托盘变成空白（用户看不出发生了什么）
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] 托盘图标加载失败：{iconPath}");
+            OrielDiagnostics.Report($"[OrielWeb] 托盘图标加载失败：{iconPath}");
             return;
         }
 
@@ -220,7 +220,7 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
             // OrielMenuRoles 会返回 false 表示"没人处理"，我们据此静默忽略（而不是猜一个窗口去操作）。
             if (!OrielMenuRoles.TryActivate(role, _app, window: null))
             {
-                System.Diagnostics.Debug.WriteLine($"[OrielWeb] 托盘菜单的 role「{role}」在当前上下文无法执行，已忽略。");
+                OrielDiagnostics.Report($"[OrielWeb] 托盘菜单的 role「{role}」在当前上下文无法执行，已忽略。");
             }
             return;
         }
@@ -245,7 +245,7 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
         // 应用其余部分照常工作——为"托盘图标没出现"让进程起不来是过度反应。
         if (!Win32.Shell_NotifyIconW(Win32Constants.NIM_ADD, ref data))
         {
-            System.Diagnostics.Debug.WriteLine("[OrielWeb] Shell_NotifyIcon(NIM_ADD) 失败：托盘不可用。");
+            OrielDiagnostics.Report("[OrielWeb] Shell_NotifyIcon(NIM_ADD) 失败：托盘不可用。");
             return;
         }
 

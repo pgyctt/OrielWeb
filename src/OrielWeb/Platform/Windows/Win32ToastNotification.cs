@@ -119,7 +119,7 @@ internal static class Win32ToastNotification
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[OrielWeb] 结束 PowerShell 失败：{ex.Message}");
+                    OrielDiagnostics.Report($"[OrielWeb] 结束 PowerShell 失败：{ex.Message}");
                 }
 
                 return false;
@@ -128,7 +128,7 @@ internal static class Win32ToastNotification
             if (process.ExitCode != 0)
             {
                 // 把脚本自己的报错记下来：否则"通知没出现"就只剩"没反应"这一种说法
-                Debug.WriteLine($"[OrielWeb] 通知投递失败（退出码 {process.ExitCode}）：{process.StandardError.ReadToEnd()}");
+                OrielDiagnostics.Report($"[OrielWeb] 通知投递失败（退出码 {process.ExitCode}）：{process.StandardError.ReadToEnd()}");
                 return false;
             }
 
@@ -137,7 +137,7 @@ internal static class Win32ToastNotification
         catch (Exception ex)
         {
             // 通知失败不该影响业务：记一笔就走
-            Debug.WriteLine($"[OrielWeb] 调用 PowerShell 投递通知失败：{ex.Message}");
+            OrielDiagnostics.Report($"[OrielWeb] 调用 PowerShell 投递通知失败：{ex.Message}");
             return false;
         }
     }
@@ -159,7 +159,7 @@ internal static class Win32ToastNotification
             return path;
         }
 
-        Debug.WriteLine("[OrielWeb] 未找到 Windows PowerShell 5.1，退回 PATH 中的 powershell（WinRT 可能不可用）。");
+        OrielDiagnostics.Report("[OrielWeb] 未找到 Windows PowerShell 5.1，退回 PATH 中的 powershell（WinRT 可能不可用）。");
         return "powershell";
     }
 

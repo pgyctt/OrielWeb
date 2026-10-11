@@ -129,7 +129,7 @@ internal static unsafe class MacOSObjCClasses
         {
             // 用户 Closing 处理器异常不得穿越 ObjC 边界。
             // 降级为"允许关闭"——与状态缺失时的默认语义一致。
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] windowShouldClose: 抛出异常：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] windowShouldClose: 抛出异常：{ex}");
         }
         return 1;
     }
@@ -147,7 +147,7 @@ internal static unsafe class MacOSObjCClasses
         catch (Exception ex)
         {
             // 用户 Closed 处理器异常不得穿越 ObjC 边界
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] windowWillClose: 抛出异常：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] windowWillClose: 抛出异常：{ex}");
         }
         return 0;
     }
@@ -165,7 +165,7 @@ internal static unsafe class MacOSObjCClasses
         catch (Exception ex)
         {
             // 异常不得穿越 ObjC 边界；状态同步失败不影响窗口本身
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] windowDidResize: 抛出异常：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] windowDidResize: 抛出异常：{ex}");
         }
         return 0;
     }
@@ -183,7 +183,7 @@ internal static unsafe class MacOSObjCClasses
         catch (Exception ex)
         {
             // 异常不得穿越 ObjC 边界；状态同步失败不影响窗口本身
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] windowDidEnterFullScreen: 抛出异常：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] windowDidEnterFullScreen: 抛出异常：{ex}");
         }
         return 0;
     }
@@ -201,7 +201,7 @@ internal static unsafe class MacOSObjCClasses
         catch (Exception ex)
         {
             // 异常不得穿越 ObjC 边界；状态同步失败不影响窗口本身
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] windowDidExitFullScreen: 抛出异常：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] windowDidExitFullScreen: 抛出异常：{ex}");
         }
         return 0;
     }
@@ -297,7 +297,7 @@ internal static unsafe class MacOSObjCClasses
         catch (Exception ex)
         {
             // 导航完成会触发用户 Loaded 处理器，异常不得穿越 ObjC 边界
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] didFinishNavigation: 抛出异常：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] didFinishNavigation: 抛出异常：{ex}");
         }
         return 0;
     }
@@ -314,7 +314,7 @@ internal static unsafe class MacOSObjCClasses
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] didStartProvisionalNavigation: 抛出异常：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] didStartProvisionalNavigation: 抛出异常：{ex}");
         }
         return 0;
     }
@@ -331,7 +331,7 @@ internal static unsafe class MacOSObjCClasses
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] didFailNavigation: 抛出异常：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] didFailNavigation: 抛出异常：{ex}");
         }
         return 0;
     }
@@ -348,7 +348,7 @@ internal static unsafe class MacOSObjCClasses
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] didFailProvisionalNavigation: 抛出异常：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] didFailProvisionalNavigation: 抛出异常：{ex}");
         }
         return 0;
     }
@@ -416,7 +416,7 @@ internal static unsafe class MacOSObjCClasses
         catch (Exception ex)
         {
             // 异常不得穿越 ObjC 边界；主题同步失败不影响应用本身
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] orielThemeChanged: 抛出异常：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] orielThemeChanged: 抛出异常：{ex}");
         }
         return 0;
     }
@@ -446,7 +446,7 @@ internal static unsafe class MacOSObjCClasses
             {
                 // 动作来自 public 的 OrielApp.PostToMainThread，异常不得穿越 ObjC 边界；
                 // 单条失败不影响后续排空
-                System.Diagnostics.Debug.WriteLine($"[OrielWeb] 主线程队列动作抛出异常：{ex}");
+                OrielDiagnostics.Report($"[OrielWeb] 主线程队列动作抛出异常：{ex}");
             }
         }
         return 0;
@@ -496,7 +496,7 @@ internal static unsafe class MacOSObjCClasses
         catch (Exception ex)
         {
             // 过滤失败就让菜单原样弹出；异常不得穿越 ObjC 边界
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] willOpenMenu: 过滤失败：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] willOpenMenu: 过滤失败：{ex}");
         }
 
         return 0;
@@ -791,14 +791,14 @@ internal static unsafe class MacOSObjCClasses
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] 应答内嵌资源失败：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] 应答内嵌资源失败：{ex}");
             try
             {
                 AssetSchemeFail(task, NsUrlErrorFileDoesNotExist);
             }
             catch (Exception inner)
             {
-                System.Diagnostics.Debug.WriteLine($"[OrielWeb] 上报失败也失败了：{inner.Message}");
+                OrielDiagnostics.Report($"[OrielWeb] 上报失败也失败了：{inner.Message}");
             }
         }
 

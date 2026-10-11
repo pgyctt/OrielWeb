@@ -24,7 +24,7 @@ internal static class MacOSAutoStart
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[OrielWeb] 写 LaunchAgent 失败：{ex.Message}");
+            OrielDiagnostics.Report($"[OrielWeb] 写 LaunchAgent 失败：{ex.Message}");
             return false;
         }
     }
@@ -42,7 +42,7 @@ internal static class MacOSAutoStart
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[OrielWeb] 删 LaunchAgent 失败：{ex.Message}");
+            OrielDiagnostics.Report($"[OrielWeb] 删 LaunchAgent 失败：{ex.Message}");
             return false;
         }
     }

@@ -201,7 +201,7 @@ internal partial class Win32WindowHost : IWindowBackend
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[OrielWeb] 过滤内建右键菜单失败：{ex.Message}");
+            OrielDiagnostics.Report($"[OrielWeb] 过滤内建右键菜单失败：{ex.Message}");
         }
     }
 
@@ -328,7 +328,7 @@ internal partial class Win32WindowHost : IWindowBackend
         {
             if (!OrielMenuRoles.TryActivate(role, _app, _window))
             {
-                System.Diagnostics.Debug.WriteLine($"[OrielWeb] 菜单 role「{role}」在 Windows 上未被处理。");
+                OrielDiagnostics.Report($"[OrielWeb] 菜单 role「{role}」在 Windows 上未被处理。");
             }
             return;
         }
@@ -661,7 +661,7 @@ internal partial class Win32WindowHost : IWindowBackend
             // （外泄 = 进程 fail-fast，不可捕获）。
             // 降级为默认处理：若异常来自 WM_CLOSE 的 Closing 回调，窗口会按默认语义销毁
             // ——即"取消关闭"的意图失效，这是"异常时无法确定用户意图"的合理降级。
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] WindowProc 处理消息 0x{message:X} 时抛出异常：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] WindowProc 处理消息 0x{message:X} 时抛出异常：{ex}");
             return Win32.DefWindowProcW(hwnd, message, wParam, lParam);
         }
     }
@@ -822,7 +822,7 @@ internal partial class Win32WindowHost : IWindowBackend
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[OrielWeb] 关闭 WebView2 控制器失败：{ex.Message}");
+                OrielDiagnostics.Report($"[OrielWeb] 关闭 WebView2 控制器失败：{ex.Message}");
             }
         }
 
@@ -960,6 +960,11 @@ internal partial class Win32WindowHost : IWindowBackend
                 using (settings)
                 {
                     settings.AreDevToolsEnabled = _options.Debug;
+
+                    // 缩放是**窗口**语义（见 OrielWindowOptions.Zoom）：关掉 Ctrl+滚轮 / Ctrl+± 与捏合。
+                    // 文档层还有一道捕获期拦截（桥接脚本的缩放闸门），那是给没有等价开关的引擎备的。
+                    settings.IsZoomControlEnabled = _options.Zoom;
+                    settings.IsPinchZoomEnabled = _options.Zoom;
                 }
             }
 
@@ -974,6 +979,7 @@ internal partial class Win32WindowHost : IWindowBackend
             await _webView.AddScriptToExecuteOnDocumentCreatedAsync(
                 OrielBridgeJs.Build(
                     _options.ConsoleForwarding,
+                    _options.Zoom,
                     App.Guard.Token,
                     App.Guard.TrustedPrefixes,
                     ReadSystemSnapshot(), _options.DragRegionSelector))
@@ -1097,7 +1103,7 @@ internal partial class Win32WindowHost : IWindowBackend
         {
             // 分发器内部已按命令捕获并净化；此处兜底分发器之外的错误。
             // 同样不透传 ex.Message（可能含内部路径），文案与分发器保持同一口径。
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] IPC 分发意外失败：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] IPC 分发意外失败：{ex}");
             PostMessageOnUi($"{{\"__oriel\":\"result\",\"id\":0,\"ok\":false,\"error\":\"命令执行失败。\"}}");
         }
     }
@@ -1162,7 +1168,7 @@ internal partial class Win32WindowHost : IWindowBackend
             catch (Exception ex)
             {
                 // 回调自身的异常不该夺走用户的知情权：回落到默认提示
-                Debug.WriteLine($"[OrielWeb] OnWebView2RuntimeMissing 回调抛出异常，改用默认提示：{ex}");
+                OrielDiagnostics.Report($"[OrielWeb] OnWebView2RuntimeMissing 回调抛出异常，改用默认提示：{ex}");
             }
         }
 
@@ -1459,7 +1465,7 @@ internal partial class Win32WindowHost : IWindowBackend
         catch (Exception ex)
         {
             // 窗口销毁后的迟到回执，忽略
-            Debug.WriteLine($"[OrielWeb] 投递回执失败（窗口可能已销毁）：{ex.Message}");
+            OrielDiagnostics.Report($"[OrielWeb] 投递回执失败（窗口可能已销毁）：{ex.Message}");
         }
     }
 

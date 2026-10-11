@@ -160,7 +160,7 @@ internal static class OrielShellLauncher
         catch (Exception ex)
         {
             // 环境里没有 xdg-open、或没有默认处理器：如实返回失败（调用方可以退回应用内提示）
-            Debug.WriteLine($"[OrielWeb] 调用系统默认程序失败（{executable}）：{ex.Message}");
+            OrielDiagnostics.Report($"[OrielWeb] 调用系统默认程序失败（{executable}）：{ex.Message}");
             return false;
         }
     }

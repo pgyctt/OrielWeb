@@ -137,7 +137,7 @@ internal sealed unsafe class GtkTrayBackend : ITrayBackend
             // 托盘没有"当前窗口"：窗口级与编辑类 role 在这里没有明确目标，忽略而不是猜一个窗口
             if (!OrielMenuRoles.TryActivate(role, _app, window: null))
             {
-                Debug.WriteLine($"[OrielWeb] 托盘菜单的 role「{role}」在当前上下文无法执行，已忽略。");
+                OrielDiagnostics.Report($"[OrielWeb] 托盘菜单的 role「{role}」在当前上下文无法执行，已忽略。");
             }
             return;
         }
@@ -157,7 +157,7 @@ internal sealed unsafe class GtkTrayBackend : ITrayBackend
 
         if (!File.Exists(iconPath))
         {
-            Debug.WriteLine($"[OrielWeb] 托盘图标文件不存在：{iconPath}");
+            OrielDiagnostics.Report($"[OrielWeb] 托盘图标文件不存在：{iconPath}");
             return;
         }
 
@@ -182,7 +182,7 @@ internal sealed unsafe class GtkTrayBackend : ITrayBackend
         catch (Exception ex)
         {
             // 异常不得穿越原生边界（外泄 = 进程终止）
-            Debug.WriteLine($"[OrielWeb] 托盘点击回调抛出异常：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] 托盘点击回调抛出异常：{ex}");
         }
     }
 
@@ -199,7 +199,7 @@ internal sealed unsafe class GtkTrayBackend : ITrayBackend
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[OrielWeb] 托盘菜单回调抛出异常：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] 托盘菜单回调抛出异常：{ex}");
         }
     }
 }

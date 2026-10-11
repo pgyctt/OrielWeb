@@ -296,7 +296,7 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         {
             if (!OrielMenuRoles.TryActivate(role, _app, _window, TryExecuteNativeEditing))
             {
-                System.Diagnostics.Debug.WriteLine($"[OrielWeb] 菜单 role「{role}」在 macOS 上未被处理。");
+                OrielDiagnostics.Report($"[OrielWeb] 菜单 role「{role}」在 macOS 上未被处理。");
             }
             return;
         }
@@ -377,6 +377,7 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
             ObjCRuntime.MakeNSString(
                 MacOSBridgeJs.Build(
                     _options.ConsoleForwarding,
+                    _options.Zoom,
                     App.Guard.Token,
                     App.Guard.TrustedPrefixes,
                     ReadSystemSnapshot(), _options.DragRegionSelector)),
@@ -410,6 +411,11 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         {
             ObjCRuntime.SendVoidBool(_webview, ObjCRuntime.Sel("setInspectable:"), _options.Debug);
         }
+
+        // 缩放是**窗口**语义（见 OrielWindowOptions.Zoom）：关掉触摸板捏合与智能缩放。
+        // allowsMagnification 是 WKWebView 的公开属性（10.10+），无需能力探测；
+        // Ctrl+滚轮那一路在 macOS 上不是引擎默认行为，由桥接脚本的缩放闸门兜住。
+        ObjCRuntime.SendVoidBool(_webview, ObjCRuntime.Sel("setAllowsMagnification:"), _options.Zoom);
 
         _navigationDelegate = MacOSObjCClasses.CreateNavigationDelegate(this);
         ObjCRuntime.SendVoidObj(_webview, ObjCRuntime.Sel("setNavigationDelegate:"), _navigationDelegate);

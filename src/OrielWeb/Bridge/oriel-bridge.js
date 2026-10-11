@@ -4,6 +4,7 @@
 //   __ORIEL_PLATFORM__ → 'windows' | 'macos' | 'linux'
 //   __ORIEL_POST__     → 平台投递表达式（obj 为待发送对象，令牌已由 post 加上）
 //   __ORIEL_CONSOLE_ENABLED__ → 'true' | 'false'（见 OrielWindowOptions.ConsoleForwarding）
+//   __ORIEL_ZOOM_ENABLED__ → 'true' | 'false'（见 OrielWindowOptions.Zoom）
 //   __ORIEL_VERSION__  → 库版本（取程序集版本前三位，如 '0.1.2'）
 //   __ORIEL_TOKEN__    → 本次进程运行的 IPC 令牌（32 位十六进制）
 //   __ORIEL_TRUSTED__  → 可信 URL 前缀数组，如 ['https://app.oriel/']
@@ -23,6 +24,31 @@
 //     Windows 走 COM 完成回调，该方法闲置但无害。
 
 (() => {
+    // ------------------------------------------------------------------------
+    // 页面缩放闸门（见 OrielWindowOptions.Zoom）
+    // ------------------------------------------------------------------------
+    // 刻意放在来源校验**之前**：缩放是"窗口"语义，与页面可不可信无关（开发期连 dev server 时同样该生效）。
+    // 宿主侧能设的只有各引擎的专有开关（Windows 的 IsZoomControlEnabled/IsPinchZoomEnabled、
+    // macOS 的 allowsMagnification），Linux 的 WebKitGTK 没有等价单开关——所以文档里再补一层
+    // 捕获期拦截，三平台同一套：Ctrl/Cmd + 滚轮、Ctrl/Cmd + 加减号/0、WebKit 的捏合手势事件。
+    // 必须 capture + passive:false 才能 preventDefault；页面自己实现的缩放（比如画布缩放）不受影响，
+    // 它读的是页面自己的手势，不依赖这些默认行为。
+    if (!__ORIEL_ZOOM_ENABLED__) {
+        const zoomGuardOptions = { passive: false, capture: true };
+        window.addEventListener('wheel', (e) => {
+            if (e.ctrlKey || e.metaKey) e.preventDefault();
+        }, zoomGuardOptions);
+        window.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey)
+                && (e.key === '+' || e.key === '-' || e.key === '=' || e.key === '0')) {
+                e.preventDefault();
+            }
+        }, true);
+        for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
+            window.addEventListener(type, (e) => e.preventDefault(), zoomGuardOptions);
+        }
+    }
+
     // 来源校验：不可信的文档**完全不安装** window.oriel——远程页面里连这个对象都不存在，
     // 而不是"装上再拦"。这样"远程页面不接 IPC"是结构性成立的，不必靠宿主侧再判一次。
     // __ORIEL_TRUSTED__ 是宿主注入的可信 URL 前缀数组（内嵌资源来源 + AllowOrigin 追加的）。

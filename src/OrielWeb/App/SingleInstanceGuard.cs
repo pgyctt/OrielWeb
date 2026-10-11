@@ -44,6 +44,12 @@ internal static class SingleInstanceGuard
     /// <summary>
     /// 尝试成为首实例：用一个独占打开的文件当锁。
     /// </summary>
+    /// <param name="id">实例标识。</param>
+    /// <param name="activationArgs">
+    /// 判为"已有实例"时随激活请求发给首实例的启动参数（一行编码，见
+    /// <see cref="EncodeActivationArgs"/>）；首实例据此实现"用命令行让已运行的程序打开某个页面"。
+    /// </param>
+    /// <param name="lockFile">取得锁时的锁句柄；调用方需持有到退出（释放即让出首实例身份）。</param>
     /// <remarks>
     /// <para>
     /// **不用"同名命名管道能否创建成功"来判定**：在 Unix 上 .NET 会先把已存在的 socket 文件删掉再绑定，
@@ -56,8 +62,13 @@ internal static class SingleInstanceGuard
     /// ——那个探活连接本身就是判定手段（见 <see cref="TryNotifyPrimary"/>）。调用方因此**不要**再调一次
     /// 通知，否则首实例会收到两次激活。
     /// </para>
+    /// <para>
+    /// 抢锁时机由调用方决定：<c>OrielApp</c> 在**构造期（<c>Build()</c>）**就调它，好让宿主在装配
+    /// 昂贵资源（配置、数据库、设备连接）之前就能通过 <c>IsSecondaryInstance</c> 分流
+    /// ——下游反馈 2026-10-11 的 P0-2 就是"判定太晚，第二实例已经连上同一台 PLC"。
+    /// </para>
     /// </remarks>
-    internal static AcquireResult TryAcquire(string id, out FileStream? lockFile)
+    internal static AcquireResult TryAcquire(string id, string activationArgs, out FileStream? lockFile)
     {
         lockFile = null;
         string path = LockPath(id);
@@ -76,9 +87,9 @@ internal static class SingleInstanceGuard
             //
             // 不靠异常类型或 HResult 区分（各平台抛出来的值并不一致），而是用两个可观测的事实来判断：
             // 先探首实例的管道，再探目录是否真的写得进去。
-            if (TryNotifyPrimary(id))
+            if (TryNotifyPrimary(id, activationArgs))
             {
-                // 首实例在监听 —— 它确实在跑，而且激活请求已经发出去了
+                // 首实例在监听 —— 它确实在跑，而且激活请求（连同本次启动参数）已经发出去了
                 return AcquireResult.AlreadyRunning;
             }
 
@@ -90,7 +101,7 @@ internal static class SingleInstanceGuard
                 return AcquireResult.AlreadyRunning;
             }
 
-            Debug.WriteLine(
+            OrielDiagnostics.Report(
                 $"[OrielWeb] 单实例锁无法创建（{path}）：{ex.Message}。" +
                 "按未检测到其他实例处理并继续启动——静默不启动比多开一个窗口难排查得多。");
             return AcquireResult.Unavailable;
@@ -126,7 +137,7 @@ internal static class SingleInstanceGuard
         catch (Exception ex) when (ex is IOException or TimeoutException or UnauthorizedAccessException)
         {
             // 首实例可能在收到通知前刚好退出；第二个实例仍应正常退出，不把这种情况当失败
-            Debug.WriteLine($"[OrielWeb] 未能连上首实例的管道（可能它没在跑，或已退出）：{ex.Message}");
+            OrielDiagnostics.Report($"[OrielWeb] 未能连上首实例的管道（可能它没在跑，或已退出）：{ex.Message}");
             return false;
         }
     }
@@ -203,7 +214,7 @@ internal static class SingleInstanceGuard
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 // 收紧权限失败不该阻断启动：目录里也没有敏感内容
-                Debug.WriteLine($"[OrielWeb] 收紧运行期目录权限失败（{directory}）：{ex.Message}");
+                OrielDiagnostics.Report($"[OrielWeb] 收紧运行期目录权限失败（{directory}）：{ex.Message}");
             }
         }
 
@@ -228,8 +239,31 @@ internal static class SingleInstanceGuard
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            Debug.WriteLine($"[OrielWeb] 运行期目录不可写（{directory}）：{ex.Message}");
+            OrielDiagnostics.Report($"[OrielWeb] 运行期目录不可写（{directory}）：{ex.Message}");
             return false;
         }
     }
+
+    /// <summary>
+    /// 把第二实例的启动参数编码成**一行**文本（管道协议是一行一条消息）。
+    /// </summary>
+    /// <remarks>
+    /// 逐参数 <see cref="Uri.EscapeDataString(string)"/> 后用空格连接：转义会把空格/换行变成 <c>%XX</c>，
+    /// "一行"这个约束因此不会被执行参数的内容打破。<see cref="Uri.EscapeDataString(string)"/> 是纯托管的
+    /// AOT 安全实现，不必为此引入序列化器。
+    /// </remarks>
+    internal static string EncodeActivationArgs(IReadOnlyList<string>? args)
+        => args is null || args.Count == 0 ? string.Empty : string.Join(' ', args.Select(Uri.EscapeDataString));
+
+    /// <summary>
+    /// 解码 <see cref="EncodeActivationArgs"/> 的结果；空串表示"没带参数"。
+    /// </summary>
+    /// <remarks>
+    /// 用 <see cref="StringSplitOptions.None"/>（不丢空段）以便逐参数还原；唯一还原不了的退化情形是
+    /// "只有一个空参数"——它与"没有参数"编码相同，两者都不携带信息。
+    /// </remarks>
+    internal static IReadOnlyList<string> DecodeActivationArgs(string? payload)
+        => string.IsNullOrEmpty(payload)
+            ? []
+            : payload.Split(' ', StringSplitOptions.None).Select(Uri.UnescapeDataString).ToArray();
 }

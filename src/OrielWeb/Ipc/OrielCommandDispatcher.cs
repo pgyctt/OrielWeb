@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -46,6 +47,18 @@ internal sealed class OrielCommandDispatcher
 
     /// <summary>本分发器用的门禁（测试据此取令牌，见 TestHarness）。</summary>
     internal OrielIpcGuard Guard => _guard;
+
+    /// <summary>
+    /// 应用命令执行完成时触发（成功与失败都有）。由 <see cref="OrielApp.CommandInvoked"/> 转发给应用。
+    /// </summary>
+    /// <remarks>
+    /// 内建 <c>win.*</c> 不在此列：拖动期间的 <c>win.dragTo</c> 每秒几十条，混进来只会淹没
+    /// "哪条命令慢"。内建命令的异常走 <see cref="OrielDiagnostics"/>（那是库自己的缺陷面）。
+    /// </remarks>
+    internal event Action<OrielCommandInvokedEventArgs>? Invoked;
+
+    /// <summary>应用命令抛异常时触发（异常原样）。由 <see cref="OrielApp.CommandFailed"/> 转发。</summary>
+    internal event Action<OrielCommandFailedEventArgs>? Failed;
 
     /// <param name="message">入站 invoke 消息。</param>
     /// <param name="sink">回执通道。</param>
@@ -116,6 +129,8 @@ internal sealed class OrielCommandDispatcher
             }
             catch (Exception ex)
             {
+                // 内建命令抛出的是库自己的缺陷：走诊断通道，不进命令观测事件（见 Invoked 的说明）
+                OrielDiagnostics.Report($"[OrielWeb] 内建命令 '{name}' 执行失败：{ex}");
                 ReplyError(sink, id, DescribeForPage(name, ex));
             }
             return;
@@ -127,15 +142,23 @@ internal sealed class OrielCommandDispatcher
             return;
         }
 
+        // 命令观测：耗时取"进入命令到出结果/抛异常"这一段，不含门禁校验与回执投递。
+        long startedAt = Stopwatch.GetTimestamp();
         try
         {
             object? target = route.Router.RequiresTarget ? ResolveTarget(route.Router.TargetType!) : null;
             var result = await route.Router.InvokeAsync(route.Index, target, args, _jsonContext).ConfigureAwait(false);
+            TimeSpan elapsed = Stopwatch.GetElapsedTime(startedAt);
             ReplyOk(sink, id, result);
+            Invoked?.Invoke(new OrielCommandInvokedEventArgs(name, elapsed, true, documentUrl));
         }
         catch (Exception ex)
         {
+            TimeSpan elapsed = Stopwatch.GetElapsedTime(startedAt);
             ReplyError(sink, id, DescribeForPage(name, ex));
+            // 先把异常交给宿主（它最关心），再把这次调用计进"已完成"——失败的调用同样是一次完成
+            Failed?.Invoke(new OrielCommandFailedEventArgs(name, ex, elapsed, documentUrl));
+            Invoked?.Invoke(new OrielCommandInvokedEventArgs(name, elapsed, false, documentUrl));
         }
     }
 
@@ -156,7 +179,7 @@ internal sealed class OrielCommandDispatcher
             return ex.Message;
         }
 
-        System.Diagnostics.Debug.WriteLine($"[OrielWeb] 命令 '{name}' 执行失败（详情不透传页面）：{ex}");
+        OrielDiagnostics.Report($"[OrielWeb] 命令 '{name}' 执行失败（详情不透传页面）：{ex}");
         return $"命令 '{name}' 执行失败。";
     }
 

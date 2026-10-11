@@ -42,9 +42,13 @@ internal static class SingleInstanceSelfTest
     }
 
     /// <summary>首实例收到第二实例的激活请求（由 SingleInstance 的回调驱动）。</summary>
-    internal static void OnActivatedBySecondInstance(WebviewWindow? window)
+    /// <param name="window">首实例的第一个窗口。</param>
+    /// <param name="secondaryArgs">第二实例的启动参数（随激活请求带回）。</param>
+    internal static void OnActivatedBySecondInstance(WebviewWindow? window, IReadOnlyList<string> secondaryArgs)
     {
         _received = true;
+        // 参数也打出来：这条同时给"用命令行让已运行的程序干活"做机器可判定的取证
+        Console.WriteLine($"SINGLE-INSTANCE: ARGS=[{string.Join(' ', secondaryArgs)}]");
         Console.WriteLine("SINGLE-INSTANCE: PASS（首实例收到第二实例的激活请求）");
         Console.Out.Flush();
         window?.Close();

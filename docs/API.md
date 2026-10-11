@@ -3,6 +3,10 @@
 按能力分章的完整说明。每章末尾的 **为什么** 是取舍记录——它解释的是"为什么不能换成另一种看起来更自然的写法"，
 因为这些地方一旦被"优化"回去就会静默出错。
 
+> **关于 IDE 里的 XML 文档**：生成的 XML 文档**包含 `internal` 成员**（例如
+> `OrielCapabilityOptions.NormalizeOrigin`），照着它调用会得到 CS0117——那是库内部的实现说明，
+> 不是公开 API。公开面以本文件与 IDE 补全里的 `public` 成员为准（下游反馈 2026-10-11 的 P2-4）。
+
 - [1. 应用与窗口](#1-应用与窗口)
 - [2. 无边框窗口](#2-无边框窗口)
 - [3. 导航与页面通信](#3-导航与页面通信)
@@ -40,12 +44,12 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 |---|---|
 | `Oriel.CreateBuilder(string[]? args = null)` | 入口。`args` 只是透传给应用自己（库不解析命令行）；`Run()` 之外还有 `Build()` 拿 `OrielApp` |
 | `UseEmbeddedAssets(string host = "app.oriel", string? resourcePrefix = null)` | 启用内嵌前端资源：程序集内嵌资源经自定义 scheme `oriel://<host>/` 提供（三平台一致，**不写盘**；`https://<host>/…` 作为兼容别名也被接受）。默认前缀是 `程序集名.wwwroot/`（显式 `/` 分隔符）。自己声明资源时必须用同一种形式：不带 `LogicalName` 的旧写法已删除，构建期报 `ORIELWEB001`（见 README 的"内嵌页面资源"）。`host` 只接受字母、数字、`-`、`_`、`.`（会被拼进页面来源并逐字节参与可信前缀判定，其他字符在构建期直接抛）。**已知边界**：引用类库的 wwwroot 会与入口合并提供（同路径入口优先）；每请求整份驻留内存且不支持 Range——wwwroot 只放小静态资源，媒体类不可用；资源不存在时 Windows 回真实 HTTP 404（导航成功），Linux/macOS 按导航失败上报（引擎能力差异）；路径只做**一次** URL 解码，字面含 `%` 的文件名（URL 里得写成 `%2520` 之类）实际按解码后的名字查找（`%2520 ≡ %20`）；Linux 的 `oriel://` 处理器是**进程级单例**（scheme 每进程只能注册一次），同进程并发两个不同 host 的应用会互踩——按单进程单应用使用 |
-| `UseJsonContext(JsonSerializerContext context)` | 注册 STJ 源生成上下文：DTO 命令参数/返回值的 AOT 安全序列化入口。**按应用实例持有**，不写全局静态状态 |
+| `UseJsonContext(JsonSerializerContext context)` | 注册 STJ 源生成上下文：DTO 命令参数/返回值的 AOT 安全序列化入口。**按应用实例持有**，不写全局静态状态。**边界**：只有 POCO 参数/返回值真正需要它——命令用 `JsonElement` 收/发时生成器直接透传整个 payload（见 §4 末"逃生口"），不必把 DTO 搬进上下文。需要 `JsonSerializerOptions` 的非 AOT 用法**没有重载**（库面向 AOT，不做反射序列化） |
 | `AddCommands<T>() where T : new()`<br>`AddCommands<T>(Func<T> factory)` | 注册含 `[OrielCommand]` 的类型（惰性单例；`factory` 用于需要构造参数的命令类）。命令实例**共享**，所有 invoke 作用在同一实例上 → **命令方法必须线程安全**；同名命令在启动时报冲突 |
-| `AddWindow(Action<OrielWindowOptions>? configure = null)`<br>`AddWindow(Action<OrielWindowOptions>? configure, Action<WebviewWindow> onCreated)` | 加窗口。`onCreated` 在 `Run()` 之前回调，用于订阅 `Loaded`/`Closing` 这类"必须早于建窗订阅"的事件 |
+| `AddWindow(Action<OrielWindowOptions>? configure = null)`<br>`AddWindow(Action<OrielWindowOptions>? configure, Action<WebviewWindow> onCreated)` | 加窗口。`onCreated` 是**配置期**回调（`Run()` 之前、建窗之前调用），用途只有一个：挂事件处理器（`Loaded`/`Closing` 这类必须早于建窗订阅的）。此时窗口后端还没建，访问 `window.App` / `PostToUiThread` / `Show` / `Hide` / `EmitEvent` 一律**抛 `InvalidOperationException`**（"窗口后端尚未初始化"）——**不是返回 null**；要窗口能力请等 `Loaded` / `NavigationCompleted` |
 | `UseDebug(bool debug = true)`；`bool Debug { get; }` | 打开 DevTools（三平台的实现与前置条件见 §1 末与 §13） |
 | `UseUserDataFolder(string path)` | 覆盖 WebView2 用户数据目录（默认 `%LOCALAPPDATA%\OrielWeb\WebView2`）。**同一进程的所有窗口共享一个 WebView2 环境**——否则第二个窗口起不来 |
-| `SingleInstance(string id, Action<WebviewWindow?>? onActivate = null)` | 单实例（见 §6，含三态判定与运行期目录） |
+| `SingleInstance(string id, Action<WebviewWindow?, IReadOnlyList<string>>? onActivate = null)` | 单实例（见 §6，含三态判定与运行期目录）。**判定发生在 `Build()`**：`app.IsSecondaryInstance` 在 `Run()` 之前就能问，第二实例因此可以在打开数据库/连设备**之前**分流，再 `Run()` 让库负责"通知首实例并静默退出"。`onActivate` 的首实例回调会拿到**第二实例的启动参数**（`Oriel.CreateBuilder(args)` 的那份），用于"用命令行让已运行的程序打开某个页面" |
 | `UseCapabilities(Action<OrielCapabilityOptions>? configure = null)` | 声明页面可调用的命令与可信来源（见 §4） |
 | `UseShell(Action<OrielShellOptions>? configure = null)` | Shell 集成的 scheme 白名单（见 §7） |
 | `AddTray(Action<OrielTrayOptions>? configure = null)` | 启用系统托盘（应用级，最多一个；见 §7） |
@@ -73,6 +77,7 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 | `string? Icon` | `null` | `WithIcon(string path)`。`null` 时：Windows 从 exe 取图标，Linux/macOS 回落到随产物分发的 `app.png` |
 | `bool Debug` | `false` | `WithDebug(bool = true)` |
 | `bool ConsoleForwarding` | `false` | `WithConsoleForwarding(bool = true)`（页面 console → `ConsoleMessage` 事件） |
+| `bool Zoom` | `true` | `WithZoom(bool = true)`。关掉**用户手势缩放**（Ctrl/Cmd + 滚轮、Ctrl/Cmd + 加减号/0、触摸板捏合）。固定布局的工业界面通常要关：整屏被误缩放会布局错乱且没有复位入口。实现分两层——宿主侧设引擎专有开关（Windows `IsZoomControlEnabled`+`IsPinchZoomEnabled`、macOS `allowsMagnification`），文档层再由桥接脚本做捕获期拦截；**Linux 的 WebKitGTK 没有等价单开关，完全靠文档层那道拦截** |
 | `OrielContextMenuPolicy ContextMenuPolicy` | `Editing` | `WithContextMenuPolicy(OrielContextMenuPolicy)`（见 §10） |
 | `string? DragRegionSelector` | `null` | `WithDragRegion(string selector)`（宿主指定拖动区域，见 §2；空/空白会抛） |
 
@@ -85,6 +90,10 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 | `OrielTheme Theme` | `Light` / `Dark`；后端未就绪时返回 `Light` |
 | `event Action<OrielTheme>? ThemeChanged` | 系统主题变化（见 §6） |
 | `event Action<OrielIpcRejectedEventArgs>? IpcRejected` | 入站 IPC 被门禁拒绝（见 §4）。Release 下拒绝原本只写调试输出，宿主无从观测 |
+| `event Action<OrielCommandInvokedEventArgs>? CommandInvoked` | 应用命令执行完成（成功与失败都有）：命令名、耗时、结果、来源文档。内建 `win.*` 不计入（拖动期间高频，会淹没"哪条命令慢"） |
+| `event Action<OrielCommandFailedEventArgs>? CommandFailed` | 应用命令抛异常：异常**原样**带出（只给宿主，页面拿到的仍是净化文案）。与 `CommandInvoked` 不重复——那个给耗时/成功率，这个给异常对象 |
+| `bool IsSecondaryInstance` | 本实例是不是"第二个实例"（需先 `SingleInstance(id)`）。**`Build()` 之后即可问**，用于在装配数据库/设备连接之前分流；激活请求此时已发给首实例 |
+| `void Run()` | 建窗并进入消息循环；`IsSecondaryInstance` 为真时只打印契约标记后返回（退出码 0） |
 | `void PostToMainThread(Action action)` | 把动作切回 UI 线程（应用自己的后台线程要用它；IPC 命令里 `await` 之后已在 UI 线程，无需再切，见下方线程模型） |
 | `void Quit()` | 请求退出：结束消息循环、让 `Run()` 返回。**不是 `Environment.Exit`**——`Run()` 返回后该做的清理仍会执行 |
 | `OrielTray? Tray` | 当前托盘（未启用为 `null`） |
@@ -248,6 +257,18 @@ WebviewWindow second = app.CreateWindow(
 > 与页面 CSS 像素是同一套坐标系。实测过（WSLg/X11/`GDK_SCALE=2`：逻辑 200x100 ↔ 设备 400x200、
 > 位移比值 ≈ 2）。再乘一次 scale 就会在 2x 屏上偏移一倍。
 
+> **边缘调整大小（Windows 已内建，目前没有可调项）**：无边框窗口的四边热区由库接管，
+> 厚度取系统的 `SM_CXSIZEFRAME + SM_CXPADDEDBORDER`（按窗口 DPI 折算）——**就是系统默认厚度，
+> 没有 API 可调**；只在 `Frameless && Resizable` 时生效（framed 窗口由系统原生处理，见 §2 开头），
+> 全屏与最大化时不生效。页面侧因此不需要（也做不到）自己实现边缘热区：既没有 `win.resize` 命令、
+> 也没有 HWND 可用（下游反馈 2026-10-11 的 P1-2：他们原来"前端热区 + 2px 原生兜底"两套机制，
+> 迁移后完全依赖这一层）。
+>
+> **已知边界（Windows 窗口移动）**：窗口移动时**不**向 WebView2 组合宿主转发
+> `NotifyParentWindowPositionChanged`（实测在最大化等场景会触发访问违例，疑似本机运行时/互操作问题），
+> 所以页面内的弹层（下拉、日期选择器）在窗口移动后可能停在旧位置，直到下一次布局；
+> 尺寸变化走 `WM_SIZE` 的 bounds 更新，不受影响。
+
 窗口图标：`WithIcon(path)` 三平台各自落到真正有图标槽的位置——Windows `WM_SETICON`、Linux 窗口图标、
 macOS Dock 图标。**Windows 会主动从 exe 取图标**（`<ApplicationIcon>`），另外两个平台**没有等价来源**
 （ELF/Mach-O 不带图标），所以必须显式给文件；GNOME 还不读 `_NET_WM_ICON`，它按 `WM_CLASS` 匹配 `.desktop` 的 `Icon=`。
@@ -300,6 +321,12 @@ window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
 > **失败导航必须报出原因**：三个引擎"接受的失败目标"各不相同（同源缺失页 / 环回端口 / 保留 TLD 各有差异），
 > 且都会静默改写不接受的形态，所以自检里逐个试候选目标，任一真的上报失败即算通过。
 
+> **首帧闸门（推荐用法）**：`Loaded` 的语义是"首次导航完成"，**早于前端框架的首屏渲染**——
+> 直接靠它显示窗口会退回"白屏 / 半成品一闪"的观感。库不替应用包一层，因为"什么时候算渲染好了"
+> 只有应用自己知道。推荐做法（demo 也是这么做的）：`WithHidden()` 建窗 → 页面首屏就绪后
+> `postMessage` 一个约定名（如 `ui.ready`）→ 宿主在 `MessageReceived` 里 `Show()`，
+> 并**加一个超时兜底**（如 8 秒），免得页面报错时窗口永不出现（下游反馈 2026-10-11 的 P2-5）。
+
 ## 4. 安全与能力模型
 
 页面里的 `oriel.invoke` **谁能调、能调什么**由三层门禁决定：来源、令牌、命令授权。
@@ -321,6 +348,7 @@ window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
 | 默认拒绝 | 两条都不命中即拒绝 |
 | `win.` 前缀始终放行 | 那是无边框窗口的标题栏按钮与拖动，只操作自己那个窗口，不是"能力"；它们由库内建，自定义同名命令会被遮蔽。**应用自己的命令请避开这个前缀** |
 | 只管 `invoke` | 单向的 `postMessage` 没有命令名，由来源与令牌两层覆盖 |
+| `win.` 只保留**命令名**段 | 事件名不受限：`EmitEvent("win.state.changed", …)` 不会被拦（库不校验事件名，事件命名空间是页面自己的）。但为了与"保留前缀"的口径一致，建议避开这个段（下游反馈 2026-10-11 的 P2-3） |
 
 | 层 | 挡什么 |
 |---|---|
@@ -331,11 +359,16 @@ window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
 被拒绝时页面侧那个 Promise 会 **reject 并带上原因**（"落进了 Deny 名单"还是"不在 Allow 名单里"），
 而不是让它等到超时——"点了没反应"和"这个命令没被授权"必须能分开。
 
-宿主侧也有观测点：`OrielApp.IpcRejected`（`OrielIpcRejectedEventArgs`：`Layer` = `Source` / `Token` /
-`Command`、`Reason`、`DocumentUrl`、`CommandName`）。它存在的理由很具体：Release 下拒绝只进调试输出，
-宿主什么都看不到，而"按钮点了没反应"最常见的成因正是被门禁拦下；另外**非 `invoke` 的消息**
-（`message` / `console` / `evalResult`）被拒时页面侧没有任何反馈，只有这个事件能看到。
-事件在收到消息的线程上**同步**触发（Windows 是 UI 线程，Linux/macOS 是各自主线程），回调里别做重活。
+宿主侧有三个观测点，都只在宿主进程里可见、都对应用可用：
+
+| 观测点 | 看什么 |
+|---|---|
+| `OrielApp.IpcRejected` | 被门禁**拒绝**的消息：层级（`Source` / `Token` / `Command`）、原因、文档 URL、命令名。非 `invoke` 的消息被拒时页面侧毫无反馈，只有这里能看到 |
+| `OrielApp.CommandInvoked` / `CommandFailed` | 应用命令的**执行**：命令名、耗时、成功与否；失败时给异常对象（原样，含内部细节）。几十条命令跑在节拍上的应用靠它回答"哪条慢""哪条在失败"。内建 `win.*` 不计入 |
+| `OrielDiagnostics.Reported` | 进程级诊断通道：IPC 被拒、shell 路径被拒、单实例锁不可用、托盘/通知失败、原生 trampoline 的兜底异常……文本带 `[OrielWeb]` 前缀。它取代了 `Debug.WriteLine`——后者带 `[Conditional("DEBUG")]`，在 Release 包里被**整个编译掉**（实测发布程序集里一个 `[OrielWeb]` 都没有），等于生产环境零日志 |
+
+三者都在收到消息的线程上**同步**触发（Windows 是 UI 线程，Linux/macOS 是各自主线程），回调里别做重活；
+`CommandInvoked` 的耗时只覆盖命令本身，不含门禁与回执投递。`OrielDiagnostics` 是静态事件，订阅者请自行退订。
 
 > **为什么 `win.*` 要开一个后门**：Release 下未配置即拒绝这条规则若把它一起拒掉，
 > 无边框窗口会**直接变成关不掉的窗口**（自绘标题栏，没有系统标题栏可替代，用户只能去任务管理器）。
@@ -349,6 +382,11 @@ window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
 > 内嵌资源的来源（`oriel://<host>/`）自动可信——少了这一条，页面会被**自己的**门禁拒掉，
 > 表现为"什么命令都没反应"。前缀由 `AssetUrl.TrustedPrefix` 生成，与导航用的 URL 同源，
 > 免得手拼出"空格 vs `%20`"这类逐字节差异（2026-10-02 的 macOS 冒烟就是这么红的）。
+
+**逃生口：`JsonElement` 参数 / 返回值。** 命令方法直接收 `JsonElement` 时，生成器把页面 payload
+**原样**透传（不做逐参数解析）；返回值里的 `JsonElement` 也原样写进回执。两个好处：① 不必把 DTO
+搬进 `UseJsonContext` 的源生成上下文（见 §1）；② 响应体与"不用库的框架"逐字节一致，适合从自研
+postMessage 桥迁移过来的应用（下游反馈 2026-10-11 的 P1-6）。代价是参数校验得自己写。
 
 ## 5. 拖动与双击的实现边界
 
@@ -437,6 +475,13 @@ builder.SingleInstance("com.example.myapp", win => { /* 首实例被唤醒 */ })
 | `event Action? Clicked` | 图标被点（**没配菜单时**才有意义；配了 `MenuOnClick` 就直接弹菜单） |
 | `event Action<string>? MenuItemClicked` | 菜单项被点，参数是该项的 `Id` |
 | `event Action<string>? RawEvent` | 平台原样事件（排查用，各平台载荷不同） |
+
+> **已知取舍：托盘气泡（`NIF_INFO` / `OrielTray.ShowBalloon`）不做。** interop 字段都在，但库只用 toast：
+> 早先走过托盘气球，实测**根本没显示出来**（能回传点击，但看不见的通知谈不上"能用"，
+> 见 `Win32ToastNotification` 的说明）。后果要知情：toast 依赖 AUMID 注册、且会被现场的
+> "专注助手 / 通知权限"关掉，而托盘气泡不依赖这些——所以"关闭 = 隐藏入托"这类语义下，
+> 操作员可能什么提示都看不到，却以为程序已经关了。要这种确定性，请让托盘菜单/页面给出可见状态
+> （下游反馈 2026-10-11 的 P1-4）。
 
 通知（`OrielNotificationOptions`）：
 

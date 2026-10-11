@@ -38,7 +38,7 @@ internal static class Win32AutoStart
 
         if (status != 0)
         {
-            Debug.WriteLine($"[OrielWeb] 打开 Run 键失败（Win32 错误 {status}）。");
+            OrielDiagnostics.Report($"[OrielWeb] 打开 Run 键失败（Win32 错误 {status}）。");
             return false;
         }
 
@@ -53,7 +53,7 @@ internal static class Win32AutoStart
                 status = Win32.RegSetValueExW(key, id, 0, Win32Constants.REG_SZ, buffer, bytes);
                 if (status != 0)
                 {
-                    Debug.WriteLine($"[OrielWeb] 写自启项失败（Win32 错误 {status}）。");
+                    OrielDiagnostics.Report($"[OrielWeb] 写自启项失败（Win32 错误 {status}）。");
                 }
 
                 return status == 0;

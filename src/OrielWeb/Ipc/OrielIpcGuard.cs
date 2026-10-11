@@ -202,7 +202,7 @@ internal sealed class OrielIpcGuard
             return;
         }
 
-        Debug.WriteLine($"[OrielWeb] IPC 已拒绝（{layer}）：{reason}");
+        OrielDiagnostics.Report($"[OrielWeb] IPC 已拒绝（{layer}）：{reason}");
         Rejected?.Invoke(new OrielIpcRejectedEventArgs(layer, reason, documentUrl, commandName));
     }
 }

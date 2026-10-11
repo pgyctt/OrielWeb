@@ -89,7 +89,7 @@ internal static class OrielBuildConfiguration
         {
             // 元数据在、但值不认识（有人把 Configuration 改成了 "Shipping" 之类）。
             // 静默回退会让"为什么 Release 下全被拒了"无从查起，这里报一笔。
-            Debug.WriteLine(
+            OrielDiagnostics.Report(
                 $"[OrielWeb] 入口程序集上的 {MetadataKey}=\"{raw}\" 不是 Debug/Release，" +
                 "已回退到 DebuggableAttribute 判定。");
         }

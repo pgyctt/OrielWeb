@@ -72,7 +72,7 @@ internal sealed unsafe class MacOSMenu : IDisposable
         currentEvent = ObjCRuntime.SendId(currentEvent, ObjCRuntime.Sel("currentEvent"));
         if (currentEvent == 0)
         {
-            Debug.WriteLine("[OrielWeb] 当前没有 NSEvent，上下文菜单无法定位，已跳过弹出。");
+            OrielDiagnostics.Report("[OrielWeb] 当前没有 NSEvent，上下文菜单无法定位，已跳过弹出。");
             return;
         }
 
@@ -276,7 +276,7 @@ internal sealed unsafe class MacOSMenu : IDisposable
         catch (Exception ex)
         {
             // 托管异常穿越 ObjC 边界会 fail-fast，绝不能外泄
-            Debug.WriteLine($"[OrielWeb] 菜单项回调抛出异常：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] 菜单项回调抛出异常：{ex}");
         }
         return 0;
     }

@@ -66,7 +66,7 @@ internal static class MacOSNotificationSender
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[OrielWeb] 结束 osascript 失败：{ex.Message}");
+                    OrielDiagnostics.Report($"[OrielWeb] 结束 osascript 失败：{ex.Message}");
                 }
 
                 return false; // 超时未退出：不能当作已投递
@@ -74,7 +74,7 @@ internal static class MacOSNotificationSender
 
             if (process.ExitCode != 0)
             {
-                Debug.WriteLine($"[OrielWeb] osascript 退出码 {process.ExitCode}：通知未投递（常见于通知权限被拒）。");
+                OrielDiagnostics.Report($"[OrielWeb] osascript 退出码 {process.ExitCode}：通知未投递（常见于通知权限被拒）。");
                 return false;
             }
 
@@ -83,7 +83,7 @@ internal static class MacOSNotificationSender
         catch (Exception ex)
         {
             // 通知失败不影响业务
-            Debug.WriteLine($"[OrielWeb] osascript 调用失败：{ex.Message}");
+            OrielDiagnostics.Report($"[OrielWeb] osascript 调用失败：{ex.Message}");
             return false;
         }
     }

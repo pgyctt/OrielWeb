@@ -181,7 +181,7 @@ internal sealed unsafe class GtkMenu : IDisposable
         catch (Exception ex)
         {
             // 异常不得穿越原生边界（外泄 = 进程终止）
-            Debug.WriteLine($"[OrielWeb] 菜单项回调抛出异常：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] 菜单项回调抛出异常：{ex}");
         }
     }
 

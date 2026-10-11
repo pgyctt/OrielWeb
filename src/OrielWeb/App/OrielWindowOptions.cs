@@ -31,6 +31,23 @@ public sealed class OrielWindowOptions
     /// <summary>是否启用开发者工具（DevTools）。</summary>
     public bool Debug { get; set; }
 
+    /// <summary>
+    /// 是否允许用户缩放页面（Ctrl/Cmd + 滚轮、Ctrl/Cmd + 加减号/0、触摸板捏合）。默认 <c>true</c>。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 固定布局的工业界面通常要关掉它：整屏被误缩放会导致布局错乱，而且没有复位入口
+    /// （下游反馈 2026-10-11 的 P0-1）。
+    /// </para>
+    /// <para>
+    /// 实现分两层：宿主侧设各引擎的专有开关（Windows <c>IsZoomControlEnabled</c> +
+    /// <c>IsPinchZoomEnabled</c>、macOS <c>allowsMagnification</c>），文档层再补一道捕获期拦截
+    /// （见 <c>Bridge/oriel-bridge.js</c> 的缩放闸门）——**Linux 的 WebKitGTK 没有等价的单开关**，
+    /// 那一侧完全靠文档层这道拦截。只影响"用户手势缩放"，页面自己实现的缩放（画布缩放一类）不受影响。
+    /// </para>
+    /// </remarks>
+    public bool Zoom { get; set; } = true;
+
     private string? _icon;
 
     /// <summary>
@@ -100,14 +117,31 @@ public sealed class OrielWindowOptions
     /// </remarks>
     public OrielContextMenuPolicy ContextMenuPolicy { get; set; } = OrielContextMenuPolicy.Editing;
 
+    /// <summary>窗口标题；见 <see cref="Title"/>。</summary>
     public OrielWindowOptions WithTitle(string title) { Title = title; return this; }
+
+    /// <summary>初始尺寸（逻辑像素，三平台一致）；见 <see cref="Width"/>。</summary>
     public OrielWindowOptions WithSize(int width, int height) { Width = width; Height = height; return this; }
+
+    /// <summary>最小尺寸（逻辑像素）；见 <see cref="MinWidth"/>。</summary>
     public OrielWindowOptions WithMinSize(int width, int height) { MinWidth = width; MinHeight = height; return this; }
+
+    /// <summary>初始位置：窗口**左上角**落在屏幕逻辑坐标 (x, y)，并顺带关掉居中；见 <see cref="X"/>。</summary>
     public OrielWindowOptions At(int x, int y) { X = x; Y = y; Center = false; return this; }
+
+    /// <summary>是否居中显示；见 <see cref="Center"/>。</summary>
     public OrielWindowOptions Centered(bool center = true) { Center = center; return this; }
+
+    /// <summary>是否允许用户调整窗口大小；见 <see cref="Resizable"/>。</summary>
     public OrielWindowOptions WithResizable(bool resizable = true) { Resizable = resizable; return this; }
+
+    /// <summary>启动即全屏；见 <see cref="Fullscreen"/>。</summary>
     public OrielWindowOptions WithFullscreen(bool fullscreen = true) { Fullscreen = fullscreen; return this; }
+
+    /// <summary>窗口置顶；见 <see cref="OnTop"/>。</summary>
     public OrielWindowOptions WithOnTop(bool onTop = true) { OnTop = onTop; return this; }
+
+    /// <summary>无边框窗口（页面自绘标题栏）；见 <see cref="Frameless"/> 与 API.md §2。</summary>
     public OrielWindowOptions WithFrameless(bool frameless = true) { Frameless = frameless; return this; }
 
     /// <summary>
@@ -121,9 +155,19 @@ public sealed class OrielWindowOptions
 
     /// <summary>指定拖动区域的选择器（可多次调用，最后一次生效）。</summary>
     public OrielWindowOptions WithDragRegion(string selector) { ArgumentException.ThrowIfNullOrWhiteSpace(selector); DragRegionSelector = selector; return this; }
+    /// <summary>窗口不上屏（页面照常加载、IPC 照常往返）；见 <see cref="Hidden"/>。</summary>
     public OrielWindowOptions WithHidden(bool hidden = true) { Hidden = hidden; return this; }
+
+    /// <summary>开启/关闭用户缩放页面；见 <see cref="Zoom"/>。</summary>
+    public OrielWindowOptions WithZoom(bool enabled = true) { Zoom = enabled; return this; }
+
+    /// <summary>启动即最大化；见 <see cref="Maximized"/>。</summary>
     public OrielWindowOptions WithMaximized(bool maximized = true) { Maximized = maximized; return this; }
+
+    /// <summary>直接加载的 URL；见 <see cref="Url"/>。</summary>
     public OrielWindowOptions WithUrl(string url) { Url = url; return this; }
+
+    /// <summary>打开 DevTools（只"允许"检查，不自动弹面板）；见 <see cref="Debug"/>。</summary>
     public OrielWindowOptions WithDebug(bool debug = true) { Debug = debug; return this; }
 
     /// <summary>设置窗口图标；平台差异见 <see cref="Icon"/>。</summary>

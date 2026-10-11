@@ -25,7 +25,7 @@ internal static class LinuxAutoStart
         catch (Exception ex)
         {
             // 没写权限时如实返回失败，让调用方决定是否告知用户
-            Debug.WriteLine($"[OrielWeb] 写 autostart 项失败：{ex.Message}");
+            OrielDiagnostics.Report($"[OrielWeb] 写 autostart 项失败：{ex.Message}");
             return false;
         }
     }
@@ -43,7 +43,7 @@ internal static class LinuxAutoStart
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[OrielWeb] 删 autostart 项失败：{ex.Message}");
+            OrielDiagnostics.Report($"[OrielWeb] 删 autostart 项失败：{ex.Message}");
             return false;
         }
     }

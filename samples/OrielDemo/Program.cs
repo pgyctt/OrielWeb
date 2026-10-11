@@ -200,7 +200,8 @@ internal static class Program
 
         if (singleInstanceSelfTest)
         {
-            // 单实例必须配在 Run() 之前：判定发生在建窗之前（否则第二个实例会先闪个窗口）
+            // 单实例配在 Run() 之前——判定发生在 Build()（装配运行时之前），
+            // 于是第二实例可以在装配昂贵资源前就通过 app.IsSecondaryInstance 分流。
             builder.SingleInstance(
                 SingleInstanceSelfTest.InstanceId,
                 SingleInstanceSelfTest.OnActivatedBySecondInstance);

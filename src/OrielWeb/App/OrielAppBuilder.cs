@@ -20,6 +20,9 @@ public sealed class OrielAppBuilder
     internal string AssetHost { get; private set; } = "app.oriel";
     internal string? AssetResourcePrefix { get; private set; }
     internal string? UserDataFolder { get; private set; }
+
+    /// <summary>应用启动参数（<see cref="Oriel.CreateBuilder"/> 的入参）；单实例用它给首实例传话。</summary>
+    internal IReadOnlyList<string> StartupArgs { get; set; } = [];
     internal Dictionary<Type, Func<object>> TargetFactories { get; } = [];
 
     /// <summary>启用内嵌前端资源：<paramref name="resourcePrefix"/> 为程序集内嵌资源名前缀（默认 "程序集名.wwwroot/"，必须以 '/' 结尾），经自定义 scheme <c>oriel://&lt;host&gt;/</c> 提供（三平台一致，不写盘）。</summary>
@@ -136,15 +139,24 @@ public sealed class OrielAppBuilder
     }
 
     internal string? SingleInstanceId { get; private set; }
-    internal Action<WebviewWindow?>? SingleInstanceActivateHandler { get; private set; }
+    internal Action<WebviewWindow?, IReadOnlyList<string>>? SingleInstanceActivateHandler { get; private set; }
 
     /// <summary>
     /// 启用单实例：第二个实例启动时会通知首实例，随后**立即以退出码 0 退出**（不建窗、不进消息循环）。
-    /// 首实例收到通知后默认把窗口前置并激活，并调用 <paramref name="onActivate"/>（可选）。
     /// </summary>
     /// <param name="id">实例标识（任意字符串；内部会哈希成管道名，不会当路径用）。</param>
-    /// <param name="onActivate">首实例收到"又有一个实例启动了"时的回调；不提供则只做默认的前置激活。</param>
-    public OrielAppBuilder SingleInstance(string id, Action<WebviewWindow?>? onActivate = null)
+    /// <param name="onActivate">
+    /// 首实例收到"又有一个实例启动了"时的回调：<c>(首实例的第一个窗口, 第二实例的启动参数)</c>；
+    /// 不提供则只做默认的前置激活。参数来自第二实例的 <see cref="Oriel.CreateBuilder"/> 入参，
+    /// 用于"用命令行让已运行的程序打开某个页面"。
+    /// </param>
+    /// <remarks>
+    /// <b>判定发生在 <c>Build()</c></b>（不是 <c>Run()</c>）：所以
+    /// <c>builder.Build()</c> 之后、装配自己的运行时之前就能问 <see cref="OrielApp.IsSecondaryInstance"/>，
+    /// 第二实例不必先把数据库/设备连上再退出（下游反馈 2026-10-11 的 P0-2）。
+    /// 代价是 <c>Build()</c> 不再纯粹：它会去抢一次进程级锁。
+    /// </remarks>
+    public OrielAppBuilder SingleInstance(string id, Action<WebviewWindow?, IReadOnlyList<string>>? onActivate = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(id);
         SingleInstanceId = id;
@@ -247,12 +259,13 @@ public sealed class OrielAppBuilder
 public static class Oriel
 {
     /// <summary>
-    /// 创建构建器。<paramref name="args"/> 目前不参与配置（保留以对齐通用启动模板的签名），
-    /// 需要读取命令行参数的应用可自行解析后再调用对应配置方法。
+    /// 创建构建器。
     /// </summary>
+    /// <param name="args">
+    /// 应用启动参数。库不解析它，但**单实例**会用到：启用 <see cref="OrielAppBuilder.SingleInstance"/>
+    /// 时，第二实例把这份参数随激活请求发给首实例（见其 <c>onActivate</c>），于是"用命令行让已运行的
+    /// 程序打开某个页面"这类需求成立。应用也可以自行读取它做别的解析。
+    /// </param>
     public static OrielAppBuilder CreateBuilder(string[]? args = null)
-    {
-        _ = args;
-        return new();
-    }
+        => new() { StartupArgs = args ?? [] };
 }

@@ -269,7 +269,7 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         {
             if (!OrielMenuRoles.TryActivate(role, _app, _window, TryExecuteNativeEditing))
             {
-                System.Diagnostics.Debug.WriteLine($"[OrielWeb] 菜单 role「{role}」在 Linux 上未被处理。");
+                OrielDiagnostics.Report($"[OrielWeb] 菜单 role「{role}」在 Linux 上未被处理。");
             }
             return;
         }
@@ -483,6 +483,7 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         var userScript = GtkNative.WebkitUserScriptNew(
             LinuxBridgeJs.Build(
                 _options.ConsoleForwarding,
+                _options.Zoom,
                 App.Guard.Token,
                 App.Guard.TrustedPrefixes,
                 ReadSystemSnapshot(), _options.DragRegionSelector),

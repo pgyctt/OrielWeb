@@ -19,7 +19,7 @@ public sealed class SingleInstanceGuardTests
     {
         string id = NewId();
 
-        Assert.Equal(SingleInstanceGuard.AcquireResult.Acquired, SingleInstanceGuard.TryAcquire(id, out FileStream? lockFile));
+        Assert.Equal(SingleInstanceGuard.AcquireResult.Acquired, SingleInstanceGuard.TryAcquire(id, string.Empty, out FileStream? lockFile));
 
         lockFile!.Dispose();
     }
@@ -28,12 +28,12 @@ public sealed class SingleInstanceGuardTests
     public void TryAcquire_WhileHeld_ReportsAlreadyRunning()
     {
         string id = NewId();
-        Assert.Equal(SingleInstanceGuard.AcquireResult.Acquired, SingleInstanceGuard.TryAcquire(id, out FileStream? first));
+        Assert.Equal(SingleInstanceGuard.AcquireResult.Acquired, SingleInstanceGuard.TryAcquire(id, string.Empty, out FileStream? first));
 
         try
         {
             // 锁被占着 → 判定为已有实例（不是 Unavailable：目录是可写的）
-            Assert.Equal(SingleInstanceGuard.AcquireResult.AlreadyRunning, SingleInstanceGuard.TryAcquire(id, out _));
+            Assert.Equal(SingleInstanceGuard.AcquireResult.AlreadyRunning, SingleInstanceGuard.TryAcquire(id, string.Empty, out _));
         }
         finally
         {
@@ -46,11 +46,11 @@ public sealed class SingleInstanceGuardTests
     {
         string id = NewId();
 
-        Assert.Equal(SingleInstanceGuard.AcquireResult.Acquired, SingleInstanceGuard.TryAcquire(id, out FileStream? first));
+        Assert.Equal(SingleInstanceGuard.AcquireResult.Acquired, SingleInstanceGuard.TryAcquire(id, string.Empty, out FileStream? first));
         first!.Dispose();
 
         // 句柄一释放（进程崩溃时由操作系统做同样的事），锁就不再占用，不该留下需要手工清理的陈旧状态
-        Assert.Equal(SingleInstanceGuard.AcquireResult.Acquired, SingleInstanceGuard.TryAcquire(id, out FileStream? second));
+        Assert.Equal(SingleInstanceGuard.AcquireResult.Acquired, SingleInstanceGuard.TryAcquire(id, string.Empty, out FileStream? second));
         second!.Dispose();
     }
 
@@ -60,7 +60,7 @@ public sealed class SingleInstanceGuardTests
         // 标识任意字符串都应被接受（内部哈希成文件名，不当路径用）
         Assert.Equal(
             SingleInstanceGuard.AcquireResult.Acquired,
-            SingleInstanceGuard.TryAcquire("含中文/与\\分隔符 的 id", out FileStream? lockFile));
+            SingleInstanceGuard.TryAcquire("含中文/与\\分隔符 的 id", string.Empty, out FileStream? lockFile));
 
         lockFile!.Dispose();
     }

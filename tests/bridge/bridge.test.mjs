@@ -48,12 +48,14 @@ const injectedDragThresholdPx = 3;
 
 /**
  * 复现 C# 侧的占位符替换，得到该平台真正被注入的脚本。
- * forwardConsole 对应 OrielWindowOptions.ConsoleForwarding（默认关闭）。
+ * forwardConsole 对应 OrielWindowOptions.ConsoleForwarding（默认关闭）；
+ * zoomEnabled 对应 OrielWindowOptions.Zoom（默认开启）。
  */
 function buildScript(
     bridge,
     {
         forwardConsole = false,
+        zoomEnabled = true,
         token = injectedToken,
         trusted = trustedPrefixes,
         doubleClickMs = injectedDoubleClickMs,
@@ -65,6 +67,7 @@ function buildScript(
         .replaceAll('__ORIEL_PLATFORM__', `'${bridge.platform}'`)
         .replaceAll('__ORIEL_POST__', bridge.post)
         .replaceAll('__ORIEL_CONSOLE_ENABLED__', forwardConsole ? 'true' : 'false')
+        .replaceAll('__ORIEL_ZOOM_ENABLED__', zoomEnabled ? 'true' : 'false')
         .replaceAll('__ORIEL_VERSION__', injectedVersion)
         .replaceAll('__ORIEL_TOKEN__', token)
         .replaceAll('__ORIEL_TRUSTED__', JSON.stringify(trusted))
@@ -299,6 +302,7 @@ test('模板：占位符齐备', () => {
     assert.ok(template.includes('__ORIEL_PLATFORM__'), '模板缺少 __ORIEL_PLATFORM__');
     assert.ok(template.includes('__ORIEL_POST__'), '模板缺少 __ORIEL_POST__');
     assert.ok(template.includes('__ORIEL_CONSOLE_ENABLED__'), '模板缺少 __ORIEL_CONSOLE_ENABLED__');
+    assert.ok(template.includes('__ORIEL_ZOOM_ENABLED__'), '模板缺少 __ORIEL_ZOOM_ENABLED__');
     assert.ok(template.includes('__ORIEL_VERSION__'), '模板缺少 __ORIEL_VERSION__');
     assert.ok(template.includes('__ORIEL_TOKEN__'), '模板缺少 __ORIEL_TOKEN__');
     assert.ok(template.includes('__ORIEL_TRUSTED__'), '模板缺少 __ORIEL_TRUSTED__');
@@ -306,6 +310,49 @@ test('模板：占位符齐备', () => {
     assert.ok(template.includes('__ORIEL_DRAG_THRESHOLD_PX__'), '模板缺少 __ORIEL_DRAG_THRESHOLD_PX__');
     assert.ok(template.includes('__ORIEL_DRAG_SELECTOR__'), '模板缺少 __ORIEL_DRAG_SELECTOR__');
     assert.ok(template.includes('window.__orielBridgeInstalled'), '模板缺少重复注入防护');
+});
+
+// ---- 缩放闸门（OrielWindowOptions.Zoom） ----
+
+for (const bridge of bridges) {
+    test(`[${bridge.platform}] 关闭缩放：拦住 Ctrl/Cmd + 滚轮、加减号与捏合手势`, () => {
+        const env = loadBridge(buildScript(bridge, { zoomEnabled: false }), bridge.channel);
+
+        let wheelPrevented = 0;
+        env.fireWindow('wheel', { ctrlKey: true, preventDefault: () => { wheelPrevented += 1; } });
+        env.fireWindow('wheel', { preventDefault: () => { wheelPrevented += 1; } });
+        assert.equal(wheelPrevented, 1, '只有带 Ctrl/Cmd 的滚轮该被拦，普通滚动不受影响');
+
+        let keyPrevented = 0;
+        env.fireWindow('keydown', { ctrlKey: true, key: '+', preventDefault: () => { keyPrevented += 1; } });
+        env.fireWindow('keydown', { key: '+', preventDefault: () => { keyPrevented += 1; } });
+        assert.equal(keyPrevented, 1, '只有带修饰键的 +/-/0 该被拦');
+
+        let gesturePrevented = 0;
+        env.fireWindow('gesturestart', { preventDefault: () => { gesturePrevented += 1; } });
+        assert.equal(gesturePrevented, 1, 'WebKit 的捏合手势事件该被拦住');
+    });
+
+    test(`[${bridge.platform}] 默认（Zoom=true）：这些手势一个都不拦`, () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+
+        let prevented = 0;
+        env.fireWindow('wheel', { ctrlKey: true, preventDefault: () => { prevented += 1; } });
+        env.fireWindow('gesturestart', { preventDefault: () => { prevented += 1; } });
+        assert.equal(prevented, 0);
+    });
+}
+
+test('缩放闸门先于来源校验：不可信来源的文档同样不缩放', () => {
+    // 缩放是**窗口**语义，与页面可不可信无关——这条同时钉住"闸门放在来源校验之前"
+    const env = loadBridge(buildScript(bridges[0], { zoomEnabled: false }), bridges[0].channel, {
+        href: 'http://localhost:5173/index.html',
+    });
+
+    let prevented = 0;
+    env.fireWindow('wheel', { ctrlKey: true, preventDefault: () => { prevented += 1; } });
+    assert.equal(prevented, 1);
+    assert.ok(!env.window.oriel, '不可信来源仍不该安装桥接');
 });
 
 // ---- 安全模型（来源 / 令牌） ----

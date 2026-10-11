@@ -9,6 +9,7 @@ internal static class OrielBridgeJs
     /// <summary>按窗口选项生成注入脚本（<paramref name="forwardConsole"/> 见 <see cref="OrielWindowOptions.ConsoleForwarding"/>）。</summary>
     public static string Build(
         bool forwardConsole,
+        bool zoomEnabled,
         string token,
         IReadOnlyList<string> trustedPrefixes,
         OrielSystemSnapshot system, string? dragSelector)
@@ -16,6 +17,7 @@ internal static class OrielBridgeJs
             "'windows'",
             "window.chrome.webview.postMessage(obj)",
             forwardConsole,
+            zoomEnabled,
             token,
             trustedPrefixes,
             system,

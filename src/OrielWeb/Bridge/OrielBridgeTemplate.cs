@@ -14,6 +14,7 @@ internal static class OrielBridgeTemplate
     private const string PlatformToken = "__ORIEL_PLATFORM__";
     private const string PostToken = "__ORIEL_POST__";
     private const string ConsoleEnabledToken = "__ORIEL_CONSOLE_ENABLED__";
+    private const string ZoomEnabledToken = "__ORIEL_ZOOM_ENABLED__";
     private const string VersionToken = "__ORIEL_VERSION__";
     private const string SecurityToken = "__ORIEL_TOKEN__";
     private const string TrustedToken = "__ORIEL_TRUSTED__";
@@ -29,18 +30,20 @@ internal static class OrielBridgeTemplate
     /// <param name="platformLiteral">platform 字段的字面量，含引号，如 <c>'windows'</c>。</param>
     /// <param name="postExpression">投递表达式，其形参名固定为 <c>obj</c>。</param>
     /// <param name="forwardConsole">是否启用 console 转发（见 <see cref="OrielWindowOptions.ConsoleForwarding"/>）。</param>
+    /// <param name="zoomEnabled">是否允许用户缩放页面（见 <see cref="OrielWindowOptions.Zoom"/>）。</param>
     /// <param name="token">本次进程运行的 IPC 令牌（见 <see cref="Ipc.OrielIpcToken"/>）。</param>
     /// <param name="trustedPrefixes">可信来源的 URL 前缀（脚本据此决定要不要安装）。</param>
     /// <param name="system">拖动实现需要的宿主事实（见 <see cref="OrielSystemSnapshot"/>）。</param>
     /// <param name="dragSelector">宿主指定的拖动区域选择器；null/空表示只认 <c>data-oriel-drag-region</c> 属性。</param>
     /// <remarks>
-    /// console 转发与拖动实现都只存在于模板里，C# 侧不再抄一份：
+    /// console 转发、缩放闸门与拖动实现都只存在于模板里，C# 侧不再抄一份：
     /// 三份手抄脚本互相漂移正是这个模板要消灭的问题。
     /// </remarks>
     internal static string Create(
         string platformLiteral,
         string postExpression,
         bool forwardConsole,
+        bool zoomEnabled,
         string token,
         IReadOnlyList<string> trustedPrefixes,
         OrielSystemSnapshot system,
@@ -49,6 +52,7 @@ internal static class OrielBridgeTemplate
             .Replace(PlatformToken, platformLiteral, StringComparison.Ordinal)
             .Replace(PostToken, postExpression, StringComparison.Ordinal)
             .Replace(ConsoleEnabledToken, forwardConsole ? "true" : "false", StringComparison.Ordinal)
+            .Replace(ZoomEnabledToken, zoomEnabled ? "true" : "false", StringComparison.Ordinal)
             .Replace(VersionToken, VersionLiteral, StringComparison.Ordinal)
             .Replace(SecurityToken, token, StringComparison.Ordinal)
             .Replace(TrustedToken, TrustedLiteral(trustedPrefixes), StringComparison.Ordinal)

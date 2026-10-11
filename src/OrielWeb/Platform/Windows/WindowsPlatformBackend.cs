@@ -177,7 +177,7 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
                 // GetMessageW 的 -1（出错）与 0（WM_QUIT）是两回事：以前一并用 `> 0` 落出循环，
                 // 应用"毫无理由地退出"且不留痕迹。这里记一笔，并补上退出消息——同线程上还有
                 // 别的消息循环在跑时（多窗口、嵌套会话）它才等到 WM_QUIT 而不是静默落空（评审 P3）。
-                System.Diagnostics.Debug.WriteLine("[OrielWeb] GetMessageW 失败，消息循环退出。");
+                OrielDiagnostics.Report("[OrielWeb] GetMessageW 失败，消息循环退出。");
                 Win32.PostQuitMessage(1);
                 return;
             }
@@ -275,7 +275,7 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
             {
                 // PostToMainThread 是 public API，用户 Action 的异常绝不能穿越原生边界
                 // （外泄 = 进程 fail-fast，不可捕获）
-                System.Diagnostics.Debug.WriteLine($"[OrielWeb] PostToMainThread 回调抛出异常：{ex}");
+                OrielDiagnostics.Report($"[OrielWeb] PostToMainThread 回调抛出异常：{ex}");
             }
             return 0;
         }

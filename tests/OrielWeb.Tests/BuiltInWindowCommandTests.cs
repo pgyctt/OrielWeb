@@ -13,8 +13,8 @@ namespace OrielWeb.Tests;
 /// </remarks>
 public sealed class BuiltInWindowCommandTests
 {
-    /// <summary>只记录调用的假窗口。</summary>
-    private sealed class FakeWindow : IOrielWindowControl
+    /// <summary>只记录调用的假窗口。internal 是为了给 DispatcherTests 的"内建命令不计入命令观测"复用。</summary>
+    internal sealed class FakeWindow : IOrielWindowControl
     {
         public List<string> Calls { get; } = [];
 

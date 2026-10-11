@@ -148,7 +148,7 @@ internal static class Win32AssetScheme
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] 应答内嵌资源失败：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] 应答内嵌资源失败：{ex}");
             TryFail(environment, args);
         }
     }
@@ -161,7 +161,7 @@ internal static class Win32AssetScheme
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] 写 500 响应也失败了：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] 写 500 响应也失败了：{ex}");
         }
     }
 

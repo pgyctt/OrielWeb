@@ -100,7 +100,7 @@ internal static unsafe class LinuxAssetScheme
             catch (Exception inner)
             {
                 // 到这里说明错误应答自身也失败了（理论上是互操作层崩坏），除了调试输出别无可为
-                System.Diagnostics.Debug.WriteLine($"[OrielWeb] oriel:// 错误应答也失败了：{inner.Message}");
+                OrielDiagnostics.Report($"[OrielWeb] oriel:// 错误应答也失败了：{inner.Message}");
             }
         }
     }

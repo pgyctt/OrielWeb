@@ -419,7 +419,7 @@ internal static unsafe class LinuxSignalHandlers
             {
                 // 动作来自 public 的 OrielApp.PostToMainThread，异常不得穿越原生边界
                 // （外泄 = 进程 fail-fast）；单条失败不影响后续排空
-                System.Diagnostics.Debug.WriteLine($"[OrielWeb] 主线程队列动作抛出异常：{ex}");
+                OrielDiagnostics.Report($"[OrielWeb] 主线程队列动作抛出异常：{ex}");
             }
         }
         return 0; // 移除该 idle 源

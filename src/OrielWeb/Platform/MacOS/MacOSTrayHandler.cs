@@ -68,7 +68,7 @@ internal static unsafe class MacOSTrayHandler
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[OrielWeb] 托盘点击回调抛出异常：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] 托盘点击回调抛出异常：{ex}");
         }
         return 0;
     }

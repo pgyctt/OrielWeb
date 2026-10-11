@@ -18,7 +18,57 @@ public sealed class OrielApp : IDisposable
             OrielBuildConfiguration.IsDebugBuild(System.Reflection.Assembly.GetEntryAssembly()),
             builder.AssetHost);
         Dispatcher = new OrielCommandDispatcher(builder.TargetFactories, builder.JsonContext, Guard);
+
+        // 单实例判定在这里（= Build() 期间）而不是 Run()：宿主往往要在 Run() 之前装配配置、数据库、
+        // 设备连接，判定太晚会把第二实例的副作用先跑一遍（下游反馈 2026-10-11 的 P0-2：第二实例
+        // 已经连上同一台 PLC 并向同一个库写了记录）。Run() 只剩"是第二实例 → 打印标记并退出"。
+        if (builder.SingleInstanceId is { } instanceId)
+        {
+            switch (SingleInstanceGuard.TryAcquire(
+                        instanceId,
+                        SingleInstanceGuard.EncodeActivationArgs(builder.StartupArgs),
+                        out FileStream? lockFile))
+            {
+                case SingleInstanceGuard.AcquireResult.AlreadyRunning:
+                    // 激活请求（含本次启动参数）已在 TryAcquire 里发出——那个探活连接就是判定手段
+                    IsSecondaryInstance = true;
+                    break;
+
+                case SingleInstanceGuard.AcquireResult.Unavailable:
+                    // 锁文件创建不出来（目录只读、磁盘满、杀软/沙箱拦截……）：无法判定有没有别的实例，
+                    // 倾向于**照常启动**——静默不启动（不建窗、退出码 0）比多开一个窗口难排查得多。
+                    // 判定细节与理由见 SingleInstanceGuard.TryAcquire。
+                    break;
+
+                case SingleInstanceGuard.AcquireResult.Acquired:
+                default:
+                    // 只占住锁：接收"激活请求"的管道留到 Run() 再建（见那里的说明）
+                    _singleInstanceLock = lockFile;
+                    break;
+            }
+        }
     }
+
+    /// <summary>
+    /// 本实例是不是"第二个实例"（只在启用了 <see cref="OrielAppBuilder.SingleInstance"/> 时有意义）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>Build()</c> 之后就有效，且**激活请求已经发给首实例了**——所以宿主可以据此跳过昂贵装配
+    /// （打开数据库、连设备），再调 <see cref="Run"/> 让库负责"通知首实例并静默退出"。
+    /// 这正是下游反馈 2026-10-11 P0-2 要的那个分流点。
+    /// </para>
+    /// <para>
+    /// 三态里的第三态（锁不可判定，见 <c>SingleInstanceGuard.AcquireResult.Unavailable</c>）按
+    /// **首实例**处理：这里返回 <c>false</c>，应用照常启动。宁可能多开一个窗口，也不要静默不启动。
+    /// </para>
+    /// <para>
+    /// **窗口期提醒**：锁在 <c>Build()</c> 就占住，而接收"激活请求"的管道要到 <see cref="Run"/> 才建。
+    /// 这段窗口里到达的第二实例会被正确判定并退出，但它的激活请求到不了首实例——宿主在 <c>Build()</c>
+    /// 之后应尽快 <see cref="Run"/>（装配完成即调），不要长期悬在两者之间。
+    /// </para>
+    /// </remarks>
+    public bool IsSecondaryInstance { get; private set; }
 
     internal OrielCommandDispatcher Dispatcher { get; }
 
@@ -32,14 +82,40 @@ public sealed class OrielApp : IDisposable
     /// 入站 IPC 被门禁拒绝时触发（来源 / 令牌 / 命令授权三层都有）。
     /// </summary>
     /// <remarks>
-    /// 用于宿主侧记账与排障：拒绝原本只在 <c>Debug.WriteLine</c> 里留痕，Release 下宿主
-    /// 什么都看不到。事件在收到消息的线程上**同步**触发（Windows 是 UI 线程，Linux/macOS
-    /// 是各自的主线程），回调里不要做重活或阻塞。
+    /// 用于宿主侧记账与排障：拒绝同时也会写进 <see cref="OrielDiagnostics"/>。事件在收到消息的
+    /// 线程上**同步**触发（Windows 是 UI 线程，Linux/macOS 是各自的主线程），回调里不要做重活或阻塞。
     /// </remarks>
     public event Action<OrielIpcRejectedEventArgs>? IpcRejected
     {
         add => Guard.Rejected += value;
         remove => Guard.Rejected -= value;
+    }
+
+    /// <summary>
+    /// 应用命令执行完成时触发（成功与失败都有；内建 <c>win.*</c> 不计入）。
+    /// </summary>
+    /// <remarks>
+    /// 用来回答"哪条命令慢""哪条在失败"——几十条命令跑在节拍上的应用，这是唯一的宿主侧观测入口
+    /// （下游反馈 2026-10-11 的 P0-3/P1-5）。<see cref="OrielCommandInvokedEventArgs.Duration"/> 是命令
+    /// 执行耗时（含参数读取），不含门禁与回执投递。事件在完成命令的线程上**同步**触发，回调里别做重活。
+    /// </remarks>
+    public event Action<OrielCommandInvokedEventArgs>? CommandInvoked
+    {
+        add => Dispatcher.Invoked += value;
+        remove => Dispatcher.Invoked -= value;
+    }
+
+    /// <summary>
+    /// 应用命令抛异常时触发：异常**原样**带出（页面拿到的仍是净化后的文案）。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="CommandInvoked"/> 不重复：那个给"耗时/成功率"，这个给**异常对象本身**
+    /// ——含内部路径与类型名，只给宿主。两条都会触发（失败的调用同样是一次"完成"）。
+    /// </remarks>
+    public event Action<OrielCommandFailedEventArgs>? CommandFailed
+    {
+        add => Dispatcher.Failed += value;
+        remove => Dispatcher.Failed -= value;
     }
 
     /// <summary>内嵌资源使用的 host（页面来源即 <c>oriel://&lt;host&gt;/</c>；取自构建器 <c>UseEmbeddedAssets</c> 的 host 参数）。</summary>
@@ -359,7 +435,7 @@ public sealed class OrielApp : IDisposable
     {
         if (!OrielShellPolicy.IsAllowedUrl(url, ShellOptions.AllowedSchemes))
         {
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] OpenExternal 拒绝了不在白名单内的目标：{url}");
+            OrielDiagnostics.Report($"[OrielWeb] OpenExternal 拒绝了不在白名单内的目标：{url}");
             return false;
         }
 
@@ -375,7 +451,7 @@ public sealed class OrielApp : IDisposable
     {
         if (!OrielShellPolicy.IsUsablePath(path))
         {
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] RevealInFileManager 拒绝了不可用路径：{path}");
+            OrielDiagnostics.Report($"[OrielWeb] RevealInFileManager 拒绝了不可用路径：{path}");
             return false;
         }
 
@@ -387,7 +463,7 @@ public sealed class OrielApp : IDisposable
     {
         if (!OrielShellPolicy.IsUsablePath(path))
         {
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] OpenWithDefaultApp 拒绝了不可用路径：{path}");
+            OrielDiagnostics.Report($"[OrielWeb] OpenWithDefaultApp 拒绝了不可用路径：{path}");
             return false;
         }
 
@@ -399,31 +475,14 @@ public sealed class OrielApp : IDisposable
     {
         EnsureApartment();
 
-        // 单实例判定必须在建窗之前：否则第二个实例会先闪出一个窗口再退出。
-        if (_builder.SingleInstanceId is { } instanceId)
+        // 单实例判定已在构造期（Build()）做完——见 IsSecondaryInstance 的说明。这里只剩分流：
+        // 第二实例不建窗、不进消息循环，打印契约标记后返回（退出码保持 0）。
+        // 下面这行是 tools/verify-macos.sh 与 demo 自检 grep 的**契约标记**，不要改措辞。
+        if (IsSecondaryInstance)
         {
-            switch (SingleInstanceGuard.TryAcquire(instanceId, out FileStream? lockFile))
-            {
-                case SingleInstanceGuard.AcquireResult.AlreadyRunning:
-                    // 已有实例在跑：激活请求已在 TryAcquire 里发出（那个探活连接就是判定手段），
-                    // 这里直接返回（不进消息循环）——Main 随之结束，退出码保持 0。
-                    // 下面这行是 tools/verify-macos.sh 与 demo 自检 grep 的**契约标记**，不要改措辞。
-                    Console.WriteLine("SINGLE-INSTANCE-SECONDARY: 已有实例，已通知并退出");
-                    Console.Out.Flush();
-                    return;
-
-                case SingleInstanceGuard.AcquireResult.Unavailable:
-                    // 锁文件创建不出来（目录只读、磁盘满、沙箱拦截……），无法判定有没有别的实例。
-                    // 这里**倾向于启动**：静默不启动（不建窗、退出码 0）比多开一个窗口难排查得多。
-                    // 判定细节与理由见 SingleInstanceGuard.TryAcquire。
-                    break;
-
-                case SingleInstanceGuard.AcquireResult.Acquired:
-                default:
-                    _singleInstanceLock = lockFile;
-                    _singleInstanceServer = SingleInstanceGuard.CreateListener(instanceId);
-                    break;
-            }
+            Console.WriteLine("SINGLE-INSTANCE-SECONDARY: 已有实例，已通知并退出");
+            Console.Out.Flush();
+            return;
         }
 
         _backend = PlatformBackendFactory.Create(_builder.UserDataFolder);
@@ -433,8 +492,13 @@ public sealed class OrielApp : IDisposable
         // 与 RestoreTray 同一条路径，免得"启动时建"和"重建"两处各写一遍。
         _ = RestoreTray();
 
-        if (_singleInstanceServer is not null)
+        // 首实例的接收管道在这里（Run）才建：Build 到 Run 之间宿主在装配自己的东西，那段窗口里没有
+        // 监听者——此时到达的第二实例仍会被**正确判定**（锁在 Build 时就占住了），只是激活请求送不进来。
+        // 管道建好立刻开始监听（实测过：先建管道、过一会儿再 WaitForConnection，会让第二实例的
+        // 连接请求一直等在那里，直到超时——所以两者必须紧挨着）。
+        if (_singleInstanceLock is not null && _builder.SingleInstanceId is { } primaryId)
         {
+            _singleInstanceServer = SingleInstanceGuard.CreateListener(primaryId);
             StartSingleInstanceListener();
         }
 
@@ -466,7 +530,7 @@ public sealed class OrielApp : IDisposable
         catch (Exception ex)
         {
             // 退出路径不该因为清理失败而崩：报出来，让进程照常结束
-            System.Diagnostics.Debug.WriteLine($"[OrielWeb] 退出清理时抛出异常：{ex}");
+            OrielDiagnostics.Report($"[OrielWeb] 退出清理时抛出异常：{ex}");
         }
     }
 
@@ -496,7 +560,7 @@ public sealed class OrielApp : IDisposable
     private FileStream? _singleInstanceLock;
 
     /// <summary>
-    /// 首实例侧：后台等后续实例的连接，收到后在 UI 线程激活窗口。
+    /// 首实例侧：后台等后续实例的连接，收到后在 UI 线程激活窗口，并把第二实例的启动参数交给回调。
     /// </summary>
     private void StartSingleInstanceListener()
     {
@@ -505,19 +569,22 @@ public sealed class OrielApp : IDisposable
             try
             {
                 await SingleInstanceGuard
-                    .ListenAsync(_singleInstanceServer!, _ => PostToMainThread(ActivateAllWindows))
+                    .ListenAsync(
+                        _singleInstanceServer!,
+                        payload => PostToMainThread(
+                            () => ActivateAllWindows(SingleInstanceGuard.DecodeActivationArgs(payload))))
                     .ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 // 监听结束（例如首实例正在退出）不算错误，记一笔即可
-                System.Diagnostics.Debug.WriteLine($"[OrielWeb] 单实例监听结束：{ex.Message}");
+                OrielDiagnostics.Report($"[OrielWeb] 单实例监听结束：{ex.Message}");
             }
         });
     }
 
-    /// <summary>把窗口前置并激活，随后交给应用的回调（若有）。</summary>
-    private void ActivateAllWindows()
+    /// <summary>把窗口前置并激活，随后把"第二实例的启动参数"交给应用的回调（若有）。</summary>
+    private void ActivateAllWindows(IReadOnlyList<string> secondaryArgs)
     {
         foreach (WebviewWindow window in _windows)
         {
@@ -525,7 +592,8 @@ public sealed class OrielApp : IDisposable
             window.Focus();
         }
 
-        _builder.SingleInstanceActivateHandler?.Invoke(_windows.Count > 0 ? _windows[0] : null);
+        _builder.SingleInstanceActivateHandler?.Invoke(
+            _windows.Count > 0 ? _windows[0] : null, secondaryArgs);
     }
 
     public void Dispose()
