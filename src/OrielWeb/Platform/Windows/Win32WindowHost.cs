@@ -80,6 +80,11 @@ internal partial class Win32WindowHost : IWindowBackend
     private DCompVisual? _dcompVisual;
 
     private bool _trackingMouseLeave;
+
+    /// <summary>最近一次转发给 WebView 的客户区落点；<see cref="ForwardMouseLeave"/> 用它补发 LEAVE。</summary>
+    private DCompPoint _lastMousePoint;
+    private bool _hasLastMousePoint;
+
     private volatile bool _loadedRaised;
 
     private int _minWidth;
@@ -736,7 +741,11 @@ internal partial class Win32WindowHost : IWindowBackend
                 break;
 
             case Win32Constants.WM_MOUSELEAVE:
+                // 指针移出窗口：组合托管下 WebView 不是窗口，系统不会把"离开"送给它，必须由宿主
+                // 补发 LEAVE——否则页面的 :hover / tooltip 会滞留在最后一次坐标上（评审 P3，
+                // 2026-10-11 复核确认代码里缺的正是这一步）。标志复位后由下一次 WM_MOUSEMOVE 重新武装。
                 _trackingMouseLeave = false;
+                ForwardMouseLeave();
                 return 0;
 
             // 键盘不需要转发：组合托管的 WebView 自己处理键盘输入，宿主只需在获得焦点时
@@ -748,6 +757,8 @@ internal partial class Win32WindowHost : IWindowBackend
             // WM_KILLFOCUS 刻意不处理（曾经与 SETFOCUS 同款 MoveFocus，已删）：失焦时把焦点
             // 塞回组合宿主是反向操作。WebView2 组合托管的标准做法是只在 SETFOCUS 时移交——
             // KILLFOCUS 也移交的话，失焦后页面的 caret/选区高亮与 IME 状态可能错乱。
+            // 这里同样**不补** LEAVE：失焦不等于指针离开（指针可能仍悬停在某个元素上），
+            // 补 LEAVE 会凭空清掉页面状态——:hover 本来就与焦点无关。
 
             case Win32Constants.WM_SIZE:
                 UpdateBounds();
@@ -1032,6 +1043,14 @@ internal partial class Win32WindowHost : IWindowBackend
         string? json = args.WebMessageAsJson;
         if (string.IsNullOrEmpty(json))
         {
+            return;
+        }
+
+        if (OrielIpcLimits.ExceedsLimit(json))
+        {
+            // 入站规模闸（见 OrielIpcLimits）：超限就不解析、直接丢弃。拿不到 id 也就回不了执，
+            // 至少让它走门禁的上报点（Debug + IpcRejected），宿主能知道"页面发了条大消息被丢了"。
+            App.Guard.Report(OrielIpcRejectionLayer.Size, OrielIpcLimits.OversizeReason(json.Length), originUrl, null);
             return;
         }
 
@@ -1437,7 +1456,34 @@ internal partial class Win32WindowHost : IWindowBackend
         if ((state & Win32Constants.MK_SHIFT) != 0) keys |= COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS.COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_SHIFT;
         if ((state & Win32Constants.MK_CONTROL) != 0) keys |= COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS.COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_CONTROL;
 
+        // 记下最后落点：WM_MOUSELEAVE 到达时指针已经在窗口外，系统给的坐标没有意义，
+        // 补发 LEAVE 要用窗口内最后一次有效坐标（见 ForwardMouseLeave）。
+        _lastMousePoint = point;
+        _hasLastMousePoint = true;
+
         controller.SendMouseInput(kind, keys, data, point);
+    }
+
+    /// <summary>补发一次 <c>COREWEBVIEW2_MOUSE_EVENT_KIND_LEAVE</c>。</summary>
+    /// <remarks>
+    /// 组合托管模式下 WebView 收不到任何系统输入（它不是窗口），"离开"同样要宿主转发；
+    /// WebView2 只认这个事件来清 hover。坐标用窗口内最后一个有效落点——LEAVE 关心的是
+    /// "离开了"这个事实，而不是离开后的坐标。窗口最小化、或还没转发过任何鼠标（没有可用落点、
+    /// 也就没有可清的 hover）时不发，避免注入无意义的指针事件。
+    /// </remarks>
+    private void ForwardMouseLeave()
+    {
+        var controller = _compositionController?.Object;
+        if (controller is null || !_hasLastMousePoint)
+        {
+            return;
+        }
+
+        controller.SendMouseInput(
+            COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_LEAVE,
+            COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS.COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_NONE,
+            0,
+            _lastMousePoint);
     }
 
     /// <summary>令光标离开窗口时补发一次 <c>WM_MOUSELEAVE</c>（Windows 默认不持续发送）。</summary>

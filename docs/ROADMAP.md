@@ -32,6 +32,16 @@
 - 影响：前端若用 `target="_blank"` 打开内嵌资源页，行为**三平台不一致且未定义**；外链应当走 `app.OpenExternal`（受 API.md §7 的 scheme 白名单约束）。
 - 最小做法：把新窗口请求路由到系统浏览器，或忽略并上报一个事件——二选一都要先定策略，所以先记在这里。
 
+#### 取消令牌（`invoke` / `EvaluateJs`）
+- 现状：整条 IPC 与 JS 求值通路都没有 `CancellationToken`，命令函数也拿不到取消信号；页面侧只有 30 秒超时。
+- 影响：宿主发出去就收不回来——窗口关了、用户改主意了、超时后想重试，原来那次都得跑完（结果被丢弃）。
+- 为什么没顺手做：要给公开 API 加参数（`EvaluateJs(..., CancellationToken)`、生成器给命令注入令牌）、三平台贯通取消语义，还要一并定"取消之后回执给什么"；属 API 设计，不是单点小改。
+
+#### 显式缓存头（`oriel://`）
+- 现状：三平台响应只有 `Content-Type`，没有 `Cache-Control` / `ETag` / `Last-Modified`。Windows（`CreateWebResourceResponse` 的 headers 串）与 macOS（`headerFields` 字典）都能加，**Linux 加不了**——`webkit_uri_scheme_request_finish` 的签名里没有响应头参数，要换 WebKitGTK 2.40+ 的 `finish_with_response`。
+- 影响：缓存行为目前完全由引擎的默认策略决定，库层没有契约。
+- 为什么没顺手做：为一个三平台不一致的显式头去动其中两个平台，收益低于把"不设缓存头是隐式行为"写进 API.md（已写）。
+
 ## 待真机验证清单
 
 这些项**只能在有桌面会话的真机上、靠人眼**判定（无头环境造不出它们要的输入或显示）。
@@ -141,3 +151,9 @@
   README 的打包一节里写了），最后打开 `.app`；Linux 跑那份 `.AppImage`。
 - 预期：安装后能启动且页面正常；卸载后安装目录消失。
 - 若不符：先看 `vpk` 的输出（未签名时它会明确警告），再按平台看系统事件日志。
+
+#### Windows 上指针移出窗口后的 hover 复位
+- 环境：Windows 桌面（WebView2 运行时）。
+- 步骤：跑 demo，把指针悬停在标题栏或某个按钮上让 `:hover` 亮起；然后把指针**快速移到窗口外**（另一个应用上），别再回窗口内移动鼠标。
+- 预期：悬停态立刻消失，tooltip 一并收掉。库在 `WM_MOUSELEAVE` 时向 WebView2 补发 `COREWEBVIEW2_MOUSE_EVENT_KIND_LEAVE`（2026-10-11 加的）；若仍滞留，说明 WebView2 对这个事件的处理与预期不符，得换清 hover 的手段。
+- 若不符：先确认 `WM_MOUSELEAVE` 真的到了（`TrackMouseEvent` 的 `TME_LEAVE` 是否武装成功、`_trackingMouseLeave` 是否被复位），再看补发 LEAVE 的前提是否满足（移动过至少一次鼠标，才有可用的落点）。

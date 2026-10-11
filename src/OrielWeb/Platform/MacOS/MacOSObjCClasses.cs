@@ -710,10 +710,30 @@ internal static unsafe class MacOSObjCClasses
 
     internal static void RemoveAssetSchemeHandler(nint instance) => AssetSchemeStates.Remove(instance);
 
-    /// <summary>WKURLSchemeTask 的失败码：<c>NSURLErrorFileDoesNotExist</c>。</summary>
+    /// <summary>WKURLSchemeTask 的失败码：<c>NSURLErrorFileDoesNotExist</c>——资源表里没有这件资源。</summary>
     private const int NsUrlErrorFileDoesNotExist = -1100;
 
+    /// <summary>WKURLSchemeTask 的失败码：<c>NSURLErrorCannotOpenFile</c>——资源在表里但读不出来。</summary>
+    private const int NsUrlErrorCannotOpenFile = -3001;
+
+    /// <summary>WKURLSchemeTask 的失败码：<c>NSURLErrorBadURL</c>——请求连 URL 都没给出来。</summary>
+    private const int NsUrlErrorBadUrl = -1000;
+
+    /// <summary>WKURLSchemeTask 的失败码：<c>NSURLErrorCancelled</c>——请求随窗口关闭一并作废。</summary>
+    private const int NsUrlErrorCancelled = -999;
+
     private const int NsUrlErrorUnsupportedUrl = -1002;
+
+    /// <summary>
+    /// 已被 WebKit 停掉的 scheme task。
+    /// </summary>
+    /// <remarks>
+    /// <c>stopURLSchemeTask:</c> 之后**不得**再回执（Apple 的契约，否则撞 WebKit 的断言）；
+    /// 而"关窗后状态表被清掉"那条路径上我们分不清任务是还在途、还是已经被停过，所以把停过的
+    /// task 记下来，回执前查一次（见 <see cref="AssetSchemeFail"/>）。全部在 WebKit 的主线程
+    /// 回调里访问，不加锁；只做软保护，满了就丢历史（见 <see cref="AssetSchemeStop"/>）。
+    /// </remarks>
+    private static readonly HashSet<nint> StoppedTasks = [];
 
     [UnmanagedCallersOnly]
     private static nint AssetSchemeStart(nint self, nint sel, nint webView, nint task)
@@ -723,6 +743,10 @@ internal static unsafe class MacOSObjCClasses
         {
             if (!AssetSchemeStates.TryGetValue(self, out var state))
             {
+                // 窗口销毁时整表移除（见 RemoveAssetSchemeHandler），此后到达的请求没人能应答。
+                // 以前这里直接返回——引擎就在这条 task 上永远等下去（评审 P3：scheme 侧缺了
+                // eval 那边 FailPendingEvals 同款的兜底）。现在给它一个终结。
+                AssetSchemeFail(task, NsUrlErrorCancelled);
                 return 0;
             }
 
@@ -730,6 +754,8 @@ internal static unsafe class MacOSObjCClasses
             nint url = request == 0 ? 0 : ObjCRuntime.SendId(request, ObjCRuntime.Sel("URL"));
             if (url == 0)
             {
+                // 连 URL 都取不出来：同样要给一个终结，不能让这条 task 悬着。
+                AssetSchemeFail(task, NsUrlErrorBadUrl);
                 return 0;
             }
 
@@ -794,7 +820,9 @@ internal static unsafe class MacOSObjCClasses
             OrielDiagnostics.Report($"[OrielWeb] 应答内嵌资源失败：{ex}");
             try
             {
-                AssetSchemeFail(task, NsUrlErrorFileDoesNotExist);
+                // 读失败（IO 异常）与"资源不存在"必须分开报：归到 -1100 会把排障引向
+                // "资源没打包"，而真正的原因只在上面那行诊断文本里（评审 P3）。
+                AssetSchemeFail(task, NsUrlErrorCannotOpenFile);
             }
             catch (Exception inner)
             {
@@ -805,11 +833,42 @@ internal static unsafe class MacOSObjCClasses
         return 0;
     }
 
+    /// <summary>引擎取消了这条 scheme 请求（导航走了、页面被替换等）。</summary>
+    /// <remarks>
+    /// 刻意"什么都不回"：Apple 的契约是 <c>stopURLSchemeTask:</c> 之后不得再调任何回执方法，
+    /// 这条 task 到此就已经结束。但要记住它被停过——<see cref="AssetSchemeFail"/> 靠这份记录
+    /// 避开"给已停的 task 回执"那条会撞 WebKit 断言的路径。记录只做软保护：攒到一定量就整体丢弃，
+    /// 丢掉的后果只是"极老的一次 task 可能被多回执一次"，而那种 task 早就没人等了。
+    /// </remarks>
     [UnmanagedCallersOnly]
-    private static nint AssetSchemeStop(nint self, nint sel, nint webView, nint task) => 0;
+    private static nint AssetSchemeStop(nint self, nint sel, nint webView, nint task)
+    {
+        try
+        {
+            if (StoppedTasks.Count >= 1024)
+            {
+                StoppedTasks.Clear();
+            }
+
+            _ = StoppedTasks.Add(task);
+        }
+        catch (Exception ex)
+        {
+            // 记不下最多是失去这层软保护，不该让记录本身把 trampoline 打穿
+            OrielDiagnostics.Report($"[OrielWeb] 记录已停的 scheme task 失败：{ex.Message}");
+        }
+
+        return 0;
+    }
 
     private static void AssetSchemeFail(nint task, int code)
     {
+        // 已经停掉的 task 不允许再回执——静默跳过（见 AssetSchemeStop 的说明）。
+        if (StoppedTasks.Remove(task))
+        {
+            return;
+        }
+
         nint error = ObjCRuntime.SendIdObjNintObj(
             ObjCRuntime.GetClass("NSError"),
             ObjCRuntime.Sel("errorWithDomain:code:userInfo:"),

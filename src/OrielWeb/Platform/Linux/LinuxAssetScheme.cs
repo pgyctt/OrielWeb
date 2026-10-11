@@ -27,6 +27,9 @@ internal static unsafe class LinuxAssetScheme
     /// <summary>WEBKIT_NETWORK_ERROR_FILE_DOES_NOT_EXIST（WebKitError.h 里的取值）。</summary>
     private const int NetworkErrorFileDoesNotExist = 303;
 
+    /// <summary>WEBKIT_NETWORK_ERROR_FAILED（WebKitError.h 里的取值）：资源在表里但读不出来。</summary>
+    private const int NetworkErrorFailed = 399;
+
     private static readonly object Gate = new();
 
     private static EmbeddedAssetStore? s_store;
@@ -95,7 +98,7 @@ internal static unsafe class LinuxAssetScheme
         {
             try
             {
-                FinishWithError(request, $"内嵌资源应答失败：{ex.Message}");
+                FinishWithError(request, $"内嵌资源应答失败：{ex.Message}", NetworkErrorFailed);
             }
             catch (Exception inner)
             {
@@ -122,13 +125,14 @@ internal static unsafe class LinuxAssetScheme
         {
             // scheme 处理器只该收到本库自己的地址；真收到别的（host 被改、scheme 认错）时
             // 报出实际地址，而不是让引擎一直等一个永不到来的应答。
-            FinishWithError(request, $"不认得的资源地址：{uri}");
+            // 不是我们发的地址：对引擎来说就是"这件资源不存在"，仍按 303 报（真实地址在 message 里）
+            FinishWithError(request, $"不认得的资源地址：{uri}", NetworkErrorFileDoesNotExist);
             return;
         }
 
         if (!store.TryGet(relative, out EmbeddedAsset asset))
         {
-            FinishWithError(request, $"内嵌资源不存在：{relative}");
+            FinishWithError(request, $"内嵌资源不存在：{relative}", NetworkErrorFileDoesNotExist);
             return;
         }
 
@@ -141,7 +145,9 @@ internal static unsafe class LinuxAssetScheme
         }
         catch (Exception ex)
         {
-            FinishWithError(request, $"读取内嵌资源失败：{asset.ResourceName}（{ex.Message}）");
+            // 资源在表里、但流读不出来：这是 399（FAILED），不是 303——报成"不存在"会把排障
+            // 引向"资源没打包"（评审 P3：三平台里 Linux/macOS 此前都把它混进了"不存在"）。
+            FinishWithError(request, $"读取内嵌资源失败：{asset.ResourceName}（{ex.Message}）", NetworkErrorFailed);
             return;
         }
 
@@ -157,7 +163,7 @@ internal static unsafe class LinuxAssetScheme
         {
             // 流没建起来，destroy 回调也就不会跑，这段内存得自己收回来。
             Marshal.FreeHGlobal(buffer);
-            FinishWithError(request, "创建内存流失败");
+            FinishWithError(request, "创建内存流失败", NetworkErrorFailed);
             return;
         }
 
@@ -172,10 +178,19 @@ internal static unsafe class LinuxAssetScheme
     [UnmanagedCallersOnly]
     private static void FreeBuffer(nint data) => Marshal.FreeHGlobal(data);
 
-    private static void FinishWithError(nint request, string message)
+    /// <summary>
+    /// 用一次"失败"应答终结这条请求。
+    /// </summary>
+    /// <param name="request">scheme 请求。</param>
+    /// <param name="message">给引擎/排障看的说明。</param>
+    /// <param name="code">
+    /// <c>WEBKIT_NETWORK_ERROR</c> 里的分类：<b>必须区分"没有这件资源"与"有但读不出来"</b>——
+    /// 都归到 303 时，排障会被告知"资源不存在"，而真实原因在 message 里（评审 P3）。
+    /// </param>
+    private static void FinishWithError(nint request, string message, int code)
     {
         nint error = GtkNative.GErrorNewLiteral(
-            GtkNative.WebkitNetworkErrorQuark(), NetworkErrorFileDoesNotExist, message);
+            GtkNative.WebkitNetworkErrorQuark(), code, message);
 
         GtkNative.WebkitUriSchemeRequestFinishError(request, error);
 

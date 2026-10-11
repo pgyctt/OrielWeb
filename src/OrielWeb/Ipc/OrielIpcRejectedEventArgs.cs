@@ -11,6 +11,15 @@ public enum OrielIpcRejectionLayer
 
     /// <summary>命令授权：来源与令牌都对，但这个命令不在 allow/deny 名单的允许侧。</summary>
     Command,
+
+    /// <summary>
+    /// 规模：入站消息超过 1 MiB 上限（见 <c>OrielIpcLimits</c>），**未解析即丢弃**。
+    /// </summary>
+    /// <remarks>
+    /// 这一层拿不到消息里的 <c>id</c>（那正是"不解析"的目的），所以页面侧收不到任何回执——
+    /// 宿主只能靠这个事件知道"页面发了条超大消息被丢了"。
+    /// </remarks>
+    Size,
 }
 
 /// <summary>

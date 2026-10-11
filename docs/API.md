@@ -43,7 +43,7 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 | 方法（真实签名） | 说明 |
 |---|---|
 | `Oriel.CreateBuilder(string[]? args = null)` | 入口。`args` 只是透传给应用自己（库不解析命令行）；`Run()` 之外还有 `Build()` 拿 `OrielApp` |
-| `UseEmbeddedAssets(string host = "app.oriel", string? resourcePrefix = null)` | 启用内嵌前端资源：程序集内嵌资源经自定义 scheme `oriel://<host>/` 提供（三平台一致，**不写盘**；`https://<host>/…` 作为兼容别名也被接受）。默认前缀是 `程序集名.wwwroot/`（显式 `/` 分隔符）。自己声明资源时必须用同一种形式：不带 `LogicalName` 的旧写法已删除，构建期报 `ORIELWEB001`（见 README 的"内嵌页面资源"）。`host` 只接受字母、数字、`-`、`_`、`.`（会被拼进页面来源并逐字节参与可信前缀判定，其他字符在构建期直接抛）。**已知边界**：引用类库的 wwwroot 会与入口合并提供（同路径入口优先）；每请求整份驻留内存且不支持 Range——wwwroot 只放小静态资源，媒体类不可用；资源不存在时 Windows 回真实 HTTP 404（导航成功），Linux/macOS 按导航失败上报（引擎能力差异）；路径只做**一次** URL 解码，字面含 `%` 的文件名（URL 里得写成 `%2520` 之类）实际按解码后的名字查找（`%2520 ≡ %20`）；Linux 的 `oriel://` 处理器是**进程级单例**（scheme 每进程只能注册一次），同进程并发两个不同 host 的应用会互踩——按单进程单应用使用 |
+| `UseEmbeddedAssets(string host = "app.oriel", string? resourcePrefix = null)` | 启用内嵌前端资源：程序集内嵌资源经自定义 scheme `oriel://<host>/` 提供（三平台一致，**不写盘**；`https://<host>/…` 作为兼容别名也被接受）。默认前缀是 `程序集名.wwwroot/`（显式 `/` 分隔符）。自己声明资源时必须用同一种形式：不带 `LogicalName` 的旧写法已删除，构建期报 `ORIELWEB001`（见 README 的"内嵌页面资源"）。`host` 只接受字母、数字、`-`、`_`、`.`（会被拼进页面来源并逐字节参与可信前缀判定，其他字符在构建期直接抛）。**已知边界**：引用类库的 wwwroot 会与入口合并提供（同路径入口优先）；每请求整份驻留内存且不支持 Range——wwwroot 只放小静态资源，媒体类不可用；**不设任何缓存头**（没有 `Cache-Control`/`ETag`/`Last-Modified`，"缓存还是不缓存"完全由引擎的默认策略决定，别把它当契约）；资源不存在时 Windows 回真实 HTTP 404（导航成功），Linux/macOS 按导航失败上报（引擎能力差异）；**读失败**（资源在表里但读不出来）三平台都按失败上报，且与"不存在"分开归类（Windows 500 / Linux 399 / macOS `NSURLErrorCannotOpenFile`），排障时不会被引向"资源没打包"；路径只做**一次** URL 解码，字面含 `%` 的文件名（URL 里得写成 `%2520` 之类）实际按解码后的名字查找（`%2520 ≡ %20`）；Linux 的 `oriel://` 处理器是**进程级单例**（scheme 每进程只能注册一次），同进程并发两个不同 host 的应用会互踩——按单进程单应用使用 |
 | `UseJsonContext(JsonSerializerContext context)` | 注册 STJ 源生成上下文：DTO 命令参数/返回值的 AOT 安全序列化入口。**按应用实例持有**，不写全局静态状态。**边界**：只有 POCO 参数/返回值真正需要它——命令用 `JsonElement` 收/发时生成器直接透传整个 payload（见 §4 末"逃生口"），不必把 DTO 搬进上下文。需要 `JsonSerializerOptions` 的非 AOT 用法**没有重载**（库面向 AOT，不做反射序列化） |
 | `AddCommands<T>() where T : new()`<br>`AddCommands<T>(Func<T> factory)` | 注册含 `[OrielCommand]` 的类型（惰性单例；`factory` 用于需要构造参数的命令类）。命令实例**共享**，所有 invoke 作用在同一实例上 → **命令方法必须线程安全**；同名命令在启动时报冲突 |
 | `AddWindow(Action<OrielWindowOptions>? configure = null)`<br>`AddWindow(Action<OrielWindowOptions>? configure, Action<WebviewWindow> onCreated)` | 加窗口。`onCreated` 是**配置期**回调（`Run()` 之前、建窗之前调用），用途只有一个：挂事件处理器（`Loaded`/`Closing` 这类必须早于建窗订阅的）。此时窗口后端还没建，访问 `window.App` / `PostToUiThread` / `Show` / `Hide` / `EmitEvent` 一律**抛 `InvalidOperationException`**（"窗口后端尚未初始化"）——**不是返回 null**；要窗口能力请等 `Loaded` / `NavigationCompleted` |
@@ -364,7 +364,7 @@ window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
 
 | 观测点 | 看什么 |
 |---|---|
-| `OrielApp.IpcRejected` | 被门禁**拒绝**的消息：层级（`Source` / `Token` / `Command`）、原因、文档 URL、命令名。非 `invoke` 的消息被拒时页面侧毫无反馈，只有这里能看到 |
+| `OrielApp.IpcRejected` | 被门禁**拒绝或丢弃**的消息：层级（`Source` / `Token` / `Command` / `Size`）、原因、文档 URL、命令名。非 `invoke` 的消息被拒时页面侧毫无反馈，只有这里能看到；`Size` 层（入站消息超过 1 MiB）连 `id` 都没解析出来，页面侧同样收不到回执 |
 | `OrielApp.CommandInvoked` / `CommandFailed` | 应用命令的**执行**：命令名、耗时、成功与否；失败时给异常对象（原样，含内部细节）。几十条命令跑在节拍上的应用靠它回答"哪条慢""哪条在失败"。内建 `win.*` 不计入 |
 | `OrielDiagnostics.Reported` | 进程级诊断通道：IPC 被拒、shell 路径被拒、单实例锁不可用、托盘/通知失败、原生 trampoline 的兜底异常……文本带 `[OrielWeb]` 前缀。它取代了 `Debug.WriteLine`——后者带 `[Conditional("DEBUG")]`，在 Release 包里被**整个编译掉**（实测发布程序集里一个 `[OrielWeb]` 都没有），等于生产环境零日志 |
 
@@ -383,6 +383,15 @@ window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
 > 内嵌资源的来源（`oriel://<host>/`）自动可信——少了这一条，页面会被**自己的**门禁拒掉，
 > 表现为"什么命令都没反应"。前缀由 `AssetUrl.TrustedPrefix` 生成，与导航用的 URL 同源，
 > 免得手拼出"空格 vs `%20`"这类逐字节差异（2026-10-02 的 macOS 冒烟就是这么红的）。
+
+**威胁模型：不把"可信页面"当敌人，但也不让它把宿主拖垮。** 门禁挡的是**不可信来源**
+（远程页面里连桥接都装不上）与**不是本应用注入的脚本**；页面自己发什么，库按"可信"处理。
+
+| 边界 | 现状 |
+|---|---|
+| 入站消息规模 | 单条上限 **1 MiB**（字符数）。超限的入站消息**不解析即丢弃**，经 `IpcRejected` 的 `Size` 层上报——页面侧收不到回执（`id` 就在那份被丢弃的 JSON 里）。出站方向不设闸：回执 JSON 由宿主自己构造，规模由宿主负责 |
+| 取消 | **没有取消令牌**：`invoke` / `EvaluateJs` 发出去就只能等它回来（页面侧 30 秒超时是唯一出路）。命令函数也拿不到取消信号（生成器不注入 `CancellationToken`）——需要可中断的长活要么自己维护取消标志，要么拆成多次调用 |
+| 可信页面 DoS | **不在防线内**：可信页面可以把主线程堵住（自己写死循环、或让命令返回一个巨大的对象）。这不是门禁能解决的问题，只能靠页面自身与命令实现的纪律 |
 
 **逃生口：`JsonElement` 参数 / 返回值。** 命令方法直接收 `JsonElement` 时，生成器把页面 payload
 **原样**透传（不做逐参数解析）；返回值里的 `JsonElement` 也原样写进回执。两个好处：① 不必把 DTO

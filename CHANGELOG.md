@@ -7,6 +7,23 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
+## 0.3.3 - 2026-10-11
+
+第三轮评审 P3 遗留里"值得做"的四条（2026-10-11 对着代码复核后判定：同批的另三条——ModuleInitializer 时序、托盘解析散落、`EnsureClassRegistered` 无锁——前提不成立，未动代码）。
+
+### 修复
+
+- **Windows：指针移出窗口后页面的悬停态滞留**。组合托管下 WebView 收不到任何系统输入，"指针离开"同样要宿主转发——此前 `WM_MOUSELEAVE` 只复位了内部跟踪标志、**没有**把 `COREWEBVIEW2_MOUSE_EVENT_KIND_LEAVE` 送进 WebView，于是 `:hover` / tooltip 会停在被移出前的位置上，直到指针再次进入并移动。现在离开时按窗口内最后一个有效落点补发 LEAVE；失焦（`WM_KILLFOCUS`）**刻意不补**——失焦不等于指针离开，补了会凭空清掉页面状态。**待真机确认**（见 ROADMAP）。
+- **macOS：关窗后仍在途的 `oriel://` 请求永不回执**。`AssetSchemeStart` 在"状态表里没有这个 handler"（窗口销毁时整表移除）与"请求取不出 URL"这两条路径上原本直接返回，引擎就在那条 scheme task 上一直等——eval 回环早有 `FailPendingEvals` 兜底，scheme 侧漏了同一手。现在两条路径都给出终结（`NSURLErrorCancelled` / `NSURLErrorBadURL`）；同时记住被 `stopURLSchemeTask:` 停过的 task，**对已停的 task 不再回执**（Apple 的契约，撞上会触发 WebKit 断言）。
+- **Linux/macOS：资源"读失败"被报成"不存在"**。`oriel://` 读到表里存在、但流读不出来的资源时，Linux 归 303（`FILE_DOES_NOT_EXIST`）、macOS 归 -1100，排障会被告知"资源没打包"，真因只在诊断文本里。现在分开归类：读失败 → Linux 399（`FAILED`）、macOS `NSURLErrorCannotOpenFile`（-3001）；Windows 本来就是 500 / 404 分开的。
+- **入站消息规模闸（1 MiB）**。三平台的入站路径都是「整串读进托管内存 → `JsonDocument.Parse`」，此前没有任何上限。现在超过 1 MiB 的入站消息**不解析即丢弃**，并经 `IpcRejected` 的新层级 `OrielIpcRejectionLayer.Size` 上报（页面侧收不到回执——`id` 就在那份被丢弃的 JSON 里）。出站方向不设闸：回执 JSON 由宿主自己构造。
+
+### 文档
+
+- API.md §4 增补**威胁模型**一段，把三条口径写实：入站 1 MiB 上限、**没有取消令牌**（`invoke` / `EvaluateJs` 发出去只能等，页面侧 30 秒超时是唯一出路；命令函数也拿不到取消信号）、"可信页面 DoS 不在防线内"。
+- API.md 的资源行写明：**不设任何缓存头**（没有 `Cache-Control`/`ETag`/`Last-Modified`，缓存行为由引擎默认策略决定，不是契约）；以及"读失败"与"不存在"的分平台归类。
+- ROADMAP 增两条已知缺口（取消令牌、显式缓存头——Linux 的 `webkit_uri_scheme_request_finish` 没有响应头参数，加不了）与一条待真机项（Windows hover 复位）。
+
 ## 0.3.2 - 2026-10-11
 
 下游反馈（一个真实工业上位机的迁移复盘）后的修复批次。

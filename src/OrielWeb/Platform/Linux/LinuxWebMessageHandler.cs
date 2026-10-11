@@ -23,6 +23,15 @@ internal sealed class LinuxWebMessageHandler : IIpcReplySink
     {
         try
         {
+            if (OrielIpcLimits.ExceedsLimit(json))
+            {
+                // 入站规模闸（见 OrielIpcLimits）：超限就不解析、直接丢弃。拿不到 id 也就回不了执，
+                // 至少让它走门禁的上报点（Debug + IpcRejected）——宿主能知道"页面发了条大消息被丢了"。
+                _host.App.Guard.Report(
+                    OrielIpcRejectionLayer.Size, OrielIpcLimits.OversizeReason(json.Length), _host.CurrentUrl, null);
+                return 0;
+            }
+
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object)
