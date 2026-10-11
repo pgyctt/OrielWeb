@@ -110,11 +110,15 @@ internal partial class AppJsonContext : JsonSerializerContext;
 ```xml
 <!-- targets 自动做的事，等价于下面这行；新项目不要手写它 -->
 <EmbeddedResource Include="wwwroot\**\*"
-                  LogicalName="$(AssemblyName).wwwroot/%(RecursiveDir)%(Filename)%(Extension)" />
+                  LogicalName="$(AssemblyName).wwwroot/$([System.String]::Copy('%(RecursiveDir)').Replace('\','/'))%(Filename)%(Extension)" />
 ```
 
 资源名用**显式 `/` 分隔符**（`MyApp.wwwroot/assets/img/logo.svg`）。这是刻意的：若按 MSBuild 的默认形式反推，
 `app.min.js` 会被推成 `app/min.js`——**静默 404、页面白屏**，而资源名里没有任何信息能区分这两种情况。
+`%(RecursiveDir)` 在 Windows 上带**反斜杠**，所以上面那行显式把它归一成 `/`：不归一的话子目录资源名会是
+`MyApp.wwwroot/assets\img\logo.svg` 这种混合形态——库读取时会归一（`EmbeddedAssetStore` 那道安全网），
+但资源名就不长成这里承诺的样子了。自己声明资源时请照抄上面那行的写法（`samples/OrielDemo` 与
+`tools/verify-pack.ps1` 的场景 B1 都是）。
 
 构建日志会说明它做了什么（在 `-v:n` 及以上可见，默认的 `dotnet build` 看不到）：
 

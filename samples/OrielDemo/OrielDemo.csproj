@@ -39,9 +39,11 @@
          与 tools/verify-pack.ps1 的场景 A。
 
          自己声明就必须带 LogicalName 的显式 '/' 分隔符（下面这行与 targets 自动生成的那行逐字符一致）。
+         注意 %(RecursiveDir) 在 Windows 上带反斜杠，所以显式归一成 '/'——不归一的话子目录资源名会是
+         "wwwroot/assets\img\logo.svg" 这种混合形态（库读取时会归一，但资源名就不是文档承诺的形状了）。
          不带 LogicalName 的旧写法已删除：构建期会报 ORIELWEB001。 -->
-    <EmbeddedResource Include="wwwroot\**\*"
-                      LogicalName="$(AssemblyName).wwwroot/%(RecursiveDir)%(Filename)%(Extension)" />
+         <EmbeddedResource Include="wwwroot\**\*"
+                       LogicalName="$(AssemblyName).wwwroot/$([System.String]::Copy('%(RecursiveDir)').Replace('\','/'))%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

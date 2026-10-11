@@ -126,6 +126,10 @@ internal static unsafe partial class ObjCRuntime
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial nint SendIdDouble4Obj(nint self, nint sel, double a, double b, double c, double d, nint obj);
 
+    /// <summary>四个 double 参数、返回对象（如 <c>+[NSColor colorWithSRGBRed:green:blue:alpha:]</c>）。</summary>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendIdDouble4(nint self, nint sel, double a, double b, double c, double d);
+
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial void SendVoidDouble4NuintNuintBool(nint self, nint sel, double a, double b, double c, double d, nuint style, nuint backing, [MarshalAs(UnmanagedType.Bool)] bool defer);
 

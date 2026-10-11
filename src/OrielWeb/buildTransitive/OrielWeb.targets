@@ -67,9 +67,15 @@
     <!-- 用 $(MSBuildProjectDirectory) 拼绝对路径，不写裸的 wwwroot\**\*：
          被 Import 的文件里，相对 glob 的解析基准不值得赌。
          %(RecursiveDir) 仍相对这个 glob 的根，LogicalName 因此与手写推荐写法逐字符一致。
-         OrielWebAutoEmbed 是给下面那个目标认领"自己人"用的标记。 -->
+         OrielWebAutoEmbed 是给下面那个目标认领"自己人"用的标记。
+
+         %(RecursiveDir) 在 Windows 上带**反斜杠**，所以显式归一成 '/'：README 承诺的资源名形式是
+         "显式 '/' 分隔符"（`MyApp.wwwroot/assets/img/logo.svg`），归一之后这条承诺是真的、而不是
+         "读取时会归一"（`EmbeddedAssetStore.MapResourceToPath` 那道归一仍在，作为第三方产物的安全网）。
+         评审 2026-10-11 附件里下游的实测就栽在这：`NewPwr.MTS.wwwroot/assets\AlarmQueryPage.js`。
+         手写声明时同样要把 %(RecursiveDir) 包上这层归一（README 与 samples/OrielDemo 都是这个写法）。 -->
     <EmbeddedResource Include="$(MSBuildProjectDirectory)\wwwroot\**\*"
-                      LogicalName="$(_OrielWebAssetAssemblyName).wwwroot/%(RecursiveDir)%(Filename)%(Extension)"
+                      LogicalName="$(_OrielWebAssetAssemblyName).wwwroot/$([System.String]::Copy('%(RecursiveDir)').Replace('\','/'))%(Filename)%(Extension)"
                       OrielWebAutoEmbed="true" />
   </ItemGroup>
 

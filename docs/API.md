@@ -77,6 +77,7 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 | `string? Icon` | `null` | `WithIcon(string path)`。`null` 时：Windows 从 exe 取图标，Linux/macOS 回落到随产物分发的 `app.png` |
 | `bool Debug` | `false` | `WithDebug(bool = true)` |
 | `bool ConsoleForwarding` | `false` | `WithConsoleForwarding(bool = true)`（页面 console → `ConsoleMessage` 事件） |
+| `uint? BackgroundColor` | `null` | `WithBackgroundColor(uint argb)` / `WithBackgroundColor(byte r, byte g, byte b)`。页面渲染出来之前那一帧的**底色**（防白黑闪，工业界面尤其需要）。三平台各落到引擎的等价开关：Windows `DefaultBackgroundColor`、macOS 窗口底色 + `underPageBackgroundColor`（12+）、Linux `webkit_web_view_set_background_color`（已在 WSL 确认符号存在；该 API 自 2.40 起 deprecated 但未移除，行为待真机确认）。只管底色，页面 CSS 一生效就由页面说了算 |
 | `bool Zoom` | `true` | `WithZoom(bool = true)`。关掉**用户手势缩放**（Ctrl/Cmd + 滚轮、Ctrl/Cmd + 加减号/0、触摸板捏合）。固定布局的工业界面通常要关：整屏被误缩放会布局错乱且没有复位入口。实现分两层——宿主侧设引擎专有开关（Windows `IsZoomControlEnabled`+`IsPinchZoomEnabled`、macOS `allowsMagnification`），文档层再由桥接脚本做捕获期拦截；**Linux 的 WebKitGTK 没有等价单开关，完全靠文档层那道拦截** |
 | `OrielContextMenuPolicy ContextMenuPolicy` | `Editing` | `WithContextMenuPolicy(OrielContextMenuPolicy)`（见 §10） |
 | `string? DragRegionSelector` | `null` | `WithDragRegion(string selector)`（宿主指定拖动区域，见 §2；空/空白会抛） |

@@ -463,6 +463,8 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         GtkNative.WebkitWebViewSetSettings(_webview, webkitSettings);
         GtkNative.GObjectUnref(webkitSettings);
 
+        ApplyBackgroundColor();
+
         // 信号连接（先注册状态，再连接信号）
         LinuxSignalHandlers.RegisterWindow(_gtkWindow, this);
         LinuxSignalHandlers.RegisterWebview(_webview, this);
@@ -537,6 +539,32 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         }
 
         Navigate();
+    }
+
+    /// <summary>
+    /// 应用"内核就绪前的底色"（见 <see cref="OrielWindowOptions.BackgroundColor"/>）。
+    /// </summary>
+    /// <remarks>
+    /// WebKitGTK 的 <c>webkit_web_view_set_background_color</c>：页面 CSS 生效之前那一帧只有它能管。
+    /// 该 API 在 2.40 起被标记 deprecated（推荐 CSS），但没有移除——已在 WSL 上确认符号存在，
+    /// 行为待真机确认（见 ROADMAP 的真机清单）。
+    /// </remarks>
+    private void ApplyBackgroundColor()
+    {
+        if (_webview == 0 || !_options.TryGetBackgroundArgb(out byte a, out byte r, out byte g, out byte b))
+        {
+            return;
+        }
+
+        var rgba = new GdkRGBA
+        {
+            Red = r / 255.0,
+            Green = g / 255.0,
+            Blue = b / 255.0,
+            Alpha = a / 255.0,
+        };
+
+        GtkNative.WebkitWebViewSetBackgroundColor(_webview, in rgba);
     }
 
     /// <summary>

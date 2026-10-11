@@ -930,6 +930,7 @@ internal partial class Win32WindowHost : IWindowBackend
             // 组合控制器同时实现 ICoreWebView2Controller（bounds / visible / focus 等）
             _controller = _compositionController.Object as ICoreWebView2Controller
                 ?? throw new InvalidOperationException("组合控制器未实现 ICoreWebView2Controller。");
+            ApplyBackgroundColor();
 
             // 关掉 WebView2 自带的拖放：它默认会把外部文件拖放接管过去（转成页面的 drag 事件），
             // 而页面拿不到文件路径。关掉之后拖放落到窗口的 WM_DROPFILES，路径由原生侧给出。
@@ -1228,6 +1229,38 @@ internal partial class Win32WindowHost : IWindowBackend
 
     /// <summary>当前文档的 URL（导航开始时更新）。入站 IPC 的来源校验用它。</summary>
     internal string? CurrentUrl => _lastNavigationUri;
+
+    /// <summary>
+    /// 应用"内核就绪前的窗口底色"（见 <see cref="OrielWindowOptions.BackgroundColor"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 用 WebView2 的 <c>DefaultBackgroundColor</c>（<c>ICoreWebView2Controller2</c>，运行时 1.0.774+）。
+    /// **不用窗口类的背景刷子**：本窗口是 <c>WS_EX_NOREDIRECTIONBITMAP</c> + DirectComposition 宿主，
+    /// 没有系统绘制的表面，没人会去画那个刷子——只有引擎自己知道首帧之前该铺什么色。
+    /// 拿不到那个接口（老运行时）或设置失败时按默认处理并记一笔：底色是装饰性的，不该影响窗口本身。
+    /// </remarks>
+    private void ApplyBackgroundColor()
+    {
+        if (_controller is null || !_options.TryGetBackgroundArgb(out byte a, out byte r, out byte g, out byte b))
+        {
+            return;
+        }
+
+        try
+        {
+            if (WebView2Utilities.GetInterface<ICoreWebView2Controller2>(_controller) is not { } controller2)
+            {
+                OrielDiagnostics.Report("[OrielWeb] 当前 WebView2 运行时没有 ICoreWebView2Controller2，BackgroundColor 未生效。");
+                return;
+            }
+
+            controller2.put_DefaultBackgroundColor(new COREWEBVIEW2_COLOR { A = a, R = r, G = g, B = b }).ThrowOnError();
+        }
+        catch (Exception ex)
+        {
+            OrielDiagnostics.Report($"[OrielWeb] 设置窗口底色失败：{ex.Message}");
+        }
+    }
 
     /// <summary>
     /// 注入给拖动实现（桥接脚本）的宿主事实快照（见 <see cref="OrielSystemSnapshot"/>）：系统双击间隔。

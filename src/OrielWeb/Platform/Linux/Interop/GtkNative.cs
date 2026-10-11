@@ -453,6 +453,17 @@ internal static unsafe partial class GtkNative
     [LibraryImport(WebKit, EntryPoint = "webkit_web_view_evaluate_javascript", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void WebkitWebViewEvaluateJavaScript(nint webview, string script, nint length, nint worldName, nint sourceUri, nint cancellable, nint callback, nint userData);
 
+    /// <summary>
+    /// 设置"内核就绪前的底色"（见 <c>OrielWindowOptions.BackgroundColor</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 已在 WSL 的 <c>libwebkit2gtk-4.1</c> 上确认本符号存在（<c>nm -D</c> 可见 set/get 两个）。
+    /// 该 API 自 WebKitGTK 2.40 起被标记 deprecated（官方推荐改用页面 CSS），但没有被移除，
+    /// 仍是有效的引擎级开关——页面 CSS 生效之前那一帧只有它能管。
+    /// </remarks>
+    [LibraryImport(WebKit, EntryPoint = "webkit_web_view_set_background_color")]
+    internal static partial void WebkitWebViewSetBackgroundColor(nint webview, in GdkRGBA rgba);
+
     [LibraryImport(WebKit, EntryPoint = "webkit_javascript_result_get_js_value")]
     internal static partial nint WebkitJavascriptResultGetJsValue(nint result);
 
@@ -608,4 +619,14 @@ internal static unsafe partial class GtkNative
     /// </summary>
     [LibraryImport(WebKit, EntryPoint = "webkit_web_view_execute_editing_command", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void WebkitWebViewExecuteEditingCommand(nint webView, string command);
+}
+
+/// <summary>GDK 的 RGBA 颜色：四个 0..1 的 double（<c>webkit_web_view_set_background_color</c> 的参数）。</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct GdkRGBA
+{
+    public double Red;
+    public double Green;
+    public double Blue;
+    public double Alpha;
 }

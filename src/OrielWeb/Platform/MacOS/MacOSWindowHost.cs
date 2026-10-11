@@ -417,6 +417,33 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         // Ctrl+滚轮那一路在 macOS 上不是引擎默认行为，由桥接脚本的缩放闸门兜住。
         ObjCRuntime.SendVoidBool(_webview, ObjCRuntime.Sel("setAllowsMagnification:"), _options.Zoom);
 
+        // 内核就绪前的底色（见 OrielWindowOptions.BackgroundColor）：窗口底色 +（12+）WKWebView 的
+        // underPageBackgroundColor——后者才是"页面没铺满时露出来的那块"，老系统上取不到就只剩窗口底色。
+        // NSColor 由类方法返回、autoreleased，不需要自己 release。
+        if (_options.TryGetBackgroundArgb(out byte bgA, out byte bgR, out byte bgG, out byte bgB))
+        {
+            nint color = ObjCRuntime.SendIdDouble4(
+                ObjCRuntime.GetClass("NSColor"),
+                ObjCRuntime.Sel("colorWithSRGBRed:green:blue:alpha:"),
+                bgR / 255.0,
+                bgG / 255.0,
+                bgB / 255.0,
+                bgA / 255.0);
+
+            if (color != 0)
+            {
+                ObjCRuntime.SendVoidObj(_nsWindow, ObjCRuntime.Sel("setBackgroundColor:"), color);
+
+                if (ObjCRuntime.SendBoolRetObj(
+                        _webview,
+                        ObjCRuntime.Sel("respondsToSelector:"),
+                        ObjCRuntime.Sel("setUnderPageBackgroundColor:")))
+                {
+                    ObjCRuntime.SendVoidObj(_webview, ObjCRuntime.Sel("setUnderPageBackgroundColor:"), color);
+                }
+            }
+        }
+
         _navigationDelegate = MacOSObjCClasses.CreateNavigationDelegate(this);
         ObjCRuntime.SendVoidObj(_webview, ObjCRuntime.Sel("setNavigationDelegate:"), _navigationDelegate);
 

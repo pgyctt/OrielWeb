@@ -79,8 +79,11 @@ function Show-Resources {
     }
 }
 
-# 资源名里的目录分隔符在 Windows 上是 '\'（%(RecursiveDir) 的产物），
-# 断言一律归一成 '/' 再比，免得同一件事在三个平台上写成三种期望值。
+# 资源名里的目录分隔符曾经在 Windows 上带 '\'（%(RecursiveDir) 的产物），于是断言只能归一后再比。
+# 2026-10-11 起 targets 自己把 %(RecursiveDir) 归一成 '/'（README 承诺的就是这个形状），
+# 所以除了这条"跨平台比较用"的归一，**另有一条硬断言**：原始资源名里不许出现反斜杠
+# （见场景 A 的 `-not ($a.RawResources -like '*\*')`）。归一留着是为了让比较逻辑与平台无关，
+# 但它再也不能掩盖 targets 那边漏了归一。
 function ConvertTo-NormalizedNames {
     param([string[]] $Names)
     return @($Names | ForEach-Object { $_.Replace('\', '/') })
@@ -125,9 +128,11 @@ function Invoke-SampleBuild {
         throw "$Label：运行产物失败（退出码 $LASTEXITCODE）。"
     }
 
+    $rawResources = @($output | Where-Object { $_ -match '\S' })
     return [pscustomobject]@{
-        Resources = @(ConvertTo-NormalizedNames -Names @($output | Where-Object { $_ -match '\S' }))
-        BuildLog  = $buildLog
+        Resources    = @(ConvertTo-NormalizedNames -Names $rawResources)
+        RawResources = $rawResources
+        BuildLog     = $buildLog
     }
 }
 
@@ -208,6 +213,10 @@ try {
         '第二个含点文件名 vendor.bundle.js 同样正确'
     Test-Assert ($a.Resources -contains 'OrielMinimal.wwwroot/assets/img/logo.svg') `
         '嵌套目录 assets/img/logo.svg 保持层级'
+    Test-Assert ($a.RawResources -contains 'OrielMinimal.wwwroot/assets/img/logo.svg') `
+        '嵌套资源的**原始**资源名就是文档承诺的形状（正斜杠，不是 assets\img\logo.svg）'
+    Test-Assert (-not ($a.RawResources | Where-Object { $_ -like '*\*' })) `
+        '所有资源名都不含反斜杠：targets 把 %(RecursiveDir) 归一成 / 了（README 承诺的显式分隔符）'
     Test-Assert ($a.Resources -contains 'OrielMinimal.wwwroot/index.html') `
         '普通文件 index.html 正常嵌入'
     Test-Assert (-not ($a.Resources -contains 'OrielMinimal.wwwroot.app.min.js')) `
@@ -236,9 +245,10 @@ try {
     $ownCsproj = Join-Path $ownDir 'OrielMinimal.csproj'
     $ownItem = @'
   <ItemGroup>
-    <!-- 自己声明也可以，但必须带 LogicalName（显式 '/' 分隔符） -->
+    <!-- 自己声明也可以，但必须带 LogicalName（显式 '/' 分隔符：%(RecursiveDir) 在 Windows 上带反斜杠，
+         所以与 README 的推荐写法一样把它归一成 '/'） -->
     <EmbeddedResource Include="wwwroot\**\*"
-                      LogicalName="OrielMinimal.wwwroot/%(RecursiveDir)%(Filename)%(Extension)" />
+                      LogicalName="OrielMinimal.wwwroot/$([System.String]::Copy('%(RecursiveDir)').Replace('\','/'))%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>
@@ -251,6 +261,8 @@ try {
 
     Test-Assert ($b1.Resources -contains 'OrielMinimal.wwwroot/app.min.js') `
         '自己声明（带 LogicalName）时资源名与零配置逐字符一致'
+    Test-Assert ($b1.RawResources -contains 'OrielMinimal.wwwroot/assets/img/logo.svg') `
+        '自声明的嵌套资源名与零配置**原始形态**逐字符一致（不靠归一兜底）'
     Test-Assert ($b1.BuildLog -match '跳过自动内嵌') `
         '构建日志里能看到"跳过自动内嵌"（说明没有重复嵌入同一批文件）'
 

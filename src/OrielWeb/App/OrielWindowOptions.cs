@@ -48,6 +48,26 @@ public sealed class OrielWindowOptions
     /// </remarks>
     public bool Zoom { get; set; } = true;
 
+    /// <summary>
+    /// 页面渲染出来之前窗口的底色（<c>0xAARRGGBB</c>）。<c>null</c>（默认）表示用平台默认（通常是白）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 解决的是所有 webview 应用的共同问题：内核就绪前后那一帧的**闪色**——工业界面上尤其刺眼，
+    /// 而页面 CSS 这时还没生效，谁都管不了那一帧（下游反馈 2026-10-11 的 P1-1）。
+    /// </para>
+    /// <para>
+    /// 三平台各落到引擎的等价开关：Windows 用 WebView2 的 <c>DefaultBackgroundColor</c>、
+    /// macOS 用窗口底色 + <c>WKWebView.underPageBackgroundColor</c>（12+，取不到就只设窗口底色）、
+    /// Linux 用 WebKitGTK 的 <c>webkit_web_view_set_background_color</c>。
+    /// </para>
+    /// <para>
+    /// 只管"底色"，不是"页面背景"：页面自己的 CSS 一生效就由页面说了算。alpha 只有在平台把窗口
+    /// 设成透明时才有意义——本库不主动那么做。
+    /// </para>
+    /// </remarks>
+    public uint? BackgroundColor { get; set; }
+
     private string? _icon;
 
     /// <summary>
@@ -160,6 +180,35 @@ public sealed class OrielWindowOptions
 
     /// <summary>开启/关闭用户缩放页面；见 <see cref="Zoom"/>。</summary>
     public OrielWindowOptions WithZoom(bool enabled = true) { Zoom = enabled; return this; }
+
+    /// <summary>设置内核就绪前的窗口底色（<c>0xAARRGGBB</c>）；见 <see cref="BackgroundColor"/>。</summary>
+    public OrielWindowOptions WithBackgroundColor(uint argb) { BackgroundColor = argb; return this; }
+
+    /// <summary>设置内核就绪前的窗口底色（不透明）；见 <see cref="BackgroundColor"/>。</summary>
+    public OrielWindowOptions WithBackgroundColor(byte red, byte green, byte blue)
+        => WithBackgroundColor(0xFF000000u | ((uint)red << 16) | ((uint)green << 8) | blue);
+
+    /// <summary>
+    /// 底色拆成 (A, R, G, B)；未设置时返回 false。
+    /// </summary>
+    /// <remarks>
+    /// 三个平台的实现都从这里取分量：ARGB 的拆法只写一处，免得某平台把 R 与 B 搞反
+    /// （那种错在深色底上不容易一眼看出来）。
+    /// </remarks>
+    internal bool TryGetBackgroundArgb(out byte a, out byte r, out byte g, out byte b)
+    {
+        a = r = g = b = 0;
+        if (BackgroundColor is not { } argb)
+        {
+            return false;
+        }
+
+        a = (byte)(argb >> 24);
+        r = (byte)(argb >> 16);
+        g = (byte)(argb >> 8);
+        b = (byte)argb;
+        return true;
+    }
 
     /// <summary>启动即最大化；见 <see cref="Maximized"/>。</summary>
     public OrielWindowOptions WithMaximized(bool maximized = true) { Maximized = maximized; return this; }
