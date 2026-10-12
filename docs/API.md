@@ -140,6 +140,7 @@ WebviewWindow second = app.CreateWindow(
 | `Maximize()` `Minimize()` `Restore()` | — |
 | `SetFullscreen(bool enabled)` `SetOnTop(bool enabled)` | — |
 | `bool IsMaximized { get; }` / `bool ToggleMaximize()` | 切换后是否最大化（页面据此换图标） |
+| `bool IsVisible { get; }` | 窗口当前是否"显示中"（`Hide()` 后为 `false`；**最小化仍算显示中**）。用来确认"真被藏住了"——Windows 组合宿主下渲染窗口曾是独立的顶层窗口，只靠窗口句柄判断不出残余（见 §9 的 `win.isVisible`） |
 | `bool ToggleFullscreen()` / `bool ToggleOnTop()` | 切换后的状态 |
 | **几何与外观** | |
 | `SetTitle(string title)` / `SetResizable(bool enabled)` | — |
@@ -228,6 +229,7 @@ WebviewWindow second = app.CreateWindow(
 | `win.drag` | Windows：进入原生模态拖动（程序发起的 `WM_NCLBUTTONDOWN`+`HTCAPTION`） |
 | `win.dragStart` / `win.dragTo` / `win.dragEnd` | macOS/Linux：按页面给的坐标流式移动 |
 | `win.toggleFullscreen` / `win.toggleOnTop` / `win.pickFile` / `win.contextMenu` | 其余窗口操作 |
+| `win.isVisible` | 只读查询：窗口当前是否显示中（内建里唯一的查询类命令；最小化仍算显示中） |
 
 **这些命令由库内建**：应用一行不注册就能用（页面里 `oriel.invoke('win.minimize')` 直接工作）。
 它们实现里最终调用的 `WebviewWindow.BeginDrag` / `BeginDragStreaming` / `DragTo` / `EndDrag`

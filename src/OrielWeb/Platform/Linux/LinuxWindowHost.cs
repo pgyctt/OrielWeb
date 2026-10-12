@@ -207,6 +207,15 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
 
     public bool IsMaximized => WindowAlive && GtkNative.GtkWindowIsMaximized(_gtkWindow);
 
+    /// <summary>
+    /// 窗口当前是否"显示中"（<see cref="Hide"/> 之后为 false；最小化仍算显示中）。
+    /// </summary>
+    /// <remarks>
+    /// 问顶层部件自己的可见位：webview 是它的子部件，<c>gtk_widget_hide</c> 藏的是整个窗口，
+    /// 不存在 Windows 组合宿主那种"渲染面是独立顶层窗口"的残余（见 <c>Win32WindowHost.Hide</c> 的不变量）。
+    /// </remarks>
+    public bool IsVisible => WindowAlive && GtkNative.GtkWidgetGetVisible(_gtkWindow);
+
     // ---- 导航操作（WebKitGTK 内建历史；无历史时调用是空操作）----
     // _webview 在 destroy 之后被置 0，判空是必需的：这些调用不能对已销毁的 webview 下手。
 

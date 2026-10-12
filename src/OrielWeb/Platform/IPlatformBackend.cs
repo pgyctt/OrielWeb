@@ -26,6 +26,16 @@ internal interface IWindowBackend
     /// <summary>当前是否处于最大化状态。</summary>
     bool IsMaximized { get; }
 
+    /// <summary>
+    /// 窗口当前是否"显示中"（被 <see cref="Hide"/> 藏住后为 false；**最小化仍算显示中**）。
+    /// </summary>
+    /// <remarks>
+    /// 三平台语义一致：问的都是"窗口（含渲染面）是否可见"，最小化不清可见位。
+    /// 存在的理由：Windows 的组合宿主下，隐藏若只 <c>SW_HIDE</c> 宿主、漏掉 WebView2 的顶层
+    /// 渲染窗口，宿主自身看起来已隐藏、实际仍在吃点击——调用方需要一个手段确认"真藏住了"。
+    /// </remarks>
+    bool IsVisible { get; }
+
     void Show();
     void Hide();
     void Close();

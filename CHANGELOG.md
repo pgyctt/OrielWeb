@@ -7,6 +7,24 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
+## 0.3.4 - 2026-10-12
+
+Windows 组合宿主下"隐藏窗口仍吃点击"的修复批次。**宿主侧针对 0.3.3 的临时兜底（按类名 `Chrome_WidgetWin_1` 隐藏残留顶层窗口、并在 `Show()` 时对称还原）可以整段删除**——本版起 `Hide()` / `Show()` 已覆盖全部承担呈现与命中测试的窗口。
+
+### 修复
+
+- **Windows：`Hide()` 之后 WebView2 渲染窗口仍浮在桌面上吃点击**。本窗口走 `CoreWebView2CompositionController`，WebView2 是 DirectComposition 合成树里的一个视觉，其浏览器 HWND（类名 `Chrome_WidgetWin_1`，属主 `msedgewebview2.exe`）是一个**顶层窗口**、**不是**宿主 HWND 的子窗口——对宿主发 `SW_HIDE` 带不走它，它会继续参与合成与命中测试，把整块区域的鼠标点击全部吃掉。现场表现为"点桌面没反应、点图标无反应"，极易被误判成桌面/系统故障（实测：宿主 `Process.MainWindowHandle = 0`、`explorer.exe` 正常、桌面图标未隐藏，`WindowFromPoint` 四个探测点全部命中那个残余窗口）。现在 `Hide()` / `Show()` 一并驱动 `ICoreWebView2Controller.IsVisible`（隐藏时先置 `false` 再 `SW_HIDE` 宿主；显示时先 `SW_SHOW` 宿主再置 `true`），顺带停掉 Chromium 合成、省一份全屏 GPU 开销；**不引入任何新的原生依赖**，`WithFrameless` / `WithHidden` / `WithMaximized` 调用方无需改动。
+- **Windows：`WithHidden()` 首帧闸门期间同样在吃点击**。隐藏启动时窗口在 `PostCreate` 就 `SW_HIDE` 了，但 WebView2 装配完成后原本**无条件**把控制器置为可见——于是闸门期间（等前端 `ui.ready`，可达 8 秒）那个顶层渲染窗口就已经浮在桌面上吃点击，"程序还没显示出来就已经在吃点击"。现在装配按**可见性意图**恢复，闸门由宿主 `Show()` 打开。
+
+### 新增
+
+- **`WebviewWindow.IsVisible { get; }`**（以及内建 `win.isVisible` 命令）。此前宿主没有任何手段确认窗口"真被藏住了"——上面的缺陷只能靠外部 `WindowFromPoint` 探测才看得见。三平台语义一致：`Hide()` 之后为 `false`，**最小化仍算显示中**（不清可见位）。Windows 用 `IsWindowVisible`、Linux 用 `gtk_widget_get_visible`、macOS 用 `NSWindow.isVisible`。纯新增，向后兼容。
+
+### 文档
+
+- API.md §3 窗口成员表补 `IsVisible`；§9 内建命令表补 `win.isVisible`（内建里唯一的查询类命令）。
+- 代码里写明一条**跨平台不变量**：`Show()` / `Hide()` 必须覆盖**全部**承担呈现与命中测试的表面，藏好后不留任何仍在参与合成与命中测试的残余窗口（见 `Win32WindowHost.Hide` 的 XML 文档），避免以后再退化。
+
 ## 0.3.3 - 2026-10-11
 
 第三轮评审 P3 遗留里"值得做"的四条（2026-10-11 对着代码复核后判定：同批的另三条——ModuleInitializer 时序、托盘解析散落、`EnsureClassRegistered` 无锁——前提不成立，未动代码）。

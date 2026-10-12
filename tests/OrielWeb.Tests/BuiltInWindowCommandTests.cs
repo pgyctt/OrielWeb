@@ -18,6 +18,9 @@ public sealed class BuiltInWindowCommandTests
     {
         public List<string> Calls { get; } = [];
 
+        /// <summary>可写是为了让 <c>win.isVisible</c> 用例断言"读到的是当前值"。</summary>
+        public bool IsVisible { get; set; } = true;
+
         public void Minimize() => Calls.Add("minimize");
 
         public bool ToggleMaximize()
@@ -80,6 +83,18 @@ public sealed class BuiltInWindowCommandTests
             CreateDispatcher(), "win.toggleMaximize", null, window: new FakeWindow());
 
         Assert.True(reply.Value().GetBoolean());
+    }
+
+    [Fact]
+    public async Task win_isVisible_把当前可见性交给页面()
+    {
+        // 只读查询：页面/宿主据此确认窗口是不是真被藏住了（内建里唯一的查询类命令）。
+        // 用 false 而不是默认 true 来断言，是为了证明它读的是**当前值**而不是恒真。
+        var (reply, _) = await TestHarness.DispatchAsync(
+            CreateDispatcher(), "win.isVisible", null, window: new FakeWindow { IsVisible = false });
+
+        Assert.True(reply.RootElement.GetProperty("ok").GetBoolean());
+        Assert.False(reply.Value().GetBoolean());
     }
 
     [Fact]

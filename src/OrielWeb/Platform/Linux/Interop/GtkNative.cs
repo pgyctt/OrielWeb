@@ -272,6 +272,11 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gtk, EntryPoint = "gtk_widget_hide")]
     internal static partial void GtkWidgetHide(nint widget);
 
+    /// <summary>部件当前是否可见（<c>gtk_widget_get_visible</c>；<c>gtk_widget_hide</c> 之后为 false）。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_widget_get_visible")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool GtkWidgetGetVisible(nint widget);
+
     // GTK3 的 gtk_window_get_position 返回 void（GTK4 才改成 gboolean）：
     // 声明成 bool 会让封送层去读一个没有意义的返回寄存器（评审 P3）。
     [LibraryImport(Gtk, EntryPoint = "gtk_window_get_position")]

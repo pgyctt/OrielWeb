@@ -15,6 +15,9 @@ namespace OrielWeb.Ipc;
 /// </remarks>
 internal interface IOrielWindowControl
 {
+    /// <summary>窗口当前是否"显示中"（供内建 <c>win.isVisible</c> 查询）。</summary>
+    bool IsVisible { get; }
+
     void Minimize();
 
     bool ToggleMaximize();

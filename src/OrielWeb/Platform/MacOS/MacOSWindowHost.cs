@@ -232,6 +232,15 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
 
     public bool IsMaximized => ObjCRuntime.SendBoolRet(_nsWindow, ObjCRuntime.Sel("isZoomed"));
 
+    /// <summary>
+    /// 窗口当前是否"显示中"（<see cref="Hide"/> 之后为 false；最小化仍算显示中）。
+    /// </summary>
+    /// <remarks>
+    /// <c>orderOut:</c> 藏的是整个 NSWindow，WKWebView 是它的 contentView 子视图、随之一并消失，
+    /// 不存在 Windows 组合宿主那种"渲染面是独立顶层窗口"的残余（见 <c>Win32WindowHost.Hide</c> 的不变量）。
+    /// </remarks>
+    public bool IsVisible => ObjCRuntime.SendBoolRet(_nsWindow, ObjCRuntime.Sel("isVisible"));
+
     // ---- 导航操作（WKWebView 内建历史；无历史时调用是空操作）----
     // _webview 在窗口销毁后被置 0，判空是必需的。
 

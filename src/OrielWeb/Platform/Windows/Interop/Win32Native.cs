@@ -521,6 +521,18 @@ internal static unsafe partial class Win32
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool IsZoomed(nint hwnd);
 
+    /// <summary>
+    /// 窗口是否"可见"（自身及所有祖先都带 <c>WS_VISIBLE</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 与 <c>IsWindowVisible</c> 的语义一致：**最小化的窗口仍算可见**（它只是移到了任务栏，
+    /// 样式位没清）。因此它回答的是"被 <see cref="ShowWindow"/> 的 <c>SW_HIDE</c> 藏住了没有"，
+    /// 而不是"在屏幕上占着地儿没有"——这正是 <c>WebviewWindow.IsVisible</c> 要的语义。
+    /// </remarks>
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool IsWindowVisible(nint hwnd);
+
     [LibraryImport("user32")]
     internal static partial uint GetDpiForWindow(nint hwnd);
 

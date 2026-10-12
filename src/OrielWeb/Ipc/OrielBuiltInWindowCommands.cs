@@ -48,6 +48,12 @@ internal static class OrielBuiltInWindowCommands
                 handler = static (window, _) => window.ToggleOnTop();
                 return true;
 
+            case "win.isVisible":
+                // 只读查询（内建里唯一的查询类命令）：返回窗口当前是否"显示中"。
+                // 最小化仍算显示中；隐藏之后为 false——宿主/页面据此确认窗口是不是真被藏住了。
+                handler = static (window, _) => window.IsVisible;
+                return true;
+
             case "win.drag":
                 // Windows：进入原生模态拖动（阻塞到松开鼠标）；macOS/Linux 上是 no-op
                 handler = static (window, _) => Mutate(window.BeginDrag);

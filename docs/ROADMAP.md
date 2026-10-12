@@ -157,3 +157,10 @@
 - 步骤：跑 demo，把指针悬停在标题栏或某个按钮上让 `:hover` 亮起；然后把指针**快速移到窗口外**（另一个应用上），别再回窗口内移动鼠标。
 - 预期：悬停态立刻消失，tooltip 一并收掉。库在 `WM_MOUSELEAVE` 时向 WebView2 补发 `COREWEBVIEW2_MOUSE_EVENT_KIND_LEAVE`（2026-10-11 加的）；若仍滞留，说明 WebView2 对这个事件的处理与预期不符，得换清 hover 的手段。
 - 若不符：先确认 `WM_MOUSELEAVE` 真的到了（`TrackMouseEvent` 的 `TME_LEAVE` 是否武装成功、`_trackingMouseLeave` 是否被复位），再看补发 LEAVE 的前提是否满足（移动过至少一次鼠标，才有可用的落点）。
+
+#### Windows 上隐藏窗口后不再残留"吃点击"的渲染窗口
+- 环境：Windows 桌面（WebView2 运行时），单显示器与多显示器各一次。
+- 步骤：`Hide()`（或托盘「隐藏主界面」）之后，用 `EnumWindows` 找类名 `Chrome_WidgetWin_1`、属主是本进程树的顶层窗口，断言其 `IsWindowVisible == false`；再用 `WindowFromPoint` 探测原窗口区域四角与中心，命中的应是桌面（`WorkerW`/`Progman`）而不是那个窗口。`Show()` 后界面完整重现。
+- 预期：隐藏后 `WebviewWindow.IsVisible == false`（`oriel.invoke('win.isVisible')` 回 `false`）；探测点全部落到桌面；显示后无空白框、无位置错位；托盘「隐藏 ↔ 显示」连续切换 10 次无累积偏移或残留；最大化 / 还原 / 边缘缩放 / 关闭入托四条路径各测一遍。
+- 另测 `WithHidden()` 闸门：起手隐藏、等前端 `ui.ready` 再 `Show()` 的窗口，在闸门期间做同样探测，不应出现吃点击的窗口。
+- 若不符：先确认走的是组合宿主（`CreateCoreWebView2CompositionController`），再确认 `Hide()` 是否真的驱动了 `ICoreWebView2Controller.IsVisible`（而非只 `SW_HIDE` 宿主）。

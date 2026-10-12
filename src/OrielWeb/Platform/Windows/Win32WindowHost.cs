@@ -91,6 +91,19 @@ internal partial class Win32WindowHost : IWindowBackend
     private int _minHeight;
     private bool _isFullscreen;
     private bool _isOnTop;
+
+    /// <summary>
+    /// 窗口的**可见性意图**：最后一次 <see cref="Show"/> / <see cref="Hide"/>（或构造时的
+    /// <see cref="OrielWindowOptions.Hidden"/>）要求的状态。
+    /// </summary>
+    /// <remarks>
+    /// 单独记一份意图、而不是每次回读窗口样式，是因为 WebView2 的组合控制器**晚于**窗口创建：
+    /// <c>WithHidden()</c> 起手时窗口在 <see cref="PostCreate"/> 就 <c>SW_HIDE</c> 了，而控制器要到
+    /// <see cref="InitializeWebView2Async"/> 才存在——那次装配必须按意图恢复可见性，否则会把
+    /// 一个隐藏启动的窗口硬置成可见（见那里的说明）。见 <see cref="Hide"/> 的跨平台不变量。
+    /// </remarks>
+    private bool _isVisible;
+
     private WINDOWPLACEMENT _savedPlacement;
     private nint _savedStyle;
     private string _title;
@@ -132,6 +145,9 @@ internal partial class Win32WindowHost : IWindowBackend
         // 策略是可写属性（运行时能改），所以把 options 里的初值取出来存进属性，而不是每次回头读 options
         ContextMenuPolicy = options.ContextMenuPolicy;
         _title = options.Title;
+        // 可见性意图的初值：WithHidden() 起手时窗口不上屏（PostCreate 据此 SW_HIDE），
+        // 且 WebView2 装配时也要按这个初值恢复（不能硬置 true，见 InitializeWebView2Async）。
+        _isVisible = !options.Hidden;
         if (options.MinWidth is int minWidth) _minWidth = minWidth;
         if (options.MinHeight is int minHeight) _minHeight = minHeight;
     }
@@ -997,7 +1013,11 @@ internal partial class Win32WindowHost : IWindowBackend
                     ReadSystemSnapshot(), _options.DragRegionSelector))
                 .ConfigureAwait(true);
 
-            _controller.IsVisible = true;
+            // 可见性按**意图态**恢复，而不是无条件置真：WithHidden() 起手时宿主已在 PostCreate 里
+            // SW_HIDE，若这里硬置 true，那个顶层的 WebView2 渲染窗口（Chrome_WidgetWin_1）就会在
+            // 首帧闸门期间（可达 8 秒）浮在桌面上吃点击——"程序还没显示出来就已经在吃点击"。
+            // 闸门由宿主在 ui.ready 后调 Show() 打开（见 Hide() 的跨平台不变量说明）。
+            _controller.IsVisible = _isVisible;
             UpdateBounds();
 
             // 内嵌资源的 URL 归一成 oriel://（兼容别名 https://<host>/… 也在这里统一），
@@ -1564,8 +1584,82 @@ internal partial class Win32WindowHost : IWindowBackend
     // IWindowBackend
     // ------------------------------------------------------------------
 
-    public void Show() => Win32.ShowWindow(_hwnd, Win32Constants.SW_SHOW);
-    public void Hide() => Win32.ShowWindow(_hwnd, Win32Constants.SW_HIDE);
+    /// <summary>
+    /// 窗口当前是否"显示中"（被 <see cref="Hide"/> 藏住后为 false）。
+    /// </summary>
+    /// <remarks>
+    /// 直接问原生窗口样式，而不是回读 <see cref="_isVisible"/> 意图——意图可能领先于实际
+    /// （控制器尚未装配、或某次 <c>ShowWindow</c> 失败），属性要对调用方如实。最小化的窗口
+    /// 仍算"显示中"（<c>WS_VISIBLE</c> 未清，见 <see cref="Win32.IsWindowVisible"/>）。
+    /// </remarks>
+    public bool IsVisible => Win32.IsWindowVisible(_hwnd);
+
+    /// <summary>
+    /// 显示窗口：**先** <c>SW_SHOW</c> 宿主，**再**把 WebView2 置为可见。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="Hide"/> 成对，二者共同维护一条**跨平台不变量**（见 <see cref="Hide"/> 的说明）。
+    /// 顺序不能反：宿主先可见、渲染面后可见，恢复过程不会出现"有窗口、没内容"的空框帧。
+    /// </remarks>
+    public void Show()
+    {
+        Win32.ShowWindow(_hwnd, Win32Constants.SW_SHOW);
+        SetControllerVisible(true);
+    }
+
+    /// <summary>
+    /// 隐藏窗口：**先**把 WebView2 置为不可见，**再** <c>SW_HIDE</c> 宿主。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>跨平台不变量</b>：<see cref="Show"/> / <see cref="Hide"/> 必须覆盖**全部**承担呈现与
+    /// 命中测试的表面——藏好之后不留任何仍在参与合成与命中测试的残余窗口。Linux
+    /// （<c>gtk_widget_hide</c>）与 macOS（<c>orderOut:</c>）作用在**含 webview 的顶层窗口**上，
+    /// 子部件随之一并消失，本就不存在残余；三端语义因此等价，改动 Windows 时不得让这条等价性退化。
+    /// </para>
+    /// <para>
+    /// Windows 上这条不变量**必须显式维护**，因为本窗口走的是
+    /// <c>CoreWebView2CompositionController</c>（见 <see cref="InitializeWebView2Async"/>）：
+    /// WebView2 是 DirectComposition 合成树里的一个**视觉**，它的浏览器 HWND
+    /// （类名 <c>Chrome_WidgetWin_1</c>）是一个由 <c>msedgewebview2.exe</c> 拥有的**顶层窗口**，
+    /// **不是**宿主 HWND 的子窗口。因此对宿主发 <c>SW_HIDE</c> 并不会把它一起带走——它会继续
+    /// 浮在桌面上参与命中测试，把整块区域的鼠标点击全部吃掉（现场症状："点桌面没反应"，
+    /// 极易被误判成系统故障）。这里用 <c>ICoreWebView2Controller.IsVisible</c> 这个官方开关关掉它，
+    /// 顺带停掉 Chromium 合成、省一份全屏 GPU 开销；**不要**退化成直接 <c>ShowWindow</c> 那个
+    /// 浏览器 HWND（那会漏掉合成开销，也依赖对引擎内部窗口结构的假设）。
+    /// </para>
+    /// </remarks>
+    public void Hide()
+    {
+        SetControllerVisible(false);
+        Win32.ShowWindow(_hwnd, Win32Constants.SW_HIDE);
+    }
+
+    /// <summary>
+    /// 记录可见性意图，并在控制器已就绪时同步给 WebView2。
+    /// </summary>
+    /// <remarks>
+    /// 控制器在装配完成前为 null（例如 <c>WithHidden()</c> 起手、页面尚未加载就调 <see cref="Show"/>）：
+    /// 这时只更新意图，等 <see cref="InitializeWebView2Async"/> 按意图恢复。
+    /// 设置失败只记一笔——可见性是窗口状态的一部分，不该让一次 COM 调用失败掀翻整个窗口操作。
+    /// </remarks>
+    private void SetControllerVisible(bool visible)
+    {
+        _isVisible = visible;
+        if (_controller is not { } controller)
+        {
+            return;
+        }
+
+        try
+        {
+            controller.IsVisible = visible;
+        }
+        catch (Exception ex)
+        {
+            OrielDiagnostics.Report($"[OrielWeb] 设置 WebView2 可见性失败：{ex.Message}");
+        }
+    }
 
     public void Close()
     {

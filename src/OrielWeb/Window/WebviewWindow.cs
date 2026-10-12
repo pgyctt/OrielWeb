@@ -225,6 +225,17 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// <summary>当前是否最大化。</summary>
     public bool IsMaximized => Backend.IsMaximized;
 
+    /// <summary>
+    /// 窗口当前是否"显示中"（<see cref="Hide"/> 之后为 false；**最小化仍算显示中**）。
+    /// </summary>
+    /// <remarks>
+    /// 三平台语义一致。存在的理由：Windows 的组合宿主下，"隐藏"曾只 <c>SW_HIDE</c> 宿主、漏掉
+    /// WebView2 的顶层渲染窗口，宿主自身看起来已隐藏、实际仍浮在桌面上吃点击——只靠窗口句柄
+    /// 判断不出这一点（<c>Process.MainWindowHandle</c> 已为 0，但残余窗口仍在）。有了它，
+    /// 宿主可以在 <see cref="Hide"/> 之后自查"是不是真藏住了"，而不必从外部用 <c>WindowFromPoint</c> 探测。
+    /// </remarks>
+    public bool IsVisible => Backend.IsVisible;
+
     /// <summary>最大化 / 还原切换，返回切换后是否最大化。</summary>
     public bool ToggleMaximize() => Backend.ToggleMaximize();
     /// <summary>全屏切换，返回切换后是否全屏。</summary>
