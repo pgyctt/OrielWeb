@@ -87,6 +87,39 @@ public sealed class WebviewWindow : IOrielWindowControl
     public event Action<string>? TitleChanged;
     /// <summary>窗口最大化状态变化（用户在原生路径下最大化/还原时也会触发）。</summary>
     public event Action<bool>? MaximizedChanged;
+
+    /// <summary>
+    /// 窗口客户区尺寸变化（对标 Tauri 2 的 <c>onResized</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 用户拖边框、最大化/还原、程序调 <see cref="Resize"/> 都会触发。
+    /// 宽高是**逻辑像素的客户区**（与 <see cref="Resize"/> 同一语义）。
+    /// <para>
+    /// <b>它不是页面 <c>window.resize</c> 的替代品</b>，而是补充：页面事件只在客户区变化时触发，
+    /// 拿不到"窗口被移到另一台不同缩放的显示器"这类信息；而宿主事件在原生侧产生，
+    /// 三平台都会到。
+    /// </para>
+    /// </remarks>
+    public event Action<OrielSizeChangedEventArgs>? Resized;
+
+    /// <summary>
+    /// 窗口位置变化（对标 Tauri 2 的 <c>onMoved</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 参数是窗口**左上角**的屏幕逻辑坐标（与 <see cref="MoveTo"/> 同一原点）。
+    /// 页面拿不到可靠的窗口位置（<c>window.screenX</c> 在多屏与 HiDPI 下三平台行为不一致），
+    /// 所以只能由宿主上报。
+    /// </remarks>
+    public event Action<OrielPositionChangedEventArgs>? Moved;
+
+    /// <summary>
+    /// 窗口获得或失去焦点（对标 Tauri 2 的 <c>onFocusChanged</c>）；参数 <c>true</c> 表示获得。
+    /// </summary>
+    /// <remarks>
+    /// 只上报焦点变化，**不动焦点归属**：Windows 的 <c>WM_KILLFOCUS</c> 刻意不把焦点塞回宿主
+    /// （那会让页面的 caret/选区/IME 错乱），本事件只做通知。
+    /// </remarks>
+    public event Action<bool>? FocusChanged;
     /// <summary>导航开始（新文档开始加载）；参数为即将加载的 URL（平台未提供时为空串）。</summary>
     public event Action<string>? NavigationStarting;
     /// <summary>导航完成（成功与失败都触发，失败时 <see cref="OrielNavigationCompletedEventArgs.Error"/> 非空）。</summary>
@@ -195,6 +228,9 @@ public sealed class WebviewWindow : IOrielWindowControl
         };
         backend.TitleChanged += title => TitleChanged?.Invoke(title);
         backend.MaximizedChanged += maximized => MaximizedChanged?.Invoke(maximized);
+        backend.Resized += args => Resized?.Invoke(args);
+        backend.Moved += args => Moved?.Invoke(args);
+        backend.FocusChanged += focused => FocusChanged?.Invoke(focused);
         backend.NavigationStarting += url => NavigationStarting?.Invoke(url);
         backend.NavigationCompleted += args => NavigationCompleted?.Invoke(args);
         backend.ConsoleMessage += args => ConsoleMessage?.Invoke(args);

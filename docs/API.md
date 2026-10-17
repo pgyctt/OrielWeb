@@ -227,12 +227,22 @@ WebviewWindow? again = app.GetWindow("settings");   // 按 label 取回（不存
 | `event Action? Closed` | — | 窗口已关闭 |
 | `event Action<string>? TitleChanged` | 新标题 | 标题变化（含页面 `<title>` 与 `SetTitle`） |
 | `event Action<bool>? MaximizedChanged` | 是否最大化 | 最大化状态变化 |
+| `event Action<OrielSizeChangedEventArgs>? Resized` | `double Width` / `double Height`（逻辑像素的**客户区**） | 客户区尺寸变化：用户拖边框、最大化/还原、程序调 `Resize`。对标 Tauri 2 的 `onResized` |
+| `event Action<OrielPositionChangedEventArgs>? Moved` | `double X` / `double Y`（窗口**左上角**的屏幕逻辑坐标，可为负） | 窗口位置变化：用户拖动、最大化/还原、程序调 `MoveTo`。对标 Tauri 2 的 `onMoved` |
+| `event Action<bool>? FocusChanged` | 是否获得焦点 | 窗口获得/失去焦点。对标 Tauri 2 的 `onFocusChanged`。**只上报，不动焦点归属** |
 | `event Action<string>? NavigationStarting` | 目标 URL | 每次导航开始 |
 | `event Action<OrielNavigationCompletedEventArgs>? NavigationCompleted` | `bool Success` / `string Url` / `string? Error` | 每次导航结束；失败看 `Error` |
 | `event Action<OrielConsoleMessageEventArgs>? ConsoleMessage` | `string Level` / `string Text` | 页面 console（需 `ConsoleForwarding`） |
 | `event Action<OrielMessageReceivedEventArgs>? MessageReceived` | `string Name` / `string Json` | 页面 `postMessage` 上来 |
 | `event Action<string>? ContextMenuItemClicked` | 被点菜单项的 `Id` | 应用自己的上下文菜单（见 §10） |
 | `event Action<OrielFileDropEventArgs>? FileDropped` | `IReadOnlyList<string> Paths` | 拖入文件/文件夹（见 §9） |
+
+> **`Resized` / `Moved` / `FocusChanged` 都会去重**：原生侧在拖动时每个像素来一次回调，
+> 三平台都按"与上次上报值差 < 0.5 逻辑像素则跳过"处理（焦点是二值，值相同即跳过；
+> 首个事件一定会报）。没有去重的话，一次拖动会变成几百次托管事件 + 页面 IPC。
+>
+> **它们不是页面 `window.resize` 的替代品**，而是补充：页面事件只在客户区变化时触发，
+> 且拿不到窗口位置（`window.screenX` 在多屏与 HiDPI 下三平台行为不一致）。
 
 `OrielMessageBoxIcon`：`Info`（默认）/ `Warning` / `Error` / `Question`。
 
@@ -891,7 +901,8 @@ sudo apt-get install -y fonts-noto-cjk   # 中文界面必需，否则渲染成�
 | 单测（`tests/OrielWeb.Tests`） | 分发器与回执协议、能力模型、内建窗口命令表、资源 URL 解析与请求路径归一（含穿越拒绝）、资源名约定、文件/Shell/对话框的纯函数、快照回退与数值格式化 |
 | 桥接测试（`tests/bridge/bridge.test.mjs`） | 三平台共用脚本的行为一致性：就绪、事件、往返、回执、超时、不可信来源不安装、每条出站消息带令牌、`oriel.label` 注入 |
 | 前端包测试（`packages/api/tests/*.test.mjs`） | `@orielweb/api` 的 `core` / `dpi` / `mocks`：mock 往返、参数原样透传、per-call 超时未支持时明确拒绝、DPI 换算与宿主侧舍入一致（含 .NET 的 ToEven） |
-| 无人自检（`OrielDemo --selftest <名字>`） | `nav` `ipc` `theme` `single-instance` `shell` `capability` `multiwindow` `scheme` `exit` `exit-timeout` `threading` `tray` `tray-js` `geometry` `geometry-frameless`——自己驱动页面、打印结论行、以退出码表达成败 |
+| 无人自检（`OrielDemo --selftest <名字>`） | `nav` `ipc` `theme` `single-instance` `shell` `capability` `multiwindow` `scheme` `exit` `exit-timeout` `threading` `tray` `tray-js` `geometry` `geometry-frameless` `windowevents`——自己驱动页面、打印结论行、以退出码表达成败 |
+| 几何/焦点事件取证（`--selftest windowevents`） | `Resized`（程序调 `Resize` 后参数应为逻辑像素的客户区）、`Moved`（`MoveTo` 后应为屏幕逻辑坐标）、`FocusChanged`（**再建一个窗口抢焦点 → 收到 false；关掉它 → 收到 true**）、以及去重（重复设同一尺寸不再触发）。三平台的原生来源完全不同，只能逐平台真机取证——"我接上了信号"与"事件真的到了"是两件事 |
 | 尺寸语义取证（`--selftest geometry` / `geometry-frameless`） | **三平台尺寸语义一致性**。前者用**装饰窗口**取证：`WithSize(800,600)` 的客户区必须是 `800x600`（修复前 Windows 上是 `784x561`，见 [TAURI2-PLAN.md](TAURI2-PLAN.md) 的 E-1），并再验一次运行期 `Resize(640,480)`。后者用**无边框窗口**取证反面：客户区不该被多做一次"客户区 → 整窗"换算 |
 | 托盘后端取证（`--selftest tray`） | 26 项：`app.png`/`app.ico` **双格式解码**、多托盘（建两个 + 按 id 取回 + 互不影响）、图标对象与**模板标记**如实回读、运行期换图（对象与路径两条入口）、菜单、显隐、标题、按 id 移除、重复 id 抛异常 |
 | 托盘前端取证（`--selftest tray-js`） | 页面真实调用 `oriel.tray`：`new` → `getById` → `getAll` → 全部 `set*` → `close` → `onEvent`，回显逐条结论。证明**前后端 API 同名同义且命令往返真的通** |

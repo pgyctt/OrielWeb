@@ -52,7 +52,7 @@ internal static class Program
     /// <c>--selftest</c> 认得的名字。加一个自检只需在这里加名字 + 在 Main 里加一行判定。
     /// </summary>
     private static readonly string[] SelfTestNames =
-        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless"];
+        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowevents"];
 
     /// <summary>本次请求的自检名字是否就是 <paramref name="name"/>（忽略大小写与首尾空白）。</summary>
     private static bool IsSelfTest(string? requested, string name)
@@ -143,6 +143,9 @@ internal static class Program
         // 症状是"无边框窗口比请求的大一圈"——而那正是 demo 的默认形态，必须有人看着。
         var geometrySelfTest = IsSelfTest(selfTest, "geometry");
         var geometryFramelessSelfTest = IsSelfTest(selfTest, "geometry-frameless");
+        // windowevents：宿主侧几何/焦点事件（Resized / Moved / FocusChanged）。
+        // 三平台的原生来源完全不同，只能逐平台真机取证——"我接上了信号"与"事件真的到了"是两件事。
+        var windowEventsSelfTest = IsSelfTest(selfTest, "windowevents");
         // --manual-check：手动验证操作台（停在那里等人点，不自动退出）。
         // 与 --selftest shell 的分工：那个是给 CI 的无人断言，这个是给人看的——
         // 每项做成按钮，托管侧的回调（托盘菜单项、通知点击、快捷键、拖放）回显到页面。
@@ -154,7 +157,7 @@ internal static class Program
         bool anySelfTest = navSelfTest || ipcSelfTest || themeSelfTest
             || singleInstanceSelfTest || shellSelfTest || capabilitySelfTest || multiWindowSelfTest
             || schemeSelfTest || exitSelfTest || threadingSelfTest || traySelfTest || trayJsSelfTest
-            || geometrySelfTest || geometryFramelessSelfTest;
+            || geometrySelfTest || geometryFramelessSelfTest || windowEventsSelfTest;
         var manualCheck = !anySelfTest && !args.Contains("--todo");
 
         // 主题自检需要 OrielApp（主题是应用级的），所以这里显式 Build 再 Run；
@@ -275,6 +278,13 @@ internal static class Program
                     WebviewWindow created = win;
                     created.Loaded += () => GeometrySelfTest.AttachFrameless(created.App, created);
                 }
+                if (windowEventsSelfTest)
+                {
+                    // 宿主侧几何/焦点事件。需要页面已加载（自检里会调 Resize/MoveTo/建窗抢焦点），
+                    // 所以挂在 Loaded 上。
+                    WebviewWindow created = win;
+                    created.Loaded += () => WindowEventsSelfTest.Attach(created.App, created);
+                }
                 if (traySelfTest || trayJsSelfTest)
                 {
                     // 托盘是应用级资源，要在 UI 线程上建；Loaded 时后端已就位
@@ -363,6 +373,7 @@ internal static class Program
             || (threadingSelfTest && ThreadingSelfTest.Failed)
             || (geometrySelfTest && GeometrySelfTest.Failed)
             || (geometryFramelessSelfTest && GeometrySelfTest.Failed)
+            || (windowEventsSelfTest && WindowEventsSelfTest.Failed)
             || ((traySelfTest || trayJsSelfTest) && TraySelfTest.Failed))
         {
             Environment.ExitCode = 1;

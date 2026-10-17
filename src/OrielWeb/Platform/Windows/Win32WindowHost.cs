@@ -113,6 +113,9 @@ internal partial class Win32WindowHost : IWindowBackend
     private event Action? Closed;
     private event Action<string>? TitleChanged;
     private event Action<bool>? MaximizedChanged;
+    private event Action<OrielSizeChangedEventArgs>? Resized;
+    private event Action<OrielPositionChangedEventArgs>? Moved;
+    private event Action<bool>? FocusChanged;
     private event Action<string>? NavigationStarting;
     private event Action<OrielNavigationCompletedEventArgs>? NavigationCompleted;
     private event Action<OrielConsoleMessageEventArgs>? ConsoleMessage;
@@ -121,6 +124,15 @@ internal partial class Win32WindowHost : IWindowBackend
     // 上一次已知的最大化状态，用于在 WM_SIZE 里识别变化（用户在原生路径下最大化/还原时，
     // 页面无从得知，必须由宿主推送）
     private bool _wasMaximized;
+
+    // 上一次已上报的客户区尺寸 / 窗口位置（逻辑像素）。
+    // WM_SIZE 与 WM_MOVE 在拖动时**每个像素都会来一次**，不去重就是把每秒几百次原生回调
+    // 变成同样数量的托管事件 + 页面 IPC——那是自伤。null 表示"还没报过"。
+    private (double Width, double Height)? _lastReportedSize;
+    private (double X, double Y)? _lastReportedPosition;
+
+    // 上一次已上报的焦点状态；null 表示"还没报过"（首个 WM_SETFOCUS 必须报，哪怕值相同）
+    private bool? _lastReportedFocus;
 
     // 最近一次 NavigationStarting 的 URL。WebView2 的 NavigationCompleted 参数里没有 URL
     // （它只有 IsSuccess / WebErrorStatus / NavigationId），而事件参数要带上 URL，故在开始时缓存。
@@ -159,6 +171,9 @@ internal partial class Win32WindowHost : IWindowBackend
     event Action? IWindowBackend.Closed { add => Closed += value; remove => Closed -= value; }
     event Action<string>? IWindowBackend.TitleChanged { add => TitleChanged += value; remove => TitleChanged -= value; }
     event Action<bool>? IWindowBackend.MaximizedChanged { add => MaximizedChanged += value; remove => MaximizedChanged -= value; }
+    event Action<OrielSizeChangedEventArgs>? IWindowBackend.Resized { add => Resized += value; remove => Resized -= value; }
+    event Action<OrielPositionChangedEventArgs>? IWindowBackend.Moved { add => Moved += value; remove => Moved -= value; }
+    event Action<bool>? IWindowBackend.FocusChanged { add => FocusChanged += value; remove => FocusChanged -= value; }
     event Action<string>? IWindowBackend.NavigationStarting { add => NavigationStarting += value; remove => NavigationStarting -= value; }
     event Action<OrielNavigationCompletedEventArgs>? IWindowBackend.NavigationCompleted { add => NavigationCompleted += value; remove => NavigationCompleted -= value; }
     event Action<OrielConsoleMessageEventArgs>? IWindowBackend.ConsoleMessage { add => ConsoleMessage += value; remove => ConsoleMessage -= value; }
@@ -779,22 +794,29 @@ internal partial class Win32WindowHost : IWindowBackend
             // 把焦点交给它（见下）。这与 AOTrino 的 Composition 宿主一致——它也只转发鼠标/指针。
             case Win32Constants.WM_SETFOCUS:
                 _controller?.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON.COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+                ReportFocus(true);
                 return 0;
 
-            // WM_KILLFOCUS 刻意不处理（曾经与 SETFOCUS 同款 MoveFocus，已删）：失焦时把焦点
-            // 塞回组合宿主是反向操作。WebView2 组合托管的标准做法是只在 SETFOCUS 时移交——
-            // KILLFOCUS 也移交的话，失焦后页面的 caret/选区高亮与 IME 状态可能错乱。
-            // 这里同样**不补** LEAVE：失焦不等于指针离开（指针可能仍悬停在某个元素上），
-            // 补 LEAVE 会凭空清掉页面状态——:hover 本来就与焦点无关。
+            // WM_KILLFOCUS **仍然不把焦点塞回组合宿主**（那会让页面的 caret/选区高亮与 IME
+            // 状态错乱，见下方原说明）。但"上报失焦"与"转移焦点"是两件事：前者只是通知，
+            // 不改变任何焦点归属，因此可以安全地加。Tauri 的 onFocusChanged 也是这个语义。
+            case Win32Constants.WM_KILLFOCUS:
+                ReportFocus(false);
+                return 0;
 
             case Win32Constants.WM_SIZE:
                 UpdateBounds();
+                ReportPosition();
                 return 0;
 
             case Win32Constants.WM_MOVE:
                 // 注意：此处理论上应调用 controller.NotifyParentWindowPositionChanged()（槽 23），
                 // 但实测在窗口最大化等场景该调用会触发 AV（疑似本机运行时 ComWrappers/互操作问题），
                 // 且窗口位置变化由 WM_SIZE 的 put_Bounds 兜底，MVP 先跳过（见 API.md）。
+                //
+                // 但**上报位置**与那个调用无关，可以安全地做：页面拿不到可靠的窗口位置
+                // （window.screenX 在多屏与 HiDPI 下三平台行为不一致），只能由宿主上报。
+                ReportPosition();
                 return 0;
 
             case Win32Constants.WM_GETMINMAXINFO:
@@ -1399,6 +1421,83 @@ internal partial class Win32WindowHost : IWindowBackend
             right = client.Right,
             bottom = client.Bottom,
         };
+
+        // 客户区是**物理像素**，而上报给宿主的必须是**逻辑像素**（与 Resize 的入参同语义）。
+        // 除而不是乘：GetClientRect 给的是设备像素，逻辑值 = 设备值 / 缩放比。
+        double scale = CurrentScaleFactor();
+        ReportSize(client.Right - client.Left, client.Bottom - client.Top, scale);
+    }
+
+    /// <summary>
+    /// 当前窗口所在显示器的缩放比（1.0 = 100%）。
+    /// </summary>
+    /// <remarks>
+    /// 用 <c>GetDpiForWindow</c> 而不是 <c>GetDpiForSystem</c>：本进程是 Per-Monitor-V2 感知的，
+    /// 窗口被拖到另一块不同缩放的显示器后 DPI 会变，而系统 DPI 不变。用系统值的话，
+    /// 副屏上的尺寸/位置上报会整体偏一个倍数。
+    /// </remarks>
+    private double CurrentScaleFactor()
+    {
+        uint dpi = Win32.GetDpiForWindow(_hwnd);
+        return dpi == 0 ? 1.0 : dpi / 96.0;
+    }
+
+    /// <summary>
+    /// 把物理像素的客户区尺寸换成逻辑像素并上报（与上次相同则跳过）。
+    /// </summary>
+    /// <remarks>
+    /// 去重是必须的：拖动边框时 <c>WM_SIZE</c> 每个像素来一次，每秒可达数百次。
+    /// 每次都触发托管事件 + 页面 IPC 会把一次拖动变成一场流量风暴，而其中 99% 的值是重复的。
+    /// </remarks>
+    private void ReportSize(int physicalWidth, int physicalHeight, double scale)
+    {
+        double width = physicalWidth / scale;
+        double height = physicalHeight / scale;
+
+        if (_lastReportedSize is { } previous
+            && Math.Abs(previous.Width - width) < 0.5
+            && Math.Abs(previous.Height - height) < 0.5)
+        {
+            return;
+        }
+
+        _lastReportedSize = (width, height);
+        Resized?.Invoke(new OrielSizeChangedEventArgs(width, height));
+    }
+
+    /// <summary>上报窗口位置（物理像素的窗口矩形 → 逻辑像素的左上角）；与上次相同则跳过。</summary>
+    private void ReportPosition()
+    {
+        if (!Win32.GetWindowRect(_hwnd, out var window))
+        {
+            return;
+        }
+
+        double scale = CurrentScaleFactor();
+        double x = window.Left / scale;
+        double y = window.Top / scale;
+
+        if (_lastReportedPosition is { } previous
+            && Math.Abs(previous.X - x) < 0.5
+            && Math.Abs(previous.Y - y) < 0.5)
+        {
+            return;
+        }
+
+        _lastReportedPosition = (x, y);
+        Moved?.Invoke(new OrielPositionChangedEventArgs(x, y));
+    }
+
+    /// <summary>上报焦点变化（与上次相同则跳过；首个事件一定会报）。</summary>
+    private void ReportFocus(bool focused)
+    {
+        if (_lastReportedFocus == focused)
+        {
+            return;
+        }
+
+        _lastReportedFocus = focused;
+        FocusChanged?.Invoke(focused);
     }
 
     // ------------------------------------------------------------------

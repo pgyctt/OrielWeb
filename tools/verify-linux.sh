@@ -280,13 +280,14 @@ run_mode() {
 }
 
 section "自检：机器断言（结论行判定）"
-for mode in nav ipc capability multiwindow scheme threading tray tray-js geometry geometry-frameless; do
+for mode in nav ipc capability multiwindow scheme threading tray tray-js geometry geometry-frameless windowevents; do
     case "$mode" in
         threading) pattern='^THREADING-SELFTEST: ' ;;
         tray)      pattern='^TRAY-SELFTEST: ' ;;
         tray-js)   pattern='^TRAY-JS-SELFTEST: ' ;;
         geometry)  pattern='^GEOMETRY-SELFTEST: ' ;;
         geometry-frameless) pattern='^GEOMETRY-SELFTEST: ' ;;
+        windowevents) pattern='^WINDOWEVENTS-SELFTEST: ' ;;
         *)         pattern='^(NAV|IPC|CAPABILITY|MULTIWINDOW|SCHEME)-SELFTEST: ' ;;
     esac
     run_mode "$mode" "$pattern"

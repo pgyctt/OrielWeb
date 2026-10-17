@@ -405,6 +405,18 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gdk, EntryPoint = "gdk_screen_get_height")]
     internal static partial int GdkScreenGetHeight(nint screen);
 
+    /// <summary>
+    /// 控件所在显示器的缩放比（1 = 100%）。
+    /// </summary>
+    /// <remarks>
+    /// 用它而不是 <c>gdk_monitor_get_scale_factor</c>：后者要自己从控件找 monitor，
+    /// 而 <c>gtk_widget_get_scale_factor</c> 已经处理了"控件还没 realize 时回落到默认显示器"。
+    /// GTK 3.10+ 才有；更老的版本上符号解析失败会让整个库加载不了，但本库要求的
+    /// libgtk-3 版本远高于此（见 README 的平台要求）。
+    /// </remarks>
+    [LibraryImport(Gtk, EntryPoint = "gtk_widget_get_scale_factor")]
+    internal static partial int GtkWidgetGetScaleFactor(nint widget);
+
     // ---- GObject / Glib ----
 
     [LibraryImport(GOject, EntryPoint = "g_signal_connect_data", StringMarshalling = StringMarshalling.Utf8)]
@@ -682,4 +694,46 @@ internal struct GdkRGBA
     public double Green;
     public double Blue;
     public double Alpha;
+}
+
+/// <summary>
+/// <c>GdkEventConfigure</c> 的托管映射（GTK3 的 <c>gdkevents.h</c>）。
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>为什么用结构体而不是手算偏移</b>：这个结构的字段对齐很微妙（<c>gint8 send_event</c> 之后
+/// 有 3 字节 padding、<c>GdkWindow*</c> 之前有 4 字节 padding），手算偏移写错 4 字节会让
+/// x 读到 y、width 读到 height 之后的数据——症状是"上报的尺寸和位置全都不对"，
+/// 而那种错误看起来像是"逻辑写错了"，很难定位到偏移。交给运行时按
+/// <see cref="LayoutKind.Sequential"/> + 字段类型算，与 C 编译器一致。
+/// </para>
+/// <para>
+/// <see cref="SendEvent"/> 声明为 <c>byte</c> 而不是 <c>bool</c>：C 的 <c>gint8</c> 是 1 字节整数，
+/// 而 .NET 的 <c>bool</c> 在默认 marshalling 下是 4 字节 Win32 BOOL——那会让后续字段整体偏移 3 字节。
+/// 这是本结构里最容易踩的一处。
+/// </para>
+/// </remarks>
+[StructLayout(LayoutKind.Sequential)]
+internal struct GdkEventConfigure
+{
+    /// <summary><c>GdkEventType</c>（int32）。</summary>
+    public int Type;
+
+    /// <summary><c>GdkWindow*</c>。</summary>
+    public nint Window;
+
+    /// <summary><c>gint8 send_event</c>：必须用 byte，用 bool 会整体错位。</summary>
+    public byte SendEvent;
+
+    /// <summary>相对父窗口/根窗口的 X（设备像素）。</summary>
+    public int X;
+
+    /// <summary>Y（设备像素）。</summary>
+    public int Y;
+
+    /// <summary>宽度（设备像素）。</summary>
+    public int Width;
+
+    /// <summary>高度（设备像素）。</summary>
+    public int Height;
 }

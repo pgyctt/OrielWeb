@@ -23,6 +23,42 @@ internal interface IWindowBackend
     event Action<string>? TitleChanged;
     /// <summary>窗口最大化状态变化（用户拖边框最大化、双击标题栏等原生路径也会触发）。</summary>
     event Action<bool>? MaximizedChanged;
+
+    /// <summary>
+    /// 窗口客户区尺寸变化（用户拖边框、最大化、程序调 <c>Resize</c> 都会触发）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参数是**逻辑像素的客户区**尺寸，与 <see cref="IWindowBackend.Resize"/> 的入参同一语义
+    /// （见 docs/API.md 的尺寸语义说明）。用它而不是物理像素：调用方（页面）关心的永远是
+    /// CSS 布局尺寸，而各平台的物理像素基准不同。
+    /// </para>
+    /// <para>
+    /// <b>为什么必须有它</b>：页面的 <c>window.resize</c> 事件只在**客户区**变化时触发，
+    /// 而窗口被移动、被别的窗口遮挡、或进入全屏时都不会触发。宿主要做布局重排、
+    /// 或者要判断"这个尺寸是不是用户拖出来的"，只能靠这个宿主侧事件。
+    /// </para>
+    /// </remarks>
+    event Action<OrielSizeChangedEventArgs>? Resized;
+
+    /// <summary>
+    /// 窗口位置变化（用户拖动、最大化/还原、程序调 <c>MoveTo</c> 都会触发）。
+    /// </summary>
+    /// <remarks>
+    /// 参数是窗口**左上角**的屏幕逻辑坐标（与 <see cref="IWindowBackend.MoveTo"/> 同一原点与单位）。
+    /// 页面拿不到窗口位置（<c>window.screenX</c> 在多屏与 HiDPI 下不可靠），所以只能由宿主上报。
+    /// </remarks>
+    event Action<OrielPositionChangedEventArgs>? Moved;
+
+    /// <summary>
+    /// 窗口获得/失去焦点（对标 Tauri 2 的 <c>onFocusChanged</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <b>只上报焦点变化，不动焦点归属</b>：Windows 的 <c>WM_KILLFOCUS</c> 此前刻意不处理
+    /// （见 Win32WindowHost 的说明——失焦时把焦点塞回宿主会让页面的 caret/选区/IME 错乱）。
+    /// 这里加的是"通知"，不是"转移"，两者互不干涉。
+    /// </remarks>
+    event Action<bool>? FocusChanged;
     /// <summary>导航开始（新文档开始加载）；参数为即将加载的 URL（平台未提供时为空串）。</summary>
     event Action<string>? NavigationStarting;
     /// <summary>导航完成——成功与失败都走这里，失败时带错误信息。页面内跳转与整页刷新同样触发。</summary>

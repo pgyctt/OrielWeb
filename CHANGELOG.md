@@ -26,8 +26,22 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
   因为自动改名会让 `emitTo('main', …)` 发到错误窗口且毫无症状。
 - `OrielApp.GetFocusedWindow()`：签名已就位，但**目前恒返回 `null`**（三平台都还没有
   "窗口是否聚焦"的查询能力）。保留它是为了让迁移代码能原样编译。
+- **窗口几何与焦点事件**（对标 Tauri 2 的 `onResized` / `onMoved` / `onFocusChanged`）：
+  `WebviewWindow.Resized`（`OrielSizeChangedEventArgs`，逻辑像素的客户区）、
+  `WebviewWindow.Moved`（`OrielPositionChangedEventArgs`，左上角原点的屏幕逻辑坐标）、
+  `WebviewWindow.FocusChanged`（`bool`）。
+  三平台原生来源完全不同——Windows `WM_SIZE`/`WM_MOVE`/`WM_SETFOCUS`+`WM_KILLFOCUS`、
+  Linux `configure-event`/`focus-in-event`+`focus-out-event`、
+  macOS `windowDidResize:`/`windowDidMove:`/`windowDidBecomeKey:`+`windowDidResignKey:`。
+  **三者都按"与上次上报值差 < 0.5 逻辑像素则跳过"去重**：原生侧在拖动时每个像素来一次回调，
+  不去重会把一次拖动变成几百次托管事件 + 页面 IPC。
+  注意 `WM_KILLFOCUS` 此前刻意不处理（把焦点塞回组合宿主会让页面 caret/IME 错乱）——
+  现在只**上报**失焦，**不动焦点归属**，两者互不干涉。
 - **`--selftest geometry`**：窗口尺寸语义取证，以及 `GEOMETRY-SELFTEST` 结论行。
-  **这一项现在会红**——它取证的是一个现存缺陷（见下方"已知问题"）。
+- **`--selftest geometry-frameless`**：钉住反面——无边框窗口不该被多做一次"客户区 → 整窗"换算。
+- **`--selftest windowevents`**：几何/焦点事件的逐平台取证。焦点那一半用"再建一个窗口抢焦点
+  → 收到 false → 关掉它 → 收到 true"造出真实的失焦/获焦，因为直接 `Focus()` 测不出失焦，
+  而失焦正是这个事件最容易写错的一半。
 
 ### 修复
 
@@ -57,8 +71,10 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
 - **Windows 高 DPI 下的换算未实测**：本机只有一台 100% 缩放显示器。
   `AdjustWindowRectExForDpi` 按**窗口所在显示器**的 DPI 取值，逻辑上正确，
   但 125%/150%/200% 下的逐像素结果没有取证。需要时在有缩放显示器的机器上跑 `--selftest geometry`。
-- **`--selftest geometry` 尚未在 Linux / macOS 上跑过**：这两个平台的尺寸语义本来就是客户区，
-  本次未改它们的代码，但断言本身需要 CI 取证。
+- **`--selftest geometry` / `windowevents` 尚未在 Linux / macOS 上跑过**：
+  代码已通过这两个目标的交叉编译（`linux-x64` / `osx-arm64` / `osx-x64` 均 0 警告 0 错误），
+  但运行期行为需要 CI 取证。尤其 Linux 的 `configure-event` 与 macOS 的 `windowDidMove:`
+  都是本次新接的信号——"编译通过"不等于"事件真的到了"。
 
 ## 0.3.5 - 2026-10-14
 

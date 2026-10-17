@@ -97,6 +97,15 @@ internal static unsafe class LinuxSignalHandlers
             (delegate* unmanaged<nint, nint, void>)&OnDestroyTrampoline, 0, 0, 0);
         GtkNative.GSignalConnectData(gtkWindow, "window-state-event",
             (delegate* unmanaged<nint, nint, nint, int>)&OnWindowStateEventTrampoline, 0, 0, 0);
+        // 尺寸 / 位置（对标 Tauri 2 的 onResized / onMoved）。configure-event 在移动**或**
+        // 调整大小时都发，所以一个信号覆盖两件事；返回值 FALSE（0）= 不吞事件。
+        GtkNative.GSignalConnectData(gtkWindow, "configure-event",
+            (delegate* unmanaged<nint, nint, nint, int>)&OnConfigureEventTrampoline, 0, 0, 0);
+        // 焦点（对标 Tauri 2 的 onFocusChanged）。GTK 的签名是 (GtkWidget*, GdkEventFocus*, gpointer) → gboolean。
+        GtkNative.GSignalConnectData(gtkWindow, "focus-in-event",
+            (delegate* unmanaged<nint, nint, nint, int>)&OnFocusInTrampoline, 0, 0, 0);
+        GtkNative.GSignalConnectData(gtkWindow, "focus-out-event",
+            (delegate* unmanaged<nint, nint, nint, int>)&OnFocusOutTrampoline, 0, 0, 0);
         GtkNative.GSignalConnectData(webview, "load-changed",
             (delegate* unmanaged<nint, int, nint, void>)&OnLoadChangedTrampoline, 0, 0, 0);
         GtkNative.GSignalConnectData(webview, "load-failed",
@@ -175,6 +184,63 @@ internal static unsafe class LinuxSignalHandlers
                 host.ScheduleMaximizedSync();
                 // 同一信号顺带回灌全屏：WM 侧的原生全屏路径（快捷键/菜单）不经过 SetFullscreen
                 host.SyncFullscreenState();
+            }
+        }
+        catch
+        {
+            // 异常不外泄
+        }
+        return 0;
+    }
+
+    // GTK3 的 "configure-event"（GdkEventConfigure）→ gboolean。
+    // 窗口被移动或调整大小时都会发，所以尺寸与位置都在这里上报（见 LinuxWindowHost.OnConfigureEvent）。
+    // 返回 0（FALSE）= 不吞事件，GTK 自身与 WebKit 的布局继续处理。
+    [UnmanagedCallersOnly]
+    internal static int OnConfigureEventTrampoline(nint widget, nint gdkEvent, nint data)
+    {
+        try
+        {
+            if (WindowStates.TryGetValue(widget, out var host))
+            {
+                host.OnConfigureEvent(gdkEvent);
+            }
+        }
+        catch
+        {
+            // 异常不外泄
+        }
+        return 0;
+    }
+
+    // GTK3 的 "focus-in-event" / "focus-out-event" → gboolean。
+    // 只上报焦点变化，**不改变焦点归属**：GTK 自己处理焦点转移，这里返回 0（FALSE）放行。
+    // （Windows 的 WM_KILLFOCUS 那边也遵循同一原则——只通知，不转移。）
+    [UnmanagedCallersOnly]
+    internal static int OnFocusInTrampoline(nint widget, nint gdkEvent, nint data)
+    {
+        try
+        {
+            if (WindowStates.TryGetValue(widget, out var host))
+            {
+                host.OnFocusChanged(true);
+            }
+        }
+        catch
+        {
+            // 异常不外泄
+        }
+        return 0;
+    }
+
+    [UnmanagedCallersOnly]
+    internal static int OnFocusOutTrampoline(nint widget, nint gdkEvent, nint data)
+    {
+        try
+        {
+            if (WindowStates.TryGetValue(widget, out var host))
+            {
+                host.OnFocusChanged(false);
             }
         }
         catch

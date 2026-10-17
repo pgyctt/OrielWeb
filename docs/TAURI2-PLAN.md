@@ -311,7 +311,20 @@ F1 ─→ F2（scope 系统是 convertFileSrc 的前置）
 | **A** `@orielweb/api` 骨架 | ✅ 完成 | `packages/api`：`core` / `dpi` / `mocks`，27 项测试 + `tsc --noEmit` 门禁，CI 已接入 |
 | **B** 窗口 `label` | ✅ 完成 | `OrielWindowOptions.Label` / `OrielApp.GetWindow` / `WebviewWindow.Label` / `oriel.label`；27 项单测 + `--selftest multiwindow` 新增 5 条断言 |
 | **E1** 尺寸语义修 bug | ✅ 完成（Windows 已验证） | Windows 侧加 `AdjustWindowRectExForDpi` 换算，`Create` / `Resize` / `WM_GETMINMAXINFO` 三条路径全部改为客户区语义；**frameless 明确不换算**。`--selftest geometry` 由红转绿：`784x561` → `800x600`，运行期 `Resize(640,480)` 也精确。新增 `--selftest geometry-frameless` 钉住反面 |
-| C / D / E2 / E3 / F / G / H | ⬜ 未开始 | 见 §4.1 |
+| **C1** 后端事件接口 | ✅ 完成 | `IWindowBackend` 新增 `Resized` / `Moved` / `FocusChanged`；`OrielSizeChangedEventArgs` / `OrielPositionChangedEventArgs`；`WebviewWindow` 三个公开事件 |
+| **C2** 三平台事件接线 | ✅ 完成（Windows 已验证，另两平台待 CI） | Windows `WM_SIZE`+`WM_MOVE`+`WM_SETFOCUS`/`WM_KILLFOCUS`；Linux 新接 `configure-event` + `focus-in/out-event`（含 `GdkEventConfigure` 结构体映射）；macOS 新接 `windowDidMove:` + `windowDidBecomeKey:`/`windowDidResignKey:`。三平台都做 0.5 逻辑像素去重。新增 `--selftest windowevents` 7 项断言 |
+| C3 / C4 / C5 / D / E2 / E3 / F / G / H | ⬜ 未开始 | 见 §4.1 |
+
+### C1/C2 的一处实现教训（写计划时未知）
+
+**GDK 结构体的字段偏移不能手算**。第一版 `OnConfigureEvent` 用 `Marshal.ReadInt32(event, offset)` 手算，
+偏移取了 24——而 `GdkEventConfigure` 的 `x` 在 64 位下是 **20**（`type` 4 字节 + 4 padding +
+指针 8 字节 + `send_event` 1 字节 + 3 padding）。差 4 字节会让 `x` 读到 `y`、`width` 读到
+`height` 之后的数据，而**编译完全通过**。
+
+现在改成 `Marshal.PtrToStructure<GdkEventConfigure>`，并加了 `GdkStructLayoutTests` 钉住
+字段顺序、连续性与 `send_event` 必须是 `byte` 而不是 `bool`（.NET 的 `bool` 默认 marshal 成
+4 字节 Win32 BOOL，会让后续字段整体偏移 3 字节）。
 
 ### E1 的验收状态（如实标注）
 

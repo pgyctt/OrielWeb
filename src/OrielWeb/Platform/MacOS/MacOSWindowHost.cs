@@ -72,11 +72,21 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     // 页面是否已加载完成（桥接脚本就绪）。就绪前不推事件；加载完成时会强制补推一次当前状态。
     private bool _pageReady;
 
+    // 上一次已上报的客户区尺寸 / 窗口位置（逻辑像素）。windowDidResize / windowDidMove
+    // 在拖动时每个像素来一次，不去重就是把每秒几百次 ObjC 回调变成同样数量的托管事件 + 页面 IPC。
+    private (double Width, double Height)? _lastReportedSize;
+    private (double X, double Y)? _lastReportedPosition;
+    // 上一次已上报的焦点状态；null 表示"还没报过"（首个 didBecomeKey 必须报，哪怕值相同）
+    private bool? _lastReportedFocus;
+
     private event Action? Loaded;
     private event Action<OrielCloseRequestEventArgs>? Closing;
     private event Action? Closed;
     private event Action<string>? TitleChanged;
     private event Action<bool>? MaximizedChanged;
+    private event Action<OrielSizeChangedEventArgs>? Resized;
+    private event Action<OrielPositionChangedEventArgs>? Moved;
+    private event Action<bool>? FocusChanged;
     private event Action<string>? NavigationStarting;
     private event Action<OrielNavigationCompletedEventArgs>? NavigationCompleted;
     private event Action<OrielConsoleMessageEventArgs>? ConsoleMessage;
@@ -227,6 +237,9 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     event Action? IWindowBackend.Closed { add => Closed += value; remove => Closed -= value; }
     event Action<string>? IWindowBackend.TitleChanged { add => TitleChanged += value; remove => TitleChanged -= value; }
     event Action<bool>? IWindowBackend.MaximizedChanged { add => MaximizedChanged += value; remove => MaximizedChanged -= value; }
+    event Action<OrielSizeChangedEventArgs>? IWindowBackend.Resized { add => Resized += value; remove => Resized -= value; }
+    event Action<OrielPositionChangedEventArgs>? IWindowBackend.Moved { add => Moved += value; remove => Moved -= value; }
+    event Action<bool>? IWindowBackend.FocusChanged { add => FocusChanged += value; remove => FocusChanged -= value; }
     event Action<string>? IWindowBackend.NavigationStarting { add => NavigationStarting += value; remove => NavigationStarting -= value; }
     event Action<OrielNavigationCompletedEventArgs>? IWindowBackend.NavigationCompleted { add => NavigationCompleted += value; remove => NavigationCompleted -= value; }
     event Action<OrielConsoleMessageEventArgs>? IWindowBackend.ConsoleMessage { add => ConsoleMessage += value; remove => ConsoleMessage -= value; }
@@ -864,6 +877,153 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         {
             System.Runtime.InteropServices.Marshal.FreeHGlobal(buffer);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // 尺寸 / 位置 / 焦点上报（对标 Tauri 2 的 onResized / onMoved / onFocusChanged）
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// 读窗口的 cocoa frame（origin.x、origin.y、size.width、size.height，单位 cocoa 点）。
+    /// </summary>
+    /// <remarks>
+    /// 走 KVC + <c>getValue:</c> 而不是直取 <c>frame</c> 的返回值：NSRect 是结构体，
+    /// msgSend 直取在 x86_64 上要走 stret、arm64 上是隐式 sret，绑定里没有那条路。
+    /// 与 <see cref="ScreenMaxY"/> 用的是同一套读法（它读的是 NSScreen 的 frame）。
+    /// </remarks>
+    private (double X, double Y, double Width, double Height) ReadFrame()
+    {
+        nint boxed = ObjCRuntime.SendIdObj(_nsWindow, ObjCRuntime.Sel("valueForKey:"), ObjCRuntime.MakeNSString("frame"));
+        if (boxed == 0)
+        {
+            return (0, 0, 0, 0);
+        }
+
+        nint buffer = System.Runtime.InteropServices.Marshal.AllocHGlobal(32);
+        try
+        {
+            ObjCRuntime.SendVoidObj(boxed, ObjCRuntime.Sel("getValue:"), buffer);
+            return (
+                BitConverter.Int64BitsToDouble(System.Runtime.InteropServices.Marshal.ReadInt64(buffer, 0)),   // origin.x
+                BitConverter.Int64BitsToDouble(System.Runtime.InteropServices.Marshal.ReadInt64(buffer, 8)),   // origin.y
+                BitConverter.Int64BitsToDouble(System.Runtime.InteropServices.Marshal.ReadInt64(buffer, 16)),  // size.width
+                BitConverter.Int64BitsToDouble(System.Runtime.InteropServices.Marshal.ReadInt64(buffer, 24))); // size.height
+        }
+        finally
+        {
+            System.Runtime.InteropServices.Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    /// <summary>
+    /// 上报客户区尺寸（逻辑像素）。
+    /// </summary>
+    /// <remarks>
+    /// 用 <c>contentLayoutRect</c> 的等价量：先取整窗 frame 的 size，再减去标题栏高度。
+    /// 但更可靠的是直接问 <c>contentView</c> 的 frame——它在无边框（FullSizeContentView）
+    /// 与装饰窗口下都给出**客户区**，而整窗 frame 在无边框下等于客户区、装饰下多一圈标题栏。
+    /// </remarks>
+    internal void ReportGeometry()
+    {
+        if (_nsWindow == 0)
+        {
+            return;
+        }
+
+        nint contentView = ObjCRuntime.SendId(_nsWindow, ObjCRuntime.Sel("contentView"));
+        if (contentView == 0)
+        {
+            return;
+        }
+
+        // contentView 的 frame 直接就是客户区尺寸（cocoa 点 = 逻辑像素，macOS 不需要额外折算）
+        nint boxed = ObjCRuntime.SendIdObj(contentView, ObjCRuntime.Sel("valueForKey:"), ObjCRuntime.MakeNSString("frame"));
+        if (boxed == 0)
+        {
+            return;
+        }
+
+        nint buffer = System.Runtime.InteropServices.Marshal.AllocHGlobal(32);
+        try
+        {
+            ObjCRuntime.SendVoidObj(boxed, ObjCRuntime.Sel("getValue:"), buffer);
+            double width = BitConverter.Int64BitsToDouble(System.Runtime.InteropServices.Marshal.ReadInt64(buffer, 16));
+            double height = BitConverter.Int64BitsToDouble(System.Runtime.InteropServices.Marshal.ReadInt64(buffer, 24));
+            ReportSize(width, height);
+        }
+        finally
+        {
+            System.Runtime.InteropServices.Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    /// <summary>
+    /// 上报窗口位置（逻辑像素、**左上角原点**）。
+    /// </summary>
+    /// <remarks>
+    /// cocoa 的原点在左下、y 向上，而公共契约是左上角原点——所以要按主屏高度换算：
+    /// <c>y_app = maxY - (origin.y + height)</c>。这与 <see cref="MoveTo"/> 的换算是同一套
+    /// （那边是 <c>setFrameTopLeftPoint</c> 直接吃左上角语义，方向相反但依据相同）。
+    /// </remarks>
+    internal void ReportPosition()
+    {
+        if (_nsWindow == 0)
+        {
+            return;
+        }
+
+        (double originX, double originY, _, double height) = ReadFrame();
+        double maxY = ScreenMaxY();
+        ReportPosition(maxY - (originY + height), originX);
+    }
+
+    /// <summary>上报位置（已换算成左上角原点）；与上次相同则跳过。</summary>
+    private void ReportPosition(double x, double y)
+    {
+        if (_lastReportedPosition is { } previous
+            && Math.Abs(previous.X - x) < 0.5
+            && Math.Abs(previous.Y - y) < 0.5)
+        {
+            return;
+        }
+
+        _lastReportedPosition = (x, y);
+        Moved?.Invoke(new OrielPositionChangedEventArgs(x, y));
+    }
+
+    /// <summary>上报客户区尺寸；与上次相同则跳过。</summary>
+    /// <remarks>
+    /// 去重是必须的：拖边框时 <c>windowDidResize:</c> 每个像素来一次，
+    /// 每次都触发托管事件 + 页面 IPC 会把一次拖动变成流量风暴。
+    /// </remarks>
+    private void ReportSize(double width, double height)
+    {
+        if (width <= 0 || height <= 0)
+        {
+            return;
+        }
+
+        if (_lastReportedSize is { } previous
+            && Math.Abs(previous.Width - width) < 0.5
+            && Math.Abs(previous.Height - height) < 0.5)
+        {
+            return;
+        }
+
+        _lastReportedSize = (width, height);
+        Resized?.Invoke(new OrielSizeChangedEventArgs(width, height));
+    }
+
+    /// <summary>上报焦点变化（与上次相同则跳过；首个事件一定会报）。</summary>
+    internal void ReportFocus(bool focused)
+    {
+        if (_lastReportedFocus == focused)
+        {
+            return;
+        }
+
+        _lastReportedFocus = focused;
+        FocusChanged?.Invoke(focused);
     }
 
     public void Resize(int width, int height)

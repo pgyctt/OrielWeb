@@ -82,11 +82,21 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     // 当前已设上去的是哪条边的光标；-1 = 没设。
     private int _activeCursorEdge = -1;
 
+    // 上一次已上报的客户区尺寸 / 窗口位置（逻辑像素）。configure-event 在拖动时每个像素来一次，
+    // 不去重就是把每秒几百次原生回调变成同样数量的托管事件 + 页面 IPC。null 表示"还没报过"。
+    private (double Width, double Height)? _lastReportedSize;
+    private (double X, double Y)? _lastReportedPosition;
+    // 上一次已上报的焦点状态；null 表示"还没报过"（首个 focus-in 必须报，哪怕值相同）
+    private bool? _lastReportedFocus;
+
     private event Action? Loaded;
     private event Action<OrielCloseRequestEventArgs>? Closing;
     private event Action? Closed;
     private event Action<string>? TitleChanged;
     private event Action<bool>? MaximizedChanged;
+    private event Action<OrielSizeChangedEventArgs>? Resized;
+    private event Action<OrielPositionChangedEventArgs>? Moved;
+    private event Action<bool>? FocusChanged;
     private event Action<string>? NavigationStarting;
     private event Action<OrielNavigationCompletedEventArgs>? NavigationCompleted;
     private event Action<OrielConsoleMessageEventArgs>? ConsoleMessage;
@@ -203,6 +213,9 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     event Action? IWindowBackend.Closed { add => Closed += value; remove => Closed -= value; }
     event Action<string>? IWindowBackend.TitleChanged { add => TitleChanged += value; remove => TitleChanged -= value; }
     event Action<bool>? IWindowBackend.MaximizedChanged { add => MaximizedChanged += value; remove => MaximizedChanged -= value; }
+    event Action<OrielSizeChangedEventArgs>? IWindowBackend.Resized { add => Resized += value; remove => Resized -= value; }
+    event Action<OrielPositionChangedEventArgs>? IWindowBackend.Moved { add => Moved += value; remove => Moved -= value; }
+    event Action<bool>? IWindowBackend.FocusChanged { add => FocusChanged += value; remove => FocusChanged -= value; }
     event Action<string>? IWindowBackend.NavigationStarting { add => NavigationStarting += value; remove => NavigationStarting -= value; }
     event Action<OrielNavigationCompletedEventArgs>? IWindowBackend.NavigationCompleted { add => NavigationCompleted += value; remove => NavigationCompleted -= value; }
     event Action<OrielConsoleMessageEventArgs>? IWindowBackend.ConsoleMessage { add => ConsoleMessage += value; remove => ConsoleMessage -= value; }
@@ -873,6 +886,122 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
             _maximizedSyncScheduled = false;
             SyncMaximizedState();
         });
+    }
+
+    // ------------------------------------------------------------------
+    // 尺寸 / 位置 / 焦点上报（对标 Tauri 2 的 onResized / onMoved / onFocusChanged）
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// GTK 的 <c>configure-event</c>：尺寸或位置变了。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>一个信号覆盖两件事</b>：GTK3 的 <c>configure-event</c> 在窗口被移动**或**调整大小时都会发，
+    /// 所以尺寸与位置都在这里上报。这也是 GTK 上唯一可靠的双向来源——
+    /// <c>size-allocate</c> 只管尺寸（且合成器发起的移动不触发），
+    /// 而 <c>gtk_window_get_position</c> 在 Wayland 下拿不到真实位置。
+    /// </para>
+    /// <para>
+    /// 从 <c>GdkEventConfigure</c> 的字段直接读，而不是回头调 <c>gtk_window_get_size</c>：
+    /// 后者在 Wayland 下可能给不出合成器侧的真实尺寸（窗口被平铺、被缩放时）。
+    /// GdkEventConfigure 的结构是 { GdkEventType type; GdkWindow* window; gint8 send_event;
+    /// guint32 x, y, width, height; } —— 前 4 个字段固定，之后是三个 32 位整数。
+    /// </para>
+    /// <para>
+    /// 坐标单位是**设备像素**（GDK 在 HiDPI 下不折算），所以除以缩放比换成逻辑像素，
+    /// 与 <see cref="MoveTo"/> / <see cref="Resize"/> 的入参语义对齐。
+    /// </para>
+    /// </remarks>
+    internal void OnConfigureEvent(nint gdkEvent)
+    {
+        if (gdkEvent == 0)
+        {
+            return;
+        }
+
+        // 用结构体映射而不是手算偏移：GdkEventConfigure 的字段对齐很微妙
+        // （gint8 send_event 后有 3 字节 padding、GdkWindow* 前有 4 字节 padding），
+        // 手算写错 4 字节会让 x 读到 y、width 读到 height 之后的数据——症状是
+        // "上报的尺寸和位置全都不对"，而那种错误看起来像是逻辑问题，极难定位到偏移。
+        // 结构定义与踩坑说明见 GtkNative.GdkEventConfigure。
+        GdkEventConfigure configure = Marshal.PtrToStructure<GdkEventConfigure>(gdkEvent);
+
+        // 尺寸为 0 是 GTK 在 realize/unrealize 之间的中间态，不是真实尺寸
+        if (configure.Width <= 0 || configure.Height <= 0)
+        {
+            return;
+        }
+
+        double scale = CurrentScaleFactor();
+        ReportSize(configure.Width / scale, configure.Height / scale);
+        ReportPosition(configure.X / scale, configure.Y / scale);
+    }
+
+    /// <summary>GTK 的 <c>focus-in-event</c> / <c>focus-out-event</c>。</summary>
+    internal void OnFocusChanged(bool focused) => ReportFocus(focused);
+
+    /// <summary>
+    /// 当前窗口所在显示器的缩放比（1.0 = 100%）。
+    /// </summary>
+    /// <remarks>
+    /// <b>每个窗口各取各的</b>：GTK 的 <c>gdk_monitor_get_scale_factor</c> 是**显示器级**的，
+    /// 同一进程的两个窗口可能在不同缩放的显示器上。用 <c>gtk_widget_get_scale_factor</c>
+    /// 拿到的是控件所在显示器（未 realize 时回落到默认显示器）。
+    /// </remarks>
+    private double CurrentScaleFactor()
+    {
+        if (!WindowAlive)
+        {
+            return 1.0;
+        }
+
+        int factor = GtkNative.GtkWidgetGetScaleFactor(_gtkWindow);
+        return factor > 0 ? factor : 1.0;
+    }
+
+    /// <summary>上报客户区尺寸（逻辑像素）；与上次相同则跳过。</summary>
+    /// <remarks>
+    /// 去重是必须的：拖动边框时 <c>configure-event</c> 每个像素来一次，
+    /// 每次都触发托管事件 + 页面 IPC 会把一次拖动变成流量风暴，而其中 99% 是重复值。
+    /// </remarks>
+    private void ReportSize(double width, double height)
+    {
+        if (_lastReportedSize is { } previous
+            && Math.Abs(previous.Width - width) < 0.5
+            && Math.Abs(previous.Height - height) < 0.5)
+        {
+            return;
+        }
+
+        _lastReportedSize = (width, height);
+        Resized?.Invoke(new OrielSizeChangedEventArgs(width, height));
+    }
+
+    /// <summary>上报窗口左上角位置（逻辑像素）；与上次相同则跳过。</summary>
+    private void ReportPosition(double x, double y)
+    {
+        if (_lastReportedPosition is { } previous
+            && Math.Abs(previous.X - x) < 0.5
+            && Math.Abs(previous.Y - y) < 0.5)
+        {
+            return;
+        }
+
+        _lastReportedPosition = (x, y);
+        Moved?.Invoke(new OrielPositionChangedEventArgs(x, y));
+    }
+
+    /// <summary>上报焦点变化（与上次相同则跳过；首个事件一定会报）。</summary>
+    private void ReportFocus(bool focused)
+    {
+        if (_lastReportedFocus == focused)
+        {
+            return;
+        }
+
+        _lastReportedFocus = focused;
+        FocusChanged?.Invoke(focused);
     }
 
     /// <summary>

@@ -123,7 +123,16 @@ internal static unsafe class MacOSObjCClasses
         AddMethod(cls, "windowWillClose:", &WindowWillClose, "v@:@");
         // 原生路径的最大化/还原（系统菜单 Zoom、脚本等）不经过 win.toggleMaximize，
         // 只能靠 resize 回调发现——isZoomed 的真实变化由宿主比对后上报（见 SyncMaximizedState）。
+        // 同一个回调顺带上报客户区尺寸（对标 Tauri 2 的 onResized）。
         AddMethod(cls, "windowDidResize:", &WindowDidResize, "v@:@");
+        // 位置变化（对标 Tauri 2 的 onMoved）。Cocoa 没有"位置+尺寸"合一的通知，
+        // 所以必须单独接 windowDidMove:——windowDidResize: 在纯移动时不发。
+        AddMethod(cls, "windowDidMove:", &WindowDidMove, "v@:@");
+        // 焦点（对标 Tauri 2 的 onFocusChanged）。NSWindow 的 key 状态就是"有焦点"：
+        // didBecomeKey 对应获得、didResignKey 对应失去。注意它与"应用激活"是两回事——
+        // 应用失活时窗口也会 resign key，那正是我们要的语义（页面确实不再接收键盘）。
+        AddMethod(cls, "windowDidBecomeKey:", &WindowDidBecomeKey, "v@:@");
+        AddMethod(cls, "windowDidResignKey:", &WindowDidResignKey, "v@:@");
         // 原生路径的全屏进出（绿钮、ESC、系统菜单）同样不经过 SetFullscreen/ToggleFullscreen：
         // 不回灌的话 _isFullscreen 会与真实状态相反，下一次 Toggle 行为颠倒
         // （Linux 由 window-state-event 回灌；Windows 全屏只经 API 发起，无此问题）。
@@ -178,12 +187,67 @@ internal static unsafe class MacOSObjCClasses
             if (WindowDelegateStates.TryGetValue(self, out var host))
             {
                 host.SyncMaximizedState();
+                // 客户区尺寸上报（对标 Tauri 2 的 onResized）。与最大化同步共用一个回调：
+                // 两者都是"窗口几何变了"，分开接只会多一次 ObjC 往返。
+                host.ReportGeometry();
             }
         }
         catch (Exception ex)
         {
             // 异常不得穿越 ObjC 边界；状态同步失败不影响窗口本身
             OrielDiagnostics.Report($"[OrielWeb] windowDidResize: 抛出异常：{ex}");
+        }
+        return 0;
+    }
+
+    [UnmanagedCallersOnly]
+    private static nint WindowDidMove(nint self, nint sel, nint notification)
+    {
+        try
+        {
+            if (WindowDelegateStates.TryGetValue(self, out var host))
+            {
+                // 只上报位置：移动不改变客户区尺寸，没必要连尺寸一起读
+                host.ReportPosition();
+            }
+        }
+        catch (Exception ex)
+        {
+            OrielDiagnostics.Report($"[OrielWeb] windowDidMove: 抛出异常：{ex}");
+        }
+        return 0;
+    }
+
+    [UnmanagedCallersOnly]
+    private static nint WindowDidBecomeKey(nint self, nint sel, nint notification)
+    {
+        try
+        {
+            if (WindowDelegateStates.TryGetValue(self, out var host))
+            {
+                host.ReportFocus(true);
+            }
+        }
+        catch (Exception ex)
+        {
+            OrielDiagnostics.Report($"[OrielWeb] windowDidBecomeKey: 抛出异常：{ex}");
+        }
+        return 0;
+    }
+
+    [UnmanagedCallersOnly]
+    private static nint WindowDidResignKey(nint self, nint sel, nint notification)
+    {
+        try
+        {
+            if (WindowDelegateStates.TryGetValue(self, out var host))
+            {
+                host.ReportFocus(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            OrielDiagnostics.Report($"[OrielWeb] windowDidResignKey: 抛出异常：{ex}");
         }
         return 0;
     }
