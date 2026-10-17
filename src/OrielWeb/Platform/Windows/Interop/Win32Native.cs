@@ -611,6 +611,22 @@ internal static unsafe partial class Win32
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool IsZoomed(nint hwnd);
 
+    /// <summary>窗口是否最小化（图标化）。</summary>
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool IsIconic(nint hwnd);
+
+    /// <summary>
+    /// 当前前台窗口。
+    /// </summary>
+    /// <remarks>
+    /// 判"本窗口有没有焦点"要用它比对，而不是 <c>GetFocus</c>：
+    /// 后者只对**调用线程的窗口队列**有意义，而这里的调用线程不一定是前台的。
+    /// 比对前台窗口才是"用户正在操作它"的判据。
+    /// </remarks>
+    [LibraryImport("user32")]
+    internal static partial nint GetForegroundWindow();
+
     /// <summary>
     /// 窗口是否"可见"（自身及所有祖先都带 <c>WS_VISIBLE</c>）。
     /// </summary>

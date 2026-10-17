@@ -81,6 +81,38 @@ internal interface IWindowBackend
     /// </remarks>
     bool IsVisible { get; }
 
+    // ---- 只读状态查询（对标 Tauri 的 Window.isMinimized / isFocused / …）----
+
+    /// <summary>当前是否最小化（图标化）。</summary>
+    /// <remarks>
+    /// <b>与 <see cref="IsVisible"/> 是两件事</b>：最小化的窗口仍然"可见"
+    /// （<c>WS_VISIBLE</c> / 控件可见性都没变），它只是被收进了任务栏。
+    /// 把它们混为一谈的后果是"最小化之后页面以为窗口被藏了"。
+    /// </remarks>
+    bool IsMinimized { get; }
+
+    /// <summary>当前是否拥有键盘焦点。</summary>
+    /// <remarks>
+    /// 三平台的判据不同（Windows 比前台窗口、GTK 问 <c>gtk_window_is_active</c>、
+    /// Cocoa 问 <c>isKeyWindow</c>），但语义一致：**这个窗口是不是用户正在操作的那个**。
+    /// 注意"应用在前台"不等于"这个窗口有焦点"——多窗口应用里必须按窗口判。
+    /// </remarks>
+    bool IsFocused { get; }
+
+    /// <summary>当前是否全屏。</summary>
+    /// <remarks>
+    /// 取的是**库自己记住的状态**（<see cref="ToggleFullscreen"/> 设置的），
+    /// 而不是去问原生窗口：三平台判断"是不是全屏"都要比对窗口矩形与显示器矩形，
+    /// 而那在用户手动调整窗口大小时会给出与"库认为的状态"不一致的答案
+    /// （比如用户把窗口拖成刚好铺满屏幕）。
+    /// 记住的状态与 <c>ToggleFullscreen</c> 的返回值一致，调用方看到的是一个自洽的世界。
+    /// </remarks>
+    bool IsFullscreen { get; }
+
+    /// <summary>当前是否置顶。</summary>
+    /// <remarks>同 <see cref="IsFullscreen"/>：取库记住的状态。</remarks>
+    bool IsAlwaysOnTop { get; }
+
     void Show();
     void Hide();
     void Close();

@@ -255,6 +255,14 @@ public sealed class BuiltInWindowApiCommandTests
         public List<string> Calls { get; } = [];
         public OrielApp App { get; set; } = Oriel.CreateBuilder().Build();
         public bool IsVisible { get; set; } = true;
+
+        // 只读状态查询（M5-1）：**真的读字段**，而不是写死 false——
+        // 写死的话"状态流转"那几条断言就没意义了。
+        public bool IsMinimized { get; set; }
+        public bool IsFocused { get; set; }
+        public bool IsFullscreen { get; set; }
+        public bool IsAlwaysOnTop { get; set; }
+
         public string? Label { get; set; } = "main";
         public bool CloseInterceptEnabled { get; set; }
         public void Minimize() => Calls.Add("minimize");

@@ -239,6 +239,36 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     /// </remarks>
     public bool IsVisible => WindowAlive && GtkNative.GtkWidgetGetVisible(_gtkWindow);
 
+    /// <summary>是否最小化（见 <see cref="IWindowBackend.IsMinimized"/>）。</summary>
+    /// <remarks>
+    /// 走 GDK 的状态位而不是 <c>gtk_window_is_active</c> 之类的间接判据：
+    /// <c>GDK_WINDOW_STATE_ICONIFIED</c>（位 1）就是"最小化"这个事实本身。
+    /// </remarks>
+    public bool IsMinimized
+    {
+        get
+        {
+            const int GdkWindowStateIconified = 1 << 1;
+
+            if (!WindowAlive)
+            {
+                return false;
+            }
+
+            nint gdkWindow = GtkNative.GtkWidgetGetWindow(_gtkWindow);
+            return gdkWindow != 0 && (GtkNative.GdkWindowGetState(gdkWindow) & GdkWindowStateIconified) != 0;
+        }
+    }
+
+    /// <summary>是否有键盘焦点（见 <see cref="IWindowBackend.IsFocused"/>）。</summary>
+    public bool IsFocused => WindowAlive && GtkNative.GtkWindowIsActive(_gtkWindow);
+
+    /// <summary>是否全屏（取库记住的状态，见 <see cref="IWindowBackend.IsFullscreen"/>）。</summary>
+    public bool IsFullscreen => _isFullscreen;
+
+    /// <summary>是否置顶（取库记住的状态，见 <see cref="IWindowBackend.IsAlwaysOnTop"/>）。</summary>
+    public bool IsAlwaysOnTop => _isOnTop;
+
     // ---- 导航操作（WebKitGTK 内建历史；无历史时调用是空操作）----
     // _webview 在 destroy 之后被置 0，判空是必需的：这些调用不能对已销毁的 webview 下手。
 

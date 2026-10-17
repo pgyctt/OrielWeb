@@ -262,6 +262,27 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     /// </remarks>
     public bool IsVisible => ObjCRuntime.SendBoolRet(_nsWindow, ObjCRuntime.Sel("isVisible"));
 
+    /// <summary>是否最小化（见 <see cref="IWindowBackend.IsMinimized"/>）。</summary>
+    /// <remarks>
+    /// Cocoa 的 <c>isMiniaturized</c> 就是"收进 Dock 了"。
+    /// 注意它与 <c>isVisible</c> **不互斥**：最小化的窗口仍然 visible。
+    /// </remarks>
+    public bool IsMinimized => _nsWindow != 0 && ObjCRuntime.SendBoolRet(_nsWindow, ObjCRuntime.Sel("isMiniaturized"));
+
+    /// <summary>是否有键盘焦点（见 <see cref="IWindowBackend.IsFocused"/>）。</summary>
+    /// <remarks>
+    /// <c>isKeyWindow</c> 是"接收键盘事件的那个窗口"，语义与另两个平台一致。
+    /// 它与 <c>isMainWindow</c> 不同：后者是"主窗口"，一个应用可以有多个主窗口，
+    /// 但同时只有一个 key window。
+    /// </remarks>
+    public bool IsFocused => _nsWindow != 0 && ObjCRuntime.SendBoolRet(_nsWindow, ObjCRuntime.Sel("isKeyWindow"));
+
+    /// <summary>是否全屏（取库记住的状态，见 <see cref="IWindowBackend.IsFullscreen"/>）。</summary>
+    public bool IsFullscreen => _isFullscreen;
+
+    /// <summary>是否置顶（取库记住的状态，见 <see cref="IWindowBackend.IsAlwaysOnTop"/>）。</summary>
+    public bool IsAlwaysOnTop => _isOnTop;
+
     // ---- 导航操作（WKWebView 内建历史；无历史时调用是空操作）----
     // _webview 在窗口销毁后被置 0，判空是必需的。
 

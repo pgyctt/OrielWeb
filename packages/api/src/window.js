@@ -215,6 +215,54 @@ export class Window {
         return invoke('window.scaleFactor', { label: this.label });
     }
 
+    // ---- 只读状态查询（对标 Tauri 的同名方法）----
+    //
+    // 这四条**无条件放行**（在标题栏白名单里）：自绘标题栏要用它们渲染按钮的当前状态
+    // 与"窗口是否激活"的配色，而它们只报告自己窗口的状态、不泄露跨窗口信息。
+
+    /**
+     * 是否最小化。
+     *
+     * @returns {Promise<boolean>}
+     * @remarks **与 `isVisible()` 是两件事**：最小化的窗口仍然"可见"，
+     * 它只是被收进了任务栏。混为一谈的后果是"最小化之后页面以为窗口被藏了"。
+     */
+    isMinimized() {
+        return invoke('window.isMinimized', { label: this.label });
+    }
+
+    /**
+     * 是否拥有键盘焦点。
+     *
+     * @returns {Promise<boolean>}
+     * @remarks 按**窗口**判而不是按应用判：多窗口应用里只有一个是 key window。
+     * 标题栏常用它渲染激活/非激活两套配色。
+     */
+    isFocused() {
+        return invoke('window.isFocused', { label: this.label });
+    }
+
+    /**
+     * 是否全屏。
+     *
+     * @returns {Promise<boolean>}
+     * @remarks 取的是宿主 `toggleFullscreen()` 记住的状态，不是比对窗口与显示器矩形——
+     * 后者在用户手动把窗口拖成刚好铺满屏幕时会给出与库不一致的答案。
+     */
+    isFullscreen() {
+        return invoke('window.isFullscreen', { label: this.label });
+    }
+
+    /**
+     * 是否置顶。
+     *
+     * @returns {Promise<boolean>}
+     * @remarks 同上：取宿主记住的状态。
+     */
+    isAlwaysOnTop() {
+        return invoke('window.isAlwaysOnTop', { label: this.label });
+    }
+
     /**
      * 当前标题（对标 Tauri 的 `title()`）。**无条件放行**（只读查询）。
      *

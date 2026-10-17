@@ -288,14 +288,14 @@ const METHOD_GAP_GROUPS = [
         ],
     },
     {
-        reason: '只读状态查询。宿主还没有对应的查询命令——本批只做了 `isVisible` / `isMaximized` / ' +
-            '`title`（那三条是自绘标题栏必需的，所以进了白名单）。其余要新增宿主查询。',
+        reason: '只读状态查询。宿主还没有对应的查询命令——已经做了的是 `isVisible` / `isMaximized` / ' +
+            '`title` / `isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop`（都是自绘标题栏' +
+            '必需的，所以进了白名单）。其余要新增宿主查询。',
         methods: [
-            'window.Window#isAlwaysOnTop', 'window.Window#isClosable',
+            'window.Window#isClosable',
             'window.Window#isDecorated', 'window.Window#isEnabled',
-            'window.Window#isFocused', 'window.Window#isFullscreen',
             'window.Window#isMaximizable', 'window.Window#isMinimizable',
-            'window.Window#isMinimized', 'window.Window#isResizable',
+            'window.Window#isResizable',
             'window.Window#theme',
         ],
     },
@@ -400,6 +400,19 @@ test('同名类的方法也对得上（我们缺的都在 METHOD_DIVERGENCES 里
                 problems.push(
                     `${module.label}.${name}#${method}: Tauri 的类有这个实例方法、我们的没有，` +
                     '且没记进 METHOD_DIVERGENCES（有意的分歧）或 METHOD_GAP_GROUPS（还没实现）。');
+            }
+
+            // **反向检查：清单过期**。
+            //
+            // 与导出面那条同样的道理——实现了某项却忘了从清单里划掉，会让工作清单慢慢变成
+            // 一份没人敢信的历史文档。这里查"清单里列着、但我们已经有了"。
+            for (const method of ourMethods) {
+                const key = `${module.label}.${name}#${method}`;
+
+                if (key in METHOD_GAPS && !(method in METHOD_DIVERGENCES)) {
+                    problems.push(
+                        `${key}: 清单里列着"还没实现"，但其实已经实现了（清单过期）。`);
+                }
             }
         }
     }

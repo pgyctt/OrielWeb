@@ -160,7 +160,59 @@ internal static class WindowSelfTest
                     $"拒绝原因应当是权限（实际：{error}）");
             }
 
-            // ---- 5. 定向销毁：关掉的是目标窗口而不是发起者 ----
+            // ---- 5. 只读状态查询（M5-1）：真窗口上的取值与流转 ----
+            //
+            // isFocused 断言的是"**页面查询与宿主侧一致**"，而不是"哪个窗口应当有焦点"。
+            // 理由：焦点取决于桌面把前台给了谁，而那在无人自检里不受控
+            // （刚创建的窗口通常会拿到前台；`--selftest windowevents` 就吃过这个环境的亏）。
+            // "两者一致"既验了查询真的读了状态，又不依赖那个环境事实。
+            bool probeFocused = (await AskWithLabelAsync("window.isFocused", ProbeLabel)).GetBoolean();
+            bool mainFocused = (await AskWithLabelAsync("window.isFocused", "main")).GetBoolean();
+
+            Check(probeFocused == probe.IsFocused,
+                $"window.isFocused 应当与宿主侧一致（页面 {probeFocused} vs 宿主 {probe.IsFocused}）");
+
+            Check(mainFocused == main.IsFocused,
+                $"window.isFocused 应当与宿主侧一致（main：页面 {mainFocused} vs 宿主 {main.IsFocused}）");
+
+            // 不变量：两个窗口不可能同时是前台窗口。
+            // 这条挡住"永远返回 true"，而上面那两条挡住"永远返回 false"。
+            Check(!(probeFocused && mainFocused),
+                "两个窗口不可能同时拥有焦点（若都 true 说明查询没按窗口判）");
+
+            Check(!(await AskWithLabelAsync("window.isMinimized", ProbeLabel)).GetBoolean(),
+                "window.isMinimized 对刚建出来的窗口应当是 false");
+
+            Check(!(await AskWithLabelAsync("window.isFullscreen", ProbeLabel)).GetBoolean(),
+                "window.isFullscreen 对刚建出来的窗口应当是 false");
+
+            Check(!(await AskWithLabelAsync("window.isAlwaysOnTop", ProbeLabel)).GetBoolean(),
+                "window.isAlwaysOnTop 对刚建出来的窗口应当是 false");
+
+            // **状态流转**：只验"初始值为假"会被"永远返回 false"骗过，
+            // 所以让宿主真去切一次状态，再看查询跟不跟得上。
+            probe.Minimize();
+            await WaitForAsync(() => probe.IsMinimized, 5000);
+            Check(probe.IsMinimized, "host 侧 Minimize() 之后 IsMinimized 应当为 true");
+            Check((await AskWithLabelAsync("window.isMinimized", ProbeLabel)).GetBoolean(),
+                "window.isMinimized 应当跟上宿主状态（true）");
+
+            // 还原
+            probe.Restore();
+            await WaitForAsync(() => !probe.IsMinimized, 5000);
+            Check(!probe.IsMinimized, "host 侧 Restore() 之后 IsMinimized 应当回到 false");
+            Check(!(await AskWithLabelAsync("window.isMinimized", ProbeLabel)).GetBoolean(),
+                "window.isMinimized 应当跟上宿主的还原（false）");
+
+            // 置顶：切换之后查询要跟着变（这条验的是"记住的状态"而不是原生查询）
+            probe.ToggleOnTop();
+            await Task.Delay(200);
+            bool onTopAfterToggle = (await AskWithLabelAsync("window.isAlwaysOnTop", ProbeLabel)).GetBoolean();
+            Check(onTopAfterToggle == probe.IsAlwaysOnTop,
+                $"window.isAlwaysOnTop 应当与宿主侧一致（页面 {onTopAfterToggle} vs 宿主 {probe.IsAlwaysOnTop}）");
+            Check(onTopAfterToggle, "ToggleOnTop() 之后 window.isAlwaysOnTop 应当是 true");
+
+            // ---- 6. 定向销毁：关掉的是目标窗口而不是发起者 ----
             await AskWithLabelAsync("window.destroy", ProbeLabel);
             await WaitForAsync(() => !app.Windows.Contains(probe), 5000);
 

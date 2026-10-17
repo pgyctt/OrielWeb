@@ -45,6 +45,28 @@ internal static class OrielBuiltInWindowApiCommands
                 handler = static (sender, args) => Resolve(sender, args).IsMaximized;
                 return true;
 
+            // ---- 只读状态查询（对标 Tauri 的 Window.isMinimized / isFocused / …）----
+            //
+            // 这四条与 isVisible / isMaximized 一样**进了标题栏白名单**：
+            // 自绘标题栏要用它们渲染图标与激活态（最小化/最大化/全屏按钮的当前状态，
+            // 以及窗口是否激活时的标题栏配色），而它们只报告自己窗口的状态、
+            // 不泄露跨窗口信息。逐条理由见 OrielCapabilityRules.AlwaysAllowedWindowCommands。
+            case "window.isMinimized":
+                handler = static (sender, args) => Resolve(sender, args).IsMinimized;
+                return true;
+
+            case "window.isFocused":
+                handler = static (sender, args) => Resolve(sender, args).IsFocused;
+                return true;
+
+            case "window.isFullscreen":
+                handler = static (sender, args) => Resolve(sender, args).IsFullscreen;
+                return true;
+
+            case "window.isAlwaysOnTop":
+                handler = static (sender, args) => Resolve(sender, args).IsAlwaysOnTop;
+                return true;
+
             case "window.scaleFactor":
                 // 页面用它把 PhysicalSize 换算成逻辑尺寸（Tauri 的 setSize 两种都收）。
                 // 取窗口所在显示器的值——窗口拖到另一块不同缩放的显示器后它会变。

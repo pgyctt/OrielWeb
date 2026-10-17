@@ -502,7 +502,7 @@ window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
 | `deny` 优先 | 两条都命中按拒绝算。"先宽泛 allow、再 deny 挖例外"是最常见的写法，若 allow 优先那条 deny 等于没写 |
 | 默认拒绝 | 两条都不命中即拒绝 |
 | `win.` 前缀始终放行 | 那是无边框窗口的标题栏按钮与拖动，只操作自己那个窗口，不是"能力"；它们由库内建，自定义同名命令会被遮蔽。**应用自己的命令请避开这个前缀**。`tray.` 前缀同理 |
-| **`window.` 族只放行一组** | 它比 `win.*` 大得多（有 `window.setIcon`、`window.setSkipTaskbar` 这类真正的能力），所以**不整族放行**；只有标题栏必需的那组（`minimize` / `toggleMaximize` / `toggleFullscreen` / `toggleOnTop` / `close` / `destroy` / `drag*` / `pickFile` / `contextMenu`）与三条只读查询（`isVisible` / `isMaximized` / `title`）例外。逐条理由见 `OrielCapabilityRules.AlwaysAllowedWindowCommands` |
+| **`window.` 族只放行一组** | 它比 `win.*` 大得多（有 `window.setIcon`、`window.setSkipTaskbar` 这类真正的能力），所以**不整族放行**；只有标题栏必需的那组（`minimize` / `toggleMaximize` / `toggleFullscreen` / `toggleOnTop` / `close` / `destroy` / `drag*` / `pickFile` / `contextMenu`）与一组只读状态查询（`isVisible` / `isMaximized` / `isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop` / `title`）例外。逐条理由见 `OrielCapabilityRules.AlwaysAllowedWindowCommands` |
 | **`event.emit` 不放行** | 唯一一处"库内建但**不**始终放行"的命令。它让一个窗口的页面能驱动**另一个窗口**的行为（跨窗口指令通道），而自绘标题栏完全不依赖它——没有开后门的理由。要用必须显式 `Allow("event.emit")` 或 `Allow("event.*")`。注意它只保留了这一个**名字**，`event.` 前缀本身不保留 |
 | 只管 `invoke` | 单向的 `postMessage` 没有命令名，由来源与令牌两层覆盖 |
 | `win.` 只保留**命令名**段 | 事件名不受限：`EmitEvent("win.state.changed", …)` 不会被拦（库不校验事件名，事件命名空间是页面自己的）。但为了与"保留前缀"的口径一致，建议避开这个段（下游反馈 2026-10-11 的 P2-3） |
@@ -1214,7 +1214,7 @@ await getTauriVersion();   // '0.4.0'    ← **库**版本，不是 Tauri 框架
 | 组 | 命令 | 是否需要 `Allow` |
 |---|---|---|
 | 标题栏必需 | `minimize` `toggleMaximize` `toggleFullscreen` `toggleOnTop` `close` `destroy` `drag*` `pickFile` `contextMenu` | **否**（无条件放行，理由见 §4） |
-| 只读查询自己的窗口 | `isVisible` `isMaximized` `title` | **否** |
+| 只读状态查询（标题栏靠它渲染按钮状态与激活配色） | `isVisible` `isMaximized` `isMinimized` `isFocused` `isFullscreen` `isAlwaysOnTop` `title` | **否** |
 | 其余 | `show` `hide` `focus` `maximize` `restore` `setTitle` `setResizable` `setFullscreen` `setOnTop` `setMinSize` `moveTo` `resize` `center` `scaleFactor` `innerSize` `outerSize` `innerPosition` `outerPosition` `getAll` `setCloseIntercept` `setEventForwarding` | **是**：`Allow("window.*")` 或逐条声明 |
 
 > **`window.*` 与 `win.*` 的分工**：`win.*` 是早期的库内建命令（**只能作用于发起者**、整族始终放行）；

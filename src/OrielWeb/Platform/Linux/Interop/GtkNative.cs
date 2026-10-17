@@ -175,6 +175,24 @@ internal static unsafe partial class GtkNative
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool GtkWindowIsMaximized(nint window);
 
+    /// <summary>窗口是不是"活动窗口"（有焦点那个）。</summary>
+    /// <remarks>
+    /// 用 <c>gtk_window_is_active</c> 而不是 <c>has_toplevel_focus</c>：
+    /// 后者在**同一个应用内**切换窗口时可能仍为真（顶层容器仍有焦点），
+    /// 而前者的语义就是"这是活动窗口"。多窗口应用必须按窗口判。
+    /// </remarks>
+    [LibraryImport(Gtk, EntryPoint = "gtk_window_is_active")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool GtkWindowIsActive(nint window);
+
+    /// <summary>取 GDK 窗口的状态位（最小化、贴边、全屏…）。</summary>
+    /// <remarks>
+    /// 返回值是 <c>GdkWindowState</c> 的位掩码，要按位判——
+    /// 见 <c>LinuxWindowHost.IsMinimized</c>（用 <c>GDK_WINDOW_STATE_ICONIFIED</c>）。
+    /// </remarks>
+    [LibraryImport(Gdk, EntryPoint = "gdk_window_get_state")]
+    internal static partial int GdkWindowGetState(nint gdkWindow);
+
     [LibraryImport(Gtk, EntryPoint = "gtk_window_is_fullscreen")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool GtkWindowIsFullscreen(nint window);

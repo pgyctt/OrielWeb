@@ -449,6 +449,26 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
   本库的线格式是 `{ type: "Logical", x, y }`（Tauri 1 的形状），宿主只认后者。
   改过去要**同时改宿主协议**，而页面看不到差别（它只是把对象原样传回 `setSize`）。
 
+#### 窗口只读状态查询（M5-1）
+
+- **`isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop`**（对标 Tauri 的同名方法）：
+  `IWindowBackend` 四个属性 + `WebviewWindow` 四个属性 + `window.*` 四条命令 + JS 四个方法。
+- **四条都进了标题栏白名单**（与 `isVisible` / `isMaximized` / `title` 同一理由）：
+  自绘标题栏要用它们渲染按钮的当前状态与"窗口是否激活"的配色，
+  而它们只报告自己窗口的状态、不泄露跨窗口信息。
+- **`isMinimized` 与 `isVisible` 是两件事**：最小化的窗口仍然"可见"，
+  它只是被收进了任务栏。混为一谈的后果是"最小化之后页面以为窗口被藏了"。
+  三平台实现：Windows `IsIconic`、Linux `gdk_window_get_state & GDK_WINDOW_STATE_ICONIFIED`、
+  macOS `isMiniaturized`。
+- **`isFocused` 按窗口判、不按应用判**：多窗口应用里只有一个是 key window。
+  三平台：Windows 比对 `GetForegroundWindow()`（**不用 `GetFocus`**——它只对调用线程的
+  窗口队列有意义）、Linux `gtk_window_is_active`（**不用 `has_toplevel_focus`**——
+  同应用内切换窗口时它可能仍为真）、macOS `isKeyWindow`（不是 `isMainWindow`）。
+- **`isFullscreen` / `isAlwaysOnTop` 取库记住的状态**，不是去问原生窗口：
+  三平台判断"是不是全屏"都要比对窗口矩形与显示器矩形，而那在用户手动把窗口拖成
+  刚好铺满屏幕时会给出与"库认为的状态"不一致的答案。记住的状态与 `ToggleFullscreen()`
+  的返回值自洽。
+
 ### 修复
 
 - **`dialog.js` 里形参遮蔽了同名导出函数**：`ask(message, options)` 与

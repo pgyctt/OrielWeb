@@ -346,6 +346,29 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// </remarks>
     public OrielPosition InnerPosition => Backend.InnerPosition;
 
+    /// <summary>当前是否最小化（对标 Tauri 的 `Window.isMinimized()`）。</summary>
+    /// <remarks>
+    /// **与 <see cref="IsVisible"/> 是两件事**：最小化的窗口仍然"可见"，
+    /// 它只是被收进了任务栏。混为一谈的后果是"最小化之后页面以为窗口被藏了"。
+    /// </remarks>
+    public bool IsMinimized => Backend.IsMinimized;
+
+    /// <summary>当前是否拥有键盘焦点（对标 Tauri 的 `Window.isFocused()`）。</summary>
+    /// <remarks>按**窗口**判而不是按应用判：多窗口应用里只有一个是 key window。</remarks>
+    public bool IsFocused => Backend.IsFocused;
+
+    /// <summary>
+    /// 当前是否全屏（对标 Tauri 的 `Window.isFullscreen()`）。
+    /// </summary>
+    /// <remarks>
+    /// 取的是 <c>ToggleFullscreen()</c> 记住的状态，不是去比对窗口与显示器矩形——
+    /// 后者在用户手动把窗口拖成刚好铺满屏幕时会给出与库不一致的答案。
+    /// </remarks>
+    public bool IsFullscreen => Backend.IsFullscreen;
+
+    /// <summary>当前是否置顶（对标 Tauri 的 `Window.isAlwaysOnTop()`）。</summary>
+    public bool IsAlwaysOnTop => Backend.IsAlwaysOnTop;
+
     public void Focus() => Backend.Focus();
     public void Maximize() => Backend.Maximize();
     public void Minimize() => Backend.Minimize();

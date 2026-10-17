@@ -1933,6 +1933,18 @@ internal partial class Win32WindowHost : IWindowBackend
     /// </remarks>
     public bool IsVisible => Win32.IsWindowVisible(_hwnd);
 
+    /// <summary>是否最小化（见 <see cref="IWindowBackend.IsMinimized"/>）。</summary>
+    public bool IsMinimized => Win32.IsIconic(_hwnd);
+
+    /// <summary>是否有键盘焦点（见 <see cref="IWindowBackend.IsFocused"/>）。</summary>
+    public bool IsFocused => _hwnd != 0 && Win32.GetForegroundWindow() == _hwnd;
+
+    /// <summary>是否全屏（取库记住的状态，见 <see cref="IWindowBackend.IsFullscreen"/>）。</summary>
+    public bool IsFullscreen => _isFullscreen;
+
+    /// <summary>是否置顶（取库记住的状态，见 <see cref="IWindowBackend.IsAlwaysOnTop"/>）。</summary>
+    public bool IsAlwaysOnTop => _isOnTop;
+
     /// <summary>
     /// 显示窗口：**先** <c>SW_SHOW</c> 宿主，**再**把 WebView2 置为可见。
     /// </summary>

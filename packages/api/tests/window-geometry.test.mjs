@@ -204,3 +204,44 @@ test('几何查询按 label 寻址（能读别的窗口）', async () => {
 
     clearMocks();
 });
+
+// ---- 只读状态查询（M5-1）----
+
+test('四条状态查询的命令名与 label', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', {
+        'window.isMinimized': false,
+        'window.isFocused': true,
+        'window.isFullscreen': false,
+        'window.isAlwaysOnTop': true,
+    });
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    assert.equal(await win.isMinimized(), false);
+    assert.equal(await win.isFocused(), true);
+    assert.equal(await win.isFullscreen(), false);
+    assert.equal(await win.isAlwaysOnTop(), true);
+
+    assert.deepEqual(calls.map((c) => c[0]), [
+        'window.isMinimized', 'window.isFocused', 'window.isFullscreen', 'window.isAlwaysOnTop',
+    ]);
+    for (const [, args] of calls) {
+        assert.deepEqual(args, { label: 'main' });
+    }
+
+    clearMocks();
+});
+
+test('四条状态查询按 label 寻址（能读别的窗口）', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('settings', { 'window.isFocused': false });
+    setTransportOverride(transport);
+
+    await new Window('settings').isFocused();
+
+    assert.deepEqual(calls[0], ['window.isFocused', { label: 'settings' }]);
+
+    clearMocks();
+});

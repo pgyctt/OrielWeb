@@ -172,6 +172,12 @@ internal static class OrielCapabilityRules
         "window.contextMenu",
         "window.isVisible",
         "window.isMaximized",
+        // 只读状态查询：自绘标题栏靠它们渲染按钮的当前状态与"窗口是否激活"的配色。
+        // 与上面两条同一理由——只报告自己窗口的状态，不泄露跨窗口信息。
+        "window.isMinimized",
+        "window.isFocused",
+        "window.isFullscreen",
+        "window.isAlwaysOnTop",
         "window.title",
     ];
 
