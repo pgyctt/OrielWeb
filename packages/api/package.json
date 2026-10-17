@@ -57,6 +57,10 @@
       "types": "./types/autostart.d.ts",
       "default": "./src/autostart.js"
     },
+    "./clipboard": {
+      "types": "./types/clipboard.d.ts",
+      "default": "./src/clipboard.js"
+    },
     "./window": {
       "types": "./types/window.d.ts",
       "default": "./src/window.js"

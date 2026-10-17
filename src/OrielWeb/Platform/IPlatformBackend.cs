@@ -378,4 +378,34 @@ internal interface IPlatformBackend : IDisposable
     /// 只如实返回 <c>false</c>，让调用方能据此在应用内补一个提示。
     /// </returns>
     bool ShowNotification(OrielNotificationOptions notification, string appId);
+
+    // ------------------------------------------------------------------ 系统剪贴板
+    //
+    // 只做**纯文本**。富格式（HTML）与图片刻意不做：
+    //
+    //   * HTML 在 Windows 上是 CF_HTML——一个带字节偏移头的私有格式，偏移写错会让
+    //     粘贴目标是乱码或截断，而那个头必须按**目标**平台重算。三平台各一套规则，
+    //     收益（一次粘贴的格式）远小于风险（静默写坏数据）。
+    //   * 图片需要一套图像句柄/资源模型，本库没有（见 README 里"没有句柄表"的说明）。
+    //
+    // 这两个缺口记在 docs/TAURI2-PLAN.md 里，不是遗漏。
+
+    /// <summary>
+    /// 读系统剪贴板里的文本；没有文本内容时返回 <c>null</c>。
+    /// </summary>
+    /// <remarks>
+    /// <b>返回 null 而不是空串</b>：剪贴板里可能是图片、文件列表，或者就是空的——
+    /// 而"空串"是一个合法的文本内容。调用方要能区分"没有文本"与"文本是空的"。
+    /// </remarks>
+    string? ReadClipboardText();
+
+    /// <summary>把文本写进系统剪贴板；失败时返回 <c>false</c>。</summary>
+    /// <remarks>
+    /// 失败不抛异常（与通知一致）：剪贴板被别的进程占着是**正常状态**
+    /// （Windows 上一次只有一个进程能打开剪贴板），不是调用方的错误。
+    /// </remarks>
+    bool WriteClipboardText(string text);
+
+    /// <summary>清空系统剪贴板；失败时返回 <c>false</c>。</summary>
+    bool ClearClipboard();
 }

@@ -905,6 +905,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 | `opener` | `openUrl` / `openPath` / `revealItemInDir` |
 | `notification` | `isPermissionGranted` / `requestPermission` / `sendNotification`（桌面子集） |
 | `autostart` | `isEnabled` / `enable` / `disable` |
+| `clipboard` | `readText` / `writeText` / `clear`（纯文本） |
 | `dpi` | `LogicalSize` / `PhysicalSize` / `LogicalPosition` / `PhysicalPosition` + 归一与换算 |
 | `mocks` | `mockIPC` / `mockWindows` / `mockEmit` / `mockConvertFileSrc` / `clearMocks` |
 
@@ -978,6 +979,41 @@ await resolveResource('assets/a.svg'); // 资源目录下拼，带越界校验
 
 > **`runtimeDir` 在 `XDG_RUNTIME_DIR` 缺失时明确失败**，不退到 `/tmp`：
 > `/tmp` 是全局共享的，不是"本用户的运行时目录"那个语义，给个错值比明确失败糟得多。
+
+### 系统剪贴板：`clipboard`
+
+```js
+import { readText, writeText, clear } from '@orielweb/api/clipboard';
+
+await writeText('内容');        // → boolean（写成功与否）
+const text = await readText();  // → string | null（null = 剪贴板里没有文本）
+await clear();                  // → boolean
+```
+
+需要能力声明（读写都是能力：写能覆盖用户已复制的内容，读可能读到密码管理器刚放进去的东西）：
+
+```csharp
+c.Allow("clipboard.*");   // 或逐条 Allow("clipboard.readText") 等
+```
+
+| 要点 | 说明 |
+|---|---|
+| **`null` ≠ `''`** | `null` 是"剪贴板里没有文本"（可能是图片、文件列表），`''` 是"文本是空的"。两者都要能表达 |
+| **写失败返回 `false`** | 剪贴板是**全局独占**资源，别的进程正开着时写不进去是正常状态。Windows 侧会重试 5 次 × 10ms |
+| **`label` 明确拒绝** | Tauri 用它选 X11 的哪个剪贴板（`CLIPBOARD`/`PRIMARY`/`SECONDARY`）；本库只操作默认那个 |
+| **Linux 上读可能阻塞** | `gtk_clipboard_wait_for_text` 会跑内嵌 main loop 等所有者应答。GTK 没有"非阻塞取一次"的入口 |
+| **macOS 的 `clearContents` 不能省** | 它给剪贴板内容打变更计数；不调用则别的应用收不到"变了"的通知（粘贴菜单还是灰的） |
+
+平台实现：Windows 走 Win32 剪贴板 API、Linux 走 GTK `GtkClipboard`、macOS 走 `NSPasteboard`。
+**Linux 与 macOS 的实现未在真机验证**（已记入 CHANGELOG 的"已知限制"）。
+
+**刻意不做**：`writeHtml`（Windows 上是 CF_HTML，带字节偏移头的私有格式，
+**偏移写错会让粘贴目标是乱码或截断**，且在"看起来成功了"的情况下静默发生）、
+`writeImage` / `readImage`（要图像句柄模型）、`writeSecret`（macOS 专有标记）。
+
+> ⚠️ **`--selftest api` 会真写一次系统剪贴板**（写进去、读回来、再清空）——
+> 因为它改不了系统状态、也不弹窗口，而"写进去再读回来"是唯一能证明三个平台的原生实现
+> 真的接对了的方式。代价是**会覆盖你当前的剪贴板内容**，跑之前请先存好心内容。
 
 ### 平台集成：`opener` / `notification` / `autostart`
 

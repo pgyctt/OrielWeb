@@ -899,4 +899,63 @@ internal struct BROWSEINFOW
     public int iImage;
 }
 
+/// <summary>
+/// Win32 剪贴板 API（<c>user32</c> / <c>kernel32</c>）。
+/// </summary>
+/// <remarks>
+/// <para>
+/// 用传统的剪贴板 API 而不是 WinRT 的 <c>Windows.ApplicationModel.DataTransfer.Clipboard</c>：
+/// 后者要初始化 WinRT 公寓并引用 WinRT 投影，在 Native AOT 下是一整套额外依赖，
+/// 而这几个 API 从 Windows 2000 起就没变过。
+/// </para>
+/// <para>
+/// <b>有一处必须遵守的时序</b>：<c>OpenClipboard</c> → <c>EmptyClipboard</c> →
+/// <c>SetClipboardData</c> → <c>CloseClipboard</c>；而 <c>OpenClipboard</c> 在别的进程
+/// 正开着剪贴板时会**直接失败**（不是等待）。所以写操作要重试，
+/// 见 <c>Win32WindowHost.WriteClipboardText</c>。
+/// </para>
+/// </remarks>
+internal static partial class Win32Clipboard
+{
+    internal const uint CF_UNICODETEXT = 13;
+
+    /// <summary>全局内存标志 <c>GMEM_MOVEABLE</c>：剪贴板要求用它分配。</summary>
+    internal const uint GMEM_MOVEABLE = 0x0002;
+
+    [LibraryImport("user32", EntryPoint = "OpenClipboard", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool OpenClipboard(nint hWndNewOwner);
+
+    [LibraryImport("user32", EntryPoint = "CloseClipboard", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool CloseClipboard();
+
+    [LibraryImport("user32", EntryPoint = "EmptyClipboard", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool EmptyClipboard();
+
+    [LibraryImport("user32", EntryPoint = "GetClipboardData", SetLastError = true)]
+    internal static partial nint GetClipboardData(uint uFormat);
+
+    [LibraryImport("user32", EntryPoint = "SetClipboardData", SetLastError = true)]
+    internal static partial nint SetClipboardData(uint uFormat, nint hMem);
+
+    [LibraryImport("user32", EntryPoint = "IsClipboardFormatAvailable", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool IsClipboardFormatAvailable(uint format);
+
+    [LibraryImport("kernel32", EntryPoint = "GlobalAlloc", SetLastError = true)]
+    internal static partial nint GlobalAlloc(uint uFlags, nuint dwBytes);
+
+    [LibraryImport("kernel32", EntryPoint = "GlobalLock", SetLastError = true)]
+    internal static partial nint GlobalLock(nint hMem);
+
+    [LibraryImport("kernel32", EntryPoint = "GlobalUnlock", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool GlobalUnlock(nint hMem);
+
+    [LibraryImport("kernel32", EntryPoint = "GlobalFree", SetLastError = true)]
+    internal static partial nint GlobalFree(nint hMem);
+}
+
 

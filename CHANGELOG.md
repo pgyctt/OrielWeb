@@ -339,7 +339,49 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
   ——真去 `openUrl` 会弹浏览器、真去 `autostart.enable` 会往系统里写一个自启项，
   自检不该改机器的状态。
 
+#### 系统剪贴板（F6）
+
+- **`@orielweb/api/clipboard`**（`readText` / `writeText` / `clear`）+ 内建命令族
+  `clipboard.*`，对标 Tauri 的 `plugin-clipboard-manager` 的**纯文本**部分。
+  **这一批有新的平台代码**（此前只有原生编辑命令，没有剪贴板 API）：
+  Windows 走 Win32 剪贴板 API、Linux 走 GTK `GtkClipboard`、macOS 走 `NSPasteboard`。
+- **`readText` 返回 `null` 而不是空串**：剪贴板里可能是图片、文件列表，或者根本是空的，
+  而空串是**一个合法的文本内容**。调用方要能区分"没有文本"与"文本是空的"。
+- **写失败返回 `false` 不抛错**：剪贴板是**全局独占**资源
+  （Windows 上一次只有一个进程能打开它），别的进程正开着时写不进去是**正常状态**。
+  Windows 侧内部会重试 5 次 × 10ms 再放弃——那个状态通常在毫秒级结束，
+  而不重试的表现是"偶发写不进剪贴板"，那种偶发最难查。
+- **`writeText` 的 `label` 明确拒绝**（Tauri 用它选 X11 的哪个剪贴板：
+  `CLIPBOARD` / `PRIMARY` / `SECONDARY`）：本库只操作默认那个，而 Windows/macOS 上
+  也没有第二个。静默忽略会让调用方以为"我写进的是 PRIMARY"（X11 上中键粘贴那个），
+  实际写进了 CLIPBOARD——一次静默的目标错位。
+- **刻意不做**：`writeHtml`（HTML 剪贴板在 Windows 上是 CF_HTML，一个带字节偏移头的
+  私有格式，**偏移写错会让粘贴目标是乱码或截断**，而它是在"看起来成功了"的情况下静默发生；
+  收益远小于风险）、`writeImage` / `readImage`（要图像句柄模型，本库没有）、
+  `writeSecret`（macOS 专有的"不记入剪贴板历史"标记）。
+- **Windows 上 `SetClipboardData` 成功之后那块 `GMEM_MOVEABLE` 内存归系统所有**，
+  不能再 `GlobalFree`——释放了会让系统在粘贴时读到已释放的内存。
+  所以只有失败路径才释放（实现里有注释标出那两处）。
+- **Linux 上读剪贴板可能阻塞**：`gtk_clipboard_wait_for_text` 会跑一个内嵌的 main loop
+  等所有者应答，对方不响应时会一直等（表现为命令等到前端超时）。
+  这是 GTK 剪贴板 API 的形状——它没有"非阻塞取一次"的入口。已在文档写明。
+- **macOS 的 `clearContents` 不能省**：它告诉系统"这块内容归我了"，同时给内容打一个
+  变更计数（changeCount）。不调用的话别的应用收不到"剪贴板变了"的通知，
+  表现为"复制了但粘贴菜单还是灰的"。
+
+> **一件事要先说**：`--selftest api` 会**真写一次系统剪贴板**（写进去、读回来、再清空），
+> 因为它改不了系统状态、也不弹窗口，而"写进去再读回来"是唯一能证明三个平台的原生实现
+> 真的接对了的方式（单测里没有后端，只测得到"没后端时不抛"）。
+> 代价是**会把用户当前的剪贴板内容覆盖掉**——跑这个自检之前请先存好心内容。
+
 ### 修复
+
+- **`--selftest api` 的超时消息说不出根因**：探针脚本解析失败时（例如一个重复的
+  `const`）**一条输出都没有**，表现是"60 秒超时"——而超时这个现象与"有个重复的变量名"
+  看不出任何关系。现在超时消息会指明"若此前一条 OK 都没有，多半是解析失败"，
+  并给出定位手段（`ORIEL_PROBE_DUMP=1` + `node --check`）。
+  **这个坑在本轮踩了两次**（`escapeCode`、`readBack` 各一次）——根因是探针是一个
+  **扁平作用域**，所有 `const` 都在同一层。诊断开关因此是值得留的。
 
 - **未 `Run()` 时内建命令抛的是未分类异常**：`ShowNotification` / `IsAutoStartEnabled`
   等在 `_backend is null` 时抛 `InvalidOperationException("应用尚未运行")`，

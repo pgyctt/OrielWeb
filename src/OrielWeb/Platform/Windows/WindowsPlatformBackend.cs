@@ -204,6 +204,189 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
     public bool ShowNotification(OrielNotificationOptions notification, string appId)
         => Win32ToastNotification.Send(notification, appId);
 
+    // ---- 系统剪贴板 ----
+
+    /// <summary>
+    /// 读剪贴板文本；没有文本内容时返回 <c>null</c>。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 先问 <c>IsClipboardFormatAvailable</c> 再取：剪贴板里可能是图片或文件列表，
+    /// 那时 <c>GetClipboardData(CF_UNICODETEXT)</c> 返回 0，而 0 与"取失败"无法区分。
+    /// 先问一句能把"没有文本"与"读失败"分开。
+    /// </para>
+    /// <para>
+    /// <c>OpenClipboard</c> 失败时**重试几次**：别的进程正开着剪贴板是正常状态
+    /// （它是个全局独占资源），而这个状态通常在几毫秒内结束。
+    /// 不重试的话表现是"偶发读不到剪贴板"，那种偶发最难查。
+    /// </para>
+    /// </remarks>
+    public string? ReadClipboardText()
+    {
+        if (!Win32Clipboard.IsClipboardFormatAvailable(Win32Clipboard.CF_UNICODETEXT))
+        {
+            return null;
+        }
+
+        if (!TryOpenClipboard())
+        {
+            return null;
+        }
+
+        try
+        {
+            nint handle = Win32Clipboard.GetClipboardData(Win32Clipboard.CF_UNICODETEXT);
+            if (handle == 0)
+            {
+                return null;
+            }
+
+            nint pointer = Win32Clipboard.GlobalLock(handle);
+            if (pointer == 0)
+            {
+                return null;
+            }
+
+            try
+            {
+                // CF_UNICODETEXT 是 NUL 结尾的 UTF-16，所以按字符串读（不需要知道长度）
+                return Marshal.PtrToStringUni(pointer);
+            }
+            finally
+            {
+                _ = Win32Clipboard.GlobalUnlock(handle);
+            }
+        }
+        finally
+        {
+            _ = Win32Clipboard.CloseClipboard();
+        }
+    }
+
+    /// <summary>写剪贴板文本。</summary>
+    /// <remarks>
+    /// <para>
+    /// <c>SetClipboardData</c> 成功之后那块 <c>GMEM_MOVEABLE</c> 内存的**所有权归系统**，
+    /// 不能再 <c>GlobalFree</c>——释放了会让系统在粘贴时读到已释放的内存。
+    /// 所以失败路径才释放，成功路径不释放（下面那两处注释就是这件事）。
+    /// </para>
+    /// </remarks>
+    public bool WriteClipboardText(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        if (!TryOpenClipboard())
+        {
+            return false;
+        }
+
+        try
+        {
+            if (!Win32Clipboard.EmptyClipboard())
+            {
+                return false;
+            }
+
+            // +1 是 NUL 结尾
+            nuint bytes = (nuint)((text.Length + 1) * sizeof(char));
+            nint handle = Win32Clipboard.GlobalAlloc(Win32Clipboard.GMEM_MOVEABLE, bytes);
+            if (handle == 0)
+            {
+                return false;
+            }
+
+            bool transferred = false;
+
+            try
+            {
+                nint pointer = Win32Clipboard.GlobalLock(handle);
+                if (pointer == 0)
+                {
+                    return false;
+                }
+
+                try
+                {
+                    unsafe
+                    {
+                        fixed (char* source = text)
+                        {
+                            Buffer.MemoryCopy(source, (void*)pointer, bytes, (nuint)(text.Length * sizeof(char)));
+                        }
+                    }
+
+                    // 自己补 NUL：MemoryCopy 只搬了 text.Length 个字符
+                    Marshal.WriteInt16(pointer, text.Length * sizeof(char), 0);
+                }
+                finally
+                {
+                    _ = Win32Clipboard.GlobalUnlock(handle);
+                }
+
+                if (Win32Clipboard.SetClipboardData(Win32Clipboard.CF_UNICODETEXT, handle) == 0)
+                {
+                    return false;
+                }
+
+                // 交出去了：从此系统拥有这块内存
+                transferred = true;
+                return true;
+            }
+            finally
+            {
+                if (!transferred)
+                {
+                    _ = Win32Clipboard.GlobalFree(handle);
+                }
+            }
+        }
+        finally
+        {
+            _ = Win32Clipboard.CloseClipboard();
+        }
+    }
+
+    /// <summary>清空剪贴板。</summary>
+    public bool ClearClipboard()
+    {
+        if (!TryOpenClipboard())
+        {
+            return false;
+        }
+
+        try
+        {
+            return Win32Clipboard.EmptyClipboard();
+        }
+        finally
+        {
+            _ = Win32Clipboard.CloseClipboard();
+        }
+    }
+
+    /// <summary>
+    /// 打开剪贴板，失败时重试几次。
+    /// </summary>
+    /// <remarks>
+    /// 剪贴板是**全局独占**资源：别的进程开着时 <c>OpenClipboard</c> 立刻失败（不等待）。
+    /// 那个状态通常在毫秒级结束，所以重试 5 次 × 10ms 足够覆盖绝大多数情况；
+    /// 真占着不放（比如某个剪贴板管理器卡住了）时如实失败，让调用方决定怎么办。
+    /// </remarks>
+    private static bool TryOpenClipboard()
+    {
+        for (int attempt = 0; attempt < 5; attempt++)
+        {
+            if (Win32Clipboard.OpenClipboard(0))
+            {
+                return true;
+            }
+
+            Thread.Sleep(10);
+        }
+
+        return false;
+    }
+
     public void Quit() => Win32.PostQuitMessage(0);
 
     public bool IsOnUiThread() => Win32.GetCurrentThreadId() == _uiThreadId;

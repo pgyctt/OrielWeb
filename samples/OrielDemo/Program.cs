@@ -265,6 +265,10 @@ internal static class Program
                     c.Allow("opener.openUrl", "opener.openPath", "opener.revealItemInDir");
                     c.Allow("notification.*");
                     c.Allow("autostart.isEnabled");
+
+                    // clipboard（F6）：读写都是能力（写能覆盖用户已复制的内容、读可能读到
+                    // 密码管理器刚放进去的东西），所以要声明。
+                    c.Allow("clipboard.*");
                 }
             })
             .UseDebug()

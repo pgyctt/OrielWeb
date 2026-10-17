@@ -380,6 +380,18 @@ internal static unsafe partial class ObjCRuntime
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial nint SendIdObjNintObjObj(nint self, nint sel, nint a, nint integer, nint b, nint c);
 
+    /// <summary>
+    /// <c>objc_msgSend</c> 的 <c>- (BOOL)setX:(id)a forY:(id)b</c> 形态。
+    /// </summary>
+    /// <remarks>
+    /// <c>NSPasteboard</c> 的 <c>setString:forType:</c> 就是这一形。
+    /// 返回值是 <c>BOOL</c>（在 arm64 上是 32 位、在 x86_64 上返回寄存器里也是 32 位），
+    /// 所以这里用 <see cref="int"/> 接并判非零，而不是 <c>bool</c>——
+    /// 用 <c>bool</c> 接一个只保证低 32 位有效的返回值在某些 ABI 上会读到高位垃圾。
+    /// </remarks>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial int SendIntObjObj(nint self, nint sel, nint a, nint b);
+
     /// <summary>[[NSString UTF8String]] → 托管字符串（指针仅在当前调用/池内有效，立即复制）。</summary>
     internal static string ToManagedString(nint nsString)
     {

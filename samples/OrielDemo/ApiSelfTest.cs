@@ -311,6 +311,38 @@ internal static class ApiSelfTest
                 // 不是：demo 在 Program.cs 里显式声明了它们。这条断言钉的是那份声明存在。
                 check('平台集成命令需要显式声明（见 Program.cs）', true, 'ok');
 
+                // ---- clipboard（F6）：真读写一次 ----
+                //
+                // 与 opener / autostart 不同，剪贴板**可以**在自检里真读写：
+                // 它不改系统状态、不弹窗口，而"写进去再读回来"是唯一能证明三个平台的
+                // 原生实现真的接对了的方式（单测里没有后端，测的只是"没后端时不抛"）。
+                //
+                // 代价是会把用户当前的剪贴板内容覆盖掉。这一点在 --selftest 的说明里写明——
+                // 一个"改了用户剪贴板"的无人自检必须让人事先知道。
+                const clipboard = await import(vendor + '/clipboard.js');
+
+                const marker = 'oriel-selftest-' + Date.now();
+                check('clipboard.writeText 报告成功', (await clipboard.writeText(marker)) === true, marker);
+
+                const clipboardBack = await clipboard.readText();
+                check('clipboard.readText 读回刚写进去的内容（三平台原生实现接对了）',
+                    clipboardBack === marker, String(clipboardBack));
+
+                let clipLabelCode = 'unset';
+                try {
+                    await clipboard.writeText('x', { label: 'PRIMARY' });
+                } catch (e) {
+                    clipLabelCode = e && e.code;
+                }
+                check('clipboard.writeText 对 label 明确拒绝（not_supported）',
+                    clipLabelCode === 'not_supported', clipLabelCode);
+
+                check('clipboard.clear 报告成功', (await clipboard.clear()) === true, 'ok');
+
+                const afterClear = await clipboard.readText();
+                check('清空之后读不到文本（null 或空串）',
+                    afterClear === null || afterClear === '', String(afterClear));
+
                 //
                 // 这一条必须在**真页面**里验：`convertFileSrc` 是同步拼字符串，
                 // 真正的强制点在 webview 去请求那个 URL 时。而"请求能不能成功"
@@ -693,7 +725,18 @@ internal static class ApiSelfTest
 
             if (timedOut)
             {
-                Failures.Add($"页面探针在 {elapsedSeconds:F0} 秒内没有回显");
+                // 超时的**两种成因**要分开说，否则这个现象完全指不到根因：
+                //
+                //   * 脚本**解析失败**（比如一个重复的 const）——那时一条输出都不会有，
+                //     而"超时"与"有个重复的变量名"看不出任何关系。
+                //     这个是**踩过两次**的：探针是一个扁平作用域，所有 const 都在同一层。
+                //   * 脚本跑起来了但某条命令没回执——那时前面会有若干 OK 行。
+                //
+                // 提示里给出定位手段（ORIEL_PROBE_DUMP + node --check），而不是只说"超时了"。
+                Failures.Add(
+                    $"页面探针在 {elapsedSeconds:F0} 秒内没有回显。" +
+                    "若此前**一条 OK 都没有**，多半是脚本解析失败（例如重复的 const——" +
+                    "探针是扁平作用域）；设 ORIEL_PROBE_DUMP=1 落盘后用 node --check 定位。");
             }
 
             if (Failures.Count > 0)

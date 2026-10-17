@@ -428,6 +428,38 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gdk, EntryPoint = "gdk_window_get_frame_extents")]
     internal static partial void GdkWindowGetFrameExtents(nint gdkWindow, out GdkRectangle rect);
 
+    // ---- 剪贴板（GtkClipboard）----
+    //
+    // 用法是 `gtk_clipboard_get(GDK_SELECTION_CLIPBOARD)` 拿到那个**单例**，
+    // 然后 wait_for_text / set_text。注意：
+    //
+    //   * `gdk_atom_intern_static_string` 拿到的是 atom，必须用**静态**那个变体
+    //     （`gdk_atom_intern` 每次都会新建一个 atom，长期跑会累积）。
+    //   * `wait_for_text` 是**同步阻塞**的：它会跑一个内嵌的 main loop 等剪贴板所有者应答。
+    //     所以它必须在**主线程**上调，而且对方卡住时这里也会卡住。
+    //     这不是偷懒——GTK 的剪贴板是异步 API，没有"非阻塞地取一次"这种东西，
+    //     `wait_for_text` 就是它给同步调用方的那个入口。见 LinuxPlatformBackend 的说明。
+    //   * `set_text` 之后必须 `gtk_clipboard_store`，否则应用退出后剪贴板内容就没了
+    //     （X11 的剪贴板是"由所有者提供内容"的模型，不是把数据交给系统）。
+
+    [LibraryImport(Gdk, EntryPoint = "gdk_atom_intern_static_string", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial nint GdkAtomInternStaticString(string atomName);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_get")]
+    internal static partial nint GtkClipboardGet(nint selection);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_wait_for_text")]
+    internal static partial nint GtkClipboardWaitForText(nint clipboard);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_set_text", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial void GtkClipboardSetText(nint clipboard, string text, int len);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_clear")]
+    internal static partial void GtkClipboardClear(nint clipboard);
+
+    [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_store")]
+    internal static partial void GtkClipboardStore(nint clipboard);
+
     // ---- GObject / Glib ----
 
     [LibraryImport(GOject, EntryPoint = "g_signal_connect_data", StringMarshalling = StringMarshalling.Utf8)]

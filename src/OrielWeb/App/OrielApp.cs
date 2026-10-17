@@ -1002,6 +1002,30 @@ public sealed class OrielApp : IDisposable
     /// </remarks>
     internal bool IsRunning => _backend is not null;
 
+    // ---------------------------------------------------------------- 系统剪贴板
+    //
+    // 只做纯文本。富格式（HTML）与图片的取舍写在 IPlatformBackend 的接口注释里。
+
+    /// <summary>
+    /// 读系统剪贴板里的文本；没有文本内容时返回 <c>null</c>。
+    /// </summary>
+    /// <remarks>
+    /// <b>没有后端（未 <c>Run()</c>）时返回 <c>null</c></b>，而不是抛异常——
+    /// 与通知那几条一致：调用方要判断的是"有没有文本"，而"宿主没起来"对它来说
+    /// 与"剪贴板里没有文本"是同一个结论。
+    /// </remarks>
+    public string? ReadClipboardText() => _backend?.ReadClipboardText();
+
+    /// <summary>把文本写进系统剪贴板；失败时返回 <c>false</c>。</summary>
+    /// <remarks>
+    /// 失败不抛异常：剪贴板是**全局独占**资源，别的进程正开着时写不进去是正常状态，
+    /// 不是调用方的错误。
+    /// </remarks>
+    public bool WriteClipboardText(string text) => _backend?.WriteClipboardText(text) ?? false;
+
+    /// <summary>清空系统剪贴板；失败时返回 <c>false</c>。</summary>
+    public bool ClearClipboard() => _backend?.ClearClipboard() ?? false;
+
     /// <summary>
     /// 发送一条系统通知。
     /// </summary>

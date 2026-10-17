@@ -143,6 +143,87 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
         return MacOSNotificationSender.Send(notification);
     }
 
+    // ---- 系统剪贴板（NSPasteboard）----
+
+    /// <summary>UTF-8 文本的粘贴板类型（<c>NSPasteboardTypeString</c>）。</summary>
+    private const string NSPasteboardTypeString = "public.utf8-plain-text";
+
+    /// <summary>
+    /// 取 <c>[NSPasteboard generalPasteboard]</c>。
+    /// </summary>
+    /// <remarks>
+    /// <c>generalPasteboard</c> 是**类方法**（<c>+</c>），所以 self 传的是类对象而不是实例：
+    /// <c>objc_getClass("NSPasteboard")</c>。传 0 会得到 nil 并让后面所有调用静默失败
+    /// （症状是"剪贴板永远是空的"）。
+    /// </remarks>
+    private static nint GeneralPasteboard()
+    {
+        nint pasteboardClass = ObjCRuntime.GetClass("NSPasteboard");
+        return pasteboardClass == 0
+            ? 0
+            : ObjCRuntime.SendId(pasteboardClass, ObjCRuntime.Sel("generalPasteboard"));
+    }
+
+    /// <summary>
+    /// 读剪贴板文本；没有文本内容时返回 <c>null</c>。
+    /// </summary>
+    /// <remarks>
+    /// AppKit 上的"读剪贴板"就是这两步：问一遍有没有这个类型，再取。
+    /// 返回的 NSString 由 AppKit 持有（autorelease），这里只读它的 UTF-8 字节，不接管所有权。
+    /// </remarks>
+    public string? ReadClipboardText()
+    {
+        nint pasteboard = GeneralPasteboard();
+        if (pasteboard == 0)
+        {
+            return null;
+        }
+
+        nint type = ObjCRuntime.MakeNSString(NSPasteboardTypeString);
+
+        // stringForType: 返回 NSString* 或 nil（剪贴板里没有该类型时）
+        nint text = ObjCRuntime.SendIdObj(pasteboard, ObjCRuntime.Sel("stringForType:"), type);
+        return text == 0 ? null : ObjCRuntime.ToManagedString(text);
+    }
+
+    /// <summary>写剪贴板文本。</summary>
+    /// <remarks>
+    /// <c>clearContents</c> 是必须的：它告诉系统"这块内容归我了"，
+    /// 同时**给这块内容打一个变更计数**（changeCount）——不调用的话
+    /// 别的应用不会收到"剪贴板变了"的通知，表现为"复制了但粘贴菜单还是灰的"。
+    /// </remarks>
+    public bool WriteClipboardText(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        nint pasteboard = GeneralPasteboard();
+        if (pasteboard == 0)
+        {
+            return false;
+        }
+
+        _ = ObjCRuntime.SendId(pasteboard, ObjCRuntime.Sel("clearContents"));
+
+        nint type = ObjCRuntime.MakeNSString(NSPasteboardTypeString);
+        nint value = ObjCRuntime.MakeNSString(text);
+
+        // setString:forType: 返回 BOOL
+        return ObjCRuntime.SendIntObjObj(pasteboard, ObjCRuntime.Sel("setString:forType:"), value, type) != 0;
+    }
+
+    /// <summary>清空剪贴板。</summary>
+    public bool ClearClipboard()
+    {
+        nint pasteboard = GeneralPasteboard();
+        if (pasteboard == 0)
+        {
+            return false;
+        }
+
+        _ = ObjCRuntime.SendId(pasteboard, ObjCRuntime.Sel("clearContents"));
+        return true;
+    }
+
     public void RunMessageLoop()
     {
         if (Interlocked.Exchange(ref _ran, 1) == 1)

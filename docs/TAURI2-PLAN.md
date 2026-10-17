@@ -329,7 +329,8 @@ F1 ─→ F2（scope 系统是 convertFileSrc 的前置）
 | **F4b-2b** `fs.*` 命令 + JS 模块 | ✅ 完成（Windows 已验证） | 14 条命令 + `@orielweb/api/fs`，**两道关都必过**（命令授权 + 路径 scope）。新增 `path_not_allowed` 码；归一在 scope 判定之前；`rename`/`copyFile` 两个路径都查。不含句柄式 API（无 rid 表）。新增 36 项单测 + 前端 16 项 + 真页面 22 项 |
 | **F2** `convertFileSrc` + asset 协议 | ✅ 完成（**仅 Windows**；Linux/macOS fail-closed） | 专用 host `file.oriel`（与页面**不同源**，所以磁盘上的 HTML 拿不到桥接）+ 独立 scope `asset.read` + 服务端"先归一后判 scope"。整条路径编成**单段**（URI 的 path 总以 `/` 开头，逐段编码会丢掉绝对路径的前导斜杠）。新增 21 项单测 + 真页面 6 项（含"页面真能加载出来"，验 `%2F` 没被引擎归一） |
 | **F5** 已有能力的 JS 入口 | ✅ 完成（Windows 已验证） | `opener`（3）/ `notification`（3，桌面子集）/ `autostart`（3）+ 内建命令族。**没有新平台代码**——宿主能力早就在 `OrielApp` 上。三族都不整族放行；`openWith` **明确拒绝**（任意程序执行，无授权模型）；`sendNotification` **异步**（Tauri 桌面端用 `window.Notification`）。新增 38 项单测 + 前端 15 项 + 真页面 7 项 |
-| **F** 其余（dialog / clipboard） / **H** | ⬜ 未开始 | 见 §4.1 |
+| **F6** `clipboard` | ✅ 完成（Windows 已验证；Linux/macOS 交叉编译通过、运行期未验） | `@orielweb/api/clipboard`（3 条）+ 内建命令族。**本批有新平台代码**：Windows Win32 剪贴板 API / Linux GTK `GtkClipboard` / macOS `NSPasteboard`。`readText` 的 `null` 与 `''` 区分开；写失败返回 false（全局独占资源被占是正常状态，Windows 侧重试 5×10ms）；`label` 明确拒绝；不做 `writeHtml`（CF_HTML 的偏移头写错会静默产生乱码）。新增 13 项单测 + 前端 9 项 + 真页面 5 项（真剪贴板往返） |
+| **F** 其余（dialog） / **H** | ⬜ 未开始 | 见 §4.1 |
 
 ### M3 的状态（2026-10-17）
 

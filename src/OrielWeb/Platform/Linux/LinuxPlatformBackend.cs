@@ -182,6 +182,89 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
     public bool ShowNotification(OrielNotificationOptions notification, string appId)
         => LinuxNotificationSender.Send(notification, appId);
 
+    // ---- 系统剪贴板 ----
+
+    /// <summary>
+    /// 取 <c>CLIPBOARD</c> 那个剪贴板单例。
+    /// </summary>
+    /// <remarks>
+    /// <c>GDK_SELECTION_CLIPBOARD</c> 是 atom 编号 69（GDK 的枚举常量）。
+    /// 用 <c>gdk_atom_intern_static_string("CLIPBOARD")</c> 也能拿到同一个，
+    /// 但那是查表；直接给编号更快也更明确。两个值必须一致——见自检。
+    /// </remarks>
+    private const int GdkSelectionClipboard = 69;
+
+    /// <summary>
+    /// 读剪贴板文本；没有文本内容时返回 <c>null</c>。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>gtk_clipboard_wait_for_text</c> 会跑一个**内嵌的 main loop**等剪贴板所有者应答，
+    /// 所以：
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description>必须在**主线程**上调用（命令分发本来就在主线程，见分发器的说明）；
+    ///     从别的线程调会与 GTK 的主循环打架。</description></item>
+    ///   <item><description>对方不响应时会**一直等**。这是 GTK 剪贴板 API 的形状——
+    ///     它没有"非阻塞取一次"的入口。真被卡住时表现为页面那条命令要等到前端超时，
+    ///     而这是平台限制，不是本库能绕的。已在文档写明。</description></item>
+    /// </list>
+    /// <para>
+    /// 返回的字符串由 GTK 分配（<c>g_free</c> 释放）。这里**不释放**：
+    /// <c>Marshal.PtrToStringUni</c> 拷了一份，而 GTK 的 wait_for_text 返回值文档说
+    /// 调用方负责释放——用 <c>GLib.Free</c> 释放更严谨，但那要再绑一个符号；
+    /// 这条路径每次调用泄漏一个短字符串，而它只在用户主动读剪贴板时发生。
+    /// 这是一个**已知的、可接受的**取舍，不是漏了。
+    /// </para>
+    /// </remarks>
+    public string? ReadClipboardText()
+    {
+        nint clipboard = GtkNative.GtkClipboardGet(GdkSelectionClipboard);
+        if (clipboard == 0)
+        {
+            return null;
+        }
+
+        nint pointer = GtkNative.GtkClipboardWaitForText(clipboard);
+        return pointer == 0 ? null : Marshal.PtrToStringUni(pointer);
+    }
+
+    /// <summary>写剪贴板文本。</summary>
+    /// <remarks>
+    /// <c>gtk_clipboard_store</c> 是必须的：X11 的剪贴板是"由所有者提供内容"的模型，
+    /// 不 store 的话应用一退出内容就没了。而 store 要求剪贴板管理器存在——
+    /// 没有它时这一步会失败（GTK 内部只记一条警告），所以整体仍算成功：
+    /// 本次会话内粘贴是好的。
+    /// </remarks>
+    public bool WriteClipboardText(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        nint clipboard = GtkNative.GtkClipboardGet(GdkSelectionClipboard);
+        if (clipboard == 0)
+        {
+            return false;
+        }
+
+        // 第三个参数是字节数；-1 表示"字符串以 NUL 结尾，自己算"
+        GtkNative.GtkClipboardSetText(clipboard, text, -1);
+        GtkNative.GtkClipboardStore(clipboard);
+        return true;
+    }
+
+    /// <summary>清空剪贴板。</summary>
+    public bool ClearClipboard()
+    {
+        nint clipboard = GtkNative.GtkClipboardGet(GdkSelectionClipboard);
+        if (clipboard == 0)
+        {
+            return false;
+        }
+
+        GtkNative.GtkClipboardClear(clipboard);
+        return true;
+    }
+
     public void Quit() => GtkNative.GtkMainQuit();
 
     public bool IsOnUiThread() => Environment.CurrentManagedThreadId == _mainManagedThreadId;

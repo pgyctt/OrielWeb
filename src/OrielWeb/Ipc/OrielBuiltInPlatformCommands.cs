@@ -26,7 +26,7 @@ namespace OrielWeb.Ipc;
 internal static class OrielBuiltInPlatformCommands
 {
     /// <summary>命令名前缀们。</summary>
-    internal static readonly string[] Prefixes = ["opener.", "notification.", "autostart."];
+    internal static readonly string[] Prefixes = ["opener.", "notification.", "autostart.", "clipboard."];
 
     /// <summary>取某个本族命令的处理函数；不是本族命令时返回 false。</summary>
     internal static bool TryGet(string name, out Func<IOrielWindowControl, string, JsonElement, object?> handler)
@@ -100,9 +100,62 @@ internal static class OrielBuiltInPlatformCommands
                 handler = static (window, _, _) => Running(window) && window.App.DisableAutoStart();
                 return true;
 
+            // ---- clipboard（对标 plugin-clipboard-manager 的纯文本部分）----
+
+            case "clipboard.readText":
+                // 没后端时返回 null（"没有文本"）而不是抛：对调用方来说，
+                // 那与"剪贴板里没有文本"是同一个结论
+                handler = static (window, _, _) => window.App.ReadClipboardText();
+                return true;
+
+            case "clipboard.writeText":
+                handler = static (window, command, args) =>
+                {
+                    RejectClipboardLabel(args);
+
+                    string text = OrielJson.GetRequiredArg<string>(args, "text", null);
+                    return window.App.WriteClipboardText(text);
+                };
+                return true;
+
+            case "clipboard.clear":
+                handler = static (window, _, _) => window.App.ClearClipboard();
+                return true;
+
             default:
                 handler = null!;
                 return false;
+        }
+    }
+
+    /// <summary>
+    /// 拒绝 Tauri 的 <c>label</c> 参数（"操作哪一个剪贴板"）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 那个参数在 X11 上有意义（<c>CLIPBOARD</c> / <c>PRIMARY</c> / <c>SECONDARY</c> 是三个
+    /// 独立的剪贴板），而 Windows 与 macOS 各只有一个。本库目前只操作默认那个
+    /// （X11 的 <c>CLIPBOARD</c>，也就是 Ctrl+C/V 用的那个）。
+    /// </para>
+    /// <para>
+    /// <b>明确拒绝而不是静默忽略</b>：忽略会让调用方以为"我写进的是 PRIMARY"
+    /// （X11 上中键粘贴用的那个），实际写进了 CLIPBOARD——一次静默的目标错位。
+    /// 要支持 PRIMARY 应当连同"三平台语义不一致"这件事一起设计
+    /// （Windows/macOS 上它根本不存在），不该靠一个被忽略的参数蒙混过去。
+    /// </para>
+    /// </remarks>
+    private static void RejectClipboardLabel(JsonElement args)
+    {
+        if (args.ValueKind == JsonValueKind.Object
+            && args.TryGetProperty("label", out JsonElement label)
+            && label.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
+        {
+            throw new OrielIpcException(
+                "本库不支持 clipboard 的 label（指定哪个剪贴板）：目前只操作默认剪贴板" +
+                "（X11 的 CLIPBOARD），而 Windows/macOS 上也没有第二个剪贴板。请省略该参数。")
+            {
+                Code = OrielIpcErrorCodes.NotSupported,
+            };
         }
     }
 
