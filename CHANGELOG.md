@@ -163,8 +163,40 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
   实测数值与 `WithSize` 那处修复**交叉吻合**：framed 下 `Outer - Inner = 16x39`、
   `InnerPos - OuterPos = 8,31`。
 
+### 新增（路径运算，F1）
+
+- **`@orielweb/api/path`**（对标 `@tauri-apps/api/path` 的路径运算部分）：`sep` / `delimiter`
+  （**同步**，读宿主注入的常量）+ `join` / `normalize` / `dirname` / `extname` / `basename` /
+  `isAbsolute` / `resolve`（异步，走宿主）。宿主侧是内建命令族 `path.*`。
+- **为什么"纯字符串运算"也放宿主**：这是本批唯一反直觉的决定。Tauri 2 自己就是全部走 IPC 的
+  （读官方源码才确认——我原以为可以在 JS 里做），而真正的理由不是照抄：Windows 的盘符、UNC、
+  `\\?\` 前缀、大小写不敏感，POSIX 的重复/尾随斜杠…… 在 JS 里手写一份就是**又造一份平台语义**，
+  两份实现必然在某个边角上不一致，症状是"只在某个平台错"。宿主有 .NET 的 `Path`。
+- **`path.*` 整族始终放行**（见 `OrielCapabilityRules.AlwaysAllowedPathCommands`）：
+  本族每个命令都只对**页面自己传进来的字符串**做运算，不做 I/O、不读宿主状态、不涉及别的窗口，
+  所以放行它不会让页面多做到任何一件它本来做不到的事。Tauri 的路径命令也属
+  `core:path:default`（默认开启）。若这里要求逐条声明，应用的实际反应会是 `Allow("path.*")`——
+  和整族放行没区别，只多一层容易写错的配置。
+  **这条放行的前提是不做 I/O**：需要 I/O 的路径能力（`fs` 读写、`convertFileSrc`）不在本族，
+  照旧走 scope + 能力声明。
+- **`normalize` 是词法的，不做文件系统访问**（与 Tauri 的**有意分歧**）：
+  Tauri 用 `std::fs::canonicalize`，它**会解析符号链接**，而且**路径不存在时直接报错**——
+  后者是很容易踩的坑："把用户输入的路径先归一一下"在路径还不存在时就会失败。
+  本库用 `Path.GetFullPath`，纯词法，对不存在的路径也能正确工作。
+  需要"真实路径"应当是 `fs` 模块的一个显式操作，而不是 `normalize` 偷偷做的事。
+
 ### 修复
 
+- **`extname` 对隐藏文件的口径**：.NET 的 `Path.GetExtension(".gitignore")` 给 `gitignore`，
+  而 Rust 的 `Path::extension()`（Tauri 的 `extname`）与 Node 的 `path.extname` 都给**空串**
+  ——整个名字是文件名，前导点不算扩展名分隔符。从 Tauri 迁来的代码走的是 Rust 口径，
+  所以这里显式实现那条规则（文件名里最后一个点之后的部分，且点不能在第 0 位或末尾）。
+- **`basename` / `dirname` 忽略尾随分隔符**：`Path.GetFileName("/a/b/")` 给空串、
+  `Path.GetDirectoryName("dir/")` 给 `dir`，而 Rust 的 `file_name()` / `parent()`
+  忽略尾随分隔符（Tauri 文档里就写着 "trailing directory separators are ignored"，
+  其例子 `dirname('/path/to/somedir/')` 给 `/path/to`）。现在两者都先去尾再算。
+  去尾时**保留根**：把 `"C:\"` 剪成 `"C:"` 会让 `GetFileName` 给出一个看起来像文件名、
+  实际什么都不是的东西。
 - **`WithSize` / `Resize` / `WithMinSize` 在 Windows 上按整窗尺寸设置（客户区比另两个平台小一圈）**。
   实测 `WithSize(800, 600)` 在 Windows 装饰窗口上得到客户区 `784x561`——宽度少 16（左右边框各 8）、
   高度少 39（标题栏 31 + 下边框 8），而 Linux（`gtk_window_resize`）与 macOS（`setContentSize:`）

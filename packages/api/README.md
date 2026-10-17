@@ -26,8 +26,9 @@ import { invoke } from '@orielweb/api/core';
 | `event` | ✅ `listen` / `once` / `emit` / `emitTo` + `TauriEvent`（含名字映射与按需转发） |
 | `window` | ✅ `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow`（恒 `null`）+ `Window` 类 |
 | `dpi` | ✅ 四个类 + 归一 + 换算 |
+| `path` | ✅ `sep` / `delimiter`（同步）+ 7 个路径运算（由宿主算） |
 | `mocks` | ✅ `mockIPC` / `mockWindows` / `mockEmit` / `mockConvertFileSrc` / `clearMocks` |
-| `app` / `path` / `menu` / `image` / … | 尚未实现，见 [TAURI2-PLAN.md](../../docs/TAURI2-PLAN.md) |
+| `app` / `menu` / `image` / `dialog` / `fs` / … | 尚未实现，见 [TAURI2-PLAN.md](../../docs/TAURI2-PLAN.md) |
 
 ## 关闭接管：语义与 Tauri **相反**
 

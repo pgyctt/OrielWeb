@@ -4,9 +4,13 @@
  * @template T
  * @param {string} cmd 命令名（如 `todo.add`）。
  * @param {Record<string, unknown>} [args] 参数对象；省略等同于"不带参数"。
- * @param {{ timeout?: number }} [options] `timeout` 单位毫秒，`<= 0` 表示不超时。
+ * @param {{ timeout?: number }} [options] `timeout` 单位毫秒，`<= 0` 表示**这次调用不超时**。
  *   省略时用全局默认值（`oriel.timeout`，默认 30000）。
  * @returns {Promise<T>}
+ * @throws {Error} 失败时 reject：`message` 是宿主文案；`code` 是可选的机器可判别错误码
+ *   （库自己的那些见 `OrielIpcErrorCodes`，如 `not_allowed` / `unknown_command` /
+ *   `missing_argument`）；`data` 是可选的附加数据。两个字段**只在宿主给了时才存在**，
+ *   所以写 `if (e.code === 'not_allowed')` 就够了，不必先判 `in`。
  */
 export function invoke<T>(cmd: string, args?: Record<string, unknown>, options?: {
     timeout?: number;

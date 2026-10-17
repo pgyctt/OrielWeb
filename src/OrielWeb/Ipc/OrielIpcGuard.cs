@@ -126,6 +126,15 @@ internal sealed class OrielIpcGuard
             return true;
         }
 
+        // path.* 族**整族放行**（逐条理由见 IsAlwaysAllowedPathCommand）。
+        // 它之所以能整族放行、而 window.* 不能：本族只对页面自己给的字符串做运算，
+        // 不做 I/O、不读宿主状态、不涉及别的窗口。
+        if (OrielCapabilityRules.IsAlwaysAllowedPathCommand(commandName))
+        {
+            denialReason = null;
+            return true;
+        }
+
         if (_options is null)
         {
             if (_isDebugBuild)

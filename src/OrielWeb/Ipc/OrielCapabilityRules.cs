@@ -176,6 +176,59 @@ internal static class OrielCapabilityRules
     ];
 
     /// <summary>
+    /// 始终放行的 <c>path.*</c> 命令（整族）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>为什么整族放行</b>，而 <c>window.*</c> 只放行一小撮：本族的每个命令都只对
+    /// **页面自己传进来的字符串**做运算，不读宿主状态、不写任何东西、不涉及别的窗口。
+    /// 换句话说，放行 <c>path.join</c> 不会让页面多做到任何一件它本来做不到的事
+    /// （它自己拼字符串也能得到同样的结果，只是可能拼错）。
+    /// </para>
+    /// <para>
+    /// 这条判断的边界要说清楚：
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description><c>normalize</c> / <c>resolve</c> 会**拼上当前工作目录**，
+    ///     所以严格说泄露了一点宿主状态（cwd）。但那既不是秘密（同进程的应用代码本来就
+    ///     知道自己在哪），也远轻于我们已经无条件放行的 <c>window.destroy</c>——
+    ///     对 cwd 斤斤计较而放行销毁窗口是不自洽的。</description></item>
+    ///   <item><description>真正需要 I/O 的路径能力（<c>fs</c> 模块的读写、<c>convertFileSrc</c>）
+    ///     **不在本族**，它们照旧走 scope + 能力声明。这一条是刻意的：
+    ///     本族之所以能整族放行，前提就是它不做 I/O。</description></item>
+    /// </list>
+    /// <para>
+    /// 对齐口径：Tauri 的路径命令属于 <c>core:path:default</c>，**默认开启**。
+    /// 若这里要求逐条声明，应用的实际反应会是 <c>Allow("path.*")</c>——
+    /// 那和现在这样整族放行没有区别，只是多了一层容易写错的配置。
+    /// </para>
+    /// </remarks>
+    private static readonly string[] AlwaysAllowedPathCommands =
+    [
+        "path.join",
+        "path.dirname",
+        "path.extname",
+        "path.basename",
+        "path.isAbsolute",
+        "path.normalize",
+        "path.resolve",
+    ];
+
+    /// <summary>判断某个 <c>path.*</c> 命令是否属于"始终放行"的一族。</summary>
+    internal static bool IsAlwaysAllowedPathCommand(string name)
+    {
+        foreach (string allowed in AlwaysAllowedPathCommands)
+        {
+            if (string.Equals(allowed, name, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// 按 allow / deny 两组模式判定一个命令名。
     /// </summary>
     /// <remarks>

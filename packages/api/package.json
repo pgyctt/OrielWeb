@@ -33,6 +33,10 @@
       "types": "./types/dpi.d.ts",
       "default": "./src/dpi.js"
     },
+    "./path": {
+      "types": "./types/path.d.ts",
+      "default": "./src/path.js"
+    },
     "./window": {
       "types": "./types/window.d.ts",
       "default": "./src/window.js"

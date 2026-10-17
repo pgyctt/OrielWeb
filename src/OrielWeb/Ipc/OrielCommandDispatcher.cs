@@ -180,6 +180,25 @@ internal sealed class OrielCommandDispatcher
             return;
         }
 
+        // 内建路径命令族（path.*）：路径运算，对标 Tauri 2 的 @tauri-apps/api/path。
+        //
+        // **不需要来源窗口**——这是它与 win.* / window.* 的结构性差别：那些命令的操作对象
+        // 是某个窗口，而路径运算只碰页面自己给的字符串。所以这里没有 window is null 的检查。
+        //
+        // 本族**始终放行**（见 OrielCapabilityRules.AlwaysAllowedPathCommands）。
+        if (OrielBuiltInPathCommands.TryGet(name, out var pathBuiltIn))
+        {
+            try
+            {
+                ReplyOk(sink, id, pathBuiltIn(args));
+            }
+            catch (Exception ex)
+            {
+                ReplyError(sink, id, DescribeBuiltInFailure(name, ex));
+            }
+            return;
+        }
+
         // 内建窗口 API 命令族（window.*）：可按 label 寻址，对标 Tauri 2 的 @tauri-apps/api/window。
         // 与 event.* 一样**不整族放行**：只有标题栏必需的那组才绕过能力校验
         // （见 OrielCapabilityRules.IsAlwaysAllowedWindowCommand）。能走到这里的调用方

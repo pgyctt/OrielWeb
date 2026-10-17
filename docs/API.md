@@ -899,8 +899,41 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 | `core` | `invoke` / `isTauri` / `convertFileSrc`（未实现，显式抛错） |
 | `event` | `listen` / `once` / `emit` / `emitTo` / `TauriEvent` |
 | `window` | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow`（恒 `null`，见下）+ `Window` 类 |
+| `path` | `sep` / `delimiter`（**同步**）+ `join` / `normalize` / `dirname` / `extname` / `basename` / `isAbsolute` / `resolve` |
 | `dpi` | `LogicalSize` / `PhysicalSize` / `LogicalPosition` / `PhysicalPosition` + 归一与换算 |
 | `mocks` | `mockIPC` / `mockWindows` / `mockEmit` / `mockConvertFileSrc` / `clearMocks` |
+
+### `path` 模块
+
+**整族无需能力声明**（`path.*` 始终放行）：本族每个命令都只对页面自己传进来的字符串做运算，
+不做 I/O、不读宿主状态、不涉及别的窗口。Tauri 的路径命令同样默认开启（`core:path:default`）。
+
+```js
+import { join, extname, basename, sep } from '@orielweb/api/path';
+
+await join('C:', 'logs', 'app.log');   // 按平台规则拼接（由宿主算）
+await extname('a.tar.gz');             // 'gz'   —— 不含点，与 Node 的 path.extname 不同
+await basename('d/app.conf', '.conf'); // 'app'
+sep();                                 // 同步：'\\'（Windows）或 '/'（POSIX）
+```
+
+与 Tauri 的三处口径（前两处是**对接** Rust，第三处是有意分歧）：
+
+| 项 | 本库/Tauri（Rust） | Node / .NET |
+|---|---|---|
+| `extname('file.html')` | `'html'`（不含点） | Node 给 `'.html'` |
+| `extname('.gitignore')` | `''`（整名是文件名） | **.NET 给 `'gitignore'`** |
+| `normalize(p)` 对不存在的路径 | **正常工作**（纯词法） | Tauri 用 `canonicalize`，**会报错** |
+
+第三处值得展开：Tauri 的 `normalize` 用 `std::fs::canonicalize`，它**会解析符号链接**，
+而且**路径不存在时直接报错**——"把用户输入的路径先归一一下"在路径还不存在时就会失败，
+是很容易踩的坑。本库用纯词法归一（`Path.GetFullPath`），不做任何文件系统访问。
+需要"真实路径"（解析链接）应当是 `fs` 模块的一个显式操作。
+
+> **为什么这些"纯字符串运算"也走宿主**：Windows 的盘符、UNC、`\\?\` 前缀、大小写不敏感，
+> POSIX 的重复/尾随斜杠……在 JS 里手写一份就是**又造一份平台语义**，两份实现必然在某个边角上
+> 不一致，症状是"只在某个平台错"。宿主有 .NET 的 `Path`，那是这些规则在 .NET 里的权威实现——
+> 加上上面那两处 Rust 口径的显式调整。
 
 **`window` 模块的方法是否需要能力声明**：
 

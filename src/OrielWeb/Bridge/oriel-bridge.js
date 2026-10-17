@@ -90,6 +90,18 @@
         // 由宿主注入的库版本（见 OrielBridgeTemplate）。页面用它做能力探测，
         // 因此**不能**在这里写死字面量——写死会与包版本各自漂移，静默误导所有兼容判断。
         version: '__ORIEL_VERSION__',
+        // 平台路径常量（对标 Tauri 的 path.sep / path.delimiter）。
+        //
+        // **这两个是同步的**（Tauri 亦然）：它们是纯常量，为了它们走一次异步 IPC
+        // 会让 `join(a, b)` 这种本该同步可算的东西也必须 await。
+        //
+        // 由平台标识推出而不是再加两个注入占位符：这两个常量在任何平台上都只有
+        // 下面这两种取值，没有任何模糊空间。注意 sep 在 Windows 上是**反斜杠**
+        // （写成 '\\' 是因为这是 JS 字符串字面量）。
+        path: {
+            sep: __ORIEL_PLATFORM__ === 'windows' ? '\\' : '/',
+            delimiter: __ORIEL_PLATFORM__ === 'windows' ? ';' : ':',
+        },
         ready: ready,
         // 命令回执超时（毫秒），可在页面侧改写为其他值；<=0 表示不启用超时。
         // 没有它时，命令永不回执（如宿主侧异常导致 sink 未投递）会让 Promise

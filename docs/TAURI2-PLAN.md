@@ -322,7 +322,8 @@ F1 ─→ F2（scope 系统是 convertFileSrc 的前置）
 | **E2** inner/outer 查询 | ✅ 完成（Windows 已验证） | `WebviewWindow.InnerSize` / `OuterSize` / `InnerPosition` / `OuterPosition` + `window.*` 四条命令 + JS 四个方法。**刻意不在标题栏白名单里**（能按 label 读别的窗口几何）。`--selftest geometry` 扩展"查询"那半，实测与 E1 的边框开销**交叉吻合**：framed 下 `Outer - Inner = 16x39`、`InnerPos - OuterPos = 8,31` |
 | **E3** dpi 多态接进 window 模块 | ✅ 完成 | `setSize` / `setPosition` / `setMinSize` 接受 `LogicalSize` 与 `PhysicalSize`（后者按窗口所在显示器的缩放比换算）；查询返回 `LogicalSize` / `LogicalPosition` 实例，`setSize(innerSize())` 是**不动点**（单测 + 真页面断言都有） |
 | **F7** 错误模型 | ✅ 完成（Windows 已验证） | 回执带可选 `code` / `data` → 页面 `Error` 上可读；8 个库级错误码（`OrielIpcErrorCodes`）；应用可自带 `OrielIpcException.Code` / `.Details`；**逐次调用超时**（`invoke(cmd, args, { timeout })`，宿主显式声明 `supportsPerCallTimeout`）；回执改为整对象传递（`_onResult(result)`），消除三平台的抽取漂移。新增 13 项单测 + 桥接 24 项 + 真页面 5 项 |
-| **F** 其余（path / dialog / app / opener / clipboard / convertFileSrc） / **H** | ⬜ 未开始 | 见 §4.1 |
+| **F1** `path` 模块 | ✅ 完成（Windows 已验证） | 内建命令族 `path.*`（7 条）+ `@orielweb/api/path`；`sep` / `delimiter` 由宿主注入（**同步**）；**整族始终放行**（不做 I/O 是那条放行的前提）。两处对接 Rust 口径（`extname` 不带点、隐藏文件无扩展名、`basename`/`dirname` 忽略尾随分隔符）；`normalize` **不做 I/O**（与 Tauri 的 `canonicalize` 有意分歧）。新增 37 项单测 + 前端 11 项 + 真页面 14 项 |
+| **F** 其余（dialog / app / opener / clipboard / convertFileSrc） / **H** | ⬜ 未开始 | 见 §4.1 |
 
 ### M3 的状态（2026-10-17）
 

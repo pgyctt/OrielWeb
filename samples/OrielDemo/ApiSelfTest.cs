@@ -127,6 +127,56 @@ internal static class ApiSelfTest
                 try { core.convertFileSrc('/tmp/a.png'); } catch (_) { convertThrew = true; }
                 check('core.convertFileSrc 未实现时明确抛错', convertThrew, 'P1-2');
 
+                // ---- path（F1）：同步常量 + 路径运算 ----
+                const path = await import(vendor + '/path.js');
+
+                // sep/delimiter 是**同步**的（读宿主注入的常量），所以这里刻意不 await
+                check('path.sep() 与宿主平台一致（本机 Windows 上是反斜杠）',
+                    path.sep() === '\\', JSON.stringify(path.sep()));
+                check('path.delimiter() 与宿主平台一致（本机 Windows 上是分号）',
+                    path.delimiter() === ';', JSON.stringify(path.delimiter()));
+
+                const joined = await path.join('a', 'b', 'c');
+                check('path.join 按平台分隔符拼接',
+                    joined === ['a', 'b', 'c'].join(path.sep()), joined);
+
+                // **不带前导点**——与 Node 的 path.extname 不同，与 Tauri/Rust 一致
+                check('path.extname 不带前导点', (await path.extname('file.html')) === 'html',
+                    await path.extname('file.html'));
+
+                // 隐藏文件没有扩展名：这条 .NET 与 Rust 口径不同，是本库显式实现的那条规则
+                check('path.extname 对 .gitignore 给空串（Rust/Node 口径，非 .NET 口径）',
+                    (await path.extname('.gitignore')) === '', JSON.stringify(await path.extname('.gitignore')));
+
+                check('path.basename 能剥离指定扩展名',
+                    (await path.basename('dir/app.conf', '.conf')) === 'app',
+                    await path.basename('dir/app.conf', '.conf'));
+
+                const dirInput = ['a', 'b', 'c.txt'].join(path.sep());
+                check('path.dirname 给出父目录',
+                    (await path.dirname(dirInput)) === ['a', 'b'].join(path.sep()),
+                    await path.dirname(dirInput));
+
+                check('path.isAbsolute 判平台相关的绝对性',
+                    (await path.isAbsolute(['C:', 'x'].join(path.sep()))) === true
+                        && (await path.isAbsolute('a/b')) === false, 'ok');
+
+                // normalize 是**词法**的：不存在的路径也要能归一（Tauri 用 canonicalize，会在这里报错）
+                const ghost = ['nonexistent-oriel', 'sub', '..', 'file.txt'].join(path.sep());
+                const normalized = await path.normalize(ghost);
+                check('path.normalize 对不存在的路径也能工作（不做 I/O）',
+                    normalized.endsWith(['nonexistent-oriel', 'file.txt'].join(path.sep())), normalized);
+
+                // resolve 保证绝对；join 不保证——这是两者的实质差别
+                const resolved = await path.resolve('sub', 'file.txt');
+                check('path.resolve 给出绝对路径',
+                    resolved !== joined && resolved.includes(path.sep() + 'sub'),
+                    resolved);
+
+                // path.* 整族放行：demo 的能力名单里**没有**任何 path.* 条目
+                // （见 Program.cs），所以这几条能跑通本身就是"放行生效"的证据。
+                check('path.* 无需能力声明即可用（整族放行）', true, '见 Program.cs 的能力名单');
+
                 // ---- 结构化错误（F7）：码要真的到达页面 ----
                 //
                 // 用一条**确定会被拒**的命令取证：demo 刻意没有声明 window.setResizable。
