@@ -52,7 +52,7 @@ internal static class Program
     /// <c>--selftest</c> 认得的名字。加一个自检只需在这里加名字 + 在 Main 里加一行判定。
     /// </summary>
     private static readonly string[] SelfTestNames =
-        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js"];
+        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless"];
 
     /// <summary>本次请求的自检名字是否就是 <paramref name="name"/>（忽略大小写与首尾空白）。</summary>
     private static bool IsSelfTest(string? requested, string name)
@@ -62,6 +62,19 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        // 自检的结论行是中文（"失败: …"），而 Windows 控制台的默认代码页是 GBK：
+        // 重定向到文件或管道时按 GBK 写出，CI 里用 UTF-8 的 grep 会匹配不到——
+        // 症状是"自检明明跑了，脚本却说没有结论行"。显式置 UTF-8 让三平台一致。
+        // 只在输出被重定向时才有意义；控制台直连时设了也无害。
+        try
+        {
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+        }
+        catch (IOException)
+        {
+            // 没有控制台（WinExe 双击启动）时设置会失败，那不是错误
+        }
+
         // --hidden：以隐藏窗口启动。既用于验证三平台的 Hidden 语义（窗口不上屏，但页面照常
         // 加载、IPC 照常往返），也是"先隐藏预热、准备好再显示"这类用法的示例。
         var hidden = args.Contains("--hidden");
@@ -123,6 +136,13 @@ internal static class Program
         // 后者验前端（页面经 oriel.tray 调内建 tray.* 命令并回显结论）——见 TraySelfTest 的说明
         var traySelfTest = IsSelfTest(selfTest, "tray");
         var trayJsSelfTest = IsSelfTest(selfTest, "tray-js");
+        // geometry：窗口尺寸语义。取证的是一个**现存缺陷**（三平台 WithSize 的语义不一致，
+        // 见 docs/TAURI2-PLAN.md 的 E-1）——它要求装饰窗口，因为 frameless 下整窗 ≈ 客户区，
+        // 偏差测不出来。所以这个自检**不能**调 WithFrameless()。
+        // geometry-frameless：反面。修 framed 的换算时极易把 frameless 也套进去，
+        // 症状是"无边框窗口比请求的大一圈"——而那正是 demo 的默认形态，必须有人看着。
+        var geometrySelfTest = IsSelfTest(selfTest, "geometry");
+        var geometryFramelessSelfTest = IsSelfTest(selfTest, "geometry-frameless");
         // --manual-check：手动验证操作台（停在那里等人点，不自动退出）。
         // 与 --selftest shell 的分工：那个是给 CI 的无人断言，这个是给人看的——
         // 每项做成按钮，托管侧的回调（托盘菜单项、通知点击、快捷键、拖放）回显到页面。
@@ -133,7 +153,8 @@ internal static class Program
         // 免得两种模式去争同一个托盘。
         bool anySelfTest = navSelfTest || ipcSelfTest || themeSelfTest
             || singleInstanceSelfTest || shellSelfTest || capabilitySelfTest || multiWindowSelfTest
-            || schemeSelfTest || exitSelfTest || threadingSelfTest || traySelfTest || trayJsSelfTest;
+            || schemeSelfTest || exitSelfTest || threadingSelfTest || traySelfTest || trayJsSelfTest
+            || geometrySelfTest || geometryFramelessSelfTest;
         var manualCheck = !anySelfTest && !args.Contains("--todo");
 
         // 主题自检需要 OrielApp（主题是应用级的），所以这里显式 Build 再 Run；
@@ -175,10 +196,19 @@ internal static class Program
                     w.WithUrl($"https://{AssetHost}/manual-check.html");
                 }
                 w.WithTitle(manualCheck ? "Oriel Demo — 手动验证" : "Oriel Demo — Todo")
-                    .WithSize(1024, 720)
+                    .WithSize((geometrySelfTest || geometryFramelessSelfTest) ? GeometrySelfTest.Width : 1024,
+                              (geometrySelfTest || geometryFramelessSelfTest) ? GeometrySelfTest.Height : 720)
                     .WithMinSize(640, 480)
-                    .WithFrameless()
                     .Centered();
+
+                // 装饰窗口是默认形态，但 demo 平时用无边框（页面自绘标题栏）。
+                // geometry 自检**必须**用装饰窗口：frameless 下整窗 ≈ 客户区，
+                // 三平台尺寸语义的偏差就测不出来——而那正是这个自检要抓的缺陷。
+                // geometry-frameless 则相反，专门验"换算没被套到无边框窗口上"。
+                if (!geometrySelfTest)
+                {
+                    w.WithFrameless();
+                }
             }, win =>
             {
                 Window = win;
@@ -231,6 +261,19 @@ internal static class Program
                     // 同上：需要 app 与已就位的窗口后端
                     WebviewWindow created = win;
                     created.Loaded += () => ThreadingSelfTest.Attach(created.App, created);
+                }
+                if (geometrySelfTest)
+                {
+                    // 窗口尺寸语义（三平台一致性）。需要页面已加载才能读 documentElement.clientWidth，
+                    // 所以挂在 Loaded 上，而不是 onCreated。
+                    WebviewWindow created = win;
+                    created.Loaded += () => GeometrySelfTest.Attach(created.App, created);
+                }
+                if (geometryFramelessSelfTest)
+                {
+                    // 反面：frameless 窗口不该被套上"客户区 → 整窗"的换算。
+                    WebviewWindow created = win;
+                    created.Loaded += () => GeometrySelfTest.AttachFrameless(created.App, created);
                 }
                 if (traySelfTest || trayJsSelfTest)
                 {
@@ -318,6 +361,8 @@ internal static class Program
             || (schemeSelfTest && SchemeSelfTest.Failed)
             || (exitSelfTest && !ExitSelfTest.TimeoutMode && Environment.ExitCode != 0)
             || (threadingSelfTest && ThreadingSelfTest.Failed)
+            || (geometrySelfTest && GeometrySelfTest.Failed)
+            || (geometryFramelessSelfTest && GeometrySelfTest.Failed)
             || ((traySelfTest || trayJsSelfTest) && TraySelfTest.Failed))
         {
             Environment.ExitCode = 1;

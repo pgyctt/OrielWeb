@@ -7,6 +7,59 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
+## 未发布
+
+Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测试先行）。
+详细差异分析与分阶段计划见该文件。
+
+### 新增
+
+- **`@orielweb/api` 前端包**（`packages/api`）：模块名与 `@tauri-apps/api` 一一对应，
+  迁移时只需替换 import 前缀。首批提供 `core`（`invoke` / `isTauri`）、`dpi`
+  （`LogicalSize` / `PhysicalSize` / `LogicalPosition` / `PhysicalPosition` + 归一与换算）、
+  `mocks`（`mockIPC` / `mockWindows` / `mockConvertFileSrc` / `clearMocks`）。
+  **JS + JSDoc，无打包器**：`exports` 直接指向 `src/*.js`，`tsc` 只做类型门禁（`--noEmit`）。
+- **窗口 `label`**（对标 Tauri 2 的 `Window.label`）：`OrielWindowOptions.Label`（默认 `"main"`，
+  自动归一小写，字符集限字母/数字/`-`/`.`/`_`）、`OrielApp.GetWindow(label)`、
+  `WebviewWindow.Label`，以及页面侧的 `window.oriel.label`。
+  **同一应用内必须唯一**，重复时建窗抛 `InvalidOperationException`——不会自动改名，
+  因为自动改名会让 `emitTo('main', …)` 发到错误窗口且毫无症状。
+- `OrielApp.GetFocusedWindow()`：签名已就位，但**目前恒返回 `null`**（三平台都还没有
+  "窗口是否聚焦"的查询能力）。保留它是为了让迁移代码能原样编译。
+- **`--selftest geometry`**：窗口尺寸语义取证，以及 `GEOMETRY-SELFTEST` 结论行。
+  **这一项现在会红**——它取证的是一个现存缺陷（见下方"已知问题"）。
+
+### 修复
+
+- **`WithSize` / `Resize` / `WithMinSize` 在 Windows 上按整窗尺寸设置（客户区比另两个平台小一圈）**。
+  实测 `WithSize(800, 600)` 在 Windows 装饰窗口上得到客户区 `784x561`——宽度少 16（左右边框各 8）、
+  高度少 39（标题栏 31 + 下边框 8），而 Linux（`gtk_window_resize`）与 macOS（`setContentSize:`）
+  得到的就是 800x600。三个平台里只有 Windows 吃的是**整窗**尺寸，这一直是缺陷而不是语义选择。
+  现在 Windows 侧在 `Create` / `Resize` / `WM_GETMINMAXINFO` 三条路径上都做
+  "逻辑像素 → 物理像素 → 客户区转整窗（`AdjustWindowRectExForDpi`）"的换算，
+  **无边框窗口明确不做这一步**（它的 `WM_NCCALCSIZE` 让客户区铺满整窗，再换算会大一圈）。
+  取证：`--selftest geometry` 修复前 `784x561`（FAIL），修复后 `800x600`（PASS）；
+  运行期 `Resize(640, 480)` 同样精确；`--selftest geometry-frameless` 确认无边框形态未被误伤。
+  **影响面**：装饰窗口（`Frameless` 默认 false，即平台原生形态）的内容区会**变大**到与另两个平台一致；
+  无边框窗口行为不变（demo 与多数工业界面用的就是它）。
+- **`API.md` 里 macOS 退出的说法与实现相反**：两处仍写着 `NSApplication.terminate:`，
+  而 0.3.5 已改成 `stop:`（`terminate:` 不让 `Run()` 返回，退出清理被整个跳过）。
+  文档已更正。
+- **demo 的结论行在 Windows 上按 GBK 写出**：控制台默认代码页是 GBK，重定向到文件后
+  CI 用 UTF-8 的 grep 匹配不到中文结论——症状是"自检明明跑了，脚本却说没有结论行"。
+  现在 `Main` 首行显式置 `Console.OutputEncoding = UTF8`。
+- **`.gitignore` 的 `**/packages/*` 会把 `packages/api` 整个忽略**：`git status` 里看不到，
+  CI checkout 后找不到文件。本仓库全部使用 `PackageReference`（还原到全局缓存），
+  从不需要旧式 `packages/` 目录，该规则已删除。
+
+### 已知限制（未验证，不是未实现）
+
+- **Windows 高 DPI 下的换算未实测**：本机只有一台 100% 缩放显示器。
+  `AdjustWindowRectExForDpi` 按**窗口所在显示器**的 DPI 取值，逻辑上正确，
+  但 125%/150%/200% 下的逐像素结果没有取证。需要时在有缩放显示器的机器上跑 `--selftest geometry`。
+- **`--selftest geometry` 尚未在 Linux / macOS 上跑过**：这两个平台的尺寸语义本来就是客户区，
+  本次未改它们的代码，但断言本身需要 CI 取证。
+
 ## 0.3.5 - 2026-10-14
 
 下游反馈（一个真实工业上位机的迁移复盘）里"值得在库上做"的六条，按价值排序全部落地。

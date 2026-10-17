@@ -21,6 +21,7 @@ internal static class OrielBridgeTemplate
     private const string DoubleClickToken = "__ORIEL_DOUBLE_CLICK_MS__";
     private const string DragThresholdToken = "__ORIEL_DRAG_THRESHOLD_PX__";
     private const string DragSelectorToken = "__ORIEL_DRAG_SELECTOR__";
+    private const string LabelToken = "__ORIEL_LABEL__";
 
     private static readonly string s_source = LoadSource();
 
@@ -35,6 +36,7 @@ internal static class OrielBridgeTemplate
     /// <param name="trustedPrefixes">可信来源的 URL 前缀（脚本据此决定要不要安装）。</param>
     /// <param name="system">拖动实现需要的宿主事实（见 <see cref="OrielSystemSnapshot"/>）。</param>
     /// <param name="dragSelector">宿主指定的拖动区域选择器；null/空表示只认 <c>data-oriel-drag-region</c> 属性。</param>
+    /// <param name="label">本窗口的 label（见 <see cref="OrielWindowOptions.Label"/>），注入为 <c>oriel.label</c>。</param>
     /// <remarks>
     /// console 转发、缩放闸门与拖动实现都只存在于模板里，C# 侧不再抄一份：
     /// 三份手抄脚本互相漂移正是这个模板要消灭的问题。
@@ -47,7 +49,8 @@ internal static class OrielBridgeTemplate
         string token,
         IReadOnlyList<string> trustedPrefixes,
         OrielSystemSnapshot system,
-        string? dragSelector)
+        string? dragSelector,
+        string label)
         => s_source
             .Replace(PlatformToken, platformLiteral, StringComparison.Ordinal)
             .Replace(PostToken, postExpression, StringComparison.Ordinal)
@@ -58,7 +61,10 @@ internal static class OrielBridgeTemplate
             .Replace(TrustedToken, TrustedLiteral(trustedPrefixes), StringComparison.Ordinal)
             .Replace(DoubleClickToken, NumberLiteral(system.DoubleClickTimeMs), StringComparison.Ordinal)
             .Replace(DragThresholdToken, NumberLiteral(OrielSystemSnapshot.DragThresholdPx), StringComparison.Ordinal)
-            .Replace(DragSelectorToken, SelectorLiteral(dragSelector), StringComparison.Ordinal);
+            .Replace(DragSelectorToken, SelectorLiteral(dragSelector), StringComparison.Ordinal)
+            // label 走 JSON 编码而不是拼引号：虽然 ValidateLabel 已限定字符集，
+            // 但这里不依赖那个约束——拼引号在字符集放宽的那一刻就会变成注入漏洞。
+            .Replace(LabelToken, JsonText.EncodeString(label), StringComparison.Ordinal);
 
     /// <summary>
     /// 可信来源前缀 → JS 数组字面量。

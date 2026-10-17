@@ -55,6 +55,21 @@ jobs:
         # 注意：必须显式给出文件路径——Node 把纯目录参数当作入口模块解析。
         run: node --test tests/bridge/bridge.test.mjs
 
+      - name: Frontend API package tests
+        # @orielweb/api 的单元测试（core / dpi / mocks）。它是页面侧公开 API 的载体，
+        # 形状错了的表现是"前端迁移后行为不对"，而那种问题在 C# 侧一个断言都抓不到。
+        # 无构建步骤（JS + JSDoc），所以直接跑 node --test。
+        working-directory: packages/api
+        run: |
+          npm install --no-save typescript@5
+          npm test
+
+      - name: Frontend API typecheck
+        # 类型检查是**门禁**而不是产物：包的 exports 直接指向 src/*.js，没有 dist/。
+        # 关掉它的话，JSDoc 里的类型声明会慢慢与实现漂移，而漂移只在消费方 IDE 里可见。
+        working-directory: packages/api
+        run: npx tsc -p . --noEmit
+
       - name: Package build logic (in-package MSBuild targets)
         # 包内 buildTransitive/OrielWeb.targets 的消费链路：打包 → 零配置消费工程 → 断言
         # wwwroot 资源名（含 app.min.js 这类含点文件名）→ 自带 LogicalName 的自声明不重复嵌入

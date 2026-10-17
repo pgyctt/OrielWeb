@@ -188,7 +188,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-section "机器断言自检：nav / ipc / theme / capability / multiwindow / scheme / threading / tray / tray-js"
+section "机器断言自检：nav / ipc / theme / capability / multiwindow / scheme / threading / tray / tray-js / geometry"
 # 放在观察窗之前：自检自己驱动页面（跳转 / 后退 / 前进 / 刷新 / 失败、console 转发、
 # postMessage、EmitEvent 闭环），跑完自己关窗退出，退出码即结论，与后面的观察窗互不干扰。
 # 这里不用 timeout：macOS 自带的是 BSD 用户态，没有 GNU coreutils 的 timeout。
@@ -198,10 +198,12 @@ section "机器断言自检：nav / ipc / theme / capability / multiwindow / sch
 #   前端（页面经 oriel.tray 调内建 tray.* 命令）——后者证明前后端 API 一致且往返真的通。
 #   注：macOS 的托盘走 NSStatusItem，无需托盘宿主即可创建，所以这两项在 CI 上有效；
 #   Linux 的 GtkStatusIcon 在没有托盘宿主时只是"图标不显示"，断言判的是资源建/撤销与状态回读。
+# geometry：窗口尺寸语义（WithSize 设的是整窗还是客户区）。**这一项现在会红**——三平台语义
+#   本来就不一致（见 docs/TAURI2-PLAN.md 的 E-1），自检先行是为了让缺陷立刻可见。
 SELFTEST_FAILED=0
 # 未通过模式的结论行汇总，最后拼进一条 GitHub 注解（注解用 API 就能读，不必登录翻日志）
 SELFTEST_FAIL_DETAIL=""
-for mode in nav ipc theme capability multiwindow scheme threading tray tray-js; do
+for mode in nav ipc theme capability multiwindow scheme threading tray tray-js geometry geometry-frameless; do
     selftest_log="$OUT/selftest-$mode.log"
     # 自检开关已合并：--selftest <名字>；输出结论行格式未变（NAV-SELFTEST: PASS 等）
     "$APP_EXE" --selftest "$mode" >"$selftest_log" 2>&1 &
@@ -219,7 +221,7 @@ for mode in nav ipc theme capability multiwindow scheme threading tray tray-js; 
         selftest_code=$?
     fi
 
-    selftest_verdict="$(grep -E '^(NAV|IPC|THEME|CAPABILITY|MULTIWINDOW|SCHEME|THREADING|TRAY|TRAY-JS)-SELFTEST: ' "$selftest_log" | tail -1 || true)"
+    selftest_verdict="$(grep -E '^(NAV|IPC|THEME|CAPABILITY|MULTIWINDOW|SCHEME|THREADING|TRAY|TRAY-JS|GEOMETRY)-SELFTEST: ' "$selftest_log" | tail -1 || true)"
     echo "  [$mode] 退出码=${selftest_code} 结论=${selftest_verdict:-无}"
     # 明细总是回显到 CI 日志：artifact 里有完整文件，但日志能直接看
     sed 's/^/    /' "$selftest_log" || true

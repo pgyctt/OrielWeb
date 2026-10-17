@@ -46,6 +46,9 @@ const trustedPrefixes = ['oriel://app.oriel/'];
 const injectedDoubleClickMs = 477;
 const injectedDragThresholdPx = 3;
 
+/** 测试用的窗口 label（对应 C# 侧 OrielWindowOptions.Label 的默认值）。 */
+const injectedLabel = 'main';
+
 /**
  * 复现 C# 侧的占位符替换，得到该平台真正被注入的脚本。
  * forwardConsole 对应 OrielWindowOptions.ConsoleForwarding（默认关闭）；
@@ -61,6 +64,7 @@ function buildScript(
         doubleClickMs = injectedDoubleClickMs,
         dragThresholdPx = injectedDragThresholdPx,
         dragSelector = '',
+        label = injectedLabel,
     } = {},
 ) {
     const script = template
@@ -72,10 +76,11 @@ function buildScript(
         .replaceAll('__ORIEL_TOKEN__', token)
         .replaceAll('__ORIEL_TRUSTED__', JSON.stringify(trusted))
         // 数值走 InvariantCulture（见 OrielBridgeTemplate.NumberLiteral），
-        // 选择器走 JsonText.EncodeString（空选择器写作 ''）
+        // 选择器与 label 走 JsonText.EncodeString（空选择器写作 ''）
         .replaceAll('__ORIEL_DOUBLE_CLICK_MS__', String(doubleClickMs))
         .replaceAll('__ORIEL_DRAG_THRESHOLD_PX__', String(dragThresholdPx))
-        .replaceAll('__ORIEL_DRAG_SELECTOR__', dragSelector === '' ? "''" : JSON.stringify(dragSelector));
+        .replaceAll('__ORIEL_DRAG_SELECTOR__', dragSelector === '' ? "''" : JSON.stringify(dragSelector))
+        .replaceAll('__ORIEL_LABEL__', JSON.stringify(label));
     assert.ok(!script.includes('__ORIEL_'), `${bridge.platform}：生成的脚本仍残留占位符`);
     return script;
 }
@@ -465,6 +470,30 @@ for (const bridge of bridges) {
         assert.equal(env.window.oriel.platform, bridge.platform);
         assert.equal(env.window.oriel.version, injectedVersion, 'oriel.version 未采用注入值');
         await env.window.oriel.ready;
+    });
+
+    // ---- 窗口 label（对标 Tauri 2 的 Window.label）----
+    //
+    // 页面靠它回答"我是谁"。多窗口下同一份页面会被加载多份，URL 与 title 都可能相同，
+    // 只有 label 是稳定标识——所以它必须是**注入值**而不是写死的 "main"。
+
+    test(`${label} label：默认注入 main`, () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        assert.equal(env.window.oriel.label, 'main');
+    });
+
+    test(`${label} label：采用宿主注入的自定义值`, () => {
+        const env = loadBridge(buildScript(bridge, { label: 'settings' }), bridge.channel);
+        assert.equal(env.window.oriel.label, 'settings');
+    });
+
+    test(`${label} label：注入值里的引号/反斜杠不会破坏脚本`, () => {
+        // label 目前被 ValidateLabel 限定为 [a-z0-9._-]，但脚本这一侧不该依赖那个约束：
+        // 字符集一旦放宽，手拼引号就会变成注入漏洞。这里钉住"走 JSON 编码"这个事实。
+        const weird = 'a"b\\c';
+        const env = loadBridge(buildScript(bridge, { label: weird }), bridge.channel);
+        assert.equal(env.loadError, undefined, `注入值破坏了脚本：${env.loadError}`);
+        assert.equal(env.window.oriel.label, weird);
     });
 
     // ---- 标题栏拖动接管（库实现，页面只标区域）----

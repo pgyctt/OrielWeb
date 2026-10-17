@@ -1,0 +1,48 @@
+{
+  "name": "@orielweb/api",
+  "version": "0.4.0",
+  "description": "OrielWeb 页面侧 API：模块名与 @tauri-apps/api 一一对应，迁移只需替换 import 前缀。",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/pgyctt/OrielWeb",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pgyctt/OrielWeb.git"
+  },
+  "keywords": [
+    "orielweb",
+    "tauri",
+    "webview",
+    "desktop",
+    "cross-platform"
+  ],
+  "files": [
+    "src",
+    "types"
+  ],
+  "exports": {
+    "./core": {
+      "types": "./types/core.d.ts",
+      "default": "./src/core.js"
+    },
+    "./dpi": {
+      "types": "./types/dpi.d.ts",
+      "default": "./src/dpi.js"
+    },
+    "./mocks": {
+      "types": "./types/mocks.d.ts",
+      "default": "./src/mocks.js"
+    }
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "typecheck": "tsc -p . --noEmit",
+    "build:types": "tsc -p tsconfig.types.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -10,10 +10,15 @@ obj/
 ## NuGet
 *.nupkg
 *.snupkg
-**/packages/*
-!**/packages/build/
+## 这里曾有一条 `**/packages/*`（旧式 packages.config 时代的还原目标目录）。
+## 本仓库全部使用 PackageReference（还原到全局缓存），从不需要它；而它会**静默忽略任何**
+## 名为 packages 的目录——包括本仓库自己的 `packages/api`（前端包）。症状是
+## "git status 里看不到新目录、CI 上找不到文件"。加 packages/api 时暴露，已删除。
 *.nuget.props
 *.nuget.targets
+
+## Node（packages/api 的开发依赖）
+node_modules/
 
 ## Build results
 [Dd]ebug/

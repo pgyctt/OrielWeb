@@ -1,0 +1,345 @@
+# OrielWeb ↔ Tauri 2 对齐：目标与执行计划
+
+> 输入：[TAURI2-ALIGNMENT.md](TAURI2-ALIGNMENT.md)（差异分析）
+> 本文件只回答两件事：**要做到什么算完成**（目标），**按什么顺序做**（计划）。
+>
+> 分析基准：仓库当前 `main`（0.3.5，`docs/TAURI2-ALIGNMENT.md` 未入库），
+> 已逐条对照 `src/OrielWeb/**` 核实，勘误见 §2。
+
+## 1. 一页结论
+
+1. **差异分析的方向成立**：S1–S7 七条结构性差距都真实存在，P0 排序也对——JS 包与 `label` 确实是"做了以后其他项成本减半"的两件事。
+2. **但有 7 处需要修正**（§2），其中 **E-1（三平台尺寸语义本就不一致）** 影响最大：它不是"对齐 Tauri 时的语义取舍"，而是**当前库的既有缺陷**——同一份代码在 Windows 上得到的是整窗尺寸，在 Linux/macOS 上得到的是客户区尺寸。frameless 窗口下两者几乎相等，所以至今没在现场暴露；装饰窗口上立刻可见。
+3. **因此 P0-5 要拆成两步**：先"三平台内部一致"，再"与 Tauri 一致"。前者是修 bug，后者才是对齐。
+4. **总目标不是"实现 Tauri 的 80 个窗口方法"**，而是"迁移只改 import"。据此设 5 个里程碑，每个都有机器可验证的退出条件（§3），任何一项没做到就不算完成。
+5. **建议的下一步**：批次 A（`@orielweb/api` 骨架）+ 批次 B（窗口 `label`）并行开工——两者文件不重叠，且是后面所有批次的前置。
+
+## 2. 对差异分析的勘误（核实结论）
+
+以下 7 条按"会不会误导实现"排序：E-1/E-2 会直接导致改错代码，必须改；E-3/E-4 影响实现方式，强烈建议补；E-5/E-6/E-7 是量级与一致性问题。
+
+### E-1（必须改）§1.5 尺寸语义：三平台**本来就不一致**，不是统一的外框语义
+
+原文断言 `Resize` = 整窗外框。实际三平台用的是三种不同语义的 API：
+
+| 平台 | `Resize` 实现 | 语义 | 初始尺寸 API | 语义 |
+|---|---|---|---|---|
+| Windows | `SetWindowPos(..., w, h, ...)`（`Win32WindowHost.cs:1821`） | **整窗**（含边框标题栏） | `CreateWindowExW(..., w, h, ...)`（`:392`） | **整窗** |
+| Linux | `gtk_window_resize`（`LinuxWindowHost.cs:985`） | **客户区**（GTK 拿不到装饰尺寸） | `gtk_window_set_default_size`（`:442`） | **客户区** |
+| macOS | `setContentSize:`（`MacOSWindowHost.cs:866`） | **客户区** | `initWithContentRect:`（`:345`） | **客户区** |
+
+**后果**：偏差只出现在 Windows + 装饰窗口。`samples/OrielDemo` 用的是 `WithFrameless()`，`WS_POPUP` 下整窗 ≈ 客户区，所以自检与真机都没暴露。一旦应用用装饰窗口（默认形态！`Frameless` 默认 `false`），Windows 的内容区就比 Linux/macOS 小一圈——**这与是否迁移 Tauri 无关，是现在的行为**。
+
+**对计划的影响**：P0-5 的验收标准必须是"三平台先一致"，而不是"与 Tauri 一致"。Windows 侧要改用 `AdjustWindowRectExForDpi` 把客户区换算成整窗，或在 `Resize` 里区分 inner/outer 两条路径。
+
+> **实现前置**：`Win32Native.cs` 目前**没有** `AdjustWindowRectExForDpi` 绑定（只有 `GetDpiForWindow`，`:611`），要新增。三平台对称的缺口：Linux 侧 `GtkNative.cs` 也**没有** `gtk_widget_get_scale_factor` / `gdk_window_get_scale_factor` 绑定，`ScaleFactor` 需要一并新增。这两条要算进 E1/E2 的量级，别当成"现成值取一下"。
+
+### E-2（必须改）§1.3 事件源：`resize`/`move`/`focus` 并非"三平台各自已有原生事件源"
+
+原文说"三平台后端各自已有原生事件源"。实际缺口：
+
+| 事件 | Windows | Linux | macOS |
+|---|---|---|---|
+| resize | `WM_SIZE` 已处理（`Win32WindowHost.cs:779`，但只 `UpdateBounds`，不上报） | **无** `configure-event` 连接（`LinuxSignalHandlers.cs:92-120`） | `windowDidResize:` 已有 |
+| move | `WM_MOVE` **刻意 `return 0` 且不取位置**（`:783`） | 同上 | **无** `windowDidMove:` |
+| focus/blur | `WM_SETFOCUS` 只移交焦点（`:769`）；`WM_KILLFOCUS` **刻意不处理**（`:773` 有明确理由） | **无** `focus-in-event` / `focus-out-event` | **无** `windowDidBecomeKey:` / `windowDidResignKey:` |
+| destroyed | `WM_DESTROY` 已有（`:825`） | `destroy` 已有（`:96`） | `windowWillClose:` 已有（`MacOSObjCClasses.cs:123`） |
+
+**后果**：P0-3 不是"接线"，而是"新增信号 + 上报"。尤其 `WM_KILLFOCUS` 那条——注释解释了为什么**不移交焦点**，但**上报 blur 事件**与移交焦点是两件事，可以只上报不动焦点。实现时要区分清楚，否则会踩回已修过的坑（失焦后 caret/IME 错乱）。
+
+### E-3（建议补）§1.3 第 3 条：`close-requested` 的 preventDefault 有一个同步/异步硬冲突
+
+原文说"JS 侧需要一个往返"。实际难点没说透：**Windows 的 `WM_CLOSE` 是同步消息**，`Win32WindowHost.cs:811` 在消息处理中直接决定 `DestroyWindow` 或 `return 0`。而页面回执是异步的（`invoke` 走 IPC）。所以不可能"在 `WM_CLOSE` 里等页面答复"。
+
+**可行的对齐做法**（Tauri 用的也是这个）：拦截 `WM_CLOSE` → 若该窗口已注册"页面接管关闭"，则**挂起关闭**（`return 0`，窗口不销毁）→ 发 `close-requested` 事件 → 页面在回调里决定：不调 `preventDefault` 则 JS 包发 `window.destroy` 真正关闭；调了则什么都不做。
+
+需要一个"挂起中"的状态机，且要处理"页面已挂起但窗口被 `DestroyWindow` 强关"的竞态。这是 P0-3 里最容易被低估的一项，建议单独一批（C5）。
+
+### E-4（建议补）§1.4 / §4.4：拒绝层已有 4 个，不是 3 个
+
+原文说"现有三层：Source/Token/Command，加 `Scope` 第四层"。实际 `OrielIpcRejectionLayer`（`Ipc/OrielIpcRejectedEventArgs.cs`）已有 **Source / Token / Command / Size** 四个值，`Size` 是 1 MiB 入站规模闸。所以 `Scope` 是**第五个**枚举值，且要明确它插在 `Command` 之后（命令授权通过后再判路径 scope）还是之前。建议：**之后**——先判"这个命令能不能调"，再判"这个路径在不在范围内"。
+
+另：`tray.*` 与 `win.*` 一样在 `OrielCapabilityRules.IsBuiltInCommand` 的"始终放行"名单里（`:100-101`）。原文只强调了 `win.*` 的后门，`tray.*` 也是。新增 `tray.setIcon(Image)` 之类会扩大这个后门的实际能力面，需要一并评估。
+
+### E-5（建议补）§2.3 `setSize` 语义相反——只在 Windows 上相反
+
+见 E-1。原文表述"`Resize` 是外框尺寸"会让实现者以为 Linux/macOS 也要改，实际只有 Windows 要动。这一点搞错会导致两个本来正确的平台被改坏。
+
+### E-6（建议补）§2.3 说 `startResizeDragging` 缺失——Windows/Linux 已实现，只缺 macOS 与 JS 入口
+
+原文把 `startResizeDragging(direction)` 判为 ❌，但代码里已有等价能力，只是**没有页面入口**：
+
+| 平台 | 现状 |
+|---|---|
+| Windows | `HitTestResizeBorder`（`Win32WindowHost.cs:1381`）在 `WM_NCHITTEST` 里返回 `HT*`，系统原生边缘缩放已生效 |
+| Linux | `LinuxResizeSupport.ResolveEdge` 判定 + `gtk_window_begin_resize_drag`（`LinuxWindowHost.cs:365`、`GtkNative.cs:225`），frameless 下也生效 |
+| macOS | 无（`styleMask` 带 `StyleResizable`，装饰窗口靠系统边框；frameless 下没有热区） |
+
+所以这一项的判定应是 **⚠️ 语义差异（只缺 API）**，而不是 ❌ 缺失。量级从"三平台实现"降到"macOS 补热区 + 加一条 JS 命令"。归到 M5 的 P2-1（窗口修饰）里一起做。
+
+### E-7（顺带发现）`API.md` 里 macOS 退出的说法已过期（两处）
+
+`API.md:145` 与 `API.md:168` 都写着"macOS `NSApplication.terminate:`"：
+
+> 1. 结束消息循环（Windows `PostQuitMessage`、Linux `GtkMainQuit`、**macOS `NSApplication.terminate:`**），让 `Run()` 返回；
+
+而 `CHANGELOG.md:24-29` 明确记录 macOS 已从 `terminate:` **改成 `stop:`**（因为 `terminate:` 不让 `run` 返回，退出清理被整个跳过，`ExitCompleted` 永不触发）。文档没跟上，且这两处正好是"让 `Run()` 返回"的上下文——说法与实际实现相反。这与 Tauri 对齐无关，但属于"同一份文档里两处说法互相矛盾"，做 E 系列时顺手改掉。
+
+### 核实无误的部分（可直接依赖）
+
+| 原文结论 | 核实 |
+|---|---|
+| 没有 npm 包 / TS 类型 | ✅ 仓库无 `package.json` / `tsconfig.json`，前端只有 `tests/bridge/*.mjs` |
+| 窗口没有 `label` | ✅ 全库 `Label` 只出现在菜单项（`OrielMenuItem.Label`）与 macOS 的 `LaunchAgent` |
+| 事件是裸 payload + 点分名 | ✅ 页面可见事件恰好 5 个：`navigation.starting` / `navigation.completed` / `theme.changed` / `maximized`（bool）/ `tray.event` |
+| 几何只有 int 逻辑像素 | ✅ `Resize(int,int)` / `MoveTo(int,int)` / `SetMinSize(int,int)`，无 `double` 入口 |
+| 错误是字符串 | ✅ `OrielIpcException` 只有一个构造器、只有 `Message` |
+| 无 Resource / rid | ✅ 无任何句柄表 |
+| 无内建命名空间（只有 `win.*` / `tray.*`） | ✅ `OrielBuiltInWindowCommands` 12 条 + `OrielBuiltInTrayCommands` 11 条 |
+| 超时是 30s 全局 | ✅ `oriel-bridge.js:92` `timeout: 30000`，`invoke` 读全局值，无 per-call |
+| `oriel.version` 是库版本 | ✅ `OrielBridgeTemplate.VersionLiteral` 读程序集版本 |
+| 托盘是唯一完整对齐项 | ✅ 11 条命令 + `TrayHandle`，方法名与 Tauri 一一对应 |
+| `path` 全缺、`OrielPathResolver` 不对外 | ✅ 37 行、`internal` |
+| `mocks` 缺失（JS 包一建就必须补） | ✅ 判断正确 |
+
+## 3. 目标
+
+### 3.1 北极星（唯一终极验收）
+
+> **同一份前端代码，只做两件事就能在 Tauri 2 与 OrielWeb 下都跑：**
+> ① `@tauri-apps/api/*` → `@orielweb/api/*` 的 import 替换；
+> ② [TAURI2-ALIGNMENT.md](TAURI2-ALIGNMENT.md) §3 那 16 条语义修正（多数由 JS 包吸收，剩下的是"超时要放宽""关窗即退出的行为不同"）。
+
+这个目标**不进近期计划**——它是 M5 之后的终局验收，写在这里是为了给每个里程碑一个统一的"为什么"。
+
+### 3.2 五个里程碑（每个都有机器可验证的退出条件）
+
+#### M1 — 地基可写代码（对应 P0-1 + P0-2）
+
+| 项 | 退出条件 |
+|---|---|
+| `@orielweb/api` 包存在 | `packages/api/` 有 `package.json`（`type: module`）+ 逐模块 `exports` 映射；`tsc` 产出 `.d.ts` 无报错 |
+| `core` / `dpi` / `mocks` 可用 | `node --test packages/api/tests/*.test.mjs` 全绿；`mockIPC` 能在 Node 里驱动 `invoke` |
+| 窗口有 `label` | C#：`OrielWindowOptions.Label`（默认 `"main"`，重复抛）、`OrielApp.GetWindow(label)` |
+| 页面知道"我是谁" | `await getCurrentWindow().label === 'main'` 在 demo 页成立（三平台） |
+| 回归 | 既有 `dotnet test` + `node --test tests/bridge` + 三平台 `--selftest` 全绿（**零破坏**） |
+
+#### M2 — 事件与窗口形状对齐（对应 P0-3 + P0-4）
+
+| 项 | 退出条件 |
+|---|---|
+| `event` 模块 | `listen` / `once` / `emit` / `emitTo` 四个函数；回调收到 `{event, id, payload}` |
+| 内置事件 | `resize` / `move` / `focus` / `blur` / `close-requested` / `destroyed` 六种在**三平台**都能触发 |
+| 关闭接管 | 页面 `onCloseRequested(e => e.preventDefault())` 能真正阻止关闭（Windows 含挂起/竞态路径） |
+| `window` 模块基础 | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow` + 现有 22 项包装 |
+| 新命令族过门禁 | `window.*` **不在** allow 名单时被拒（一条回归测试钉死"后门不扩散"） |
+| 验收 | `--selftest event`（六种事件逐条断言）+ `--selftest window` |
+| demo 迁移 | `samples/OrielDemo/wwwroot` 改吃 `@orielweb/api`（证明包能用，不是只有测试能用） |
+
+#### M3 — 几何正确（对应 P0-5，含 E-1 的修 bug）
+
+| 项 | 退出条件 |
+|---|---|
+| 三平台先一致 | `Resize(w,h)` 与初始尺寸在**装饰窗口**下三平台客户区逐像素相同（这是修 bug，不是对齐） |
+| `scaleFactor` | `WebviewWindow.ScaleFactor` 三平台可用（Windows `GetDpiForWindow/96`、Linux `gtk_widget_get_scale_factor`（需新增绑定）、macOS `NSScreen.backingScaleFactor`） |
+| inner/outer 拆分 | `InnerSize` / `OuterSize` / `InnerPosition` / `OuterPosition` 四个查询 |
+| JS 多态 | `setSize(new LogicalSize(800,600))` / `new PhysicalSize(...)` 都能用 |
+| 验收 | `--selftest geometry`：100% / 150% / 200% 三档下逐像素断言，**同一份用例三平台结果一致** |
+
+#### M4 — 高频能力（对应 P1）
+
+| 项 | 退出条件 |
+|---|---|
+| `path` | 24 个目录 + 7 个路径操作 + 2 个常量，纯计算无平台后端 |
+| `convertFileSrc` + 文件 scheme | 页面能 `<img src>` 加载 scope 内的本地文件；scope 外的路径被拒 |
+| `dialog` 全量 | `open` / `save` / `message` / `ask` / `confirm`，过滤器形状对齐 `{name, extensions}` |
+| `app` 元信息 | `getName` / `getVersion` / `getIdentifier` / `getBundleType` / `exit` |
+| 已有 C# 能力的 JS 入口 | `opener` 3 个 + `notification` + `autostart` 3 个 |
+| `clipboard`（text） | 三平台剪贴板读写 |
+| 错误模型 | reject 的 `Error` 上带 `code` / `data`；`invoke` 支持 per-call `timeout` |
+
+#### M5 — 进阶（对应 P2）
+
+按 TAURI2-ALIGNMENT.md §4.3 P2-1 … P2-8 原样执行。**M5 不设统一退出条件**，每项独立验收（它们互不依赖，可按需取用）。
+
+### 3.3 明确不做的（与差异分析一致，这里再钉一次）
+
+移动端、插件模型 / `plugin:` 前缀 / 插件 ABI、`tauri.conf.json` 清单、多 webview、`shell` 子进程、`http`/`websocket`/`upload`/`sql`/`stronghold`、`updater`、`deep-link`。
+
+**新增一条**：不引入前端构建链（打包器 / bundler / 框架）。理由见 §6 决策 D-1。
+
+## 4. 计划
+
+### 4.1 批次总表
+
+量级是"单人、熟悉本库"的粗估：S ≤ 1 天，M 2–3 天，L 4–7 天，XL > 1 周。
+
+| 批次 | 内容 | 前置 | 量级 | 主要改动面 |
+|---|---|---|---|---|
+| **A** | `@orielweb/api` 骨架（core / dpi / mocks） | — | M | 新增 `packages/api/**`、CI 加一步 |
+| **B** | 窗口 `label` | — | M | `OrielWindowOptions`、`OrielApp`、`IOrielWindowControl`、注入脚本、能力模型 |
+| **C1** | 后端事件接口（`Resized`/`Moved`/`FocusChanged`） | — | S | `IPlatformBackend.cs` |
+| **C2** | 三平台事件接线（6 类事件 × 3 平台） | C1 | L | `Win32WindowHost`、`LinuxWindowHost` + `LinuxSignalHandlers` + `GtkNative`、`MacOSWindowHost` + `MacOSObjCClasses` |
+| **C3** | `event` 模块 + `{event,id,payload}` 包装 | A、B | M | `packages/api/event.js`、注入脚本 |
+| **C4** | `once` / `emit` / `emitTo` | C3 | S | 新内建 `event.emit`、JS 包 |
+| **C5** | `close-requested` 挂起/接管状态机 | C2 | M | 三平台 `Closing` 路径 + 新命令 `window.destroy` |
+| **D1** | `window.*` 命令族 + 按 label 路由 | B | M | 新 `OrielBuiltInWindowApiCommands`（与 `win.*` 分开） |
+| **D2** | `window` 模块 JS 侧 | A、D1 | M | `packages/api/window.js` |
+| **E1** | **修三平台尺寸语义不一致**（E-1） | — | M | Windows `Win32WindowHost`（`AdjustWindowRectExForDpi`） |
+| **E2** | `ScaleFactor` + inner/outer 查询 | E1 | M | 三平台后端 + `WebviewWindow` + `IOrielWindowControl` |
+| **E3** | `dpi` 多态换算 + `setSize`/`setPosition` | A、E2 | S | `packages/api/dpi.js`、`window.js` |
+| **F1** | `path` 模块 | A | S | 纯计算，无后端 |
+| **F2** | `convertFileSrc` + 文件 scheme + **scope 系统**（含 `Scope` 拒绝层） | F1 | L | 三平台 scheme handler、`OrielCapabilityOptions`、`OrielIpcRejectionLayer` |
+| **F3** | `dialog` 全量（含 `ask`/`confirm`） | A | M | 三平台对话框 + JS 包 |
+| **F4** | `app` 元信息 + `exit` + `show/hide` | A | S | `OrielApp`、JS 包 |
+| **F5** | `opener` / `notification` / `autostart` JS 入口 | A | S | 只加命令包装 |
+| **F6** | `clipboard`（text） | A | M | 三平台剪贴板 |
+| **F7** | 错误模型（`code`/`data` + per-call timeout） | A | M | `OrielIpcException`、回执协议、注入脚本、JS 包 |
+| **G** | demo 迁到 `@orielweb/api` + `--selftest api` | M2 完成 | M | `samples/OrielDemo/wwwroot`、新自检 |
+| **H** | 迁移样例 `samples/OrielTauriCompat` | G | S | 同一页面 + 两份 `package.json` 别名 |
+
+**M5（P2）不再拆批**，按差异分析 §4.3 逐项做，每项独立提交。唯一需要修正的是 **P2-1 里的 `startResizeDragging`**：Windows/Linux 已有热区实现（见 §2 E-6），只需补 macOS 与 JS 命令，量级是 S 不是 L。
+
+### 4.2 关键路径与并行
+
+```
+A ──┬─→ C3 ─→ C4
+    │
+B ──┴─→ D1 ─→ D2
+      └─→ C3（label 是 emitTo 的前置）
+
+C1 ─→ C2 ─→ C5
+
+E1 ─→ E2 ─→ E3
+
+A ─→ F1 / F3 / F4 / F5 / F7   （互相独立，可任意插入）
+F1 ─→ F2（scope 系统是 convertFileSrc 的前置）
+```
+
+- **A 与 B 完全并行**（A 只碰 `packages/`，B 只碰 `src/OrielWeb/`）。
+- **C 与 D 都依赖 B**（都要 label），但 C 与 D 之间不互相依赖，可并行。
+- **E 与 C 争同一批文件**（三平台 WindowHost）→ 单人做则串行，建议 **C 先 E 后**（事件是 P0 刚需，几何偏差在 frameless 下不明显）。
+- **F 系列只依赖 A**，是"填缝工作"——任何一个卡住时都能切过去。`F2` 例外：它自带 scope 系统，是最重的一项，不要顺手插进别的批次。
+- **C5（关闭接管）单独串行**：它动的是三平台的关闭路径，任何其它批次同时改那条路都会产生难查的竞态。
+
+### 4.3 版本节奏
+
+| 版本 | 内容 | 破坏性 |
+|---|---|---|
+| 0.4.0 | A + B + C1/C2/C3/C4 | 无（事件包装只在 JS 包内，旧 `oriel.on` 不变） |
+| 0.5.0 | C5 + D + G | 无（`window.*` 是新族；`win.*` 保留） |
+| 0.6.0 | E（含 E1 的 bug 修复）+ F1/F3/F4/F5 | **E1 是行为变更**：Windows 装饰窗口的内容区会变大（变成与另两平台一致）。CHANGELOG 必须写明"这是修 bug，尺寸可能变化" |
+| 0.7.0 | F2/F6/F7 + H | `OrielIpcException` 加 `Code`/`Data` 是纯增量 |
+| 0.8.0+ | M5 各项 | 逐项评估 |
+
+**关于"破坏性变更只在首个稳定版前做"**（差异分析 §4.2）：本计划**不做任何破坏性变更**。`Resize` 保留 outer 语义（Windows 侧修成"客户区"是 bug 修复，不是语义变更——因为它要与另两平台一致），inner 走新增的 `SetInnerSize`。这样既有代码不会静默变样。
+
+## 5. 每批次的验收动作（统一口径）
+
+任何批次合入前必须过：
+
+| 层次 | 命令 |
+|---|---|
+| 单测 | `dotnet test tests/OrielWeb.Tests -c Release` |
+| 桥接测试 | `node --test tests/bridge/bridge.test.mjs` |
+| JS 包测试 | `node --test packages/api/tests/*.test.mjs` |
+| 类型 | `npx tsc -p packages/api --noEmit` |
+| 格式 | `dotnet format OrielWeb.slnx --verify-no-changes` |
+| 自检（Windows） | `pwsh tools/verify-windows.ps1 -Stages selftest` |
+| 自检（Linux） | `bash tools/verify-linux.sh --stages selftest`（CI 里 xvfb） |
+| 自检（macOS） | `bash tools/verify-macos.sh` |
+
+**新增自检必须同时进三个脚本**，否则"只在 Windows 验过"会变成默认状态——现有 `--selftest` 的结论行正则分散在 `tools/verify-windows.ps1:289`、`verify-linux.sh:285-288`、`verify-macos.sh:222`，加名字要三处同步。
+
+## 6. 待决策点
+
+这几项必须在动手前定，否则中途返工。
+
+### D-1：TS 源码 vs JS + JSDoc（建议后者）
+
+| 方案 | 优点 | 代价 |
+|---|---|---|
+| A. TS 源码 + `tsc` 编译到 `dist/` | 类型即源码，最标准 | 引入构建步骤；CI 多一步；与"零依赖"调性冲突；`npm publish` 要带 `dist/` |
+| **B. JS + JSDoc → `tsc` 只出 `.d.ts`**（推荐） | **无打包器**，`exports` 直接指向 `src/*.js`；CI 只跑 `tsc --noEmit` 校验类型；与 `tests/bridge` 的 `node --test` 完全同构 | 类型写在注释里，IDE 补全略弱（现代 tsserver 已足够） |
+
+选 B。理由：本库的卖点是"零依赖、AOT、单文件"，前端包也不该引入 bundler。`node --test` 能直接跑 `.js`，CI 改动最小。
+
+### D-2：`Resize` 语义 —— **已定，且结论与原计划相反**
+
+| 方案 | 优点 | 代价 |
+|---|---|---|
+| A. `Resize` 改成 inner（对齐 Tauri） | JS 层少一层换算 | 原以为会**破坏性** |
+| **B. `Resize` 保持 outer，新增 `SetInnerSize`**（原推荐） | 零破坏 | 需要两条代码路径 |
+| **C. `Resize` 直接定为 inner（已采纳）** | 与 Tauri 一致；Windows 侧本来就是**错的** | 无 |
+
+**为什么改判**：计划阶段我以为"Windows 设整窗"是一种可保留的语义选择，所以推荐了 B（保留 outer + 新增 `SetInnerSize`）。
+实测取证后结论不同——Linux/macOS 的 `Resize` **本来**就是客户区语义，只有 Windows 是整窗。
+所以"把 Windows 改成客户区"不是语义变更，而是**修 bug**：修完之后三平台一致，且与 Tauri 的 `setSize` 一致。
+不存在"既有代码会变样"的问题，因为既有代码在 Linux/macOS 上一直是客户区语义。
+
+代价是**必须区分 frameless**：无边框窗口的 `WM_NCCALCSIZE` 让客户区铺满整窗，
+再换算一次就会大一圈。这一点用 `--selftest geometry-frameless` 单独钉住。
+
+### D-3：`fs` 做不做（差异分析 §2.11 的决策点）
+
+建议**做方案 B 的最小集**（`readTextFile`/`readFile`/`writeTextFile`/`writeFile`/`exists`/`mkdir`/`remove`/`readDir`/`stat` + `BaseDirectory` + allow/deny glob），理由：`convertFileSrc`（F2）反正要引入 scope 系统，fs 复用同一套 scope，边际成本低。**不做** `watch` / `FileHandle` 随机读写 / `copyFile` / `rename`。
+
+这一项**推迟到 F2 之后再定**——如果 F2 的 scope 系统证明好用，fs 就是顺水推舟；如果 scope 做得很别扭，fs 就砍掉。
+
+### D-4：`tray.*` 后门要不要收紧
+
+`tray.*` 现在与 `win.*` 一样"始终放行"（`OrielCapabilityRules.IsBuiltInCommand:100`）。加了 `tray.setIcon(Image)` 之后，页面可以任意改托盘图标——风险低但确实扩大能力面。建议：**保持放行，但在文档里明确列出"后门包含哪些命令"**，而不是笼统说"win.* 与 tray.*"。
+
+## 7. 风险与对策
+
+| # | 风险 | 影响 | 对策 |
+|---|---|---|---|
+| R-1 | **E-1 的尺寸 bug 被当成"对齐工作"**，导致修完 Windows 又去改本来正确的 Linux/macOS | 高：改坏两个平台 | E1 的验收标准写成"三平台客户区逐像素相同"，且**先写测试再改**（`--selftest geometry` 先行） |
+| R-2 | `close-requested` 的挂起状态机与"用户直接 DestroyWindow"竞态 | 高：可能关不掉窗口或崩 | C5 单独立批；Windows 侧先在自检里跑通"挂起→页面放行→销毁"与"挂起→强关"两条路径 |
+| R-3 | 6 类事件 × 3 平台 = 18 处改动，散在 3 个 1000+ 行文件里 | 中：漏一个平台就"某平台没有 resize" | C2 的验收按"事件 × 平台"矩阵逐格勾，不用"跑通了"概括 |
+| R-4 | `WM_KILLFOCUS` 加上报时误改回"移交焦点" | 中：caret/IME 错乱（已修过的坑） | C2 实现时注释里保留原有理由；只加 `FocusChanged?.Invoke(false)`，不动 `MoveFocus` |
+| R-5 | 新 `window.*` 族误用 `win.*` 的后门 | **高：安全** | D1 加一条回归测试：`window.setIcon` 不在 allow 名单时必须被拒 |
+| R-6 | 事件从裸 payload 变 `{event,id,payload}` 破坏既有页面 | 中 | 包装**只在 JS 包内**做；`oriel.on` 的旧语义原样保留。两套并存，不迁移也能跑 |
+| R-7 | `packages/api` 引入 Node 工具链，CI 变慢 | 低 | D-1 选 B（无打包器）；CI 只加 `tsc --noEmit` + `node --test`，复用现有 Node 22 |
+| R-8 | 窗口 `label` 重复、`GetWindow` 返回已销毁窗口 | 中 | B 的单测覆盖：重复 label 抛、关闭后 `GetWindow` 返回 null、`GetAllWindows` 不含已关闭 |
+| R-9 | `--selftest` 新名字忘了同步三个验证脚本 | 低但会静默漏平台 | 加名字时三处同改（§5 已列行号） |
+
+## 8. 进度
+
+| 批次 | 状态 | 说明 |
+|---|---|---|
+| **A** `@orielweb/api` 骨架 | ✅ 完成 | `packages/api`：`core` / `dpi` / `mocks`，27 项测试 + `tsc --noEmit` 门禁，CI 已接入 |
+| **B** 窗口 `label` | ✅ 完成 | `OrielWindowOptions.Label` / `OrielApp.GetWindow` / `WebviewWindow.Label` / `oriel.label`；27 项单测 + `--selftest multiwindow` 新增 5 条断言 |
+| **E1** 尺寸语义修 bug | ✅ 完成（Windows 已验证） | Windows 侧加 `AdjustWindowRectExForDpi` 换算，`Create` / `Resize` / `WM_GETMINMAXINFO` 三条路径全部改为客户区语义；**frameless 明确不换算**。`--selftest geometry` 由红转绿：`784x561` → `800x600`，运行期 `Resize(640,480)` 也精确。新增 `--selftest geometry-frameless` 钉住反面 |
+| C / D / E2 / E3 / F / G / H | ⬜ 未开始 | 见 §4.1 |
+
+### E1 的验收状态（如实标注）
+
+| 项 | 状态 |
+|---|---|
+| Windows framed 建窗尺寸 | ✅ 真机验证：`WithSize(800,600)` → 客户区 `800x600` |
+| Windows framed 运行期 `Resize` | ✅ 真机验证：`Resize(640,480)` → 客户区 `640x480` |
+| Windows frameless 建窗 + `Resize` | ✅ 真机验证：两种形态都精确 `800x600` / `640x480` |
+| **Windows 高 DPI（125%/150%/200%）** | ⚠️ **未验证**——本机只有一台 100% 缩放显示器。`AdjustWindowRectExForDpi` 按窗口 DPI 取值，逻辑上正确，但没有实测取证 |
+| **Linux / macOS** | ⚠️ **未改代码**——这两个平台的 `Resize` 本来就是客户区语义，无需改动。但 `--selftest geometry` 在它们上面**尚未跑过**，需 CI 取证 |
+
+> 高 DPI 那条要在有缩放显示器的机器上跑 `--selftest geometry`；若客户区偏离 800x600 超过 ±2，
+> 先查 `ClientToWindowSize` 传的 DPI 是不是**窗口所在显示器**的（不是系统 DPI）。
+
+### 已核实的两处新增结论（写计划时未知）
+
+1. **舍入规则会漂移**：宿主侧 `.NET` 的 `Math.Round` 默认 `MidpointRounding.ToEven`
+   （`Math.Round(4.5)` = 4），而 JS 的 `Math.round` 是向 +∞（= 5）。E3 的 DPI 换算如果不复刻
+   ToEven，同一份代码在 150% 屏上会比宿主算的大 1 像素——只在恰好 `.5` 的输入上出现，
+   人眼看不出、随机测试也撞不到。已在 `packages/api/src/dpi.js` 的 `roundToEven` 里复刻并逐例钉住。
+2. **`EvaluateJs` 有线程约束**：自检/测试里从线程池调它会得到 `0x802A000C`
+   （"只能从创建它的线程调用"）。写 E1 骨架时就踩了一次——它看起来像"几何断言失败"，
+   实际是调用方式错了。后续所有基于 `EvaluateJs` 的自检都要挂在 UI 线程上（`Loaded` 里 `await`，
+   不要 `Task.Run`）。
+
+### 立刻可做的三件事（原始建议，已全部完成）
+
+1. ~~批次 A：建 `packages/api/`~~ ✅
+2. ~~批次 B：`OrielWindowOptions.Label`~~ ✅
+3. ~~E1 的测试先行~~ ✅（红灯已亮）
+

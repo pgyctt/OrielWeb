@@ -14,7 +14,7 @@ internal static class MacOSBridgeJs
         bool zoomEnabled,
         string token,
         IReadOnlyList<string> trustedPrefixes,
-        OrielSystemSnapshot system, string? dragSelector)
+        OrielSystemSnapshot system, string? dragSelector, string label)
         => OrielBridgeTemplate.Create(
             "'macos'",
             "window.webkit.messageHandlers.oriel.postMessage(JSON.stringify(obj))",
@@ -23,5 +23,6 @@ internal static class MacOSBridgeJs
             token,
             trustedPrefixes,
             system,
-            dragSelector);
+            dragSelector,
+            label);
 }

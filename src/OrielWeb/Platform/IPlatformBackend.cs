@@ -8,6 +8,15 @@ internal interface IWindowBackend
     /// <summary>本窗口所属的应用（窗口创建时注入）。</summary>
     OrielApp App { get; }
 
+    /// <summary>
+    /// 本窗口的 label（由 <see cref="OrielWindowOptions.Label"/> 定下，创建后不变）。
+    /// </summary>
+    /// <remarks>
+    /// 放在后端契约上而不是只放 <see cref="WebviewWindow"/>：注入脚本要用它给页面装
+    /// <c>oriel.label</c>，而注入脚本是后端在建窗时生成的（见 <c>OrielBridgeTemplate.Create</c>）。
+    /// </remarks>
+    string Label { get; }
+
     event Action? Loaded;
     event Action<OrielCloseRequestEventArgs>? Closing;
     event Action? Closed;

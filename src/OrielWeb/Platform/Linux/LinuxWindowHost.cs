@@ -191,6 +191,9 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     public nint NativeWindowHandle => _gtkWindow;
 
     public OrielApp App => _app;
+
+    /// <summary>本窗口的 label（见 <see cref="OrielWindowOptions.Label"/>）。</summary>
+    public string Label => _options.Label;
     /// <remarks>本类为 internal，public 成员不增加对外 API 面；它实现 <see cref="IWindowBackend.IsOnUiThread"/>。</remarks>
     public bool IsOnUiThread() => _backend.IsOnUiThread();
     internal void PostToMainThread(Action action) => _backend.PostToMainThread(action);
@@ -498,7 +501,7 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
                 _options.Zoom,
                 App.Guard.Token,
                 App.Guard.TrustedPrefixes,
-                ReadSystemSnapshot(), _options.DragRegionSelector),
+                ReadSystemSnapshot(), _options.DragRegionSelector, _options.Label),
             1, // WEBKIT_USER_CONTENT_INJECT_TOP_FRAME（主帧）
             0, // WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START（文档开始处注入，与 Windows/macOS 后端一致）
             0,

@@ -158,6 +158,21 @@ public sealed class WebviewWindow : IOrielWindowControl
     public OrielApp App => Backend.App;
 
     /// <summary>
+    /// 本窗口的 label（对标 Tauri 2 的 <c>Window.label</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 在窗口后端创建时由 <see cref="OrielWindowOptions.Label"/> 定下，之后不变——它是寻址单位，
+    /// 改名会让"按 label 找到的窗口"与"页面以为自己是谁"这两件事脱节。
+    /// </para>
+    /// <para>
+    /// 窗口后端尚未就位（<c>Run()</c> 之前、或 <c>onCreated</c> 回调里）时读它返回 null，
+    /// 而不是抛异常：那种时机读 label 属于"还没准备好"，不该让宿主在回调里崩掉。
+    /// </para>
+    /// </remarks>
+    public string? Label => _backend?.Label;
+
+    /// <summary>
     /// 关闭时的簿记：由 <see cref="OrielApp"/> 设置（把本窗口从应用窗口列表里摘掉），
     /// 在公共 <see cref="Closed"/> 事件**之前**执行。
     /// </summary>

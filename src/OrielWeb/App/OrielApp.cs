@@ -132,6 +132,51 @@ public sealed class OrielApp : IDisposable
 
     private readonly List<WebviewWindow> _windows = [];
 
+    /// <summary>
+    /// 按 label 取窗口（对标 Tauri 2 的 <c>Window.getByLabel</c>）。
+    /// </summary>
+    /// <param name="label">窗口 label（大小写不敏感，见 <see cref="OrielWindowOptions.ValidateLabel"/>）。</param>
+    /// <returns>找到的窗口；不存在或已关闭时返回 <c>null</c>。</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>返回 null 而不是抛异常</b>：与 Tauri 的 <c>getByLabel</c> 一致，也让调用方能用
+    /// <c>if (app.GetWindow("settings") is { } w)</c> 这种形态表达"有就操作、没有就算了"。
+    /// </para>
+    /// <para>
+    /// 已关闭的窗口**不会**被返回：它们在 <c>Closed</c> 时就从列表里摘掉了
+    /// （见 <see cref="AttachWindow"/> 的 <c>ClosedBookkeeping</c>）。
+    /// 这一点很关键——返回一个死窗口会让调用方拿到一个所有方法都抛异常的对象，
+    /// 而"窗口已关闭"这个事实在异常文案里往往看不出来。
+    /// </para>
+    /// </remarks>
+    public WebviewWindow? GetWindow(string label)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(label);
+        string normalized = OrielWindowOptions.ValidateLabel(label);
+
+        foreach (WebviewWindow window in _windows)
+        {
+            if (string.Equals(window.Label, normalized, StringComparison.Ordinal))
+            {
+                return window;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 当前有焦点的窗口（对标 Tauri 2 的 <c>Window.getFocusedWindow</c>）。
+    /// </summary>
+    /// <returns>焦点窗口；平台取不到或没有窗口时有焦点时返回 <c>null</c>。</returns>
+    /// <remarks>
+    /// <b>目前恒返回 null</b>：三平台都还没有"窗口是否聚焦"的查询能力
+    /// （P0-3 的 focus 事件只上报变化，不记录状态）。这里保留签名是为了让迁移代码
+    /// 能原样编译，而不是等实现时才改调用点——但要明确它现在给不出答案，
+    /// 而不是假装"没有窗口有焦点"。
+    /// </remarks>
+    public WebviewWindow? GetFocusedWindow() => null;
+
     /// <summary>内嵌资源表（未用内嵌资源时为 null）。运行时新建的窗口也用它。</summary>
     private EmbeddedAssetStore? _assets;
 
@@ -191,6 +236,11 @@ public sealed class OrielApp : IDisposable
     /// </summary>
     private void AttachWindow(WebviewWindow window, OrielWindowOptions options)
     {
+        // label 唯一性在这里判：这是启动期窗口与运行时新建窗口的**唯一汇合点**，
+        // 判一次就覆盖两条路径。放在构建器（AddWindow）里不行——那时还没有应用实例，
+        // 也就不知道"默认 main"已经被谁占用了。
+        EnsureLabelAvailable(options.Label);
+
         if (_builder.Debug)
         {
             options.Debug = true;
@@ -215,6 +265,47 @@ public sealed class OrielApp : IDisposable
         // 走 ClosedBookkeeping 而不是公共 Closed 事件：摘除必须发生在用户的 Closed 处理器**之前**，
         // 否则用户在处理器里读到的 Windows 还包含刚关掉的那个窗口。
         created.ClosedBookkeeping = () => _windows.Remove(created);
+    }
+
+    /// <summary>
+    /// 判定一个 label 是否已被存活窗口占用；被占用时抛异常。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>为什么必须抛而不是自动改名</b>：label 是寻址单位。自动改成 <c>main-2</c> 之后，
+    /// 页面里写死的 <c>emitTo('main', …)</c> 会发到错误的窗口，而这个错误**没有任何症状**
+    /// ——事件就是没到。宁可启动失败，也不要一个悄悄改名的窗口。
+    /// </para>
+    /// <para>
+    /// 已关闭窗口的 label 会被释放（它已从 <see cref="_windows"/> 摘掉），
+    /// 因此"关掉 settings 再开一个 settings"是成立的。
+    /// </para>
+    /// </remarks>
+    private void EnsureLabelAvailable(string label)
+        => EnsureLabelAvailable(label, _windows.Select(w => w.Label));
+
+    /// <summary>
+    /// 唯一性判定的纯函数形态：给定已有 label 集合，判定新 label 是否可用。
+    /// </summary>
+    /// <remarks>
+    /// 抽出来是为了能单测——真正调用它的 <c>AttachWindow</c> 需要真实窗口后端，
+    /// 而"重复 label 会不会被发现"这件事恰恰不能只在真机上验。
+    /// </remarks>
+    /// <param name="label">待建窗口的 label（已由 <see cref="OrielWindowOptions.ValidateLabel"/> 归一）。</param>
+    /// <param name="existingLabels">已存活窗口的 label；其中 <c>null</c> 表示该窗口后端尚未就位，跳过。</param>
+    /// <exception cref="InvalidOperationException">label 已被占用。</exception>
+    internal static void EnsureLabelAvailable(string label, IEnumerable<string?> existingLabels)
+    {
+        foreach (string? existing in existingLabels)
+        {
+            if (existing is not null && string.Equals(existing, label, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"窗口 label「{label}」已被占用。label 是寻址单位（GetWindow / emitTo / 能力配置都按它找窗口），" +
+                    "不能重复——请给每个窗口不同的 Label（见 OrielWindowOptions.Label）。" +
+                    "注意默认值是 \"main\"：多窗口应用必须显式给除第一个之外的窗口设 label。");
+            }
+        }
     }
 
     /// <summary>页面侧的主题事件名：<c>oriel.on('theme.changed', theme =&gt; …)</c>，payload 为 <c>"light"</c> / <c>"dark"</c>。</summary>

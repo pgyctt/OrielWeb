@@ -85,8 +85,13 @@ internal static class MultiWindowSelfTest
         {
             // 新窗口指向**同一个 todo 页面**（内嵌资源首页）：多窗口要验证的是"各窗口有各自的页面
             // 与会话，而命令、能力、令牌是共用的"，以及内建 win.* 只作用到发起调用的那个窗口。
+            //
+            // **必须显式给 Label**：默认值是 "main"，而第一个窗口已经占了它。label 是寻址单位
+            // （GetWindow / emitTo / 能力配置都按它找窗口），重复会被库拒绝而不是自动改名——
+            // 自动改名会让页面里写死的 emitTo('main', …) 发到错误窗口，且没有任何症状。
             _second = first.App.CreateWindow(
-                w => w.WithTitle("Oriel Demo — 窗口 2")
+                w => w.WithLabel("window-2")
+                      .WithTitle("Oriel Demo — 窗口 2")
                       .WithSize(560, 640)
                       .WithMinSize(420, 360)
                       .WithFrameless(),
@@ -97,6 +102,12 @@ internal static class MultiWindowSelfTest
                         if (args.Name == SecondEcho)
                         {
                             _secondEchoed = true;
+
+                            // 页面侧的 label 必须与宿主侧一致：它由注入脚本写成，
+                            // 与 OrielWindowOptions.Label 是两个来源，错配了不会有别的症状。
+                            Check(
+                                args.Json.Contains("\"label\":\"window-2\"", StringComparison.Ordinal),
+                                $"第二个窗口的页面 oriel.label 应为 window-2，实际 payload：{args.Json}");
                         }
 
                         TryAdvance();
@@ -114,10 +125,24 @@ internal static class MultiWindowSelfTest
 
         Check(_second is not null, "CreateWindow 应返回窗口对象");
         Check(first.App.Windows.Count == 2, $"新建后应有 2 个窗口，实际 {first.App.Windows.Count}");
+
+        // label 寻址（P0-2）：两个窗口各自可被按 label 找到，且不会互相混淆。
+        // 这两条是本自检新增的断言——label 之前，多窗口只能靠"我记住那个对象引用"，
+        // 而对象引用过不了 IPC。
+        Check(first.App.GetWindow("main") == first, "按 label「main」应取回第一个窗口");
+        Check(first.App.GetWindow("window-2") == _second, "按 label「window-2」应取回第二个窗口");
+        Check(first.App.GetWindow("nope") is null, "取不存在的 label 应返回 null 而不是抛异常");
+        Check(_second!.Label == "window-2", $"第二个窗口的 Label 应为 window-2，实际 {_second.Label}");
+        Check(first.Label == "main", $"第一个窗口的 Label 应为 main（默认值），实际 {first.Label}");
     }
 
     private static void OnSecondLoaded()
-        => _ = _second!.EvaluateJs($"window.oriel.postMessage('{SecondEcho}', {{ n: 2 }})");
+    {
+        // 第二个窗口的页面回显两件事：它自己的会话通了，以及它**知道自己是哪个窗口**。
+        // oriel.label 是页面回答"我是谁"的唯一途径——多窗口下 URL、title 都可能相同。
+        _ = _second!.EvaluateJs(
+            $"window.oriel.postMessage('{SecondEcho}', {{ n: 2, label: window.oriel.label }})");
+    }
 
     /// <summary>
     /// 按"收到第二个窗口的回显 → 问第一个窗口还在不在 → 从第二个窗口里调 win.close"推进。

@@ -625,6 +625,31 @@ internal static unsafe partial class Win32
     [LibraryImport("user32")]
     internal static partial int GetSystemMetricsForDpi(int index, uint dpi);
 
+    /// <summary>
+    /// 按"客户区尺寸"反推"整窗尺寸"（按指定 DPI）。<c>lpRect</c> 传入客户区矩形，返回时被改写为整窗矩形。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>它是"把 <c>WithSize</c> 的语义统一成客户区"的那件工具</b>：Linux 的
+    /// <c>gtk_window_resize</c> 与 macOS 的 <c>setContentSize:</c> 都直接设客户区，而 Win32 的
+    /// <c>SetWindowPos</c> / <c>CreateWindowExW</c> 设的是整窗（含边框与标题栏）。
+    /// 不换算的后果是同一份 <c>WithSize(800, 600)</c> 在 Windows 上得到 784x561 的客户区
+    /// （左右边框各 8、标题栏 + 下边框 39），而另两个平台得到 800x600。
+    /// </para>
+    /// <para>
+    /// <b>只能用于有系统装饰的窗口</b>：无边框窗口的 <c>WM_NCCALCSIZE</c> 把客户区铺满整窗
+    /// （见 <c>Win32WindowHost.HandleMessage</c>），那时客户区 = 整窗，再换算一次反而会大一圈。
+    /// </para>
+    /// <para>
+    /// 用 <c>ForDpi</c> 变体而不是 <c>AdjustWindowRectEx</c>：本进程是 Per-Monitor-V2 感知的，
+    /// 非 DPI 变体按**系统** DPI 算，在副屏（不同缩放）上会明显偏小。
+    /// </para>
+    /// </remarks>
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool AdjustWindowRectExForDpi(
+        ref RECT lpRect, uint dwStyle, [MarshalAs(UnmanagedType.Bool)] bool bMenu, uint dwExStyle, uint dpi);
+
     [LibraryImport("user32")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool DestroyIcon(nint icon);

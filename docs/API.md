@@ -64,9 +64,10 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 
 | 属性 | 默认 | 链式写法 |
 |---|---|---|
+| `string Label` | `"main"` | `WithLabel(string)`。**窗口的稳定标识**（对标 Tauri 2 的 `Window.label`），也是寻址单位：`OrielApp.GetWindow(label)` 按它取窗口。字符集限字母/数字/`-`/`.`/`_`，**自动归一小写**（三平台的大小写规则不同，不归一会出现"只在某个平台错配"）。**同一应用内必须唯一**，重复会在建窗时抛 `InvalidOperationException`——不会自动改名（自动改名会让 `emitTo('main', …)` 发到错误窗口且毫无症状）。页面侧读 `window.oriel.label` |
 | `string Title` | `"Oriel"` | `WithTitle(string)` |
-| `int Width` / `int Height` | `1000` / `700` | `WithSize(int, int)`。**逻辑像素**（三平台一致）：Windows 在 Per-Monitor-V2 下按窗口 DPI 折算 |
-| `int? MinWidth` / `int? MinHeight` | `null`（不限制） | `WithMinSize(int, int)`（同上，逻辑像素） |
+| `int Width` / `int Height` | `1000` / `700` | `WithSize(int, int)`。**逻辑像素的客户区**（三平台一致）：Windows 在 Per-Monitor-V2 下按窗口 DPI 折算，并把"客户区 → 整窗"换算掉（`AdjustWindowRectExForDpi`）；Linux/macOS 的原生 API 本就是客户区语义。**frameless 窗口不做这层换算**——它的客户区已铺满整窗 |
+| `int? MinWidth` / `int? MinHeight` | `null`（不限制） | `WithMinSize(int, int)`（同上：逻辑像素的**客户区**下限；Windows 会换算成整窗的跟踪尺寸） |
 | `int? X` / `int? Y` | `null` | `At(int, int)`（顺带把 `Center` 置 false）。窗口**左上角**落在屏幕逻辑坐标 (x,y)——三平台一致（Linux 在 map 前发出 move 请求，最终落点由窗口管理器确认） |
 | `bool Center` | `true` | `Centered(bool = true)` |
 | `bool Resizable` | `true` | `WithResizable(bool = true)` |
@@ -88,6 +89,8 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 | 成员（真实签名） | 说明 |
 |---|---|
 | `IReadOnlyList<WebviewWindow> Windows` | 当前存活窗口；关闭的窗口会自动摘除 |
+| `WebviewWindow? GetWindow(string label)` | **按 label 取窗口**（对标 Tauri 2 的 `Window.getByLabel`）。不存在或已关闭时返回 `null`（不抛）。已关闭的窗口不会被返回——返回一个死窗口会让调用方拿到一个所有方法都抛异常的对象 |
+| `WebviewWindow? GetFocusedWindow()` | 有焦点的窗口。**目前恒返回 `null`**：三平台都还没有"窗口是否聚焦"的查询能力（P0-3 的 focus 事件只上报变化，不记录状态）。保留签名是为了让迁移代码能原样编译，但**它现在给不出答案** |
 | `WebviewWindow CreateWindow(Action<OrielWindowOptions>? configure = null, Action<WebviewWindow>? onCreated = null)` | 运行时新建窗口（见 §1 的多窗口说明）。**只能在 `Run()` 之后调**，否则抛 `InvalidOperationException` |
 | `OrielTheme Theme` | `Light` / `Dark`；后端未就绪时返回 `Light` |
 | `event Action<OrielTheme>? ThemeChanged` | 系统主题变化（见 §6） |
@@ -122,16 +125,20 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 ```csharp
 // 运行时新建窗口。必须在 UI 线程调用——命令处理、窗口事件、托盘回调里都在 UI 线程上。
 WebviewWindow second = app.CreateWindow(
-    w => w.WithTitle("第二个窗口").WithSize(800, 600),
+    w => w.WithLabel("settings")        // 必须给：默认 "main" 已被第一个窗口占用
+          .WithTitle("第二个窗口").WithSize(800, 600),
     win => win.Loaded += () => Console.WriteLine("第二个窗口就绪"));
+
+WebviewWindow? again = app.GetWindow("settings");   // 按 label 取回（不存在时 null）
 ```
 
 | 语义 | 说明 |
 |---|---|
 | 一个应用、多个窗口 | 内嵌资源表（不落盘）、可信来源、IPC 令牌与能力配置都继承**应用级**的那些；页面各有一份，命令与门禁共用 |
+| **每个窗口要有不同的 `Label`** | 默认 `"main"`，多窗口时必须显式给其余窗口设 label；重复会在建窗时抛 `InvalidOperationException`（**不会自动改名**——自动改名会让 `emitTo('main', …)` 发到错误窗口且毫无症状）。页面侧读 `window.oriel.label` 回答"我是谁" |
 | `win.*` 只作用到发起者 | 内建窗口命令按"发起调用的那个窗口"路由，多窗口下不会打错窗口 |
 | 关掉一个不退出 | 所有窗口都关掉之后消息循环才结束（Windows 由存活窗口计数归零触发 `WM_QUIT`，macOS 由 `applicationShouldTerminateAfterLastWindowClosed:` 回答） |
-| `Windows` 会自动摘除已关闭的窗口 | 摘除发生在公共 `Closed` 事件**之前**：处理器里读到的列表不含刚关掉的那个 |
+| `Windows` 会自动摘除已关闭的窗口 | 摘除发生在公共 `Closed` 事件**之前**：处理器里读到的列表不含刚关掉的那个。`GetWindow` 同样不会返回已关闭的窗口 |
 | 必须在 UI 线程调用 | 刻意不做自动 marshal：返回值是同步的窗口对象，"marshal 过去再建"会让调用方拿到一个尚未建好的窗口 |
 
 > **Windows 上全进程共享一个 WebView2 环境**：user data folder 是全进程一个目录，而 WebView2 不允许
@@ -142,7 +149,7 @@ WebviewWindow second = app.CreateWindow(
 
 `Quit()` 是"最终退出"，不是"建议退出"。它做三件事：
 
-1. 结束消息循环（Windows `PostQuitMessage`、Linux `GtkMainQuit`、macOS `NSApplication.terminate:`），让 `Run()` 返回；
+1. 结束消息循环（Windows `PostQuitMessage`、Linux `GtkMainQuit`、macOS `NSApplication.stop:`），让 `Run()` 返回；
 2. `Run()` 返回前执行库侧清理（撤销托盘图标、释放后端与共享 WebView2 环境）——**清理照常执行，不是 `Environment.Exit` 一走了之**；
 3. 同时起一个看门狗：从"请求退出"算起超过 `ExitTimeoutDuration`（默认 10 秒）进程仍在，就强制结束它，退出码为 `ForceExitCode`（默认 `2`）。
 
@@ -165,7 +172,7 @@ WebviewWindow second = app.CreateWindow(
 → 若超时则 `ExitTimeout`（看门狗线程上触发，随后强杀）。**`ExitCompleted` 不代表进程已结束**——
 宿主在 `Run()` 返回后的收尾仍受看门狗保护。
 
-> `Quit()` **只能在 UI 线程调用**：`PostQuitMessage` / `GtkMainQuit` / `NSApplication.terminate:`
+> `Quit()` **只能在 UI 线程调用**：`PostQuitMessage` / `GtkMainQuit` / `NSApplication.stop:`
 > 都是线程相关的，从线程池调用会投给一个没有消息循环的线程，主循环永远收不到（表现为"调了
 > `Quit` 却退不掉"）。从其它线程退出请用 `InvokeOnUiThread` 编组过来。库检测到不在 UI 线程会
 > 立刻抛 `InvalidOperationException` 而不是静默投递。
@@ -187,7 +194,7 @@ WebviewWindow second = app.CreateWindow(
 | **几何与外观** | |
 | `SetTitle(string title)` / `SetResizable(bool enabled)` | — |
 | `SetMinSize(int width, int height)` | — |
-| `MoveTo(int x, int y)` / `Resize(int width, int height)` / `Center()` | 坐标是**屏幕**坐标、**左上角**原点（**逻辑像素**：HiDPI 下由库按窗口 DPI 折算，调用方不要预折算，见 §2）——`MoveTo` 的原点语义三平台一致 |
+| `MoveTo(int x, int y)` / `Resize(int width, int height)` / `Center()` | 坐标是**屏幕**坐标、**左上角**原点（**逻辑像素**：HiDPI 下由库按窗口 DPI 折算，调用方不要预折算，见 §2）——`MoveTo` 的原点语义三平台一致。`Resize` 的宽高是**客户区**（对标 Tauri 的 `setSize`）：Windows 会把客户区换算成整窗，frameless 窗口不换算（客户区已等于整窗） |
 | **拖动** | |
 | `BeginDrag()` | Windows：进入原生模态拖动（**阻塞到松开鼠标**） |
 | `BeginDragStreaming(double px, double py, double wx, double wy, double ww, double wh, double sh)` | macOS/Linux 的流式拖动起点；参数含义见 §2。**库自己接管标题栏拖动时走的就是它** |
@@ -776,6 +783,7 @@ window.ContextMenuPolicy = OrielContextMenuPolicy.Editing;  // Editing（默认�
 |---|---|
 | `oriel.ready` | Promise，脚本就绪（推荐用它而不是 `orielready` 事件） |
 | `oriel.platform` | `'windows'` / `'macos'` / `'linux'` |
+| `oriel.label` | 本窗口的 label（对标 Tauri 2 的 `Window.label`）。多窗口下同一份页面会被加载多份，URL 与 title 都可能相同——**只有它是稳定标识**。取值来自 `OrielWindowOptions.Label`，不是写死的 |
 | `oriel.version` | 库版本（`Major.Minor.Build`，由宿主注入，不是写死的） |
 | `oriel.timeout` | 命令回执超时（毫秒，默认 30000；页面可改，`<=0` 不启用） |
 | `oriel.dragRegion(target?)` | 登记拖动区域（见 §2）：不传参数 = 重新扫描整个文档；返回登记的元素数 |
@@ -881,8 +889,10 @@ sudo apt-get install -y fonts-noto-cjk   # 中文界面必需，否则渲染成�
 | 手段 | 覆盖 |
 |---|---|
 | 单测（`tests/OrielWeb.Tests`） | 分发器与回执协议、能力模型、内建窗口命令表、资源 URL 解析与请求路径归一（含穿越拒绝）、资源名约定、文件/Shell/对话框的纯函数、快照回退与数值格式化 |
-| 桥接测试（`tests/bridge/bridge.test.mjs`） | 三平台共用脚本的行为一致性：就绪、事件、往返、回执、超时、不可信来源不安装、每条出站消息带令牌 |
-| 无人自检（`OrielDemo --selftest <名字>`） | `nav` `ipc` `theme` `single-instance` `shell` `capability` `multiwindow` `scheme` `exit` `exit-timeout` `threading` `tray` `tray-js`——自己驱动页面、打印结论行、以退出码表达成败 |
+| 桥接测试（`tests/bridge/bridge.test.mjs`） | 三平台共用脚本的行为一致性：就绪、事件、往返、回执、超时、不可信来源不安装、每条出站消息带令牌、`oriel.label` 注入 |
+| 前端包测试（`packages/api/tests/*.test.mjs`） | `@orielweb/api` 的 `core` / `dpi` / `mocks`：mock 往返、参数原样透传、per-call 超时未支持时明确拒绝、DPI 换算与宿主侧舍入一致（含 .NET 的 ToEven） |
+| 无人自检（`OrielDemo --selftest <名字>`） | `nav` `ipc` `theme` `single-instance` `shell` `capability` `multiwindow` `scheme` `exit` `exit-timeout` `threading` `tray` `tray-js` `geometry` `geometry-frameless`——自己驱动页面、打印结论行、以退出码表达成败 |
+| 尺寸语义取证（`--selftest geometry` / `geometry-frameless`） | **三平台尺寸语义一致性**。前者用**装饰窗口**取证：`WithSize(800,600)` 的客户区必须是 `800x600`（修复前 Windows 上是 `784x561`，见 [TAURI2-PLAN.md](TAURI2-PLAN.md) 的 E-1），并再验一次运行期 `Resize(640,480)`。后者用**无边框窗口**取证反面：客户区不该被多做一次"客户区 → 整窗"换算 |
 | 托盘后端取证（`--selftest tray`） | 26 项：`app.png`/`app.ico` **双格式解码**、多托盘（建两个 + 按 id 取回 + 互不影响）、图标对象与**模板标记**如实回读、运行期换图（对象与路径两条入口）、菜单、显隐、标题、按 id 移除、重复 id 抛异常 |
 | 托盘前端取证（`--selftest tray-js`） | 页面真实调用 `oriel.tray`：`new` → `getById` → `getAll` → 全部 `set*` → `close` → `onEvent`，回显逐条结论。证明**前后端 API 同名同义且命令往返真的通** |
 | 退出语义取证（`--selftest exit` / `exit-timeout`） | 正常退出：`Exiting` 与 `ExitCompleted` 都触发、退出码 `0`。超时强杀：在 `Run()` 返回后堵死 UI 线程（复现现场"清理卡住"），断言看门狗在 `ExitTimeoutDuration` 后强制结束进程、退出码为 `ForceExitCode`（`2`），且 `ExitTimeout` 事件先于强杀触发。**必须子进程取证**：`Environment.Exit` 会把测试运行器一起带走 |

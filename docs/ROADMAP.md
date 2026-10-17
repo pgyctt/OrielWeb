@@ -2,6 +2,18 @@
 
 只记**还没做**的和**还没在真机上验过**的。已落地的能力、用法与取舍记录见 [API.md](API.md)。
 
+## API 与 Tauri 2 对齐（进行中）
+
+完整差异分析与分阶段清单见 [TAURI2-ALIGNMENT.md](TAURI2-ALIGNMENT.md)。只记**还没做**的前置项：
+
+| 缺口 | 为什么必须先做 |
+|---|---|
+| 没有 npm 包 / TS 类型（公开 API 只有注入的 `window.oriel`） | 所有模块的形状无法与 Tauri 一致，前端也不能 `import` |
+| 窗口没有 `label` | `getCurrentWindow` / `getByLabel` / `emitTo` / 按窗口授权全部做不了 |
+| 事件是裸 payload + 点分名，无 `{event,id,payload}`、无 target | `event` 模块无法对齐；内置窗口事件（resize/move/focus…）整体缺失 |
+| 几何只有 int 逻辑像素，无 `Logical/Physical`、无 `scaleFactor`；且 `Resize` 是外框、Tauri `setSize` 是客户区 | 所有 size/position API 形状不同，迁移后尺寸差一圈 |
+| 只有 `win.*` / `tray.*` 两个内建命名空间 | 无法按模块挂载与授权；新增 `window.*` 族必须过门禁（`win.*` 的后门不扩散） |
+
 ## 明确不做
 
 | 项 | 为什么 |
@@ -89,6 +101,19 @@
   `InvokeOnUiThread` 的动作确实执行在 UI 线程上、`PostToUiThread` 返回 `true` 且回调落在 UI 线程。
 - 若不符：macOS 看 `_mainManagedThreadId` 是否在 `NSApplication.run` 之前就记下了（构造函数里记的，
   应当正确）；Linux 看 `Environment.CurrentManagedThreadId` 与 GTK 主循环线程是否同一个。
+
+#### 窗口尺寸语义在高 DPI 下的逐像素正确性（Windows 未验；Linux/macOS 未跑）
+- 背景：`WithSize` / `Resize` / `WithMinSize` 现在统一为**逻辑像素的客户区**语义。Windows 侧走
+  "逻辑 → 物理 → 客户区转整窗（`AdjustWindowRectExForDpi`）"，frameless 不换算（客户区已铺满整窗）。
+  100% 缩放下已在 Windows 真机取证（`784x561` → `800x600`，运行期 `Resize(640,480)` 同样精确）。
+- 环境：**有缩放显示器的机器**——Windows 125% / 150% / 200% 各一次（含跨不同缩放的副屏拖动窗口后
+  再 `Resize`）；Linux X11 与 Wayland 的 200%；macOS Retina。
+- 步骤：`OrielDemo --selftest geometry`，再 `--selftest geometry-frameless`。
+- 预期：两者都 `GEOMETRY-SELFTEST: PASS`，客户区与请求值相差 ≤ 2 逻辑像素。
+- 若不符：先确认 `ClientToWindowSize` 传的是**窗口所在显示器**的 DPI（`GetDpiForWindow`），
+  不是系统 DPI——用错在副屏上会明显偏小。再确认 frameless 分支真的跳过了换算
+  （跳过失败的症状是"无边框窗口比请求的大一圈"，即多了一整套边框 + 标题栏）。
+- 状态：Windows 100% 已验；**高 DPI 与另两个平台均未取证**。
 
 #### Linux 高 DPI 下的拖动是否跟手（拖动已在库侧，不要折算）
 - 环境：Linux 桌面 + 真实高 DPI 缩放（X11 与 Wayland 各一次；`GDK_SCALE=2` 只在 X11 下生效）。

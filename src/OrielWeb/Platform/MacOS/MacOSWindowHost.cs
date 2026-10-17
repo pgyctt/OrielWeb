@@ -215,6 +215,9 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     public nint NativeWindowHandle => _nsWindow;
 
     public OrielApp App => _app;
+
+    /// <summary>本窗口的 label（见 <see cref="OrielWindowOptions.Label"/>）。</summary>
+    public string Label => _options.Label;
     /// <remarks>本类为 internal，public 成员不增加对外 API 面；它实现 <see cref="IWindowBackend.IsOnUiThread"/>。</remarks>
     public bool IsOnUiThread() => _backend.IsOnUiThread();
     internal void PostToMainThread(Action action) => _backend.PostToMainThread(action);
@@ -390,7 +393,7 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
                     _options.Zoom,
                     App.Guard.Token,
                     App.Guard.TrustedPrefixes,
-                    ReadSystemSnapshot(), _options.DragRegionSelector)),
+                    ReadSystemSnapshot(), _options.DragRegionSelector, _options.Label)),
             0, // WKUserScriptInjectionTimeAtDocumentStart
             true);
         ObjCRuntime.SendVoidObj(userContentController, ObjCRuntime.Sel("addUserScript:"), userScript);

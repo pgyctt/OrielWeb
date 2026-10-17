@@ -3,6 +3,70 @@ namespace OrielWeb;
 /// <summary>窗口初始配置（对齐 pywebview 基本面）。用 With* 方法链式配置。</summary>
 public sealed class OrielWindowOptions
 {
+    /// <summary>
+    /// 窗口的稳定标识（对标 Tauri 2 的窗口 label）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 默认 <c>"main"</c>。它是**寻址单位**：页面侧 <c>getCurrentWindow()</c> 拿到的是自己，
+    /// <c>GetByLabel("settings")</c> 拿到指定的那一个，<c>emitTo("settings", …)</c> 把事件
+    /// 只发给它。没有 label 时这些都做不了——多窗口应用只能靠"我记住那个对象引用"，
+    /// 而对象引用过不了 IPC。
+    /// </para>
+    /// <para>
+    /// <b>同一应用内必须唯一</b>：重复时 <see cref="OrielApp.CreateWindow"/> 与
+    /// <c>OrielAppBuilder.Run()</c> 会抛 <see cref="InvalidOperationException"/>。
+    /// 不在这里抛是因为构建器期还没有应用实例，无法知道已有哪些 label；
+    /// 而且"默认都是 main"这件事只有在真正建第二个窗口时才成为问题。
+    /// </para>
+    /// <para>
+    /// 字符限制与 <c>UseEmbeddedAssets</c> 的 host 相同（字母、数字、<c>-</c>、<c>.</c>、<c>_</c>）：
+    /// 它会出现在命令参数与将来的 capability 配置里，含空格/斜杠/中文会让配置无法逐字节匹配。
+    /// </para>
+    /// </remarks>
+    public string Label
+    {
+        get => _label;
+        set => _label = ValidateLabel(value);
+    }
+
+    private string _label = DefaultLabel;
+
+    /// <summary>未显式指定 label 时的默认值。单窗口应用因此不必写它。</summary>
+    public const string DefaultLabel = "main";
+
+    /// <summary>设置窗口 label；语义与限制见 <see cref="Label"/>。</summary>
+    public OrielWindowOptions WithLabel(string label) { Label = label; return this; }
+
+    /// <summary>
+    /// 校验并归一 label：非空、只含允许字符。
+    /// </summary>
+    /// <remarks>
+    /// 归一为**小写**：label 会进命令参数与配置，而三平台的文件系统/配置比对大小写规则不同
+    /// （Windows 不敏感、Linux 敏感）。统一小写之后，"Main" 与 "main" 不会被当成两个窗口，
+    /// 也不会出现"配置里写 main、页面报 Main"这种只在某个平台发生的错配。
+    /// </remarks>
+    internal static string ValidateLabel(string? label)
+    {
+        if (string.IsNullOrWhiteSpace(label))
+        {
+            throw new ArgumentException(
+                $"窗口 label 不能为空。默认值是 \"{DefaultLabel}\"，多窗口请各给不同的值。", nameof(label));
+        }
+
+        foreach (char c in label)
+        {
+            if (!char.IsAsciiLetterOrDigit(c) && c is not ('-' or '.' or '_'))
+            {
+                throw new ArgumentException(
+                    $"窗口 label「{label}」含非法字符「{c}」：它要出现在命令参数与能力配置里，" +
+                    "只能用字母、数字、'-'、'.'、'_'。", nameof(label));
+            }
+        }
+
+        return label.ToLowerInvariant();
+    }
+
     public string Title { get; set; } = "Oriel";
     public int Width { get; set; } = 1000;
     public int Height { get; set; } = 700;

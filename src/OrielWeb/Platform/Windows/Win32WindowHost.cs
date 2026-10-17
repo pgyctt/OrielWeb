@@ -402,19 +402,30 @@ internal partial class Win32WindowHost : IWindowBackend
         }
         host._hwnd = hwnd;
 
-        // 尺寸与位置统一为逻辑像素（与 Linux/macOS 的 WithSize/At 同语义）：Windows 在
-        // Per-Monitor-V2 下按**窗口所在显示器**的 DPI 折算。不折算的后果是 150%/200% 屏上
-        // 窗口只有一半大，`At(x,y)` 也只落到应有落点的几分之一——位置此前漏了折算（评审
-        // 2026-10-08 发现 2），尺寸与位置现在共用 LogicalPixels 这一个入口。
+        // 尺寸与位置统一为**逻辑像素的客户区**（与 Linux/macOS 的 WithSize/At 同语义）：
+        //   * 逻辑像素 → 物理像素：Per-Monitor-V2 下按**窗口所在显示器**的 DPI 折算。
+        //     不折算的后果是 150%/200% 屏上窗口只有一半大（评审 2026-10-08 发现 2 修的就是位置漏折算）。
+        //   * 客户区 → 整窗：Win32 的 CreateWindowExW / SetWindowPos 吃的是**整窗**尺寸，
+        //     而 Linux 的 gtk_window_resize 与 macOS 的 setContentSize: 吃的是**客户区**。
+        //     不换算的话同一份 WithSize(800,600) 在 Windows 上得到 784x561 的客户区
+        //     （实测，见 --selftest geometry），而另两个平台得到 800x600。
+        //     **frameless 窗口不换算**：它的 WM_NCCALCSIZE 把客户区铺满整窗，客户区已等于整窗。
         // 时机在窗口已建、尚未显示（PostCreate 才 ShowWindow）——用户看不到这次修正。
         uint initialDpi = Win32.GetDpiForWindow(hwnd);
-        if (initialDpi != 96)
-        {
-            int physicalWidth = LogicalPixels.ToPhysical(options.Width, initialDpi);
-            int physicalHeight = LogicalPixels.ToPhysical(options.Height, initialDpi);
+        int physicalWidth = LogicalPixels.ToPhysical(options.Width, initialDpi);
+        int physicalHeight = LogicalPixels.ToPhysical(options.Height, initialDpi);
 
-            // 位置只在显式给了 At(x,y) 时才动：没给时窗口保持系统摆位（或稍后由 Center 摆），
-            // 用 SWP_NOMOVE 保住它。At 一次给两维，缺一维按"没给位置"处理。
+        if (!options.Frameless)
+        {
+            (physicalWidth, physicalHeight) = ClientToWindowSize(
+                physicalWidth, physicalHeight, style, initialDpi);
+        }
+
+        // 位置只在显式给了 At(x,y) 时才动：没给时窗口保持系统摆位（或稍后由 Center 摆），
+        // 用 SWP_NOMOVE 保住它。At 一次给两维，缺一维按"没给位置"处理。
+        // 注意位置**不需要**做客户区换算：At 定的是窗口左上角，与客户区大小无关。
+        if (initialDpi != 96 || !options.Frameless)
+        {
             if (options.X is int atX && options.Y is int atY)
             {
                 _ = Win32.SetWindowPos(
@@ -801,10 +812,27 @@ internal partial class Win32WindowHost : IWindowBackend
                     info->ptMaxPosition.Y = monitorInfo.rcWork.Top;
                 }
 
-                // 最小尺寸同样按逻辑像素折算（与 Create/Resize 共用 LogicalPixels 这一个入口）
+                // 最小尺寸同样按逻辑像素折算（与 Create/Resize 共用 LogicalPixels 这一个入口）。
+                // 注意 ptMinTrackSize 是**整窗**尺寸（它约束的是 WM_GETMINMAXINFO 的跟踪尺寸），
+                // 所以 framed 窗口还要把"客户区下限"换算成整窗——否则最小尺寸会退化成
+                // "客户区能缩到 客户区下限 - 边框"，与另两个平台不一致。
                 uint dpi = Win32.GetDpiForWindow(hwnd);
-                if (_minWidth > 0) info->ptMinTrackSize.X = LogicalPixels.ToPhysical(_minWidth, dpi);
-                if (_minHeight > 0) info->ptMinTrackSize.Y = LogicalPixels.ToPhysical(_minHeight, dpi);
+                if (_minWidth > 0)
+                {
+                    int minWidth = LogicalPixels.ToPhysical(_minWidth, dpi);
+                    info->ptMinTrackSize.X = _options.Frameless
+                        ? minWidth
+                        : ClientToWindowSize(minWidth, 1, ComputeStyle(_options), dpi).Width;
+                }
+
+                if (_minHeight > 0)
+                {
+                    int minHeight = LogicalPixels.ToPhysical(_minHeight, dpi);
+                    info->ptMinTrackSize.Y = _options.Frameless
+                        ? minHeight
+                        : ClientToWindowSize(1, minHeight, ComputeStyle(_options), dpi).Height;
+                }
+
                 return 0;
             }
 
@@ -1010,7 +1038,7 @@ internal partial class Win32WindowHost : IWindowBackend
                     _options.Zoom,
                     App.Guard.Token,
                     App.Guard.TrustedPrefixes,
-                    ReadSystemSnapshot(), _options.DragRegionSelector))
+                    ReadSystemSnapshot(), _options.DragRegionSelector, _options.Label))
                 .ConfigureAwait(true);
 
             // 可见性按**意图态**恢复，而不是无条件置真：WithHidden() 起手时宿主已在 PostCreate 里
@@ -1543,11 +1571,59 @@ internal partial class Win32WindowHost : IWindowBackend
         return frame > 0 ? frame : 8;
     }
 
+    /// <summary>
+    /// 客户区尺寸（物理像素）→ 整窗尺寸（物理像素）。
+    /// </summary>
+    /// <param name="clientWidth">客户区宽（物理像素）。</param>
+    /// <param name="clientHeight">客户区高（物理像素）。</param>
+    /// <param name="style">窗口样式（决定边框与标题栏的组成）。</param>
+    /// <param name="dpi">窗口所在显示器的 DPI。</param>
+    /// <remarks>
+    /// <para>
+    /// 存在的唯一理由：把 <c>WithSize</c> / <c>Resize</c> 的语义统一成**客户区**。
+    /// Linux 的 <c>gtk_window_resize</c> 与 macOS 的 <c>setContentSize:</c> 都直接设客户区，
+    /// 只有 Win32 设整窗——不换算就是"同一份代码在 Windows 上小一圈"。
+    /// </para>
+    /// <para>
+    /// <b>调用方必须自己排除 frameless 窗口</b>：那种窗口的 <c>WM_NCCALCSIZE</c> 让客户区
+    /// 铺满整窗，客户区已等于整窗，再换算会大一圈。这里不做判断，因为样式与
+    /// <see cref="OrielWindowOptions.Frameless"/> 是两处信息，放在一处判更不容易漏。
+    /// </para>
+    /// <para>
+    /// 换算失败（<c>AdjustWindowRectExForDpi</c> 返回 false）时**退回原值**而不是抛异常：
+    /// 拿不到边框尺寸时"窗口小一圈"比"应用起不来"好得多，而且这属于平台调用失败，
+    /// 不该让一个纯观感问题升级成启动失败。
+    /// </para>
+    /// </remarks>
+    private static (int Width, int Height) ClientToWindowSize(
+        int clientWidth, int clientHeight, uint style, uint dpi)
+    {
+        if (dpi == 0)
+        {
+            dpi = 96;
+        }
+
+        var rect = new RECT { Left = 0, Top = 0, Right = clientWidth, Bottom = clientHeight };
+        if (!Win32.AdjustWindowRectExForDpi(ref rect, style, false, Win32Constants.WS_EX_NOREDIRECTIONBITMAP, dpi))
+        {
+            return (clientWidth, clientHeight);
+        }
+
+        int width = rect.Right - rect.Left;
+        int height = rect.Bottom - rect.Top;
+
+        // 极端情况下（样式异常、DPI 巨大）可能算出非正值：退回原值，不让窗口变成 0 宽
+        return width > 0 && height > 0 ? (width, height) : (clientWidth, clientHeight);
+    }
+
     // ------------------------------------------------------------------
     // IPC（WebMessage 接收与回执见 Win32WebView2Ipc.cs，避免 async 与 unsafe 混用）
     // ------------------------------------------------------------------
 
     public OrielApp App => _app;
+
+    /// <summary>本窗口的 label（见 <see cref="OrielWindowOptions.Label"/>）。</summary>
+    public string Label => _options.Label;
 
     internal WindowsPlatformBackend Backend => _backend;
 
@@ -1820,11 +1896,22 @@ internal partial class Win32WindowHost : IWindowBackend
 
     public void Resize(int width, int height)
     {
-        // width/height 是逻辑像素（与窗口选项同语义），按当前窗口 DPI 折算
+        // width/height 是**逻辑像素的客户区**（与 Linux gtk_window_resize、macOS setContentSize: 同语义）：
+        //   1. 逻辑 → 物理（按当前窗口 DPI）；
+        //   2. 客户区 → 整窗（仅 framed；frameless 的客户区已等于整窗）。
         uint dpi = Win32.GetDpiForWindow(_hwnd);
+        int physicalWidth = LogicalPixels.ToPhysical(width, dpi);
+        int physicalHeight = LogicalPixels.ToPhysical(height, dpi);
+
+        if (!_options.Frameless)
+        {
+            (physicalWidth, physicalHeight) = ClientToWindowSize(
+                physicalWidth, physicalHeight, ComputeStyle(_options), dpi);
+        }
+
         Win32.SetWindowPos(
             _hwnd, 0, 0, 0,
-            LogicalPixels.ToPhysical(width, dpi), LogicalPixels.ToPhysical(height, dpi),
+            physicalWidth, physicalHeight,
             Win32Constants.SWP_NOMOVE | Win32Constants.SWP_NOZORDER | Win32Constants.SWP_NOACTIVATE);
     }
 

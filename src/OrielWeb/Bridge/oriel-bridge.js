@@ -11,6 +11,7 @@
 //   __ORIEL_DOUBLE_CLICK_MS__  → 系统双击间隔（毫秒）
 //   __ORIEL_DRAG_THRESHOLD_PX__ → 判定"这是拖动而不是点击"的位移阈值（逻辑像素）
 //   __ORIEL_DRAG_SELECTOR__    → 宿主指定的拖动区域选择器（'' 表示只用属性标注）
+//   __ORIEL_LABEL__            → 本窗口的 label（对标 Tauri 2 的 Window.label）
 //
 // 三平台此前各自手抄一份，已导致缺陷同步传播（ready 的 TDZ、orielready 的时序
 // 都曾三份全中）。任何修改都会同时作用于三平台——这正是合并的目的。
@@ -82,6 +83,10 @@
 
     const oriel = {
         platform: __ORIEL_PLATFORM__,
+        // 本窗口的 label（对标 Tauri 2 的 Window.label）。页面靠它回答"我是谁"——
+        // 多窗口下同一个页面会被加载多份，而 URL、title 都可能相同，只有 label 是稳定标识。
+        // 由宿主注入（见 OrielWindowOptions.Label），不写死：默认 "main" 但可以改。
+        label: __ORIEL_LABEL__,
         // 由宿主注入的库版本（见 OrielBridgeTemplate）。页面用它做能力探测，
         // 因此**不能**在这里写死字面量——写死会与包版本各自漂移，静默误导所有兼容判断。
         version: '__ORIEL_VERSION__',

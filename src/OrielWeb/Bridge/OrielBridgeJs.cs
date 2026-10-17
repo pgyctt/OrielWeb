@@ -12,7 +12,9 @@ internal static class OrielBridgeJs
         bool zoomEnabled,
         string token,
         IReadOnlyList<string> trustedPrefixes,
-        OrielSystemSnapshot system, string? dragSelector)
+        OrielSystemSnapshot system,
+        string? dragSelector,
+        string label)
         => OrielBridgeTemplate.Create(
             "'windows'",
             "window.chrome.webview.postMessage(obj)",
@@ -21,5 +23,6 @@ internal static class OrielBridgeJs
             token,
             trustedPrefixes,
             system,
-            dragSelector);
+            dragSelector,
+            label);
 }

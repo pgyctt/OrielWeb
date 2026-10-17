@@ -16,7 +16,7 @@
 # ============================ 三个阶段 ============================
 #
 # 【自检】机器断言（结论行判定）
-#   nav ipc capability multiwindow scheme threading tray tray-js
+#   nav ipc capability multiwindow scheme threading tray tray-js geometry geometry-frameless
 #   theme（深浅两条路径必须给出**不同**结论）
 #   exit / exit-timeout（子进程；**同时**判结论行与退出码）
 #   single-instance（双进程：第二个应立即成功退出并通知首实例）
@@ -280,11 +280,13 @@ run_mode() {
 }
 
 section "自检：机器断言（结论行判定）"
-for mode in nav ipc capability multiwindow scheme threading tray tray-js; do
+for mode in nav ipc capability multiwindow scheme threading tray tray-js geometry geometry-frameless; do
     case "$mode" in
         threading) pattern='^THREADING-SELFTEST: ' ;;
         tray)      pattern='^TRAY-SELFTEST: ' ;;
         tray-js)   pattern='^TRAY-JS-SELFTEST: ' ;;
+        geometry)  pattern='^GEOMETRY-SELFTEST: ' ;;
+        geometry-frameless) pattern='^GEOMETRY-SELFTEST: ' ;;
         *)         pattern='^(NAV|IPC|CAPABILITY|MULTIWINDOW|SCHEME)-SELFTEST: ' ;;
     esac
     run_mode "$mode" "$pattern"
