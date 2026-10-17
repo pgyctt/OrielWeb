@@ -158,6 +158,11 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gtk, EntryPoint = "gtk_widget_set_sensitive")]
     internal static partial void GtkWidgetSetSensitive(nint widget, int sensitive);
 
+    /// <summary>控件当前是否"敏感"（接收输入）。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_widget_get_sensitive")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool GtkWidgetGetSensitive(nint widget);
+
     /// <summary>在指针位置弹出菜单；triggerEvent 传 0 表示用当前指针位置（GTK 3.22+）。</summary>
     [LibraryImport(Gtk, EntryPoint = "gtk_menu_popup_at_pointer")]
     internal static partial void GtkMenuPopupAtPointer(nint menu, nint triggerEvent);

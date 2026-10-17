@@ -1960,6 +1960,19 @@ internal partial class Win32WindowHost : IWindowBackend
     /// <summary>是否可关闭（原生读，见 <see cref="IWindowBackend.IsClosable"/>）。</summary>
     public bool IsClosable => (CurrentStyle() & Win32Constants.WS_SYSMENU) != 0;
 
+    /// <summary>是否接收输入（见 <see cref="IWindowBackend.IsEnabled"/>）。</summary>
+    public bool IsEnabled => _hwnd != 0 && Win32.IsWindowEnabled(_hwnd);
+
+    /// <summary>启用/禁用输入（见 <see cref="IWindowBackend.SetEnabled"/>）。</summary>
+    public void SetEnabled(bool enabled)
+    {
+        if (_hwnd != 0)
+        {
+            // 返回值是"调用之前是否启用"，不是操作是否成功——显式丢弃免得被当成结果
+            _ = Win32.EnableWindow(_hwnd, enabled);
+        }
+    }
+
     /// <summary>
     /// 读当前窗口样式位。
     /// </summary>

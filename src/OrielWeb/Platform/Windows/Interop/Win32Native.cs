@@ -627,6 +627,20 @@ internal static unsafe partial class Win32
     [LibraryImport("user32")]
     internal static partial nint GetForegroundWindow();
 
+    /// <summary>窗口是否接收输入（被 <c>EnableWindow(false)</c> 禁用后为 false）。</summary>
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool IsWindowEnabled(nint hwnd);
+
+    /// <summary>启用/禁用窗口的输入。</summary>
+    /// <remarks>
+    /// 禁用后窗口仍会绘制，但**收不到鼠标与键盘**，而且系统会把焦点交给别的窗口。
+    /// 返回值是"调用**之前**是否处于启用状态"（不是操作是否成功）——很容易看错。
+    /// </remarks>
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool EnableWindow(nint hwnd, [MarshalAs(UnmanagedType.Bool)] bool enable);
+
     /// <summary>
     /// 窗口是否"可见"（自身及所有祖先都带 <c>WS_VISIBLE</c>）。
     /// </summary>

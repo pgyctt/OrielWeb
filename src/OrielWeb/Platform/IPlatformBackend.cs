@@ -162,6 +162,20 @@ internal interface IWindowBackend
     /// </remarks>
     bool IsClosable { get; }
 
+    /// <summary>
+    /// 当前是否接收输入。
+    /// </summary>
+    /// <remarks>
+    /// "禁用"在三个平台上的表现一致：窗口仍在、仍绘制，但**收不到鼠标与键盘**。
+    /// Windows 是 <c>EnableWindow</c>、GTK 是 <c>gtk_widget_set_sensitive</c>、
+    /// Cocoa **没有这个概念**——用 <c>setIgnoresMouseEvents:</c> 近似（只挡鼠标、不挡键盘）。
+    /// 这个差别如实写出来：macOS 上"禁用"挡不住键盘，需要挡键盘的应用要自己处理。
+    /// </remarks>
+    bool IsEnabled { get; }
+
+    /// <summary>启用/禁用窗口的输入（见 <see cref="IsEnabled"/>）。</summary>
+    void SetEnabled(bool enabled);
+
     void Show();
     void Hide();
     void Close();

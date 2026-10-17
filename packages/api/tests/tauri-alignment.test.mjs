@@ -265,6 +265,13 @@ const METHOD_DIVERGENCES = {
         '本库的类是普通可枚举对象，宿主直接读 `type` / `x` / `y`，不需要 toJSON。',
 
     _handleTauriEvent: 'Tauri 内部的 Window 事件分发入口（下划线前缀），不是公开 API。',
+
+    activityName:
+        'Android 专有（当前 Activity 的名字）。本库是桌面库，没有对应物——' +
+        '而**永远返回一个空串或抛错都不对**，所以干脆不提供这个名字。',
+
+    sceneIdentifier:
+        'iOS 专有（当前 UIScene 的标识符）。理由同 `activityName`。',
 };
 
 /**
@@ -277,45 +284,43 @@ const METHOD_DIVERGENCES = {
  */
 const METHOD_GAP_GROUPS = [
     {
-        reason: 'Window 上的事件入口。本库的事件在 `event` 模块（`listen` / `once` / `emit`），' +
-            'Window 上没有转发。`onScaleChanged` / `onThemeChanged` / `onDragDropEvent` 还额外需要' +
-            '宿主事件（缩放变化、主题变化、拖放），那些还没接。',
+        reason: '窗口尺寸约束（`setMaxSize` / `setSizeConstraints`）。Windows 要加 `ptMaxTrackSize`、' +
+            'macOS 用 `setContentMaxSize:`——这两处都干净；**Linux 上 GTK 没有 max size 的简单入口**，' +
+            '得改用 `gtk_window_set_geometry_hints`（那会**替换**现有的 `set_size_request` min 机制），' +
+            '属于"没在真机验证过就不动已验证代码"的一类。',
+        methods: ['window.Window#setMaxSize', 'window.Window#setSizeConstraints'],
+    },
+    {
+        reason: '窗口外观的开关（装饰 / 阴影 / 背景色 / 图标 / 三个按钮的可用性 / 可聚焦 / 置底）。' +
+            '除了 `setDecorations`，其余都是"切一个样式位或属性"，形态相近，适合作为一批做。' +
+            '`setDecorations` 单独麻烦：Windows 上 `ComputeStyle` 是**创建期的静态决定**，' +
+            '运行期切换要改整套样式并让 `WM_NCCALCSIZE` 的分支跟着变，而那条路我无法目视验证。',
         methods: [
-            'window.Window#listen', 'window.Window#once',
-            'window.Window#emit', 'window.Window#emitTo',
-            'window.Window#onScaleChanged', 'window.Window#onThemeChanged',
-            'window.Window#onDragDropEvent',
+            'window.Window#setDecorations', 'window.Window#setShadow',
+            'window.Window#setBackgroundColor', 'window.Window#setIcon',
+            'window.Window#setClosable', 'window.Window#setMaximizable',
+            'window.Window#setMinimizable', 'window.Window#setFocusable',
+            'window.Window#setAlwaysOnBottom',
         ],
     },
     {
-        reason: '只读状态查询**已经全部做完**（isVisible / isMaximized / title / isMinimized / ' +
-            'isFocused / isFullscreen / isAlwaysOnTop / isDecorated / isResizable / isMaximizable / ' +
-            'isMinimizable / isClosable / theme）。这一组只剩 `isEnabled`：',
-        methods: ['window.Window#isEnabled'],
-    },
-    {
-        reason: '窗口状态设置。宿主还没有对应的命令（其中 `setMaxSize` / `setSizeConstraints` / ' +
-            '`setDecorations` / `setSkipTaskbar` 是最常被用到的几个）。',
+        reason: '每个平台各有一套、甚至只有一个平台有的概念（任务栏隐藏 / 全工作区可见 / 内容防截屏 / ' +
+            '简化全屏 / 指定显示器全屏 / 标题栏样式）。做之前得先决定"在另两个平台上它意味着什么、' +
+            '还是干脆不支持"——那是设计决策而不是实现。',
         methods: [
-            'window.Window#setAlwaysOnBottom', 'window.Window#setBackgroundColor',
-            'window.Window#setClosable', 'window.Window#setContentProtected',
-            'window.Window#setDecorations', 'window.Window#setEnabled',
-            'window.Window#setFocusable', 'window.Window#setFullscreenOnMonitor',
-            'window.Window#setIcon', 'window.Window#setMaximizable',
-            'window.Window#setMaxSize', 'window.Window#setMinimizable',
-            'window.Window#setShadow', 'window.Window#setSimpleFullscreen',
-            'window.Window#setSizeConstraints', 'window.Window#setSkipTaskbar',
-            'window.Window#setTheme', 'window.Window#setTitleBarStyle',
-            'window.Window#setVisibleOnAllWorkspaces', 'window.Window#unminimize',
+            'window.Window#setSkipTaskbar', 'window.Window#setVisibleOnAllWorkspaces',
+            'window.Window#setContentProtected', 'window.Window#setSimpleFullscreen',
+            'window.Window#setFullscreenOnMonitor', 'window.Window#setTitleBarStyle',
         ],
     },
     {
-        reason: '窗口特效（macOS 的 vibrancy / Windows 的 Mica 等）。三平台机制差异很大，' +
-            '要做就得先有一套特效模型。',
+        reason: '窗口特效（macOS 的 vibrancy / Windows 的 Mica）。三平台机制差异很大，' +
+            '要做就得先有一套"特效"的抽象模型。',
         methods: ['window.Window#setEffects', 'window.Window#clearEffects'],
     },
     {
-        reason: '光标控制。本库还没有光标模型（形状、可见性、位置、抓取）。',
+        reason: '光标控制。需要一套光标模型（形状、可见性、位置、抓取）**加上光标资源**' +
+            '（Tauri 那边光标图标走另一套协议），不是几个独立开关。',
         methods: [
             'window.Window#setCursorGrab', 'window.Window#setCursorIcon',
             'window.Window#setCursorPosition', 'window.Window#setCursorVisible',
@@ -323,19 +328,32 @@ const METHOD_GAP_GROUPS = [
         ],
     },
     {
-        reason: '任务栏徽标与进度（Windows / macOS 的 Dock）。本库还没有。',
+        reason: '任务栏 / Dock 的徽标与进度。Windows 要 `ITaskbarList3`（COM）、macOS 要 ' +
+            '`NSDockTile`，都是独立的平台集成。',
         methods: [
             'window.Window#setBadgeCount', 'window.Window#setBadgeLabel',
             'window.Window#setProgressBar', 'window.Window#setOverlayIcon',
         ],
     },
     {
-        reason: '请求用户注意（任务栏闪烁 / Dock 弹跳）。本库还没有。',
-        methods: ['window.Window#requestUserAttention'],
+        reason: '应用级主题覆写。本库现在只有"跟随系统"（`OrielApp.Theme` 是只读的），' +
+            '要做就得先定"覆写的作用域是什么"（整个应用？单个窗口？）——那是设计决策。',
+        methods: ['window.Window#setTheme'],
     },
     {
-        reason: '移动端专有（Android 的 activity / iOS 的 scene）。桌面端没有对应物。',
-        methods: ['window.Window#activityName', 'window.Window#sceneIdentifier'],
+        reason: '宿主还没有推这三个事件：`onScaleChanged` 要缩放变化通知、`onThemeChanged` 要主题变化通知、' +
+            '`onDragDropEvent` 要**完整的文件拖放事件流**（进入/移动/离开/放下，还带路径数据）。' +
+            '前两个是"某个全局值变了"的广播，第三个是带数据的一次交互，形状不同。',
+        methods: [
+            'window.Window#onScaleChanged', 'window.Window#onThemeChanged',
+            'window.Window#onDragDropEvent',
+        ],
+    },
+    {
+        reason: '请求用户注意（任务栏闪烁 / Dock 弹跳）。三个平台都有干净的入口' +
+            '（`FlashWindowEx` / urgency hint / `requestUserAttention:`），是剩下这些里最便宜的一个——' +
+            '没做只是因为本批的预算用在了别处，不是它难。',
+        methods: ['window.Window#requestUserAttention'],
     },
 ];
 

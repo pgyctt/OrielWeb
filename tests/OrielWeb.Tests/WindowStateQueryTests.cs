@@ -23,7 +23,7 @@ public sealed class WindowStateQueryTests
     [
         "window.isMinimized", "window.isFocused", "window.isFullscreen", "window.isAlwaysOnTop",
         "window.isDecorated", "window.isResizable", "window.isMaximizable", "window.isMinimizable",
-        "window.isClosable",
+        "window.isClosable", "window.isEnabled",
     ];
 
     [Theory]
@@ -36,6 +36,7 @@ public sealed class WindowStateQueryTests
     [InlineData("window.isMaximizable")]
     [InlineData("window.isMinimizable")]
     [InlineData("window.isClosable")]
+    [InlineData("window.isEnabled")]
     [InlineData("window.theme")]
     public void CommandsAreRegistered(string name)
         => Assert.True(OrielBuiltInWindowApiCommands.TryGet(name, out _), $"未注册：{name}");
@@ -50,6 +51,7 @@ public sealed class WindowStateQueryTests
     [InlineData("window.isMaximizable")]
     [InlineData("window.isMinimizable")]
     [InlineData("window.isClosable")]
+    [InlineData("window.isEnabled")]
     [InlineData("window.theme")]
     public void QueriesAreInTheTitleBarWhitelist(string name)
     {
@@ -72,6 +74,7 @@ public sealed class WindowStateQueryTests
     [InlineData("window.isMaximizable")]
     [InlineData("window.isMinimizable")]
     [InlineData("window.isClosable")]
+    [InlineData("window.isEnabled")]
     [InlineData("window.theme")]
     public void QueriesDoNotNeedCapabilityDeclaration(string name)
     {

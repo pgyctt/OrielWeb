@@ -220,6 +220,10 @@ internal static class Program
                         "window.destroy",
                         "window.setCloseIntercept",
                         "window.setEventForwarding",
+                        // 启用/禁用窗口的输入（M5-4）。**刻意不放进白名单**——
+                        // 禁用窗口不是标题栏要做的事，而它让页面能把窗口变成"点不动"的状态，
+                        // 那是能力而不是外观。
+                        "window.setEnabled",
                         // 几何查询（E2）：**刻意不放进标题栏白名单**——自绘标题栏不需要它们，
                         // 而它们能按 label 读到**别的**窗口的几何。所以要用必须显式声明。
                         "window.innerSize",

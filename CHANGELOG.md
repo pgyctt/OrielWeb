@@ -497,7 +497,58 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
 - 六条都进了**标题栏白名单**：标题栏靠 `isDecorated` 决定"要不要渲染自绘标题栏"、
   靠 `isMaximizable`/`isMinimizable`/`isClosable` 决定"哪个按钮该出现"、靠 `theme` 决定配色。
 
+#### Window 上的事件转发 + `isEnabled`/`setEnabled`（M5-3 / M5-4）
+
+- **`Window.listen` / `once` / `emit` / `emitTo`**（对标 Tauri 同名方法）：**纯委托**到
+  `event` 模块——那边已经做了 Tauri 事件名 → 宿主事件名的映射、"订阅高频事件时自动打开
+  宿主转发"，在这一层重新实现一份没有意义。
+  Tauri 的 `Window.listen` 对内置事件走一条本地快路径、其余走全局事件系统；
+  本库**统一走全局那条**——库里的内置事件本来就是宿主推给页面的同一条通道，
+  分成两条只会让"为什么这个事件收得到那个收不到"变得难查。
+  一处如实标注：本库的 `event.listen` **同步**返回退订函数（Tauri 返回 `Promise`）；
+  `await` 一个非 Promise 值同样可用，所以迁移代码不用改。
+- **`unminimize`** 映射到宿主的 `window.restore`：三平台的"还原"本来就是**同一个原生动作**
+  （Windows `SW_RESTORE`、GTK `deiconify` + `unmaximize`、Cocoa `deminiaturize:`）——
+  Tauri 把 `restore` 与 `unminimize` 分成两条命令，而 Win32 的 `SW_RESTORE` 一个调用
+  就同时解除最小化与最大化。如实映射，而不是假装它们是两件事。
+- **`isEnabled` / `setEnabled`**：三平台实现——Windows `IsWindowEnabled` / `EnableWindow`、
+  GTK `gtk_widget_get_sensitive` / `set_sensitive`、Cocoa `ignoresMouseEvents`。
+  **macOS 上"禁用"只挡鼠标、不挡键盘**（Cocoa 没有这个概念），如实写进接口文档。
+  `isEnabled` 进标题栏白名单（只读自己窗口的状态），**`setEnabled` 不进**——
+  禁用窗口不是标题栏要做的事，而它让页面能把窗口变成"点不动"的状态，那是能力而非外观。
+
+#### `window.Window` 的差异清单全部归类完毕
+
+H 产出的那份清单现在**每一项都有归属**，测试机械保证不会漏：
+
+| 归类 | 含义 |
+|---|---|
+| 已实现 | 只读查询 13 + 外观查询 6 + 事件入口 4 + `unminimize` + `isEnabled`/`setEnabled` |
+| 有意不做 | `activityName` / `sceneIdentifier`（Android/iOS 专有，桌面端没有对应物） |
+| 待做（已分类，带原因） | 36 项，见下 |
+
+待做的 36 项按**批次优先级**分组，每组写明"为什么还没做"：
+
+| 组 | 数量 | 为什么还没做 |
+|---|---|---|
+| 窗口尺寸约束 | 2 | Linux 上 GTK 没有 max size 的简单入口，要改用 `gtk_window_set_geometry_hints`（会**替换**现有 min 机制），属于"没在真机验证过就不动已验证代码" |
+| 窗口外观开关 | 9 | 多数是"切一个样式位"，适合一批做；`setDecorations` 单独麻烦（Windows 的 `ComputeStyle` 是**创建期静态决定**，运行期切换要改整套样式与 `WM_NCCALCSIZE` 分支） |
+| 平台专有概念 | 6 | 每个平台各有一套甚至只有一个平台有——先得决定"在另两个平台上意味着什么" |
+| 窗口特效 | 2 | 三平台机制差异大，要先有一套特效抽象 |
+| 光标控制 | 6 | 要光标模型**加光标资源**，不是几个独立开关 |
+| 任务栏徽标/进度 | 4 | Windows 要 `ITaskbarList3`（COM）、macOS 要 `NSDockTile` |
+| 应用级主题覆写 | 1 | 要先定"覆写的作用域"（整个应用？单窗口？） |
+| 宿主事件 | 3 | `onScaleChanged` / `onThemeChanged` / `onDragDropEvent` 需要新的宿主事件 |
+| 请求注意 | 1 | **不难**——三平台都有干净入口，只是本批预算用在了别处 |
+
 ### 修复
+
+- **白名单改动因 PowerShell 解析失败而静默丢失**：`window.isEnabled` 的白名单条目
+  在一次批量编辑里没写进去——那条命令在**后面**的 JS 编辑处遇到中文解析错误而整体失败，
+  前面的 C# 编辑虽然执行了，但这一条没有。症状是自检报"`window.isEnabled` 不在 Allow 名单里"，
+  而我以为它已在白名单里。
+  教训：**批量命令里的中文一律用 `edit` 工具**，不要塞进 PowerShell 字符串——
+  这个会话里它已经反复把中文弄乱；判断"编辑是否生效"不能靠记忆，要 grep 回来。
 
 - **自检里"拿主窗口当装饰对照"的错误假设**：`isDecorated` 的第一版断言是
   "探针窗口 false、主窗口 true"，结果主窗口那条**失败**——demo 的主窗口**也是无边框的**

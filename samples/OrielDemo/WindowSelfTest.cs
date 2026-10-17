@@ -272,7 +272,25 @@ internal static class WindowSelfTest
             string theme = (await AskWithLabelAsync("window.theme", ProbeLabel)).GetString() ?? "";
             Check(theme is "light" or "dark", $"window.theme 应当给 light/dark（实际「{theme}」）");
 
-            // ---- 7. 定向销毁：关掉的是目标窗口而不是发起者 ----
+            // ---- 7. isEnabled / setEnabled（M5-4）----
+            //
+            // 禁用/启用是**可观察的**：宿主侧读回来必须跟着变——
+            // 只断言"命令没报错"的话，一个空实现也能过。
+            Check(probe.IsEnabled, "刚建出来的窗口应当是启用的");
+
+            await AskMainAsync(
+                "window.setEnabled",
+                SelfTestJson.Object(("label", SelfTestJson.String(ProbeLabel)), ("value", "false")));
+            Check(!probe.IsEnabled, "禁用之后宿主侧 IsEnabled 应当是 false");
+            Check((await AskWithLabelAsync("window.isEnabled", ProbeLabel)).GetBoolean() == probe.IsEnabled,
+                "window.isEnabled 应当与宿主侧一致（禁用态）");
+
+            await AskMainAsync(
+                "window.setEnabled",
+                SelfTestJson.Object(("label", SelfTestJson.String(ProbeLabel)), ("value", "true")));
+            Check(probe.IsEnabled, "重新启用之后宿主侧 IsEnabled 应当回到 true");
+
+            // ---- 8. 定向销毁：关掉的是目标窗口而不是发起者 ----
             await AskWithLabelAsync("window.destroy", ProbeLabel);
             await WaitForAsync(() => !app.Windows.Contains(probe), 5000);
 

@@ -185,6 +185,7 @@ internal static class OrielCapabilityRules
         "window.isMaximizable",
         "window.isMinimizable",
         "window.isClosable",
+        "window.isEnabled",
         "window.theme",
         "window.title",
     ];

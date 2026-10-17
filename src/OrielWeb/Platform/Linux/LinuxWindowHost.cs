@@ -302,6 +302,18 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     /// </remarks>
     public bool IsClosable => true;
 
+    /// <summary>是否接收输入（见 <see cref="IWindowBackend.IsEnabled"/>）。</summary>
+    public bool IsEnabled => WindowAlive && GtkNative.GtkWidgetGetSensitive(_gtkWindow);
+
+    /// <summary>启用/禁用输入（见 <see cref="IWindowBackend.SetEnabled"/>）。</summary>
+    public void SetEnabled(bool enabled)
+    {
+        if (WindowAlive)
+        {
+            GtkNative.GtkWidgetSetSensitive(_gtkWindow, enabled ? 1 : 0);
+        }
+    }
+
     // ---- 导航操作（WebKitGTK 内建历史；无历史时调用是空操作）----
     // _webview 在 destroy 之后被置 0，判空是必需的：这些调用不能对已销毁的 webview 下手。
 

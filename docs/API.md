@@ -1214,7 +1214,7 @@ await getTauriVersion();   // '0.4.0'    ← **库**版本，不是 Tauri 框架
 | 组 | 命令 | 是否需要 `Allow` |
 |---|---|---|
 | 标题栏必需 | `minimize` `toggleMaximize` `toggleFullscreen` `toggleOnTop` `close` `destroy` `drag*` `pickFile` `contextMenu` | **否**（无条件放行，理由见 §4） |
-| 只读状态查询（标题栏靠它渲染按钮状态与激活配色） | `isVisible` `isMaximized` `isMinimized` `isFocused` `isFullscreen` `isAlwaysOnTop` `isDecorated` `isResizable` `isMaximizable` `isMinimizable` `isClosable` `theme` `title` | **否** |
+| 只读状态查询（标题栏靠它渲染按钮状态与激活配色） | `isVisible` `isMaximized` `isMinimized` `isFocused` `isFullscreen` `isAlwaysOnTop` `isDecorated` `isResizable` `isMaximizable` `isMinimizable` `isClosable` `isEnabled` `theme` `title` | **否** |
 | 其余 | `show` `hide` `focus` `maximize` `restore` `setTitle` `setResizable` `setFullscreen` `setOnTop` `setMinSize` `moveTo` `resize` `center` `scaleFactor` `innerSize` `outerSize` `innerPosition` `outerPosition` `getAll` `setCloseIntercept` `setEventForwarding` | **是**：`Allow("window.*")` 或逐条声明 |
 
 > **`window.*` 与 `win.*` 的分工**：`win.*` 是早期的库内建命令（**只能作用于发起者**、整族始终放行）；

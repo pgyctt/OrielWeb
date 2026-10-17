@@ -305,6 +305,25 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     public bool IsClosable => (CurrentStyleMask() & StyleClosable) != 0;
 
     /// <summary>
+    /// 是否接收输入（见 <see cref="IWindowBackend.IsEnabled"/>）。
+    /// </summary>
+    /// <remarks>
+    /// **只挡鼠标、不挡键盘**：Cocoa 没有"禁用窗口"这个概念，这里用
+    /// <c>ignoresMouseEvents</c> 近似。如实写出来，而不是假装与另两个平台一致。
+    /// </remarks>
+    public bool IsEnabled => _nsWindow != 0
+        && !ObjCRuntime.SendBoolRet(_nsWindow, ObjCRuntime.Sel("ignoresMouseEvents"));
+
+    /// <summary>启用/禁用输入（见 <see cref="IWindowBackend.SetEnabled"/>）。</summary>
+    public void SetEnabled(bool enabled)
+    {
+        if (_nsWindow != 0)
+        {
+            ObjCRuntime.SendVoidBool(_nsWindow, ObjCRuntime.Sel("setIgnoresMouseEvents:"), !enabled);
+        }
+    }
+
+    /// <summary>
     /// 读当前的 <c>styleMask</c>。
     /// </summary>
     /// <remarks>

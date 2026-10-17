@@ -14,7 +14,7 @@
 
 import { invoke } from './core.js';
 import { getTransport } from './internal.js';
-import { listen, TauriEvent } from './event.js';
+import { listen, once, emit, emitTo, TauriEvent } from './event.js';
 import {
     LogicalSize,
     LogicalPosition,
@@ -328,6 +328,106 @@ export class Window {
      */
     theme() {
         return invoke('window.theme', { label: this.label });
+    }
+
+    /**
+     * 是否接收输入。
+     *
+     * @returns {Promise<boolean>}
+     * @remarks **macOS 上只挡鼠标、不挡键盘**：Cocoa 没有"禁用窗口"这个概念，
+     * 那边用 `ignoresMouseEvents` 近似。需要挡键盘的应用要自己处理。
+     */
+    isEnabled() {
+        return invoke('window.isEnabled', { label: this.label });
+    }
+
+    /**
+     * 启用/禁用窗口的输入。
+     *
+     * @param {boolean} enabled
+     * @returns {Promise<void>}
+     * @remarks 需要 `Allow("window.setEnabled")`——它**不在**标题栏白名单里
+     * （禁用窗口不是标题栏要做的事）。
+     */
+    setEnabled(enabled) {
+        if (typeof enabled !== 'boolean') {
+            throw new TypeError('setEnabled: enabled 必须是布尔值');
+        }
+
+        return invoke('window.setEnabled', { label: this.label, value: enabled });
+    }
+
+    // ---- 事件（对标 Tauri 的 Window.listen / once / emit / emitTo）----
+    //
+    // 纯委托到 `event` 模块：那边已经做了 Tauri 事件名 → 宿主事件名的映射、
+    // 以及"订阅高频事件时自动打开宿主转发"。在这一层重新实现一份没有意义。
+    //
+    // Tauri 的 `Window.listen` 对内置事件（`tauri://resize` 等）走一条本地的快路径，
+    // 其余走全局事件系统；本库**统一走全局那条**——因为库里的内置事件本来就是
+    // 宿主推给页面的同一条通道，分成两条只会让"为什么这个事件收得到那个收不到"变得难查。
+
+    /**
+     * 订阅一个事件。与模块级 `listen` 等价。
+     *
+     * @param {string} event 事件名（Tauri 名或宿主名都行，见 `event` 模块的映射表）。
+     * @param {(event: { event: string, id: number, payload: any }) => void} handler
+     * @returns {() => void} 退订函数（**同步**返回，比 Tauri 的 Promise 更方便：
+     * `await` 一个非 Promise 值同样可用，所以迁移代码不用改）。
+     */
+    listen(event, handler) {
+        return listen(event, handler);
+    }
+
+    /**
+     * 订阅一次；收到第一条后自动退订。
+     *
+     * @param {string} event
+     * @param {(event: { event: string, id: number, payload: any }) => void} handler
+     * @returns {() => void} 退订函数（在触发前调用可以取消；**同步**返回，同上）。
+     */
+    once(event, handler) {
+        return once(event, handler);
+    }
+
+    /**
+     * 广播一个事件给**所有**窗口。
+     *
+     * @param {string} event
+     * @param {unknown} [payload]
+     * @returns {Promise<void>}
+     * @remarks 需要宿主 `Allow("event.emit")`——那是唯一一条**不在**任何白名单里的内建命令
+     * （它让一个窗口的页面能驱动别的窗口，而自绘标题栏不依赖它）。见 API.md §4。
+     */
+    emit(event, payload) {
+        return emit(event, payload);
+    }
+
+    /**
+     * 把事件发给指定的那个窗口。
+     *
+     * @param {string} target 目标窗口的 label。
+     * @param {string} event
+     * @param {unknown} [payload]
+     * @returns {Promise<void>}
+     * @remarks 同样需要 `Allow("event.emit")`。
+     */
+    emitTo(target, event, payload) {
+        return emitTo(target, event, payload);
+    }
+
+    /**
+     * 把一个最小化的窗口恢复到正常状态（对标 Tauri 的 `Window.unminimize()`）。
+     *
+     * @returns {Promise<void>}
+     * @remarks
+     * 走宿主的 `window.restore`：三平台的"还原"本来就是**同一个原生动作**
+     * （Windows `SW_RESTORE`、GTK `gtk_window_deiconify` + `unmaximize`、
+     * Cocoa `deminiaturize:`）——Tauri 把 `restore` 与 `unminimize` 分成两条命令，
+     * 而 Win32 的 `SW_RESTORE` 一个调用就同时解除最小化与最大化。
+     * 这里如实映射到同一个动作，而不是假装它们是两件事。
+     */
+    unminimize() {
+        return invoke('window.restore', { label: this.label });
     }
 
     /**

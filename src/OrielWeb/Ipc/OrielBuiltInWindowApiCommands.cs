@@ -87,6 +87,18 @@ internal static class OrielBuiltInWindowApiCommands
                 handler = static (sender, args) => Resolve(sender, args).IsClosable;
                 return true;
 
+            case "window.isEnabled":
+                handler = static (sender, args) => Resolve(sender, args).IsEnabled;
+                return true;
+
+            case "window.setEnabled":
+                handler = static (sender, args) =>
+                {
+                    Resolve(sender, args).SetEnabled(OrielJson.GetRequiredArg<bool>(args, "value", null));
+                    return null;
+                };
+                return true;
+
             case "window.theme":
                 // 对标 Tauri 的 Window.theme()：返回 'light' / 'dark' / null。
                 //

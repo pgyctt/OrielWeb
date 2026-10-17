@@ -70,6 +70,160 @@ export class Window {
     /** 窗口所在显示器的缩放比（1.0 = 100%）。需要 `window.scaleFactor` 被允许。 */
     scaleFactor(): Promise<any>;
     /**
+     * 是否最小化。
+     *
+     * @returns {Promise<boolean>}
+     * @remarks **与 `isVisible()` 是两件事**：最小化的窗口仍然"可见"，
+     * 它只是被收进了任务栏。混为一谈的后果是"最小化之后页面以为窗口被藏了"。
+     */
+    isMinimized(): Promise<boolean>;
+    /**
+     * 是否拥有键盘焦点。
+     *
+     * @returns {Promise<boolean>}
+     * @remarks 按**窗口**判而不是按应用判：多窗口应用里只有一个是 key window。
+     * 标题栏常用它渲染激活/非激活两套配色。
+     */
+    isFocused(): Promise<boolean>;
+    /**
+     * 是否全屏。
+     *
+     * @returns {Promise<boolean>}
+     * @remarks 取的是宿主 `toggleFullscreen()` 记住的状态，不是比对窗口与显示器矩形——
+     * 后者在用户手动把窗口拖成刚好铺满屏幕时会给出与库不一致的答案。
+     */
+    isFullscreen(): Promise<boolean>;
+    /**
+     * 是否置顶。
+     *
+     * @returns {Promise<boolean>}
+     * @remarks 同上：取宿主记住的状态。
+     */
+    isAlwaysOnTop(): Promise<boolean>;
+    /**
+     * 是否有系统装饰（标题栏与边框）。
+     *
+     * @returns {Promise<boolean>}
+     * @remarks 取创建时的选项，窗口生命期内不变。无边框窗口多用它决定"要不要渲染自绘标题栏"。
+     */
+    isDecorated(): Promise<boolean>;
+    /**
+     * 是否可缩放。
+     *
+     * @returns {Promise<boolean>}
+     * @remarks 从**原生实际状态**读回（`setResizable` 改的就是它），
+     * 所以反映的是"系统接受的是什么"。
+     */
+    isResizable(): Promise<boolean>;
+    /**
+     * 是否可最大化。
+     *
+     * @returns {Promise<boolean>}
+     * @remarks **Linux 与 macOS 上等于 `isResizable()`**：那两个平台没有独立的
+     * "可最大化"概念（GTK 跟着 resizable 走、AppKit 的 zoom 以 resizable 为前提）。
+     * Windows 上才是独立的样式位。
+     */
+    isMaximizable(): Promise<boolean>;
+    /**
+     * 是否可最小化。
+     *
+     * @returns {Promise<boolean>}
+     * @remarks 同 `isMaximizable()`：Linux 上回落到 `isResizable()`。
+     */
+    isMinimizable(): Promise<boolean>;
+    /**
+     * 是否可关闭。
+     *
+     * @returns {Promise<boolean>}
+     * @remarks **Linux 上恒为 `true`**：GTK 没有这个概念（窗口总能收到 delete-event，
+     * 本库的关闭接管是在那之上做的拦截）。
+     */
+    isClosable(): Promise<boolean>;
+    /**
+     * 当前主题（`'light'` 或 `'dark'`）。
+     *
+     * @returns {Promise<'light' | 'dark'>}
+     * @remarks
+     * 对标 Tauri 的 `Window.theme()`，但有两点不同：
+     * 那边可能返回 `null`（"无法确定"），本库**总是给得出值**——三平台都能读到系统主题，
+     * 而本库目前只有"跟随系统"这一种来源，没有"按窗口覆写主题"的能力。
+     */
+    theme(): Promise<"light" | "dark">;
+    /**
+     * 是否接收输入。
+     *
+     * @returns {Promise<boolean>}
+     * @remarks **macOS 上只挡鼠标、不挡键盘**：Cocoa 没有"禁用窗口"这个概念，
+     * 那边用 `ignoresMouseEvents` 近似。需要挡键盘的应用要自己处理。
+     */
+    isEnabled(): Promise<boolean>;
+    /**
+     * 启用/禁用窗口的输入。
+     *
+     * @param {boolean} enabled
+     * @returns {Promise<void>}
+     * @remarks 需要 `Allow("window.setEnabled")`——它**不在**标题栏白名单里
+     * （禁用窗口不是标题栏要做的事）。
+     */
+    setEnabled(enabled: boolean): Promise<void>;
+    /**
+     * 订阅一个事件。与模块级 `listen` 等价。
+     *
+     * @param {string} event 事件名（Tauri 名或宿主名都行，见 `event` 模块的映射表）。
+     * @param {(event: { event: string, id: number, payload: any }) => void} handler
+     * @returns {() => void} 退订函数（**同步**返回，比 Tauri 的 Promise 更方便：
+     * `await` 一个非 Promise 值同样可用，所以迁移代码不用改）。
+     */
+    listen(event: string, handler: (event: {
+        event: string;
+        id: number;
+        payload: any;
+    }) => void): () => void;
+    /**
+     * 订阅一次；收到第一条后自动退订。
+     *
+     * @param {string} event
+     * @param {(event: { event: string, id: number, payload: any }) => void} handler
+     * @returns {() => void} 退订函数（在触发前调用可以取消；**同步**返回，同上）。
+     */
+    once(event: string, handler: (event: {
+        event: string;
+        id: number;
+        payload: any;
+    }) => void): () => void;
+    /**
+     * 广播一个事件给**所有**窗口。
+     *
+     * @param {string} event
+     * @param {unknown} [payload]
+     * @returns {Promise<void>}
+     * @remarks 需要宿主 `Allow("event.emit")`——那是唯一一条**不在**任何白名单里的内建命令
+     * （它让一个窗口的页面能驱动别的窗口，而自绘标题栏不依赖它）。见 API.md §4。
+     */
+    emit(event: string, payload?: unknown): Promise<void>;
+    /**
+     * 把事件发给指定的那个窗口。
+     *
+     * @param {string} target 目标窗口的 label。
+     * @param {string} event
+     * @param {unknown} [payload]
+     * @returns {Promise<void>}
+     * @remarks 同样需要 `Allow("event.emit")`。
+     */
+    emitTo(target: string, event: string, payload?: unknown): Promise<void>;
+    /**
+     * 把一个最小化的窗口恢复到正常状态（对标 Tauri 的 `Window.unminimize()`）。
+     *
+     * @returns {Promise<void>}
+     * @remarks
+     * 走宿主的 `window.restore`：三平台的"还原"本来就是**同一个原生动作**
+     * （Windows `SW_RESTORE`、GTK `gtk_window_deiconify` + `unmaximize`、
+     * Cocoa `deminiaturize:`）——Tauri 把 `restore` 与 `unminimize` 分成两条命令，
+     * 而 Win32 的 `SW_RESTORE` 一个调用就同时解除最小化与最大化。
+     * 这里如实映射到同一个动作，而不是假装它们是两件事。
+     */
+    unminimize(): Promise<void>;
+    /**
      * 当前标题（对标 Tauri 的 `title()`）。**无条件放行**（只读查询）。
      *
      * @returns {Promise<string>}

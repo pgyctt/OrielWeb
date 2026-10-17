@@ -397,6 +397,13 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// <remarks>**Linux 上恒为 `true`**（GTK 没有这个概念），见后端接口的说明。</remarks>
     public bool IsClosable => Backend.IsClosable;
 
+    /// <summary>当前是否接收输入（对标 Tauri 的 `Window.isEnabled()`）。</summary>
+    /// <remarks>macOS 上只挡鼠标、不挡键盘，见后端接口的说明。</remarks>
+    public bool IsEnabled => Backend.IsEnabled;
+
+    /// <summary>启用/禁用窗口的输入（对标 Tauri 的 `Window.setEnabled()`）。</summary>
+    public void SetEnabled(bool enabled) => Backend.SetEnabled(enabled);
+
     public void Focus() => Backend.Focus();
     public void Maximize() => Backend.Maximize();
     public void Minimize() => Backend.Minimize();

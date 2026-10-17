@@ -293,3 +293,85 @@ test('theme 给字符串而不是布尔', async () => {
 
     clearMocks();
 });
+
+// ---- Window 上的事件转发（M5-3）----
+
+test('Window.listen / once / emit / emitTo 委托到 event 模块', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', {
+        'event.emit': null,
+    });
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    // listen / once 断言的是**委托形态**：返回一个同步退订函数，调用它不报错。
+    // 注册命令走的是 event 模块自己的通道（那边的测试已经覆盖），
+    // 这里只需要证明 Window 上的入口确实转到了它——而不是又实现了一套。
+    const unlisten = await win.listen('my-event', () => {});
+    assert.equal(typeof unlisten, 'function');
+    unlisten();
+
+    const cancel = await win.once('my-event', () => {});
+    assert.equal(typeof cancel, 'function');
+    cancel();
+
+    // emit / emitTo 是 await 的，命令名可以直接断言
+    await win.emit('my-event', { a: 1 });
+    assert.equal(calls[0][0], 'event.emit');
+
+    // emitTo 用的是**同一条命令** + `target` 字段（宿主侧也是这个设计：
+    // 一条命令按 target 是否为 null 分流），所以断言的是参数而不是命令名
+    await win.emitTo('other', 'my-event', { a: 1 });
+    assert.equal(calls[1][0], 'event.emit');
+    assert.equal(calls[1][1].target, 'other');
+    assert.equal(calls[0][1].target, null);
+
+    clearMocks();
+});
+
+test('unminimize 走 window.restore（三平台同一个原生动作）', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', { 'window.restore': null });
+    setTransportOverride(transport);
+
+    // Tauri 把 restore 与 unminimize 分成两条命令，而 Win32 的 SW_RESTORE
+    // 一个调用就同时解除最小化与最大化——所以这里如实映射到同一个动作
+    await new Window('main').unminimize();
+
+    assert.deepEqual(calls[0], ['window.restore', { label: 'main' }]);
+
+    clearMocks();
+});
+
+test('isEnabled / setEnabled 的命令与参数名', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', {
+        'window.isEnabled': true,
+        'window.setEnabled': null,
+    });
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    assert.equal(await win.isEnabled(), true);
+    await win.setEnabled(false);
+
+    assert.deepEqual(calls[0], ['window.isEnabled', { label: 'main' }]);
+    assert.deepEqual(calls[1], ['window.setEnabled', { label: 'main', value: false }]);
+
+    clearMocks();
+});
+
+test('setEnabled 对非布尔值在页面侧就抛错', async () => {
+    clearMocks();
+    setTransportOverride({ async invoke() { return null; } });
+
+    // 传 "false" 字符串会被宿主当成真值（或报 invalid_argument），两种都不如当场说清楚
+    await assert.rejects(
+        async () => { await new Window('main').setEnabled('false'); },
+        (err) => err instanceof TypeError,
+    );
+
+    clearMocks();
+});
