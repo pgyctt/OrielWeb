@@ -986,6 +986,23 @@ public sealed class OrielApp : IDisposable
     // 详见 API.md。
 
     /// <summary>
+    /// 后端是否已就位（即 <c>Run()</c> 已经跑起来）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 给内建命令族用的：那些命令在"宿主还没跑起来"时应当**返回失败值**，
+    /// 而不是让 <c>_backend ?? throw</c> 抛出一个未分类的 <c>InvalidOperationException</c>
+    /// ——后者到了页面就是一句"命令执行失败"（<c>internal</c> 码），
+    /// 而调用方看不出"是因为宿主还没起来"。
+    /// </para>
+    /// <para>
+    /// 实践中页面只在 <c>Run()</c> 之后才存在，所以这条分支正常走不到；
+    /// 而"正常走不到"的分支正是最需要给出可读错误的那些。
+    /// </para>
+    /// </remarks>
+    internal bool IsRunning => _backend is not null;
+
+    /// <summary>
     /// 发送一条系统通知。
     /// </summary>
     /// <returns>

@@ -902,6 +902,9 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 | `path` | `sep` / `delimiter`（**同步**）+ `join` / `normalize` / `dirname` / `extname` / `basename` / `isAbsolute` / `resolve` |
 | `app` | `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`（全是只读元信息，**无需能力声明**） |
 | `fs` | `readTextFile` / `writeTextFile` / `readFile` / `writeFile` / `exists` / `size` / `readDir` / `stat` / `lstat` / `mkdir` / `remove` / `rename` / `copyFile` / `truncate`（**两道关都必过**，见下） |
+| `opener` | `openUrl` / `openPath` / `revealItemInDir` |
+| `notification` | `isPermissionGranted` / `requestPermission` / `sendNotification`（桌面子集） |
+| `autostart` | `isEnabled` / `enable` / `disable` |
 | `dpi` | `LogicalSize` / `PhysicalSize` / `LogicalPosition` / `PhysicalPosition` + 归一与换算 |
 | `mocks` | `mockIPC` / `mockWindows` / `mockEmit` / `mockConvertFileSrc` / `clearMocks` |
 
@@ -975,6 +978,42 @@ await resolveResource('assets/a.svg'); // 资源目录下拼，带越界校验
 
 > **`runtimeDir` 在 `XDG_RUNTIME_DIR` 缺失时明确失败**，不退到 `/tmp`：
 > `/tmp` 是全局共享的，不是"本用户的运行时目录"那个语义，给个错值比明确失败糟得多。
+
+### 平台集成：`opener` / `notification` / `autostart`
+
+```js
+import { openUrl, openPath, revealItemInDir } from '@orielweb/api/opener';
+import { sendNotification, requestPermission } from '@orielweb/api/notification';
+import { isEnabled, enable } from '@orielweb/api/autostart';
+```
+
+**三族都不整族放行**，要用必须声明：
+
+| 命令 | 为什么要声明 |
+|---|---|
+| `opener.openUrl` | 能拉起任意协议处理器（不过宿主还会按 `OrielShellOptions.AllowedSchemes` 过滤一次，默认 `http`/`https`/`mailto`） |
+| `opener.openPath` | 等于"用默认程序打开任意文件"——对一个 `.exe` 来说就是执行它 |
+| `opener.revealItemInDir` | 会打开文件管理器 |
+| `notification.*` | 能弹系统通知（可被用来伪装成别的应用） |
+| `autostart.*` | 改的是系统状态（往注册表/LaunchAgent/XDG autostart 里写东西） |
+
+与 Tauri 的差别：
+
+| 项 | 本库 | Tauri |
+|---|---|---|
+| `opener.openWith`（用指定程序打开） | ⛔ **明确拒绝**（`not_supported`）——那是任意程序执行，需要"允许哪些程序"的授权模型 | ✅ |
+| `opener.revealItemInDir` 返回值 | `boolean`（**全部**成功才为 true） | `void` |
+| `sendNotification` | **异步**（走宿主命令，三平台都是原生通知） | 同步（桌面端用 `window.Notification`） |
+| `notification` 的通知管理 | ⛔ 不提供（要通知句柄表：`active`/`pending`/`cancel`/`cancelAll`/`removeActive`） | ✅ |
+| `notification` 的渠道与调度 | ⛔ 不提供（`channels`/`Importance`/`Visibility` 是 Android 概念；`Schedule` 要常驻定时器） | ✅ |
+| `notification.onAction` / `onNotificationReceived` | ⛔ 不提供（要把通知点击回传到页面） | ✅ |
+
+> **`opener.openWith` 为什么明确拒绝而不是静默忽略**：静默忽略会让调用方以为
+> "我指定了用某个程序打开"，实际按系统默认打开——一次静默的行为降级，而调用方不会发现。
+
+> **`autostart.enable()` 装上的是当前这个可执行文件**。开发期跑的是 `dotnet run` 或
+> bin 目录里的临时产物，那条自启项在换构建之后会指向一个不存在的路径。
+> "打开自启 → 重启 → 没反应"这类现象先要排除这一条。
 
 ### `convertFileSrc`：把文件显示出来
 

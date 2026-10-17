@@ -45,6 +45,18 @@
       "types": "./types/fs.d.ts",
       "default": "./src/fs.js"
     },
+    "./opener": {
+      "types": "./types/opener.d.ts",
+      "default": "./src/opener.js"
+    },
+    "./notification": {
+      "types": "./types/notification.d.ts",
+      "default": "./src/notification.js"
+    },
+    "./autostart": {
+      "types": "./types/autostart.d.ts",
+      "default": "./src/autostart.js"
+    },
     "./window": {
       "types": "./types/window.d.ts",
       "default": "./src/window.js"

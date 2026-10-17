@@ -256,6 +256,15 @@ internal static class Program
                     c.Allow(
                         OrielAssetFileServer.ScopeCommand,
                         scope => scope.AllowPath(fsRoot.Replace('\\', '/') + "/**"));
+
+                    // 平台集成（F5）：三族都**不是**始终放行，所以要显式声明。
+                    //
+                    // 自检只调只读那几条与参数校验（不真的弹浏览器、不真的写自启项），
+                    // 但命令授权是在**进处理函数之前**判的——不声明的话连参数校验都到不了，
+                    // 自检会拿到 not_allowed 而不是 invalid_argument。
+                    c.Allow("opener.openUrl", "opener.openPath", "opener.revealItemInDir");
+                    c.Allow("notification.*");
+                    c.Allow("autostart.isEnabled");
                 }
             })
             .UseDebug()

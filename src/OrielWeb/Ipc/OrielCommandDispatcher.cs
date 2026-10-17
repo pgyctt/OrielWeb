@@ -224,6 +224,32 @@ internal sealed class OrielCommandDispatcher
             return;
         }
 
+        // 内建平台集成命令族（opener.* / notification.* / autostart.*）：
+        // 对标 Tauri 的 plugin-opener / plugin-notification / plugin-autostart。
+        //
+        // 三族**都不整族放行**：它们改的是系统状态（autostart）、能拉起外部程序
+        // （opener.openPath 相当于"用默认程序打开任意文件"，双击一个 .exe 就是执行它）、
+        // 或能拉起任意协议处理器（opener.openUrl）。都不是"只操作自己那个窗口"那一类。
+        if (OrielBuiltInPlatformCommands.TryGet(name, out var platformBuiltIn))
+        {
+            if (window is null)
+            {
+                ReplyError(sink, id, ErrorReply.Text($"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。", OrielIpcErrorCodes.NoSourceWindow));
+                return;
+            }
+
+            try
+            {
+                ReplyOk(sink, id, platformBuiltIn(window, name, args));
+            }
+            catch (Exception ex)
+            {
+                ReplyError(sink, id, DescribeBuiltInFailure(name, ex));
+            }
+
+            return;
+        }
+
         // 内建应用命令族（app.*）：只读元信息，对标 Tauri 2 的 @tauri-apps/api/app。
         //
         // 与 path.* 的差别：本族需要**应用实例**（`window.App`），所以要有来源窗口。

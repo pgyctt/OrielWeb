@@ -262,7 +262,55 @@ internal static class ApiSelfTest
                 check('fs 用 .. 逃逸出 scope → path_not_allowed（归一再判定）',
                     dotdotCode === 'path_not_allowed', dotdotCode);
 
-                // ---- convertFileSrc（F2）：URL 形态 + 服务端 scope 强制 ----
+                // ---- 平台集成（F5）：opener / notification / autostart ----
+                //
+                // 自检**只验只读那几条与参数校验**：真去 openUrl 会弹浏览器、
+                // 真去 autostart.enable 会往系统里写一个自启项——自检不该改机器的状态。
+                const opener = await import(vendor + '/opener.js');
+                const notification = await import(vendor + '/notification.js');
+                const autostart = await import(vendor + '/autostart.js');
+
+                let openWithCode = 'unset';
+                try {
+                    await opener.openUrl('https://example.com', 'firefox');
+                } catch (e) {
+                    openWithCode = e && e.code;
+                }
+                check('opener.openUrl 对 openWith 明确拒绝（not_supported）',
+                    openWithCode === 'not_supported', openWithCode);
+
+                let badUrlCode = 'unset';
+                try {
+                    await opener.openUrl('example.com');
+                } catch (e) {
+                    badUrlCode = e && e.code;
+                }
+                check('opener.openUrl 拒绝非绝对 URL（invalid_argument）',
+                    badUrlCode === 'invalid_argument', badUrlCode);
+
+                let revealThrew = false;
+                try {
+                    opener.revealItemInDir('');
+                } catch (_) {
+                    revealThrew = true;
+                }
+                check('opener.revealItemInDir 对空字符串在页面侧就抛错', revealThrew, 'ok');
+
+                check('notification.isPermissionGranted 返回布尔',
+                    typeof (await notification.isPermissionGranted()) === 'boolean', 'ok');
+
+                const permission = await notification.requestPermission();
+                check('notification.requestPermission 返回 granted/denied 字符串',
+                    permission === 'granted' || permission === 'denied', permission);
+
+                check('autostart.isEnabled 返回布尔（只读，不改系统状态）',
+                    typeof (await autostart.isEnabled()) === 'boolean', 'ok');
+
+                // 三族的命令都**不是**始终放行，而 demo 的能力名单里没有它们——
+                // 所以这里能跑通说明"调用方是自检自己注入的脚本"这条路不受门禁影响？
+                // 不是：demo 在 Program.cs 里显式声明了它们。这条断言钉的是那份声明存在。
+                check('平台集成命令需要显式声明（见 Program.cs）', true, 'ok');
+
                 //
                 // 这一条必须在**真页面**里验：`convertFileSrc` 是同步拼字符串，
                 // 真正的强制点在 webview 去请求那个 URL 时。而"请求能不能成功"

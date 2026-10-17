@@ -305,7 +305,49 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
 > 但取不到内容。这是刻意的：宁可"用不了"，也不要"某平台漏了 scope 检查"。
 > 已在 ROADMAP 里记为待办。
 
+#### 平台集成（F5：opener / notification / autostart）
+
+- **三个新模块 + 内建命令族**，对标 Tauri 的 `plugin-opener` / `plugin-notification` /
+  `plugin-autostart`。**没有新平台代码**——宿主侧的能力早就在 `OrielApp` 上
+  （`OpenExternal` / `OpenWithDefaultApp` / `RevealInFileManager` / `ShowNotification` /
+  `IsAutoStartEnabled` / `EnableAutoStart` / `DisableAutoStart`），这批做的是给它们配
+  Tauri 形状的命令名与参数。
+- **三族都不整族放行**，要用必须声明。理由各不相同但都成立：
+  `opener.openPath` 等于"用默认程序打开任意文件"（双击一个 `.exe` 就是执行它）、
+  `opener.openUrl` 能拉起协议处理器、`autostart.*` 改的是系统状态。
+  它们都不是"只操作自己那个窗口"那一类。
+- **`opener.openWith` 明确拒绝而不是静默忽略**：那个参数是"用指定程序打开"，
+  等于**任意程序执行**，需要一套"允许哪些程序"的授权模型（本库没有）。
+  静默忽略会让调用方以为"我指定了用某个程序打开"，实际按系统默认打开——
+  一次静默的行为降级，而调用方不会发现。
+- **`opener.openUrl` 的协议白名单**：宿主侧的 `OrielShellPolicy` 已经限制了 scheme
+  （默认 `http`/`https`/`mailto`），`file:` / `javascript:` / 裸路径会被拒并返回 `false`。
+  要放行自定义协议请在**宿主侧**配置白名单，而不是在页面侧拼字符串绕过。
+  （写文档时我一度写成"不限制协议"，那是错的——实现比文档更严。）
+- **`sendNotification` 在本库是异步的**（与 Tauri 的差别）：Tauri 桌面端直接
+  `new window.Notification(...)`（走浏览器的通知 API，所以同步），而 WebView 的浏览器通知
+  API 三平台并不可靠（WKWebView 上基本没有），所以本库走宿主命令，三平台都是原生的。
+  忽略返回值的调用方不受影响，但不能依赖"调用完通知就已经发出去了"。
+- **`notification` 只提供桌面子集**（`isPermissionGranted` / `requestPermission` /
+  `sendNotification`）：Tauri 那边还有一整套 `active` / `pending` / `cancel` /
+  `removeActive` / `channels` / `registerActionTypes` / `onAction` / `Schedule` /
+  `Importance` / `Visibility`，其中大部分要一张通知句柄表（本库没有）或是 Android 概念、
+  常驻定时器、通知点击回传。桌面端最常见的用法就是"发一条通知"，那一个函数覆盖了绝大多数场景。
+- **`revealItemInDir` 返回布尔**（Tauri 是 void）：一个失败时调用方会以为"都定位到了"。
+  全部成功才算成功。
+- **`--selftest api` 扩到 93 项**：新增平台集成的 7 项。自检**只验只读那几条与参数校验**
+  ——真去 `openUrl` 会弹浏览器、真去 `autostart.enable` 会往系统里写一个自启项，
+  自检不该改机器的状态。
+
 ### 修复
+
+- **未 `Run()` 时内建命令抛的是未分类异常**：`ShowNotification` / `IsAutoStartEnabled`
+  等在 `_backend is null` 时抛 `InvalidOperationException("应用尚未运行")`，
+  而 `OpenExternal` 返回 `false`——同一个"宿主没起来"的状态有两套行为。
+  到了页面就是一句"命令执行失败"（`internal` 码），调用方看不出原因。
+  新增 `OrielApp.IsRunning`，平台集成命令在未就绪时统一返回 `false`。
+  实践中页面只在 `Run()` 之后才存在，所以这条分支正常走不到——
+  而"正常走不到"的分支正是最需要给出可读错误的那些。
 
 - **`fs.writeTextFile` 会写 UTF-8 BOM**：用了 `File.WriteAllText(..., Encoding.UTF8)`，
   而那个静态属性写文件时**会写 BOM**（`EF BB BF`）。后果很具体：写 5 个汉字，
