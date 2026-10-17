@@ -275,6 +275,41 @@ public sealed class WebviewWindow : IOrielWindowControl
         get => Backend.CloseInterceptEnabled;
         set => Backend.CloseInterceptEnabled = value;
     }
+
+    /// <summary>
+    /// 哪几类宿主事件转发给页面（尺寸 / 位置 / 焦点）。默认 <see cref="OrielWindowEventKind.None"/>。
+    /// </summary>
+    /// <remarks>
+    /// JS 包在页面 <c>listen</c> 到对应事件名时按需打开它。默认全关是因为尺寸与位置事件
+    /// 在拖动时每个像素来一次（宿主侧已去重，但一次跨屏拖动仍有上千条），
+    /// 而推给页面在 macOS/Linux 上是一次 JS 求值。完整理由见 <see cref="OrielWindowEventKind"/>。
+    /// </remarks>
+    public OrielWindowEventKind EventForwarding
+    {
+        get => Backend.EventForwarding;
+        set => Backend.EventForwarding = value;
+    }
+
+    /// <summary>
+    /// 窗口所在显示器的缩放比（1.0 = 100%）。
+    /// </summary>
+    /// <remarks>
+    /// 页面用它把 <c>PhysicalSize</c> 换算成逻辑尺寸。取**窗口所在显示器**的值，
+    /// 窗口被拖到另一块不同缩放的显示器后它会变——完整说明见
+    /// <see cref="IWindowBackend.ScaleFactor"/>。
+    /// </remarks>
+    public double ScaleFactor => Backend.ScaleFactor;
+
+    /// <summary>
+    /// 当前窗口标题（对标 Tauri 2 的 <c>Window.title()</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="TitleChanged"/> **不是**同一件事：那个事件只在页面文档标题变化时触发，
+    /// 程序调 <see cref="SetTitle"/> 不会触发它（宿主自己知道自己改了）。
+    /// 要"标题现在是什么"读这个属性，别等事件——完整说明见 <see cref="IWindowBackend.Title"/>。
+    /// </remarks>
+    public string Title => Backend.Title;
+
     public void Focus() => Backend.Focus();
     public void Maximize() => Backend.Maximize();
     public void Minimize() => Backend.Minimize();

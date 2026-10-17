@@ -33,6 +33,10 @@
       "types": "./types/dpi.d.ts",
       "default": "./src/dpi.js"
     },
+    "./window": {
+      "types": "./types/window.d.ts",
+      "default": "./src/window.js"
+    },
     "./mocks": {
       "types": "./types/mocks.d.ts",
       "default": "./src/mocks.js"

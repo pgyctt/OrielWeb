@@ -27,6 +27,15 @@ internal interface IOrielWindowControl
     /// <summary>窗口当前是否"显示中"（供内建 <c>win.isVisible</c> 查询）。</summary>
     bool IsVisible { get; }
 
+    /// <summary>
+    /// 本窗口的 label。
+    /// </summary>
+    /// <remarks>
+    /// <c>window.*</c> 族要用它算**默认目标**：命令的 <c>label</c> 参数缺省时作用于发起者，
+    /// 而"发起者是谁"只能经这个属性问出来——IPC 层没有别的途径知道来源窗口的身份。
+    /// </remarks>
+    string? Label { get; }
+
     void Minimize();
 
     bool ToggleMaximize();

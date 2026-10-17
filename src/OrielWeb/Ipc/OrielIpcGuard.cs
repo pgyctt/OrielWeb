@@ -118,6 +118,14 @@ internal sealed class OrielIpcGuard
             return true;
         }
 
+        // window.* 族里的标题栏必需命令同样放行（逐条理由见 IsAlwaysAllowedWindowCommand）。
+        // 这一族**不整族放行**：它比 win.* 大得多，里面有真正的能力。
+        if (OrielCapabilityRules.IsAlwaysAllowedWindowCommand(commandName))
+        {
+            denialReason = null;
+            return true;
+        }
+
         if (_options is null)
         {
             if (_isDebugBuild)

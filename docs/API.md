@@ -65,6 +65,7 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 | 属性 | 默认 | 链式写法 |
 |---|---|---|
 | `bool InterceptClose` | `false` | `WithInterceptClose(bool = true)`。**让页面接管关闭**：用户点关闭时推一个 `close-requested` 事件给页面，窗口**先不销毁**；页面同意就调 `WebviewWindow.Destroy()`，不同意就什么都不做。对标 Tauri 2 的 `onCloseRequested` + `preventDefault`。**宿主的 `Closing` 优先**（置了 `Cancel` 就不再问页面）；**页面加载完成前不生效**（事件送不到未加载的页面，挂起只会让窗口变成点 X 没反应） |
+| `OrielWindowEventKind EventForwarding` | `None` | 哪几类宿主事件**转发给页面**（`Resize` / `Move` / `Focus`）。**默认全关**：尺寸与位置事件在拖动时每个像素来一次（已按 0.5 逻辑像素去重，但一次跨屏拖动仍有上千条），而推给页面在 macOS/Linux 上是一次 JS 求值。JS 包在页面 `listen` 到对应事件名时会自动打开它（见 §11 与 `window.setEventForwarding`） |
 | `string Label` | `"main"` | `WithLabel(string)`。**窗口的稳定标识**（对标 Tauri 2 的 `Window.label`），也是寻址单位：`OrielApp.GetWindow(label)` 按它取窗口。字符集限字母/数字/`-`/`.`/`_`，**自动归一小写**（三平台的大小写规则不同，不归一会出现"只在某个平台错配"）。**同一应用内必须唯一**，重复会在建窗时抛 `InvalidOperationException`——不会自动改名（自动改名会让 `emitTo('main', …)` 发到错误窗口且毫无症状）。页面侧读 `window.oriel.label` |
 | `string Title` | `"Oriel"` | `WithTitle(string)` |
 | `int Width` / `int Height` | `1000` / `700` | `WithSize(int, int)`。**逻辑像素的客户区**（三平台一致）：Windows 在 Per-Monitor-V2 下按窗口 DPI 折算，并把"客户区 → 整窗"换算掉（`AdjustWindowRectExForDpi`）；Linux/macOS 的原生 API 本就是客户区语义。**frameless 窗口不做这层换算**——它的客户区已铺满整窗 |
@@ -189,6 +190,9 @@ WebviewWindow? again = app.GetWindow("settings");   // 按 label 取回（不存
 | `Show()` `Hide()` `Close()` `Focus()` | `Close()` 会先触发 `Closing`（可取消） |
 | `Destroy()` | **强制销毁**：绕过 `Closing` 与页面接管。页面实现"确认后关闭"用的就是它——若它也能被拦下，那条路会被宿主否决逻辑无声地变成"关不掉"，而页面以为用户已经确认过了 |
 | `bool CloseInterceptEnabled { get; set; }` | 是否让页面接管关闭；初值来自 `OrielWindowOptions.InterceptClose`，运行期可改（页面常只在"有未保存内容"时接管） |
+| `OrielWindowEventKind EventForwarding { get; set; }` | 哪几类宿主事件转发给页面；默认 `None`（见 `OrielWindowOptions.EventForwarding`） |
+| `double ScaleFactor { get; }` | 窗口所在显示器的缩放比（1.0 = 100%）。页面用它把 `PhysicalSize` 换算成逻辑尺寸。**取窗口所在显示器**而不是系统值——窗口拖到另一块不同缩放的显示器后它会变 |
+| `string Title { get; }` | 当前窗口标题（对标 Tauri 2 的 `Window.title()`）。与 `TitleChanged` **不是**同一件事：那个只在页面文档标题变化时触发，程序调 `SetTitle` 不会触发它 |
 | `Maximize()` `Minimize()` `Restore()` | — |
 | `SetFullscreen(bool enabled)` `SetOnTop(bool enabled)` | — |
 | `bool IsMaximized { get; }` / `bool ToggleMaximize()` | 切换后是否最大化（页面据此换图标） |
@@ -496,6 +500,7 @@ window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
 | `deny` 优先 | 两条都命中按拒绝算。"先宽泛 allow、再 deny 挖例外"是最常见的写法，若 allow 优先那条 deny 等于没写 |
 | 默认拒绝 | 两条都不命中即拒绝 |
 | `win.` 前缀始终放行 | 那是无边框窗口的标题栏按钮与拖动，只操作自己那个窗口，不是"能力"；它们由库内建，自定义同名命令会被遮蔽。**应用自己的命令请避开这个前缀**。`tray.` 前缀同理 |
+| **`window.` 族只放行一组** | 它比 `win.*` 大得多（有 `window.setIcon`、`window.setSkipTaskbar` 这类真正的能力），所以**不整族放行**；只有标题栏必需的那组（`minimize` / `toggleMaximize` / `toggleFullscreen` / `toggleOnTop` / `close` / `destroy` / `drag*` / `pickFile` / `contextMenu`）与三条只读查询（`isVisible` / `isMaximized` / `title`）例外。逐条理由见 `OrielCapabilityRules.AlwaysAllowedWindowCommands` |
 | **`event.emit` 不放行** | 唯一一处"库内建但**不**始终放行"的命令。它让一个窗口的页面能驱动**另一个窗口**的行为（跨窗口指令通道），而自绘标题栏完全不依赖它——没有开后门的理由。要用必须显式 `Allow("event.emit")` 或 `Allow("event.*")`。注意它只保留了这一个**名字**，`event.` 前缀本身不保留 |
 | 只管 `invoke` | 单向的 `postMessage` 没有命令名，由来源与令牌两层覆盖 |
 | `win.` 只保留**命令名**段 | 事件名不受限：`EmitEvent("win.state.changed", …)` 不会被拦（库不校验事件名，事件命名空间是页面自己的）。但为了与"保留前缀"的口径一致，建议避开这个段（下游反馈 2026-10-11 的 P2-3） |
@@ -813,6 +818,53 @@ window.ContextMenuPolicy = OrielContextMenuPolicy.Editing;  // Editing（默认�
 
 桥接脚本在文档创建时注入，只安装到**可信来源**（见 §4）。
 
+### 11.1 `window.oriel`（底层传输层）
+
+它等价于 Tauri 的 `__TAURI_INTERNALS__`：能用，但**不是公开 API**。新代码请用 `@orielweb/api/*`。
+
+### 11.2 `@orielweb/api`（推荐）
+
+模块名与 `@tauri-apps/api` 一一对应，迁移 = 换 import 前缀。当前已提供 `core` / `event` / `window` / `dpi` / `mocks`。
+
+```js
+import { getCurrentWindow } from '@orielweb/api/window';
+import { listen, TauriEvent } from '@orielweb/api/event';
+
+const win = getCurrentWindow();
+console.log(win.label);                       // 我是哪个窗口（宿主注入）
+
+// 关闭接管：**本库是"页面同意才关"**，与 Tauri 的 preventDefault 相反
+const un = await win.onCloseRequested(async () => {
+  if (await confirmDiscard()) await win.destroy();   // 同意关闭
+  // 不同意：什么都不做，窗口留在打开状态
+});
+
+// 内置事件用 Tauri 名；包内会翻译成宿主事件名，并按需打开转发
+await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.payload.height));
+```
+
+| 模块 | 内容 |
+|---|---|
+| `core` | `invoke` / `isTauri` / `convertFileSrc`（未实现，显式抛错） |
+| `event` | `listen` / `once` / `emit` / `emitTo` / `TauriEvent` |
+| `window` | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow`（恒 `null`，见下）+ `Window` 类 |
+| `dpi` | `LogicalSize` / `PhysicalSize` / `LogicalPosition` / `PhysicalPosition` + 归一与换算 |
+| `mocks` | `mockIPC` / `mockWindows` / `mockEmit` / `mockConvertFileSrc` / `clearMocks` |
+
+**`window` 模块的方法是否需要能力声明**：
+
+| 组 | 命令 | 是否需要 `Allow` |
+|---|---|---|
+| 标题栏必需 | `minimize` `toggleMaximize` `toggleFullscreen` `toggleOnTop` `close` `destroy` `drag*` `pickFile` `contextMenu` | **否**（无条件放行，理由见 §4） |
+| 只读查询自己的窗口 | `isVisible` `isMaximized` `title` | **否** |
+| 其余 | `show` `hide` `focus` `maximize` `restore` `setTitle` `setResizable` `setFullscreen` `setOnTop` `setMinSize` `moveTo` `resize` `center` `scaleFactor` `getAll` `setCloseIntercept` `setEventForwarding` | **是**：`Allow("window.*")` 或逐条声明 |
+
+> **`window.*` 与 `win.*` 的分工**：`win.*` 是早期的库内建命令（**只能作用于发起者**、整族始终放行）；
+> `window.*` 是为对齐 Tauri 2 建的族（**可按 `label` 寻址**、只有上面那两组无条件放行）。
+> 两族并存、旧的冻结，是不破坏既有应用的唯一路径。
+
+### 11.3 `window.oriel` 的原始成员
+
 | 成员 | 说明 |
 |---|---|
 | `oriel.ready` | Promise，脚本就绪（推荐用它而不是 `orielready` 事件） |
@@ -927,7 +979,8 @@ sudo apt-get install -y fonts-noto-cjk   # 中文界面必需，否则渲染成�
 | 前端包测试（`packages/api/tests/*.test.mjs`） | `@orielweb/api` 的 `core` / `dpi` / `event` / `mocks`：mock 往返、参数原样透传、per-call 超时未支持时明确拒绝、DPI 换算与宿主侧舍入一致（含 .NET 的 ToEven）、事件包装与 once 语义、`emit`/`emitTo` 的参数形状 |
 | 事件投递取证（`--selftest event`） | `event.emit` 的**跨窗口**投递：广播（发起窗口自己也收到）、定向（只有目标收到）、定向到不存在的窗口返回 0 且不抛。断言靠探针页面回显 label——证明"页面 → 宿主 → 页面"整条通路是通的 |
 | 关闭接管取证（`--selftest close`） | 四条路径逐条取证：**页面阻止**（什么都不做 → 窗口必须留开）、**页面放行**（调 `win.destroy` → 必须真的关掉）、**宿主否决优先**（`Closing` 里 Cancel → 页面**不该**收到事件）、**未接管**（直接关掉且页面不该收到事件）。另有"`Destroy()` 能强制关掉被接管的窗口"这条逃生口断言 |
-| 无人自检（`OrielDemo --selftest <名字>`） | `nav` `ipc` `theme` `single-instance` `shell` `capability` `multiwindow` `scheme` `exit` `exit-timeout` `threading` `tray` `tray-js` `geometry` `geometry-frameless` `windowevents` `event` `close`——自己驱动页面、打印结论行、以退出码表达成败 |
+| 窗口 API 取证（`--selftest window`） | **按 label 寻址**：主窗口发命令、作用到另一个窗口（`hide`/`show` 用宿主侧 `IsVisible` 取证；`setTitle` 用 `window.title` 读回**双向**确认——改到了目标、没改到发起者）；**能力门禁两侧**：白名单命令（`window.isVisible`）放行、未声明的（`window.setResizable`）被拒且理由是权限；`window.destroy` 只关目标不关发起者 |
+| 无人自检（`OrielDemo --selftest <名字>`） | `nav` `ipc` `theme` `single-instance` `shell` `capability` `multiwindow` `scheme` `exit` `exit-timeout` `threading` `tray` `tray-js` `geometry` `geometry-frameless` `windowevents` `event` `close` `window`——自己驱动页面、打印结论行、以退出码表达成败 |
 | 几何/焦点事件取证（`--selftest windowevents`） | `Resized`（程序调 `Resize` 后参数应为逻辑像素的客户区）、`Moved`（`MoveTo` 后应为屏幕逻辑坐标）、`FocusChanged`（**再建一个窗口抢焦点 → 收到 false；关掉它 → 收到 true**）、以及去重（重复设同一尺寸不再触发）。三平台的原生来源完全不同，只能逐平台真机取证——"我接上了信号"与"事件真的到了"是两件事 |
 | 尺寸语义取证（`--selftest geometry` / `geometry-frameless`） | **三平台尺寸语义一致性**。前者用**装饰窗口**取证：`WithSize(800,600)` 的客户区必须是 `800x600`（修复前 Windows 上是 `784x561`，见 [TAURI2-PLAN.md](TAURI2-PLAN.md) 的 E-1），并再验一次运行期 `Resize(640,480)`。后者用**无边框窗口**取证反面：客户区不该被多做一次"客户区 → 整窗"换算 |
 | 托盘后端取证（`--selftest tray`） | 26 项：`app.png`/`app.ico` **双格式解码**、多托盘（建两个 + 按 id 取回 + 互不影响）、图标对象与**模板标记**如实回读、运行期换图（对象与路径两条入口）、菜单、显隐、标题、按 id 移除、重复 id 抛异常 |

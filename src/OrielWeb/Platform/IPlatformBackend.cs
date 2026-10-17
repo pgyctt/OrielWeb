@@ -103,6 +103,36 @@ internal interface IWindowBackend
     /// 是因为页面往往只在"有未保存内容"时接管——那是个运行期状态。
     /// </remarks>
     bool CloseInterceptEnabled { get; set; }
+
+    /// <summary>
+    /// 哪几类宿主事件转发给页面（默认 <see cref="OrielWindowEventKind.None"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 详见 <see cref="OrielWindowEventKind"/>：默认全关是因为尺寸/位置事件在拖动时
+    /// 每个像素来一次，而推给页面在 macOS/Linux 上是一次 JS 求值。
+    /// </remarks>
+    OrielWindowEventKind EventForwarding { get; set; }
+
+    /// <summary>
+    /// 窗口所在显示器的缩放比（1.0 = 100%）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 页面用它把 <c>PhysicalSize</c> 换算成逻辑尺寸（Tauri 的 <c>setSize</c> 两种都收）。
+    /// 各平台取值：Windows <c>GetDpiForWindow/96</c>、Linux <c>gtk_widget_get_scale_factor</c>、
+    /// macOS <c>NSScreen.backingScaleFactor</c>。
+    /// </para>
+    /// <para>
+    /// <b>取窗口所在显示器而不是系统值</b>：窗口被拖到另一块不同缩放的显示器后它会变。
+    /// 用系统值的话，副屏上的换算会整体差一个倍数——而那表现为"窗口大小不对"，很难联想到缩放。
+    /// </para>
+    /// <para>
+    /// macOS 上这是 <c>backingScaleFactor</c>（Retina 上为 2.0），而窗口 API 收的是**点**：
+    /// 点与逻辑像素一一对应，所以换算时除以它正是想要的。
+    /// </para>
+    /// </remarks>
+    double ScaleFactor { get; }
+
     void Focus();
     void Maximize();
     void Minimize();
@@ -110,6 +140,23 @@ internal interface IWindowBackend
     void SetFullscreen(bool enabled);
     void SetOnTop(bool enabled);
     void SetTitle(string title);
+
+    /// <summary>
+    /// 当前窗口标题（对标 Tauri 2 的 <c>Window.title()</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 读的是宿主记下的值，而不是去问原生窗口（<c>GetWindowTextW</c> / <c>gtk_window_get_title</c> /
+    /// <c>title</c>）：三者语义有细微差别（页面 &lt;title&gt; 与程序设置会互相覆盖），
+    /// 而"库自己对外的标题是什么"只有一个答案，就是它记下的那个。
+    /// </para>
+    /// <para>
+    /// 它与 <see cref="IWindowBackend.TitleChanged"/> **不是**同一件事：那个事件只在页面文档标题变化时
+    /// 触发（标题栏跟随页面），而程序调 <c>SetTitle</c> 不会触发它——宿主自己知道自己改了。
+    /// 需要"标题现在是什么"请读这个属性，不要等事件。
+    /// </para>
+    /// </remarks>
+    string Title { get; }
     void SetResizable(bool enabled);
     void SetMinSize(int width, int height);
     void MoveTo(int x, int y);

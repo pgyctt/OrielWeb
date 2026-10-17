@@ -31,6 +31,16 @@ public sealed class BuiltInWindowCommandTests
         /// <summary>可写是为了让 <c>win.isVisible</c> 用例断言"读到的是当前值"。</summary>
         public bool IsVisible { get; set; } = true;
 
+        /// <summary>
+        /// 本窗口的 label。
+        /// </summary>
+        /// <remarks>
+        /// <c>window.*</c> 族用它算**默认目标**（命令的 label 参数缺省时作用于发起者）。
+        /// 默认给 <c>"main"</c> 而不是 null：多数用例只关心"命令有没有作用到这个窗口"，
+        /// 而 null 会让它们撞上"无法确定发起窗口"的报错——那是另一条单独的用例。
+        /// </remarks>
+        public string? Label { get; set; } = "main";
+
         public void Minimize() => Calls.Add("minimize");
 
         public bool ToggleMaximize()

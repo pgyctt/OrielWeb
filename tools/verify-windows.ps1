@@ -286,8 +286,8 @@ if (Test-Stage 'selftest') {
     }
 
     Section '自检：机器断言（结论行判定）'
-    $commonPattern = '^(NAV|IPC|THEME|CAPABILITY|MULTIWINDOW|SCHEME|THREADING|TRAY|TRAY-JS|GEOMETRY|WINDOWEVENTS|EVENT|CLOSE)-SELFTEST: '
-    foreach ($mode in @('nav', 'ipc', 'theme', 'capability', 'multiwindow', 'scheme', 'threading', 'tray', 'tray-js', 'geometry', 'geometry-frameless', 'windowevents', 'event', 'close')) {
+    $commonPattern = '^(NAV|IPC|THEME|CAPABILITY|MULTIWINDOW|SCHEME|THREADING|TRAY|TRAY-JS|GEOMETRY|WINDOWEVENTS|EVENT|CLOSE|WINDOW)-SELFTEST: '
+    foreach ($mode in @('nav', 'ipc', 'theme', 'capability', 'multiwindow', 'scheme', 'threading', 'tray', 'tray-js', 'geometry', 'geometry-frameless', 'windowevents', 'event', 'close', 'window')) {
         $result = Invoke-SelftestMode -Mode $mode -Pattern $commonPattern
         $Summary += "[$mode] $(if ($result.Verdict) { $result.Verdict } else { "无结论行（退出码 $($result.ExitCode)）" })"
 

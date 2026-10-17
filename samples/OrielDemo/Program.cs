@@ -52,7 +52,7 @@ internal static class Program
     /// <c>--selftest</c> 认得的名字。加一个自检只需在这里加名字 + 在 Main 里加一行判定。
     /// </summary>
     private static readonly string[] SelfTestNames =
-        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowevents", "event", "close"];
+        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowevents", "event", "close", "window"];
 
     /// <summary>本次请求的自检名字是否就是 <paramref name="name"/>（忽略大小写与首尾空白）。</summary>
     private static bool IsSelfTest(string? requested, string name)
@@ -152,6 +152,8 @@ internal static class Program
         // close：关闭接管（可阻止关闭）。四条路径逐条取证，见 CloseSelfTest 的说明。
         // 它自己建探针窗口，主窗口只需正常存在。
         var closeSelfTest = IsSelfTest(selfTest, "close");
+        // window：window.* 命令族的按 label 寻址 + 能力门禁。它要建第二个窗口当被操作对象。
+        var windowSelfTest = IsSelfTest(selfTest, "window");
         // --manual-check：手动验证操作台（停在那里等人点，不自动退出）。
         // 与 --selftest shell 的分工：那个是给 CI 的无人断言，这个是给人看的——
         // 每项做成按钮，托管侧的回调（托盘菜单项、通知点击、快捷键、拖放）回显到页面。
@@ -164,7 +166,7 @@ internal static class Program
             || singleInstanceSelfTest || shellSelfTest || capabilitySelfTest || multiWindowSelfTest
             || schemeSelfTest || exitSelfTest || threadingSelfTest || traySelfTest || trayJsSelfTest
             || geometrySelfTest || geometryFramelessSelfTest || windowEventsSelfTest || eventSelfTest
-            || closeSelfTest;
+            || closeSelfTest || windowSelfTest;
         var manualCheck = !anySelfTest && !args.Contains("--todo");
 
         // 主题自检需要 OrielApp（主题是应用级的），所以这里显式 Build 再 Run；
@@ -188,6 +190,27 @@ internal static class Program
                 if (eventSelfTest)
                 {
                     c.Allow("event.emit");
+                }
+
+                if (windowSelfTest)
+                {
+                    // **刻意逐条声明而不是 Allow("window.*")**：window 自检要同时验
+                    // "放行分支"与"拒绝分支"，所以留一条（window.setResizable）不声明，
+                    // 用它做拒绝路径的对照。整族放行会把那条对照抹掉。
+                    //
+                    // 注意这里没有 window.minimize / window.close 之类——它们在白名单里，
+                    // 不声明也放行（见 OrielCapabilityRules.IsAlwaysAllowedWindowCommand）。
+                    c.Allow(
+                        "window.getAll",
+                        "window.isVisible",
+                        "window.isMaximized",
+                        "window.scaleFactor",
+                        "window.show",
+                        "window.hide",
+                        "window.setTitle",
+                        "window.destroy",
+                        "window.setCloseIntercept",
+                        "window.setEventForwarding");
                 }
             })
             .UseDebug()
@@ -325,6 +348,15 @@ internal static class Program
                     WebviewWindow created = win;
                     created.Loaded += () => CloseSelfTest.Begin(created.App, created);
                 }
+                if (windowSelfTest)
+                {
+                    // window.* 自检：订阅必须在 onCreated（早于导航）——页面在解析时就会
+                    // 被宿主用 EvaluateJs 驱动，等 Loaded 再订阅会漏掉最早的回执。
+                    // 开始跑放在 Loaded：那时 App 可用（能建第二个窗口）。
+                    WindowSelfTest.AttachEvents(win);
+                    WebviewWindow created = win;
+                    created.Loaded += () => WindowSelfTest.Begin(created.App);
+                }
                 if (traySelfTest || trayJsSelfTest)
                 {
                     // 托盘是应用级资源，要在 UI 线程上建；Loaded 时后端已就位
@@ -416,6 +448,7 @@ internal static class Program
             || (windowEventsSelfTest && WindowEventsSelfTest.Failed)
             || (eventSelfTest && EventSelfTest.Failed)
             || (closeSelfTest && CloseSelfTest.Failed)
+            || (windowSelfTest && WindowSelfTest.Failed)
             || ((traySelfTest || trayJsSelfTest) && TraySelfTest.Failed))
         {
             Environment.ExitCode = 1;

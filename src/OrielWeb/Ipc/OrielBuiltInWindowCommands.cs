@@ -112,7 +112,7 @@ internal static class OrielBuiltInWindowCommands
                 return true;
 
             case "win.contextMenu":
-                handler = static (window, _) => Mutate(() => window.ShowContextMenu(StandardContextMenu()));
+                handler = static (window, _) => Mutate(() => window.ShowContextMenu(OrielStandardContextMenu.Items));
                 return true;
 
             default:
@@ -126,25 +126,6 @@ internal static class OrielBuiltInWindowCommands
         action();
         return null;
     }
-
-    /// <summary>
-    /// 内建上下文菜单：编辑三项 + 全选 + 关闭。
-    /// </summary>
-    /// <remarks>
-    /// 只放**跨应用通用**的项——应用自己的菜单项（业务动作、勾选项）仍应由应用用
-    /// <see cref="WebviewWindow.ShowContextMenu"/> 自己弹，那是它才知道的内容。
-    /// 编辑类 role 是尽力而为的（见 <see cref="OrielMenuRoles"/> 的说明）。
-    /// </remarks>
-    private static IReadOnlyList<OrielMenuItem> StandardContextMenu() =>
-    [
-        OrielMenuItem.RoleItem(OrielMenuRole.Cut),
-        OrielMenuItem.RoleItem(OrielMenuRole.Copy),
-        OrielMenuItem.RoleItem(OrielMenuRole.Paste),
-        OrielMenuItem.Separator(),
-        OrielMenuItem.RoleItem(OrielMenuRole.SelectAll),
-        OrielMenuItem.Separator(),
-        OrielMenuItem.RoleItem(OrielMenuRole.Close),
-    ];
 
     /// <summary>读一个必给的数字参数；缺了或不是数字都报错——静默当 0 会让拖动跳到屏幕左上角。</summary>
     private static double Number(JsonElement args, string property, string commandName)

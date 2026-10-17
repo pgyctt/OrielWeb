@@ -49,6 +49,52 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
     返回 true = 允许），翻译只发生在各自的入口处，判定逻辑共用一份。
 - **`--selftest close`**：四条路径逐条真机取证（页面阻止 / 页面放行 / 宿主否决优先 / 未接管），
   外加"`Destroy()` 能强制关掉被接管的窗口"这条逃生口断言。
+- **`window.*` 命令族**（对标 Tauri 2 的 `@tauri-apps/api/window`）：**可按 `label` 寻址**——
+  页面能操作**别的窗口**，而 `win.*` 只能作用于发起者。含 `show` / `hide` / `close` / `destroy` /
+  `focus` / `minimize` / `maximize` / `restore` / `toggleMaximize` / `toggleFullscreen` /
+  `toggleOnTop` / `setTitle` / `setResizable` / `setFullscreen` / `setOnTop` / `setMinSize` /
+  `moveTo` / `resize` / `center` / `drag*` / `pickFile` / `contextMenu` / `setCloseIntercept` /
+  `setEventForwarding`，以及只读查询 `label` / `title` / `isVisible` / `isMaximized` /
+  `scaleFactor` / `getAll`。
+  **门禁姿态与 `win.*` 刻意不同**：`win.*` 整族始终放行，而 `window.*` 只为**标题栏必需的一组**
+  （`minimize` / `toggleMaximize` / `toggleFullscreen` / `toggleOnTop` / `close` / `destroy` /
+  `drag*` / `pickFile` / `contextMenu`）与三条只读查询（`isVisible` / `isMaximized` / `title`）例外，
+  其余走 deny-by-default——这一族里有 `setIcon`、`setSkipTaskbar` 这类真正的能力，
+  整族放行等于给一个比 `win.*` 大得多的面开后门。逐条理由见
+  `OrielCapabilityRules.AlwaysAllowedWindowCommands`。
+- **`@orielweb/api/window`**（对标 `@tauri-apps/api/window`）：`getCurrentWindow` /
+  `getAllWindows` / `getByLabel` / `getFocusedWindow`（**恒 `null`**，见"已知限制"）+ `Window` 类。
+  方法名与 Tauri 一一对应，命令名映射在包内完成（`setAlwaysOnTop` → `window.setOnTop`、
+  `unmaximize` → `window.restore`、`setFocus` → `window.focus`）。`setSize` / `setPosition` /
+  `setMinSize` 接受 `LogicalSize` 与 `PhysicalSize`（后者按窗口所在显示器的缩放比换算）。
+- **`Window.onCloseRequested`**：**与 Tauri 语义相反**——Tauri 在回调里 `preventDefault()` 阻止关闭；
+  本库是"宿主挂起、页面**同意**才 `destroy()`"。订阅时自动打开关闭接管、退订时关掉。
+  传进回调的 `event.preventDefault` 是**空操作**（保留它只是为了让迁移代码不抛 `TypeError`），
+  文档与代码注释里都写明了。
+- **事件转发开关**（`window.setEventForwarding` + `OrielWindowOptions.EventForwarding`）：
+  尺寸 / 位置 / 焦点事件**默认不推给页面**——它们在拖动时每个像素来一次
+  （已按 0.5 逻辑像素去重，但一次跨屏拖动仍有上千条），而推给页面在 macOS/Linux 上是一次 JS 求值。
+  JS 包在页面 `listen` 到 `TauriEvent.WINDOW_RESIZED` 这类名字时**自动**按需打开；
+  打不开（命令被门禁拒掉）会 `console.error` 说明原因，而不是静默地"订阅了收不到"。
+- **`TauriEvent` 名字映射**：`tauri://resize` → 宿主 `resize` 等，映射在包内完成，
+  页面看到的 `event.event` 仍是它订阅时用的 Tauri 名（`e.event === TauriEvent.WINDOW_RESIZED` 成立）。
+  `tauri://destroyed` 标注为**永远收不到**：窗口销毁时页面正在被拆掉，事件送不出去
+  （Tauri 的 JS 侧同样如此，那个事件是给 Rust 用的）。
+- **`OrielWindowEventKind`**：`None` / `Resize` / `Move` / `Focus` 的标志位枚举。
+- **`WebviewWindow.ScaleFactor` / `WebviewWindow.Title`**：前者取**窗口所在显示器**的缩放比
+  （Windows `GetDpiForWindow/96`、Linux `gtk_widget_get_scale_factor`、macOS `backingScaleFactor`），
+  后者是"标题现在是什么"的查询（与 `TitleChanged` **不同**：那个只在页面文档标题变化时触发）。
+- **`--selftest window`**：按 label 寻址 + 能力门禁两侧的逐条真机取证。
+- **`Window.getFocusedWindow()`**：签名已就位，但**目前恒返回 `null`**——三平台都还没有
+  "哪个窗口有焦点"的**查询**能力（`FocusChanged` 只上报变化、不记录状态）。
+  保留它是为了让迁移代码能原样编译，而不是假装"没有窗口有焦点"。
+
+### 修复
+
+- **命令返回值支持字符串序列**（`string[]` / `List<string>` / 任何 `IEnumerable<string>`）：
+  此前它们需要应用往 `JsonSerializerContext` 里加 `[JsonSerializable]`，而对一个纯 BCL 类型
+  来说那是很不合理的负担，漏加的症状是"这个命令一调就报错、其它命令都好"。
+  现在手写数组输出（AOT 安全、无反射）。`window.getAll` 返回 label 列表正依赖它。
 - **窗口 `label`**（对标 Tauri 2 的 `Window.label`）：`OrielWindowOptions.Label`（默认 `"main"`，
   自动归一小写，字符集限字母/数字/`-`/`.`/`_`）、`OrielApp.GetWindow(label)`、
   `WebviewWindow.Label`，以及页面侧的 `window.oriel.label`。
@@ -101,13 +147,15 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
 - **Windows 高 DPI 下的换算未实测**：本机只有一台 100% 缩放显示器。
   `AdjustWindowRectExForDpi` 按**窗口所在显示器**的 DPI 取值，逻辑上正确，
   但 125%/150%/200% 下的逐像素结果没有取证。需要时在有缩放显示器的机器上跑 `--selftest geometry`。
-- **`--selftest geometry` / `windowevents` / `event` / `close` 尚未在 Linux / macOS 上跑过**：
+- **`--selftest geometry` / `windowevents` / `event` / `close` / `window` 尚未在 Linux / macOS 上跑过**：
   代码已通过这两个目标的交叉编译（`linux-x64` / `osx-arm64` / `osx-x64` 均 0 警告 0 错误），
   但运行期行为需要 CI 取证。尤其 Linux 的 `configure-event`、macOS 的 `windowDidMove:`
   与三平台的关闭接管路径都是本次新接的——"编译通过"不等于"事件真的到了"。
-- **页面侧的 `onCloseRequested` 尚未进 JS 包**：宿主侧的关闭接管已完成并取证，
-  页面目前要用裸通道（`oriel.on('close-requested')` + `oriel.invoke('win.destroy')`）。
-  Tauri 形状的 `getCurrentWindow().onCloseRequested(handler)` 属于 window 模块（批次 D2）。
+- **`getFocusedWindow()` 恒返回 `null`**：三平台都还没有"哪个窗口有焦点"的**查询**能力
+  （宿主的 `FocusChanged` 只上报变化、不记录状态）。签名先就位是为了让迁移代码能原样编译。
+- **`tauri://destroyed` 永远收不到**：窗口销毁时页面正在被拆掉，事件送不出去。
+  需要"即将关闭"的通知请用 `tauri://close-requested`（其前提是宿主开了关闭接管）。
+- **`tauri://scale-change` / `tauri://theme-changed` / `tauri://window-created` 未实现**。
 
 ## 0.3.5 - 2026-10-14
 

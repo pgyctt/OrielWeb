@@ -102,6 +102,80 @@ internal static class OrielCapabilityRules
     }
 
     /// <summary>
+    /// <c>window.*</c> 里的标题栏必需命令：**即使能力没声明也放行**。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>为什么 <c>window.*</c> 不像 <c>win.*</c> 那样整族放行</b>：<c>win.*</c> 是早期的库内建命令，
+    /// 当时只有"标题栏那几个按钮"；而 <c>window.*</c> 是为对齐 Tauri 2 新建的族，
+    /// 里面有 <c>window.setSkipTaskbar</c>、<c>window.setIcon</c> 这类真正的能力。
+    /// 整族放行等于给一个比 <c>win.*</c> 大得多的能力面开后门。
+    /// </para>
+    /// <para>
+    /// 但**完全不放行也不行**：<c>win.*</c> 后门存在的理由（无边框窗口没有系统标题栏，
+    /// 拒掉关闭按钮会变成关不掉的窗口）在 <c>window.*</c> 上同样成立——迁移到新族的应用
+    /// 会用 <c>window.close</c> 而不是 <c>win.close</c>。所以只留**那一组**。
+    /// </para>
+    /// <para>
+    /// 名单刻意写死而不是"按前缀放行"：前缀放行等于放行整族，就退回了 <c>win.*</c> 的老问题。
+    /// 每加一条都要先问"拒绝它会不会让窗口变得不可用"。
+    /// </para>
+    /// </remarks>
+    internal static bool IsAlwaysAllowedWindowCommand(string commandName)
+    {
+        if (string.IsNullOrEmpty(commandName))
+        {
+            return false;
+        }
+
+        foreach (string allowed in AlwaysAllowedWindowCommands)
+        {
+            if (string.Equals(commandName, allowed, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>见 <see cref="IsAlwaysAllowedWindowCommand"/>。</summary>
+    /// <remarks>
+    /// 逐条理由：
+    /// <list type="bullet">
+    ///   <item><description><c>minimize</c> / <c>toggleMaximize</c> / <c>toggleFullscreen</c> /
+    ///     <c>toggleOnTop</c> / <c>close</c> / <c>destroy</c>：标题栏按钮本身。
+    ///     <c>destroy</c> 必须在——它同时是"关闭接管"里页面同意关闭的出口，
+    ///     拒掉它会让确认后的关闭永远走不完。</description></item>
+    ///   <item><description><c>drag*</c>：无边框窗口的拖动，没有它窗口根本挪不动。</description></item>
+    ///   <item><description><c>pickFile</c> / <c>contextMenu</c>：与 <c>win.*</c> 侧同源的两个入口。
+    ///     保留是为了不制造"同一个动作在新旧族里权限不同"的意外。</description></item>
+    ///   <item><description><c>isVisible</c> / <c>isMaximized</c> / <c>title</c>：**只读查询自己窗口的状态**，
+    ///     不泄露任何跨窗口信息，而自绘标题栏要靠它渲染图标与文字。
+    ///     这几条是对计划里那次安全红线的**有意扩展**（计划只列了写操作）——理由写在这里，
+    ///     以免日后被当成"漏配了 deny"。</description></item>
+    /// </list>
+    /// </remarks>
+    internal static readonly string[] AlwaysAllowedWindowCommands =
+    [
+        "window.minimize",
+        "window.toggleMaximize",
+        "window.toggleFullscreen",
+        "window.toggleOnTop",
+        "window.close",
+        "window.destroy",
+        "window.drag",
+        "window.dragStart",
+        "window.dragTo",
+        "window.dragEnd",
+        "window.pickFile",
+        "window.contextMenu",
+        "window.isVisible",
+        "window.isMaximized",
+        "window.title",
+    ];
+
+    /// <summary>
     /// 按 allow / deny 两组模式判定一个命令名。
     /// </summary>
     /// <remarks>

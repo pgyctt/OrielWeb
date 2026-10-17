@@ -1,4 +1,11 @@
 /**
+ * 把 Tauri 事件名翻译成宿主事件名。
+ *
+ * @param {string} eventName
+ * @returns {string}
+ */
+export function toHostEventName(eventName: string): string;
+/**
  * 订阅一个事件。
  *
  * @param {string} eventName 事件名（如 `resize`、`tauri://resize`、自定义名）。
@@ -70,18 +77,16 @@ export function __clearEventSubscriptions(): void;
  * Tauri 2 的内置事件名（`TauriEvent`）。
  *
  * @remarks
- * **本库目前只实现了其中一部分**，如实标注：
+ * **本库的支持状态**（如实标注，别让"常量存在"被误读成"事件会来"）：
  *
  * | 常量 | 状态 |
  * |---|---|
- * | `RESIZED` / `MOVED` | ✅ 宿主侧 `Resized` / `Moved` 事件已就位（P0-3 C2），但**尚未推到页面通道** |
- * | `FOCUS_CHANGED` | 同上（`FocusChanged` 已就位，未推到页面） |
- * | `CLOSE_REQUESTED` / `DESTROYED` | ⬜ 未实现（C5） |
- * | `DRAG_ENTER` / `DRAG_OVER` / `DRAG_DROP` / `DRAG_LEAVE` | ⛔ 不做（文件拖放走宿主 `FileDropped`，不在页面事件通道上） |
- * | `SCALE_CHANGED` / `THEME_CHANGED` / `WINDOW_CREATED` | ⬜ 未实现 |
- *
- * 常量先定义出来是为了让迁移代码能原样编译（`TauriEvent.RESIZED` 不会变成 undefined），
- * 但**订阅它们现在收不到事件**——这一点必须写清楚，否则又是一个"配了没反应"。
+ * | `WINDOW_RESIZED` / `WINDOW_MOVED` | ✅ 可用。宿主侧 `Resized` / `Moved` 会在页面订阅时自动打开转发 |
+ * | `WINDOW_FOCUS` / `WINDOW_BLUR` | ✅ 可用（同上） |
+ * | `WINDOW_CLOSE_REQUESTED` | ✅ 可用，但**前提是宿主开了关闭接管**（`OrielWindowOptions.InterceptClose`）——没开接管时宿主直接关闭，不会有通知 |
+ * | `WINDOW_DESTROYED` | ⛔ **永远收不到**：窗口销毁时页面正在被拆掉，事件送不出去（Tauri 的 JS 侧同样如此，那个事件是给 Rust 用的）。要"即将关闭"的通知请用 `WINDOW_CLOSE_REQUESTED` |
+ * | `WINDOW_SCALE_FACTOR_CHANGED` / `WINDOW_THEME_CHANGED` / `WINDOW_CREATED` | ⬜ 未实现 |
+ * | `DRAG_ENTER` / `DRAG_OVER` / `DRAG_DROP` / `DRAG_LEAVE` | ⛔ 不做：文件拖放走宿主 `WebviewWindow.FileDropped` 事件，不在页面事件通道上（页面拿不到文件路径，浏览器安全模型如此） |
  */
 export const TauriEvent: Readonly<{
     WINDOW_RESIZED: "tauri://resize";

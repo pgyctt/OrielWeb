@@ -749,6 +749,38 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     /// <summary>是否让页面接管关闭；初值取自 <see cref="OrielWindowOptions.InterceptClose"/>。</summary>
     public bool CloseInterceptEnabled { get; set; }
 
+    /// <summary>哪几类宿主事件转发给页面；默认全关（见 <see cref="OrielWindowEventKind"/>）。</summary>
+    public OrielWindowEventKind EventForwarding { get; set; }
+
+    /// <summary>
+    /// 窗口所在显示器的缩放比（见 <see cref="IWindowBackend.ScaleFactor"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 取 <c>backingScaleFactor</c>（Retina 上为 2.0）。窗口 API 收的是**点**，
+    /// 点与逻辑像素一一对应，所以换算 <c>PhysicalSize</c> 时除以它正是想要的。
+    /// 取 <c>window.screen</c> 而不是 <c>NSScreen.mainScreen</c>：后者永远是主屏，
+    /// 窗口被拖到副屏（不同缩放）时会给错倍数。
+    /// </remarks>
+    public double ScaleFactor
+    {
+        get
+        {
+            if (_nsWindow == 0)
+            {
+                return 1.0;
+            }
+
+            nint screen = ObjCRuntime.SendId(_nsWindow, ObjCRuntime.Sel("screen"));
+            if (screen == 0)
+            {
+                return 1.0;
+            }
+
+            double scale = ObjCRuntime.SendDouble(screen, ObjCRuntime.Sel("backingScaleFactor"));
+            return scale > 0 ? scale : 1.0;
+        }
+    }
+
     public void Focus()
     {
         ObjCRuntime.SendVoidObj(_nsWindow, ObjCRuntime.Sel("makeKeyAndOrderFront:"), 0);
@@ -865,6 +897,9 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         SetOnTop(!_isOnTop);
         return _isOnTop;
     }
+
+    /// <summary>当前窗口标题（见 <see cref="IWindowBackend.Title"/>）。</summary>
+    public string Title => _title;
 
     public void SetTitle(string title)
     {
@@ -1037,6 +1072,13 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
 
         _lastReportedPosition = (x, y);
         Moved?.Invoke(new OrielPositionChangedEventArgs(x, y));
+
+        // 页面侧转发是按需的（默认关）：拖动时这条路径每个像素走一次，
+        // 而这里的推送是一次 JS 求值。见 OrielWindowEventKind。
+        if ((EventForwarding & OrielWindowEventKind.Move) != 0)
+        {
+            PushEventOnUi("move", OrielEventPayload.Position(x, y));
+        }
     }
 
     /// <summary>上报客户区尺寸；与上次相同则跳过。</summary>
@@ -1060,6 +1102,11 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
 
         _lastReportedSize = (width, height);
         Resized?.Invoke(new OrielSizeChangedEventArgs(width, height));
+
+        if ((EventForwarding & OrielWindowEventKind.Resize) != 0)
+        {
+            PushEventOnUi("resize", OrielEventPayload.Size(width, height));
+        }
     }
 
     /// <summary>上报焦点变化（与上次相同则跳过；首个事件一定会报）。</summary>
@@ -1072,6 +1119,13 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
 
         _lastReportedFocus = focused;
         FocusChanged?.Invoke(focused);
+
+        // 页面侧是两个事件名（focus / blur）而不是一个带布尔值的事件——
+        // 那是 Tauri 的形状，页面可以只订阅其中一个。
+        if ((EventForwarding & OrielWindowEventKind.Focus) != 0)
+        {
+            PushEventOnUi(focused ? "focus" : "blur", "null");
+        }
     }
 
     public void Resize(int width, int height)

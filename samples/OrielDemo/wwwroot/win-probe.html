@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <title>Oriel Window Probe</title>
+</head>
+<body>
+    <!-- 窗口 API 自检的**被操作对象**（--selftest window）。
+
+         它刻意什么都不做：这个自检验的是"主窗口能不能按 label 操作另一个窗口"，
+         被操作的窗口只要**存在**就够了。需要一个真页面而不是空 URL，
+         是因为 CreateWindow 不写 Url 会回落到内嵌资源首页（那是 todo 页，
+         会额外装配一套命令与会话，让自检的断言面变大）。 -->
+    <p id="status">window probe</p>
+</body>
+</html>

@@ -1513,7 +1513,15 @@ internal partial class Win32WindowHost : IWindowBackend
 
         _lastReportedSize = (width, height);
         Resized?.Invoke(new OrielSizeChangedEventArgs(width, height));
+
+        // 页面侧转发是**按需**的（默认关）：拖动时这条路径每个像素走一次，
+        // 而推给页面在 macOS/Linux 上是一次 JS 求值。见 OrielWindowEventKind。
+        if ((EventForwarding & OrielWindowEventKind.Resize) != 0)
+        {
+            PushEventOnUi("resize", OrielEventPayload.Size(width, height));
+        }
     }
+
 
     /// <summary>上报窗口位置（物理像素的窗口矩形 → 逻辑像素的左上角）；与上次相同则跳过。</summary>
     private void ReportPosition()
@@ -1536,6 +1544,11 @@ internal partial class Win32WindowHost : IWindowBackend
 
         _lastReportedPosition = (x, y);
         Moved?.Invoke(new OrielPositionChangedEventArgs(x, y));
+
+        if ((EventForwarding & OrielWindowEventKind.Move) != 0)
+        {
+            PushEventOnUi("move", OrielEventPayload.Position(x, y));
+        }
     }
 
     /// <summary>上报焦点变化（与上次相同则跳过；首个事件一定会报）。</summary>
@@ -1548,6 +1561,13 @@ internal partial class Win32WindowHost : IWindowBackend
 
         _lastReportedFocus = focused;
         FocusChanged?.Invoke(focused);
+
+        // 页面侧是两个事件名（focus / blur）而不是一个带布尔值的事件——
+        // 那是 Tauri 的形状，页面可以只订阅其中一个。
+        if ((EventForwarding & OrielWindowEventKind.Focus) != 0)
+        {
+            PushEventOnUi(focused ? "focus" : "blur", "null");
+        }
     }
 
     // ------------------------------------------------------------------
@@ -1784,6 +1804,12 @@ internal partial class Win32WindowHost : IWindowBackend
     /// </summary>
     public bool CloseInterceptEnabled { get; set; }
 
+    /// <summary>哪几类宿主事件转发给页面；默认全关（见 <see cref="OrielWindowEventKind"/>）。</summary>
+    public OrielWindowEventKind EventForwarding { get; set; }
+
+    /// <summary>窗口所在显示器的缩放比（见 <see cref="IWindowBackend.ScaleFactor"/>）。</summary>
+    public double ScaleFactor => CurrentScaleFactor();
+
     internal void PostWebMessageOnUi(string json) => PostMessageOnUi(json);
 
     private void PostMessageOnUi(string json)
@@ -2010,6 +2036,9 @@ internal partial class Win32WindowHost : IWindowBackend
             _isFullscreen = false;
         }
     }
+
+    /// <summary>当前窗口标题（见 <see cref="IWindowBackend.Title"/>）。</summary>
+    public string Title => _title;
 
     public void SetTitle(string title)
     {

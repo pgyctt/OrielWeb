@@ -180,6 +180,29 @@ internal sealed class OrielCommandDispatcher
             return;
         }
 
+        // 内建窗口 API 命令族（window.*）：可按 label 寻址，对标 Tauri 2 的 @tauri-apps/api/window。
+        // 与 event.* 一样**不整族放行**：只有标题栏必需的那组才绕过能力校验
+        // （见 OrielCapabilityRules.IsAlwaysAllowedWindowCommand）。能走到这里的调用方
+        // 要么在那组白名单里，要么已经通过了命令授权。
+        if (OrielBuiltInWindowApiCommands.TryGet(name, out var windowApiBuiltIn))
+        {
+            if (window is null)
+            {
+                ReplyError(sink, id, $"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。");
+                return;
+            }
+
+            try
+            {
+                ReplyOk(sink, id, windowApiBuiltIn(window, args));
+            }
+            catch (Exception ex)
+            {
+                ReplyError(sink, id, DescribeBuiltInFailure(name, ex));
+            }
+            return;
+        }
+
         if (!_routes.TryGetValue(name, out var route))
         {
             ReplyError(sink, id, $"未知命令 '{name}'。请确认方法已标注 [OrielCommand] 且所在程序集被应用引用。");

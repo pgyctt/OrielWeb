@@ -15,6 +15,79 @@ import { invoke } from './core.js';
 import { getTransport } from './internal.js';
 
 /**
+ * Tauri 内置事件名 → 本库宿主事件名的映射，以及**是否需要打开页面转发**。
+ *
+ * @remarks
+ * 为什么要有这张表而不是让宿主直接发 Tauri 名：
+ *   * 宿主事件名（`resize` / `close-requested`）是既有契约，改了会破坏已经用它的页面；
+ *   * 映射只在包内做一次，页面看到的仍是 Tauri 名——迁移代码不必改。
+ *
+ * `forwarding` 那一列是**性能开关**：尺寸/位置事件在拖动时每个像素来一次，
+ * 而推给页面在 macOS/Linux 上是一次 JS 求值。所以宿主默认不推，
+ * 由这里在页面真的订阅时打开（见 `enableForwarding`）。缺省表示无需开关
+ * （低频事件本就该推，或由别的机制决定）。
+ *
+ * `tauri://destroyed` **不在表里**：窗口销毁时页面本身正在被拆掉，
+ * 那条事件送不到（Tauri 的 JS 侧同样如此，它是给 Rust 侧用的）。
+ * 需要"窗口要关了"的通知请用 `tauri://close-requested`。
+ *
+ * @type {Record<string, { host: string, forwarding?: 'resize' | 'move' | 'focus' }>}
+ */
+const HOST_EVENT_MAP = Object.freeze({
+    'tauri://resize': { host: 'resize', forwarding: 'resize' },
+    'tauri://move': { host: 'move', forwarding: 'move' },
+    'tauri://focus': { host: 'focus', forwarding: 'focus' },
+    'tauri://blur': { host: 'blur', forwarding: 'focus' },
+    // 关闭请求由宿主侧的关闭接管开关直接决定推送时机（挂起时必须推），
+    // 所以它不需要"订阅了才推"的中间态。
+    'tauri://close-requested': { host: 'close-requested' },
+});
+
+/**
+ * 把 Tauri 事件名翻译成宿主事件名。
+ *
+ * @param {string} eventName
+ * @returns {string}
+ */
+export function toHostEventName(eventName) {
+    return HOST_EVENT_MAP[eventName]?.host ?? eventName;
+}
+
+/**
+ * 已打开转发的项（包内记账，避免每次 listen 都发一次 IPC）。
+ * @type {Set<'resize' | 'move' | 'focus'>}
+ */
+const enabledForwarding = new Set();
+
+/**
+ * 按需打开宿主→页面的转发。
+ *
+ * @param {'resize' | 'move' | 'focus' | undefined} kind
+ * @returns {void}
+ * @remarks
+ * **失败必须让人看见**：命令被能力门禁拒掉时事件永远不会到，
+ * 而静默的后果是"我明明订阅了却收不到"——那是最难排查的一类问题
+ * （页面代码看起来完全正确）。所以这里把拒绝原因打到 console.error，
+ * 并说清要怎么修。
+ */
+function enableForwarding(kind) {
+    if (!kind || enabledForwarding.has(kind)) {
+        return;
+    }
+
+    enabledForwarding.add(kind);
+
+    // 不等回执（listen 是同步的），但失败要报出来
+    invoke('window.setEventForwarding', { [kind]: true }).catch((error) => {
+        enabledForwarding.delete(kind);
+        console.error(
+            `@orielweb/api/event: 无法打开「${kind}」事件转发，相关事件不会到达页面。` +
+            `原因：${error && error.message ? error.message : error}。` +
+            '请在宿主侧允许 `window.setEventForwarding`（或用 OrielWindowOptions.EventForwarding 静态开启）。');
+    });
+}
+
+/**
  * 事件 id 的自增序号。
  *
  * Tauri 用它做"取消订阅时告诉后端是哪一个"的标识；本库的退订在页面侧完成
@@ -101,6 +174,14 @@ function subscribe(eventName, handler, isOnce) {
             '如果你在 Node 里跑，请用 mocks 的 mockIPC 或直接构造传输层。');
     }
 
+    // Tauri 名 → 宿主名。页面看到的 `event.event` 仍是**它订阅时用的那个名字**
+    // （下面 toEventObject 用 eventName），这样迁移代码读 `e.event === TauriEvent.WINDOW_RESIZED` 成立。
+    const mapping = HOST_EVENT_MAP[eventName];
+    const hostName = mapping?.host ?? eventName;
+
+    // 高频事件（尺寸/位置/焦点）在宿主侧默认不推，这里按需打开。
+    enableForwarding(mapping?.forwarding);
+
     let set = subscriptions.get(eventName);
     if (!set) {
         set = new Set();
@@ -128,7 +209,7 @@ function subscribe(eventName, handler, isOnce) {
     };
 
     // 底层通道的订阅（返回的是它自己的退订函数）
-    const unlistenRaw = transport.on(eventName, entry.raw);
+    const unlistenRaw = transport.on(hostName, entry.raw);
 
     // 退订：同时清包内表与底层通道。**幂等**——once 触发时调一次，调用方之后
     // 再调一次也不该出问题（重复删同一个元素是无害的，重复调底层退订也一样）。
@@ -195,18 +276,16 @@ export async function emitTo(target, eventName, payload) {
  * Tauri 2 的内置事件名（`TauriEvent`）。
  *
  * @remarks
- * **本库目前只实现了其中一部分**，如实标注：
+ * **本库的支持状态**（如实标注，别让"常量存在"被误读成"事件会来"）：
  *
  * | 常量 | 状态 |
  * |---|---|
- * | `RESIZED` / `MOVED` | ✅ 宿主侧 `Resized` / `Moved` 事件已就位（P0-3 C2），但**尚未推到页面通道** |
- * | `FOCUS_CHANGED` | 同上（`FocusChanged` 已就位，未推到页面） |
- * | `CLOSE_REQUESTED` / `DESTROYED` | ⬜ 未实现（C5） |
- * | `DRAG_ENTER` / `DRAG_OVER` / `DRAG_DROP` / `DRAG_LEAVE` | ⛔ 不做（文件拖放走宿主 `FileDropped`，不在页面事件通道上） |
- * | `SCALE_CHANGED` / `THEME_CHANGED` / `WINDOW_CREATED` | ⬜ 未实现 |
- *
- * 常量先定义出来是为了让迁移代码能原样编译（`TauriEvent.RESIZED` 不会变成 undefined），
- * 但**订阅它们现在收不到事件**——这一点必须写清楚，否则又是一个"配了没反应"。
+ * | `WINDOW_RESIZED` / `WINDOW_MOVED` | ✅ 可用。宿主侧 `Resized` / `Moved` 会在页面订阅时自动打开转发 |
+ * | `WINDOW_FOCUS` / `WINDOW_BLUR` | ✅ 可用（同上） |
+ * | `WINDOW_CLOSE_REQUESTED` | ✅ 可用，但**前提是宿主开了关闭接管**（`OrielWindowOptions.InterceptClose`）——没开接管时宿主直接关闭，不会有通知 |
+ * | `WINDOW_DESTROYED` | ⛔ **永远收不到**：窗口销毁时页面正在被拆掉，事件送不出去（Tauri 的 JS 侧同样如此，那个事件是给 Rust 用的）。要"即将关闭"的通知请用 `WINDOW_CLOSE_REQUESTED` |
+ * | `WINDOW_SCALE_FACTOR_CHANGED` / `WINDOW_THEME_CHANGED` / `WINDOW_CREATED` | ⬜ 未实现 |
+ * | `DRAG_ENTER` / `DRAG_OVER` / `DRAG_DROP` / `DRAG_LEAVE` | ⛔ 不做：文件拖放走宿主 `WebviewWindow.FileDropped` 事件，不在页面事件通道上（页面拿不到文件路径，浏览器安全模型如此） |
  */
 export const TauriEvent = Object.freeze({
     WINDOW_RESIZED: 'tauri://resize',

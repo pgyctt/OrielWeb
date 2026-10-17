@@ -311,6 +311,25 @@ public static class OrielJson
             case JsonElement je:
                 je.WriteTo(writer);
                 return;
+
+            // 字符串序列：手写数组而不是走 STJ，因为这条路径**不需要反射也不需要源生成上下文**。
+            //
+            // 为什么值得单独支持：返回"一串字符串"（文件列表、可用设备名、窗口 label……）是最常见的
+            // 命令形状之一，而走 STJ 就需要应用为 `string[]` / `List<string>` 往 JsonSerializerContext
+            // 里加 [JsonSerializable] —— 那对一个纯 BCL 类型是很不合理的负担，
+            // 漏加的症状是"这个命令一调就报错，其它命令都好"。
+            //
+            // 放在 `case string` 之后：string 本身也实现了 IEnumerable<char>，但不实现
+            // IEnumerable<string>，所以两者不会互相遮蔽。
+            case IEnumerable<string> strings:
+                writer.WriteStartArray();
+                foreach (string item in strings)
+                {
+                    writer.WriteStringValue(item);
+                }
+
+                writer.WriteEndArray();
+                return;
         }
 
         var type = value.GetType();
