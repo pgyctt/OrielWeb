@@ -40,6 +40,16 @@ public static class OrielIpcErrorCodes
     /// <summary>这次调用缺少来源窗口，而该命令必须有窗口才能执行。</summary>
     public const string NoSourceWindow = "no_source_window";
 
+    /// <summary>
+    /// 这个能力在当前平台上不存在。
+    /// </summary>
+    /// <remarks>
+    /// 用在"某平台确实没有这个概念"的地方，而不是"还没实现"——后者应当是
+    /// <see cref="Internal"/> 或干脆不要暴露这个命令。当前唯一的用法是几个
+    /// 目录解析（如 Windows 上没有 <c>runtimeDir</c>、macOS 上没有 <c>templateDir</c>）。
+    /// </remarks>
+    public const string NotSupported = "not_supported";
+
     /// <summary>库内部的意外失败（**不是**应用命令自己抛的异常）。</summary>
     /// <remarks>
     /// 应用命令抛的异常不带码——那是应用的错误分类，库不该替它编。

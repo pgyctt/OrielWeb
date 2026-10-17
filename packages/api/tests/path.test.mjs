@@ -12,7 +12,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { sep, delimiter, join, normalize, dirname, extname, basename, isAbsolute, resolve } from '../src/path.js';
+import {
+    sep, delimiter, join, normalize, dirname, extname, basename, isAbsolute, resolve, resolveResource,
+    appDataDir, appLogDir, homeDir, tempDir, fontDir,
+} from '../src/path.js';
 import { clearMocks } from '../src/mocks.js';
 import { setTransportOverride } from '../src/internal.js';
 
@@ -188,7 +191,95 @@ test('basename() 的 ext 为空串时仍然带上（调用方显式给了）', a
     clearMocks();
 });
 
-// ---- 失败路径：错误码要透传 ----
+// ---- 目录解析（F4b-1）----
+
+test('每个目录函数发对应命令，且**不带参数**', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport();
+    setTransportOverride(transport);
+
+    // 只挑几条代表性的（24 个逐个跑没必要，而下面那条会覆盖"全部都注册了"）
+    await appDataDir();
+    await appLogDir();
+    await homeDir();
+    await tempDir();
+
+    assert.deepEqual(calls.map((c) => c[0]), [
+        'path.appDataDir',
+        'path.appLogDir',
+        'path.homeDir',
+        'path.tempDir',
+    ]);
+
+    for (const [, args] of calls) {
+        assert.equal(args, undefined);
+    }
+
+    clearMocks();
+});
+
+test('全部 24 个目录函数都存在且发出形状正确的命令名', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport();
+    setTransportOverride(transport);
+
+    // 目录名 → 命令名的规则是"首字母小写 + Dir 后缀"，宿主侧同一条规则。
+    // 这里逐个调一遍，把 24 条命令名全钉住：漏一个的症状是某个
+    // `appConfigDir()` 之类的函数发了宿主不认的命令名（报 unknown_command）。
+    const directories = [
+        'appConfigDir', 'appDataDir', 'appLocalDataDir', 'appCacheDir', 'appLogDir',
+        'audioDir', 'cacheDir', 'configDir', 'dataDir', 'localDataDir',
+        'desktopDir', 'documentDir', 'downloadDir', 'executableDir', 'fontDir',
+        'homeDir', 'pictureDir', 'publicDir', 'resourceDir', 'runtimeDir',
+        'tempDir', 'templateDir', 'videoDir',
+    ];
+
+    const mod = await import('../src/path.js');
+    for (const name of directories) {
+        assert.equal(typeof mod[name], 'function', `缺少 ${name}`);
+        await mod[name]();
+    }
+
+    assert.equal(calls.length, directories.length);
+    for (const [command, args] of calls) {
+        assert.match(command, /^path\.[a-z][A-Za-z]*Dir$/, `命令名形状不对：${command}`);
+        assert.equal(args, undefined);
+    }
+
+    clearMocks();
+});
+
+test('resolveResource() 把参数放在 path 字段里', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({ 'path.resolveResource': 'C:\\res\\assets\\a.svg' });
+    setTransportOverride(transport);
+
+    assert.equal(await resolveResource('assets/a.svg'), 'C:\\res\\assets\\a.svg');
+    assert.deepEqual(calls[0], ['path.resolveResource', { path: 'assets/a.svg' }]);
+
+    clearMocks();
+});
+
+test('目录解析在平台不支持时以 not_supported 拒绝', async () => {
+    clearMocks();
+
+    // Windows 上的 fontDir / runtimeDir / executableDir 与 macOS 上的 templateDir
+    // 都是"这个平台没有这个概念"——调用方据此按平台分支，而不是当成 bug。
+    const error = new Error('fontDir 在 Windows 上不存在（与 Tauri 一致，请按平台分支处理）。');
+    error.code = 'not_supported';
+    setTransportOverride({ async invoke() { throw error; } });
+
+    await assert.rejects(
+        () => fontDir(),
+        (caught) => {
+            assert.equal(caught.code, 'not_supported');
+            return true;
+        },
+    );
+
+    clearMocks();
+});
+
 
 test('path 命令的失败带着错误码上来到调用方', async () => {
     clearMocks();

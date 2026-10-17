@@ -210,8 +210,46 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
   `getBundleType` / `BundleType`（返回 Tauri 打包器的产物类型，本库是库不是打包器，
   **给不出这个值**——编一个比不提供更糟，迁移代码会基于错信息分支）。
 
+#### 目录解析（F4b-1）
+
+- **`path.*Dir` 一族（24 条命令）+ JS 侧 24 个函数**（`appDataDir` / `homeDir` / `tempDir` / …），
+  与 Tauri 的 `@tauri-apps/api/path` 函数名一一对应。**规则逐格对齐 Tauri 的
+  `tauri::path::PathResolver`**（底层是 Rust 的 `dirs` crate：Windows 走
+  `SHGetKnownFolderPath`、Linux 走 XDG、macOS 走 `~/Library/*`）。
+- **为什么不用 .NET 的 `Environment.SpecialFolder`"差不多就行"**：实测**有三格不一样**。
+  `downloadDir` 在 .NET 里没有可靠的成员；`publicDir` 的 `CommonDocuments` 给
+  `C:\Users\Public\Documents`，而 Tauri 的 `FOLDERID_Public` 是 `C:\Users\Public`——
+  **差一层目录**；`fontDir` / `runtimeDir` / `executableDir` 在 Windows 上 Tauri 明确不支持
+  （调用报错），而 .NET 能给出 `fontDir`。所以 Windows 侧直接用 `SHGetKnownFolderPath`
+  （`Downloads` / `Public` 两格必须如此），而**不支持的那三格照 Tauri 拒绝**
+  （`not_supported`）：多给一个值会让"能跑"与"能迁"分叉，
+  而分叉在迁移完成之后才发现是最糟的时机。
+- **`not_supported` 错误码**（新增）：用于"这个平台确实没有这个概念"，
+  与 `invalid_argument`（调用方拼错了）分开——前者是调用方该按平台分支的正常情况。
+- **`resolveResource(path)`**：资源目录下拼相对路径，**带越界校验**。绝对路径被拒
+  （那等于"读文件系统任意位置"，而函数名是 resolve**Resource**）；拼完跑出资源目录的也拒。
+  判据是"拼完在不在根之内"而不是"字符串里有没有 `..`"——`assets/../logo.svg` 是合法且常见的。
+- **`path.*` 放行名单改为由目录清单派生**，不再手抄第二份：手抄的失败模式是
+  "加了目录忘了加放行"，症状为某个 `path.xxxDir` 在 Release 下被拒，而那看起来像
+  "这个目录不存在"。有一条测试逐个断言"每个目录名都有可注册、可放行的命令"。
+- **Linux 的 XDG 用户目录按用户配置读**：`~/.config/user-dirs.dirs` 里的
+  `XDG_DESKTOP_DIR="$HOME/桌面"` 这类值（中文系统上很常见），含 `$HOME` 要展开。
+  **不能假定 `~/Desktop`**。文件读不了或格式不认识时退回默认名、不抛异常
+  （那是用户可编辑的文件，一份坏配置不该让"取桌面目录"整个失败）。
+- **`runtimeDir` 在 `XDG_RUNTIME_DIR` 缺失时明确失败**，**不**退到 `/tmp`：
+  `/tmp` 是全局共享的，不是"本用户的运行时目录"那个语义，给个错值比明确失败糟得多
+  （调用方会把 socket 放进 `/tmp`）。
+
 ### 修复
 
+- **`Video` 目录那格把 `macName` 与 `windowsFolder` 写反了**
+  （`UserDir("Videos", …, "Movies")`，正确是 `UserDir("Movies", …, KnownFolder.Videos)`）。
+  运行到那一格才炸，而炸出来的是 `ArgumentException: Requested value 'Movies' was not found`
+  ——与"目录解析"看不出关系。**修复方式是消除这类笔误的可能性**：第三个参数从
+  "枚举名字符串 + `Enum.Parse`"改成直接传枚举，同样的笔误从此是编译错误。
+  这个缺陷是测试抓到的，而测试之所以能抓到，是因为它**用 `SHGetKnownFolderPath`
+  独立算一遍期望值**，而不是复用实现里的枚举——否则"实现和测试抄同一份错的映射"
+  会双双通过。
 - **`oriel.version` 被双重编码**：`__ORIEL_VERSION__` 在模板里原本写着 `'__ORIEL_VERSION__'`
   （自带引号），而本轮把宿主的注入值改成了 JSON 字符串字面量，于是生成的脚本成了
   `version: '"0.3.5"',`——页面拿到的是**连引号一起**的 `"0.3.5"`，所有基于

@@ -125,3 +125,153 @@ export function isAbsolute(path) {
 export function resolve(...paths) {
     return invoke('path.resolve', { paths });
 }
+
+// ---------------------------------------------------------------------------
+// 目录解析（对标 Tauri 的 appDataDir / homeDir / … 那一整组）
+//
+// **命令名与 Tauri 的函数名一一对应**（path.appDataDir ↔ appDataDir()），
+// 所以下面这些函数体全是同一形状，不必逐个写实现。
+//
+// 三平台的解析规则各格不同（Linux 走 XDG / macOS 走 ~/Library / Windows 走 FOLDERID_*），
+// 由**宿主**算——理由与上面那些路径运算一样，而且这里更强：XDG 的用户目录
+// 是用户可配置的（中文系统上"桌面"常常就是 ~/桌面），Windows 的已知文件夹
+// 也可以被重定向到别的盘。在 JS 里拼字符串必然在某个用户的机器上错。
+// ---------------------------------------------------------------------------
+
+/**
+ * 生成一个目录函数：命令名 = `path.` + name + `Dir`。
+ *
+ * @param {string} name 目录名（与 Tauri 的 BaseDirectory 取值同名，首字母大写）。
+ * @returns {() => Promise<string>}
+ */
+function dirFunction(name) {
+    // 目录名的首字母在 JS 里取：`name[0]` 在 noUncheckedIndexedAccess 下是 string|undefined，
+    // 而这些名字是模块内的字面量，不会空。用 charAt 表达"一定有一个字符"更直白，
+    // 也免了一个只为了哄类型检查器的非空断言。
+    const command = `path.${name.charAt(0).toLowerCase()}${name.slice(1)}Dir`;
+    return () => invoke(command);
+}
+
+/**
+ * 应用配置文件目录：`${configDir}/${identifier}`。对标 Tauri 的 `appConfigDir()`。
+ *
+ * @type {() => Promise<string>}
+ */
+export const appConfigDir = dirFunction('AppConfig');
+
+/** 应用数据目录：`${dataDir}/${identifier}`。 */
+export const appDataDir = dirFunction('AppData');
+
+/** 应用本地数据目录：`${localDataDir}/${identifier}`。 */
+export const appLocalDataDir = dirFunction('AppLocalData');
+
+/** 应用缓存目录：`${cacheDir}/${identifier}`。 */
+export const appCacheDir = dirFunction('AppCache');
+
+/**
+ * 应用日志目录。
+ *
+ * @remarks
+ * 三平台规则里唯一一个全都不同的：macOS 是 `~/Library/Logs/{identifier}`（**不在**
+ * 应用数据目录下），另两个平台是 `${localDataDir}/${identifier}/logs`。
+ */
+export const appLogDir = dirFunction('AppLog');
+
+/** 用户的音乐目录。Linux `XDG_MUSIC_DIR` / macOS `~/Music` / Windows `{FOLDERID_Music}`。 */
+export const audioDir = dirFunction('Audio');
+
+/** 用户的缓存目录。Linux `$XDG_CACHE_HOME` 或 `~/.cache` / macOS `~/Library/Caches` / Windows `{FOLDERID_LocalAppData}`。 */
+export const cacheDir = dirFunction('Cache');
+
+/** 用户的配置目录。Linux `$XDG_CONFIG_HOME` 或 `~/.config` / macOS `~/Library/Application Support` / Windows `{FOLDERID_RoamingAppData}`。 */
+export const configDir = dirFunction('Config');
+
+/** 用户的数据目录。Linux `$XDG_DATA_HOME` 或 `~/.local/share` / macOS `~/Library/Application Support` / Windows `{FOLDERID_RoamingAppData}`。 */
+export const dataDir = dirFunction('Data');
+
+/** 用户的本地数据目录。Windows 上是 `{FOLDERID_LocalAppData}`（与 `dataDir` **不同**）。 */
+export const localDataDir = dirFunction('LocalData');
+
+/** 桌面目录。 */
+export const desktopDir = dirFunction('Desktop');
+
+/** 文档目录。 */
+export const documentDir = dirFunction('Document');
+
+/** 下载目录。 */
+export const downloadDir = dirFunction('Download');
+
+/**
+ * 可执行文件目录。
+ *
+ * @remarks
+ * **只有 Linux 支持**（`$XDG_BIN_HOME` 或 `~/.local/bin`）；macOS 与 Windows 上调用会
+ * 以 `not_supported` 被拒——这一点与 Tauri 一致。请按平台分支。
+ */
+export const executableDir = dirFunction('Executable');
+
+/**
+ * 字体目录。
+ *
+ * @remarks
+ * Linux `$XDG_DATA_HOME/fonts`、macOS `~/Library/Fonts`；**Windows 上不支持**（与 Tauri 一致）。
+ */
+export const fontDir = dirFunction('Font');
+
+/** 家目录。 */
+export const homeDir = dirFunction('Home');
+
+/** 图片目录。 */
+export const pictureDir = dirFunction('Picture');
+
+/** 公共目录。Windows 上是 `{FOLDERID_Public}`（`C:\Users\Public`，**不是** `...\Documents`）。 */
+export const publicDir = dirFunction('Public');
+
+/**
+ * 资源目录（随应用分发的额外文件，如数据库模板、脚本）。
+ *
+ * @remarks
+ * Windows 是主可执行文件所在目录；macOS 是 `${exe_dir}/../Resources`；
+ * Linux 是 `$APPDIR/usr/lib/{exe}`（AppImage）或 `/usr/lib/{exe}`。
+ *
+ * 要拼具体文件用 {@link resolveResource}——它有越界校验。
+ */
+export const resourceDir = dirFunction('Resource');
+
+/**
+ * 运行时目录。
+ *
+ * @remarks
+ * **只有 Linux 支持**（`$XDG_RUNTIME_DIR`）；macOS 与 Windows 上以 `not_supported` 被拒。
+ * Linux 上若该环境变量缺失也会被拒——**不会**退到 `/tmp`：
+ * `/tmp` 是全局共享的，不是"本用户的运行时目录"那个语义，给个错值比明确失败糟得多。
+ */
+export const runtimeDir = dirFunction('Runtime');
+
+/** 临时目录。 */
+export const tempDir = dirFunction('Temp');
+
+/**
+ * 模板目录。
+ *
+ * @remarks Linux `XDG_TEMPLATES_DIR`、Windows `{FOLDERID_Templates}`；**macOS 上不支持**（与 Tauri 一致）。
+ */
+export const templateDir = dirFunction('Template');
+
+/** 视频目录。 */
+export const videoDir = dirFunction('Video');
+
+/**
+ * 把一段相对路径解析到资源目录下（对标 Tauri 的 `resolveResource()`）。
+ *
+ * @param {string} resourcePath 相对资源目录的路径；子目录与 `..` 都允许，但不能跑出资源目录。
+ * @returns {Promise<string>}
+ * @remarks
+ * 与 `join(await resourceDir(), p)` 的差别是**这里有校验**：绝对路径被拒
+ * （那等于"读文件系统任意位置"，而函数名是 resolve**Resource**），
+ * 拼完跑出资源目录的也拒。判据是"拼完在不在根之内"而不是"字符串里有没有 `..`"——
+ * `assets/../logo.svg` 是合法的、也很常见。
+ */
+export function resolveResource(resourcePath) {
+    return invoke('path.resolveResource', { path: resourcePath });
+}

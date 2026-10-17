@@ -40,9 +40,38 @@ internal static class OrielBuiltInPathCommands
     /// <c>window.*</c> 的结构性差别（那些在缺少来源窗口时要报错）。
     /// </remarks>
     internal static bool TryGet(string name, out Func<JsonElement, object?> handler)
+        => TryGet(name, appIdentifier: null, out handler);
+
+    /// <summary>
+    /// 取某个 <c>path.*</c> 命令的处理函数（带应用标识符，供目录解析用）。
+    /// </summary>
+    /// <param name="name">命令名。</param>
+    /// <param name="appIdentifier">应用标识符；<c>App*</c> 那几个目录需要它。</param>
+    /// <param name="handler">处理函数。</param>
+    internal static bool TryGet(string name, string? appIdentifier, out Func<JsonElement, object?> handler)
     {
+        // 目录解析：命令名与 Tauri 的函数名一一对应（path.appDataDir ↔ appDataDir()）。
+        // 用 AllDirectories 作单一来源——见那里的 remarks。
+        foreach (string directory in OrielKnownDirs.AllDirectories)
+        {
+            if (name != Prefix + char.ToLowerInvariant(directory[0]) + directory[1..] + "Dir")
+            {
+                continue;
+            }
+
+            string captured = directory;
+            handler = _ => OrielKnownDirs.Resolve(captured, appIdentifier ?? DefaultIdentifier());
+            return true;
+        }
+
         switch (name)
         {
+            case "path.resolveResource":
+                // 对标 Tauri 的 resolveResource(path)：资源目录下拼一段相对路径。
+                // 与 join 的差别是它**先做路径校验**——见 ResolveResource 的 remarks。
+                handler = args => ResolveResource(args, appIdentifier ?? DefaultIdentifier());
+                return true;
+
             case "path.join":
                 handler = static args => Path.Join(GetPaths(args));
                 return true;
@@ -77,6 +106,67 @@ internal static class OrielBuiltInPathCommands
                 return false;
         }
     }
+
+    /// <summary>
+    /// 资源目录下拼一段相对路径（对标 Tauri 的 <c>resolveResource(path)</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 与 <c>join(resourceDir(), p)</c> 的差别是**这里有校验**：<c>p</c> 是相对路径时
+    /// 必须落在资源目录之内。理由是 Tauri 的文档明说它"必须遵循 tauri.conf.json 里
+    /// resources 的语法"，也就是一个**打包清单里的相对路径**，不是任意路径。
+    /// </para>
+    /// <para>
+    /// 具体规则：绝对路径直接拒绝（那等于"读文件系统任意位置"，而这个函数的名字是
+    /// resolve**Resource**）；含 <c>..</c> 拼接后跑出资源目录的也拒绝。
+    /// 后一条不能靠"字符串里有没有 .."来判——<c>a/../b</c> 是合法的，
+    /// 必须拼完再看结果在不在根之内。
+    /// </para>
+    /// </remarks>
+    private static string ResolveResource(JsonElement args, string appIdentifier)
+    {
+        string relative = OrielJson.GetRequiredArg<string>(args, "path", null);
+
+        if (Path.IsPathFullyQualified(relative))
+        {
+            throw new OrielIpcException(
+                $"resolveResource 的参数必须是相对路径（相对资源目录），实际是绝对路径：{relative}")
+            {
+                Code = OrielIpcErrorCodes.InvalidArgument,
+            };
+        }
+
+        string root = Path.GetFullPath(OrielKnownDirs.Resolve("Resource", appIdentifier));
+        string combined = Path.GetFullPath(Path.Combine(root, relative));
+
+        // 拼完再判：比较时给 root 补一个分隔符，否则 /a/bc 会被判成"在 /a/b 之内"
+        string rootWithSeparator = root.EndsWith(Path.DirectorySeparatorChar)
+            ? root
+            : root + Path.DirectorySeparatorChar;
+
+        if (!combined.StartsWith(rootWithSeparator, StringComparison.Ordinal)
+            && !string.Equals(combined, root, StringComparison.Ordinal))
+        {
+            throw new OrielIpcException(
+                $"resolveResource 的参数跑出了资源目录：{relative}")
+            {
+                Code = OrielIpcErrorCodes.InvalidArgument,
+            };
+        }
+
+        return combined;
+    }
+
+    /// <summary>
+    /// 目录解析在拿不到应用标识符时的兜底。
+    /// </summary>
+    /// <remarks>
+    /// 正常情况下调用方会传应用的真实标识符（见 <c>OrielCommandDispatcher</c> 的接线）。
+    /// 这个兜底只对"没经过应用上下文就调了内建命令"的路径生效——那种情况下用一个
+    /// 固定的占位名，比抛异常好：<c>AppData</c> 这类目录还是能解析出来的（只是目录名不对），
+    /// 而抛异常会让整个命令族不可用。
+    /// </remarks>
+    private static string DefaultIdentifier() => "oriel-app";
 
     /// <summary>读必需参数 <c>paths</c>（字符串数组）。</summary>
     private static string[] GetPaths(JsonElement args)

@@ -205,6 +205,61 @@ internal static class ApiSelfTest
                 // （见 Program.cs），所以这几条能跑通本身就是"放行生效"的证据。
                 check('path.* 无需能力声明即可用（整族放行）', true, '见 Program.cs 的能力名单');
 
+                // ---- 目录解析（F4b-1）：真宿主上逐格取值 ----
+                const home = await path.homeDir();
+                check('path.homeDir() 给绝对路径', home.startsWith('C:\\') || home.startsWith('/'), home);
+
+                const appData = await path.appDataDir();
+                check('path.appDataDir() 落在 dataDir 之下且含应用标识符',
+                    appData.endsWith(appId) && appData.startsWith(await path.dataDir()),
+                    appData);
+
+                // Windows 上这四格分成两对（Roaming / Local）——把 Data 与 LocalData
+                // 混成一条实现会让其中一对双双错掉，而那种错在 Linux/macOS 上看不出来
+                const config = await path.configDir();
+                const data = await path.dataDir();
+                const localData = await path.localDataDir();
+                const cache = await path.cacheDir();
+                check('path.configDir() 与 path.dataDir() 同（Windows 上都是 Roaming）',
+                    config === data, config + ' vs ' + data);
+                check('path.localDataDir() 与 path.cacheDir() 同（Windows 上都是 Local）',
+                    localData === cache, localData + ' vs ' + cache);
+                check('Windows 上 Roaming 与 Local 是不同目录',
+                    data !== localData, data + ' vs ' + localData);
+
+                // 下载目录**不能**靠 .NET 的 SpecialFolder 得到（没有那个成员），
+                // 而 publicDir 也不是 CommonDocuments（那个多一层 \Documents）。
+                const downloads = await path.downloadDir();
+                const publicDir = await path.publicDir();
+                check('path.downloadDir() 取到 Downloads',
+                    /[\\/]Downloads$/.test(downloads), downloads);
+                check('path.publicDir() 是 Public 而不是 Public\\Documents',
+                    !/[\\/]Documents$/.test(publicDir), publicDir);
+
+                // 平台不支持的那几格要以 not_supported 明确拒绝（与 Tauri 一致），
+                // 而不是给一个编出来的值
+                let fontCode = 'unset';
+                try {
+                    await path.fontDir();
+                } catch (e) {
+                    fontCode = e && e.code;
+                }
+                check('path.fontDir() 在 Windows 上以 not_supported 被拒（与 Tauri 一致）',
+                    fontCode === 'not_supported', fontCode);
+
+                // resolveResource 的越界校验
+                const resource = await path.resolveResource('assets/logo.svg');
+                check('path.resolveResource() 落在资源目录之下',
+                    resource.startsWith(await path.resourceDir()), resource);
+
+                let escapeCode = 'unset';
+                try {
+                    await path.resolveResource('../outside.txt');
+                } catch (e) {
+                    escapeCode = e && e.code;
+                }
+                check('path.resolveResource() 拒绝跑出资源目录', escapeCode === 'invalid_argument', escapeCode);
+
                 // ---- 结构化错误（F7）：码要真的到达页面 ----
                 //
                 // 用一条**确定会被拒**的命令取证：demo 刻意没有声明 window.setResizable。

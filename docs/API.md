@@ -936,6 +936,45 @@ sep();                                 // 同步：'\\'（Windows）或 '/'（PO
 > 不一致，症状是"只在某个平台错"。宿主有 .NET 的 `Path`，那是这些规则在 .NET 里的权威实现——
 > 加上上面那两处 Rust 口径的显式调整。
 
+### `path` 的目录解析（24 个）
+
+```js
+import { appDataDir, homeDir, tempDir, resolveResource } from '@orielweb/api/path';
+
+await appDataDir();                    // %APPDATA%\com.example.app（Windows）
+await homeDir();                       // C:\Users\<你>
+await tempDir();
+await resolveResource('assets/a.svg'); // 资源目录下拼，带越界校验
+```
+
+规则**逐格对齐 Tauri**（`dirs` crate：Windows `SHGetKnownFolderPath` / Linux XDG / macOS `~/Library/*`）：
+
+| 分组 | 函数 | Linux | macOS | Windows |
+|---|---|---|---|---|
+| 应用 | `appConfigDir` `appDataDir` `appLocalDataDir` `appCacheDir` `appLogDir` | `${基目录}/${标识符}`（`appLogDir` 再加 `/logs`） | 同左（`appLogDir` 是 `~/Library/Logs/${标识符}`） | 同左 |
+| 用户 | `homeDir` `desktopDir` `documentDir` `downloadDir` `pictureDir` `videoDir` `audioDir` `publicDir` `templateDir` | XDG（桌面/文档/下载等按 `user-dirs.dirs`，**用户可配置**） | `~/Desktop` 等固定名 | `{FOLDERID_*}`（可被重定向到别的盘） |
+| 系统 | `configDir` `dataDir` `localDataDir` `cacheDir` `tempDir` | `$XDG_*` 或 `~/.config` `~/.local/share` `~/.cache` | `~/Library/Application Support` / `~/Library/Caches` | `{FOLDERID_RoamingAppData}` / `{FOLDERID_LocalAppData}` |
+| 资源 | `resourceDir` `resolveResource` | `$APPDIR/usr/lib/{exe}` 或 `/usr/lib/{exe}`；开发期 `${exe_dir}/../lib/{exe}` | `${exe_dir}/../Resources` | 主可执行文件所在目录 |
+| **平台独有** | `executableDir` `runtimeDir` | ✅ | ⛔ 不支持 | ⛔ 不支持 |
+| | `fontDir` | ✅ | ✅ | ⛔ 不支持 |
+| | `templateDir` | ✅ | ⛔ 不支持 | ✅ |
+
+⚠️ 标记"不支持"的那些调用会以 **`not_supported`** 被拒（与 Tauri 一致）。
+**照 Tauri 拒绝而不是"顺手多给一个值"是有意的**：多给会让"能跑"与"能迁"分叉，
+而分叉在迁移完成之后才发现是最糟的时机。
+
+> **Windows 上为什么不用 .NET 的 `SpecialFolder`**：实测有三格对不上——
+> `downloadDir` 没有对应成员；`publicDir` 的 `CommonDocuments` 给 `...\Public\Documents`
+> 而 Tauri 给 `C:\Users\Public`（**差一层**）；`fontDir` 等三格 Tauri 明确不支持。
+> 所以直接用 `SHGetKnownFolderPath`。
+
+> **`resolveResource` 有越界校验**：绝对路径被拒（那等于读文件系统任意位置，
+> 而函数名是 resolve**Resource**），拼完跑出资源目录的也拒。
+> 判据是"拼完在不在根之内"而不是"字符串里有没有 `..`"——`assets/../logo.svg` 合法且常见。
+
+> **`runtimeDir` 在 `XDG_RUNTIME_DIR` 缺失时明确失败**，不退到 `/tmp`：
+> `/tmp` 是全局共享的，不是"本用户的运行时目录"那个语义，给个错值比明确失败糟得多。
+
 ### `app` 模块（只读元信息）
 
 ```js

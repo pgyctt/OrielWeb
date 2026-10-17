@@ -186,7 +186,7 @@ internal sealed class OrielCommandDispatcher
         // 是某个窗口，而路径运算只碰页面自己给的字符串。所以这里没有 window is null 的检查。
         //
         // 本族**始终放行**（见 OrielCapabilityRules.AlwaysAllowedPathCommands）。
-        if (OrielBuiltInPathCommands.TryGet(name, out var pathBuiltIn))
+        if (OrielBuiltInPathCommands.TryGet(name, window?.App.Info.Identifier, out var pathBuiltIn))
         {
             try
             {

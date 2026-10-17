@@ -212,7 +212,40 @@ internal static class OrielCapabilityRules
         "path.isAbsolute",
         "path.normalize",
         "path.resolve",
+
+        // 目录解析（对标 Tauri 的 appDataDir / homeDir / … 那一整组）。
+        //
+        // 也是"不做 I/O、不写任何东西"的：读的是环境变量与操作系统的已知文件夹。
+        // 严格说它泄露了一点宿主信息（用户名会出现在 homeDir 里），但那与 path.normalize
+        // 泄露 cwd 是同一量级，而我们在上面已经论证过那个可以放行。
+        //
+        // 与 path.join 的差别只是"值从哪来"——从参数变成从宿主环境读。既然
+        // Tauri 的 core:path:default 默认开着这一整组，这里也照做。
+        "path.resolveResource",
+        .. DirectoryCommandNames(),
     ];
+
+    /// <summary>
+    /// 目录解析的命令名：由目录清单派生，**不手抄**。
+    /// </summary>
+    /// <remarks>
+    /// 手抄两份清单的失败模式是"加了目录忘了加放行"——症状为某个 <c>path.xxxDir</c>
+    /// 在 Release 下被拒，而那看起来像"这个目录不存在"。派生就没有这个缝。
+    /// 命名规则与 <c>OrielBuiltInPathCommands.TryGet(string, string?, out …)</c> 用的是同一条
+    /// （目录名首字母小写 + <c>Dir</c> 后缀）。
+    /// </remarks>
+    private static string[] DirectoryCommandNames()
+    {
+        var names = new string[OrielKnownDirs.AllDirectories.Length];
+
+        for (int i = 0; i < names.Length; i++)
+        {
+            string directory = OrielKnownDirs.AllDirectories[i];
+            names[i] = $"path.{char.ToLowerInvariant(directory[0])}{directory[1..]}Dir";
+        }
+
+        return names;
+    }
 
     /// <summary>判断某个 <c>path.*</c> 命令是否属于"始终放行"的一族。</summary>
     internal static bool IsAlwaysAllowedPathCommand(string name)
