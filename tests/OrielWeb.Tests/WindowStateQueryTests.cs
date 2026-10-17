@@ -22,6 +22,8 @@ public sealed class WindowStateQueryTests
     private static readonly string[] NewQueries =
     [
         "window.isMinimized", "window.isFocused", "window.isFullscreen", "window.isAlwaysOnTop",
+        "window.isDecorated", "window.isResizable", "window.isMaximizable", "window.isMinimizable",
+        "window.isClosable",
     ];
 
     [Theory]
@@ -29,6 +31,12 @@ public sealed class WindowStateQueryTests
     [InlineData("window.isFocused")]
     [InlineData("window.isFullscreen")]
     [InlineData("window.isAlwaysOnTop")]
+    [InlineData("window.isDecorated")]
+    [InlineData("window.isResizable")]
+    [InlineData("window.isMaximizable")]
+    [InlineData("window.isMinimizable")]
+    [InlineData("window.isClosable")]
+    [InlineData("window.theme")]
     public void CommandsAreRegistered(string name)
         => Assert.True(OrielBuiltInWindowApiCommands.TryGet(name, out _), $"未注册：{name}");
 
@@ -37,6 +45,12 @@ public sealed class WindowStateQueryTests
     [InlineData("window.isFocused")]
     [InlineData("window.isFullscreen")]
     [InlineData("window.isAlwaysOnTop")]
+    [InlineData("window.isDecorated")]
+    [InlineData("window.isResizable")]
+    [InlineData("window.isMaximizable")]
+    [InlineData("window.isMinimizable")]
+    [InlineData("window.isClosable")]
+    [InlineData("window.theme")]
     public void QueriesAreInTheTitleBarWhitelist(string name)
     {
         // **门禁姿态**：这四条与 isVisible / isMaximized 一样在标题栏白名单里——
@@ -53,6 +67,12 @@ public sealed class WindowStateQueryTests
     [InlineData("window.isFocused")]
     [InlineData("window.isFullscreen")]
     [InlineData("window.isAlwaysOnTop")]
+    [InlineData("window.isDecorated")]
+    [InlineData("window.isResizable")]
+    [InlineData("window.isMaximizable")]
+    [InlineData("window.isMinimizable")]
+    [InlineData("window.isClosable")]
+    [InlineData("window.theme")]
     public void QueriesDoNotNeedCapabilityDeclaration(string name)
     {
         // 没配能力时（_options 为 null）也要放行——与 win.* 那族同样的待遇

@@ -333,7 +333,8 @@ F1 ─→ F2（scope 系统是 convertFileSrc 的前置）
 | **F3** `dialog` | ✅ 完成（Windows 已验证；Linux/macOS 交叉编译通过、运行期未验） | `@orielweb/api/dialog`（5 条）+ 内建命令族。open/save **复用既有原生层**（`win.pickFile` **冻结不动**，两者共用底层、命令契约独立）；message/ask/confirm 是**新平台代码**（`MessageBoxW` / `GtkMessageDialog` / `NSAlert`）。**命令层返回语义、页面层映射文案**——Windows 无法自定义按钮文字，返回文案会导致静默错答。新增 29 项单测 + 前端 19 项 + 真页面 4 项 |
 | **H** 迁移对照 | ✅ 完成 | `tauri-alignment.test.mjs`：把 `@tauri-apps/api` 与官方插件当**参照实现**机械比对导出面与方法，三个方向都管（缺口/扩展/清单过期），每个差异都必须有记录。参照实现是 devDependency，CI 用 `npm ci` 强制检查。**抓到并修了两个真实缺陷**（window 没转出 dpi 四类、dpi 类缺 toPhysical/toLogical）；方法级比对产出 62 项 `window.Window` 缺口，按类别记为 **M5 的工作清单** |
 | **M5-1** 窗口只读状态查询 | ✅ 完成（Windows 已验证） | `isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop`（对标 Tauri 同名方法）。四条都进标题栏白名单。新增 13 项单测 + 前端 2 项 + 真页面 12 项（含"页面查询与宿主侧逐条一致"与状态流转） |
-| **M5** 其余 P2 | ⬜ 未开始 | 工作清单见 `packages/api/tests/tauri-alignment.test.mjs` 的 `METHOD_GAP_GROUPS`（`window.Window` 减掉这 4 项后还剩 58 项） |
+| **M5-2** 外观与能力的只读查询 | ✅ 完成（Windows 已验证） | `isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `theme`。四条读原生样式位、`isDecorated` 读选项。**三处跨平台语义差异如实记录**（`isMaximizable` 在 Linux/macOS 等于 `isResizable`、`isClosable` 在 Linux 恒真）。**只读查询全部做完**。新增 18 项单测 + 前端 2 项 + 真页面 9 项 |
+| **M5** 其余 P2 | ⬜ 未开始 | 工作清单见 `packages/api/tests/tauri-alignment.test.mjs` 的 `METHOD_GAP_GROUPS`（`window.Window` 剩 52 项；下一批建议做"窗口状态设置"与"`Window` 上的事件转发"） |
 
 ### M3 的状态（2026-10-17）
 

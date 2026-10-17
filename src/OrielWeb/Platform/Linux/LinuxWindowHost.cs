@@ -269,6 +269,39 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     /// <summary>是否置顶（取库记住的状态，见 <see cref="IWindowBackend.IsAlwaysOnTop"/>）。</summary>
     public bool IsAlwaysOnTop => _isOnTop;
 
+    /// <summary>是否有系统装饰（取创建时的选项，见 <see cref="IWindowBackend.IsDecorated"/>）。</summary>
+    public bool IsDecorated => !_options.Frameless;
+
+    /// <summary>是否可缩放（原生读，见 <see cref="IWindowBackend.IsResizable"/>）。</summary>
+    public bool IsResizable => WindowAlive && GtkNative.GtkWindowGetResizable(_gtkWindow);
+
+    /// <summary>
+    /// 是否可最大化（见 <see cref="IWindowBackend.IsMaximizable"/>）。
+    /// </summary>
+    /// <remarks>
+    /// <b>回落到 <see cref="IsResizable"/></b>：GTK 没有"可最大化"这个独立概念——
+    /// 最大化跟着 resizable 走。<c>gtk_window_set_resizable(false)</c> 之后窗口确实最大化不了。
+    /// </remarks>
+    public bool IsMaximizable => IsResizable;
+
+    /// <summary>
+    /// 是否可最小化（见 <see cref="IWindowBackend.IsMinimizable"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 同样回落到 <see cref="IsResizable"/>，理由同 <see cref="IsMaximizable"/>。
+    /// </remarks>
+    public bool IsMinimizable => IsResizable;
+
+    /// <summary>
+    /// 是否可关闭（见 <see cref="IWindowBackend.IsClosable"/>）。
+    /// </summary>
+    /// <remarks>
+    /// <b>恒为 true</b>：GTK 没有"可关闭"这个概念——窗口总能收到 delete-event，
+    /// 而本库的关闭接管是在那之上做的**拦截**（页面可以不同意关）。
+    /// 所以"能不能关"在这里不是一个可以被关掉的属性。给恒真比给一个猜测值诚实。
+    /// </remarks>
+    public bool IsClosable => true;
+
     // ---- 导航操作（WebKitGTK 内建历史；无历史时调用是空操作）----
     // _webview 在 destroy 之后被置 0，判空是必需的：这些调用不能对已销毁的 webview 下手。
 

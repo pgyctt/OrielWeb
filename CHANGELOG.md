@@ -469,7 +469,42 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
   刚好铺满屏幕时会给出与"库认为的状态"不一致的答案。记住的状态与 `ToggleFullscreen()`
   的返回值自洽。
 
+#### 外观与能力的只读查询（M5-2）
+
+- **`isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `theme`**
+  （对标 Tauri 的同名方法）：与 M5-1 同构（后端属性 + `WebviewWindow` + `window.*` + JS）。
+  **`window.Window` 的只读查询至此全部做完**，工作清单从 58 项降到 **52 项**。
+- **"读原生"还是"读记住的状态"，按哪个反映事实来分**：
+  `isResizable` 等四条**从原生动读**（Windows 读 `WS_THICKFRAME` / `WS_MAXIMIZEBOX` /
+  `WS_MINIMIZEBOX` / `WS_SYSMENU`、GTK `gtk_window_get_resizable`、Cocoa `styleMask`）——
+  `SetResizable` 本来就是改原生样式，读回来才反映"系统实际接受的是什么"；
+  而 `isDecorated` 取**创建时的选项**（窗口生命期内不变，且 Windows 上它是我们的
+  `WM_NCCALCSIZE` 处理，读样式位读不出那个意图）。
+- **三处跨平台语义差异，如实写进接口文档**：
+
+  | 查询 | Linux | macOS | Windows |
+  |---|---|---|---|
+  | `isMaximizable` | = `isResizable` | = `isResizable` | 独立样式位 |
+  | `isMinimizable` | = `isResizable` | `Miniaturizable` 位 | 独立样式位 |
+  | `isClosable` | **恒 true** | `Closable` 位 | `WS_SYSMENU` |
+
+  前两行是因为 GTK 与 AppKit 都没有"可最大化"这个**独立概念**（最大化跟着 resizable 走）；
+  最后一行是因为 GTK 没有"可关闭"概念——窗口总能收到 delete-event，
+  而本库的关闭接管是在那之上做的**拦截**。给恒真/回落值比给一个猜测值诚实。
+- **`theme` 总给得出值**（`'light'` / `'dark'`）：Tauri 可能返回 `null`（"无法确定"），
+  而本库目前只有"跟随系统"这一种来源，三平台都能读到系统主题，
+  也没有"按窗口覆写主题"的能力。
+- 六条都进了**标题栏白名单**：标题栏靠 `isDecorated` 决定"要不要渲染自绘标题栏"、
+  靠 `isMaximizable`/`isMinimizable`/`isClosable` 决定"哪个按钮该出现"、靠 `theme` 决定配色。
+
 ### 修复
+
+- **自检里"拿主窗口当装饰对照"的错误假设**：`isDecorated` 的第一版断言是
+  "探针窗口 false、主窗口 true"，结果主窗口那条**失败**——demo 的主窗口**也是无边框的**
+  （它用自绘标题栏）。于是"两个都 false"根本证明不了查询不是写死的。
+  改成**另建一个带装饰的探针窗口**，在同一时刻让两个窗口给出不同答案——
+  那才说明查询真的读了每个窗口自己的状态。
+  这类"我以为是 A、实际是 B"的假设，只有把断言写成可观察的对照才会暴露。
 
 - **`dialog.js` 里形参遮蔽了同名导出函数**：`ask(message, options)` 与
   `confirm(message, options)` 里的形参 `message` 遮蔽了导出的 `message` 函数，

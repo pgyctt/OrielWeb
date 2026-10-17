@@ -369,6 +369,34 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// <summary>当前是否置顶（对标 Tauri 的 `Window.isAlwaysOnTop()`）。</summary>
     public bool IsAlwaysOnTop => Backend.IsAlwaysOnTop;
 
+    /// <summary>当前是否有系统装饰（对标 Tauri 的 `Window.isDecorated()`）。</summary>
+    /// <remarks>
+    /// 取创建时的选项（`Frameless` 的取反）：它在窗口生命期内不变。
+    /// </remarks>
+    public bool IsDecorated => Backend.IsDecorated;
+
+    /// <summary>当前是否可缩放（对标 Tauri 的 `Window.isResizable()`）。</summary>
+    public bool IsResizable => Backend.IsResizable;
+
+    /// <summary>
+    /// 当前是否可最大化（对标 Tauri 的 `Window.isMaximizable()`）。
+    /// </summary>
+    /// <remarks>
+    /// **Linux 与 macOS 上等于 <see cref="IsResizable"/>**：那两个平台没有独立的
+    /// "可最大化"概念（GTK 跟着 resizable 走、AppKit 的 zoom 以 resizable 为前提）。
+    /// Windows 上是独立的样式位。
+    /// </remarks>
+    public bool IsMaximizable => Backend.IsMaximizable;
+
+    /// <summary>当前是否可最小化（对标 Tauri 的 `Window.isMinimizable()`）。</summary>
+    public bool IsMinimizable => Backend.IsMinimizable;
+
+    /// <summary>
+    /// 当前是否可关闭（对标 Tauri 的 `Window.isClosable()`）。
+    /// </summary>
+    /// <remarks>**Linux 上恒为 `true`**（GTK 没有这个概念），见后端接口的说明。</remarks>
+    public bool IsClosable => Backend.IsClosable;
+
     public void Focus() => Backend.Focus();
     public void Maximize() => Backend.Maximize();
     public void Minimize() => Backend.Minimize();

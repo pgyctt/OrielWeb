@@ -113,6 +113,55 @@ internal interface IWindowBackend
     /// <remarks>同 <see cref="IsFullscreen"/>：取库记住的状态。</remarks>
     bool IsAlwaysOnTop { get; }
 
+    /// <summary>当前是否有系统装饰（标题栏与边框）。</summary>
+    /// <remarks>
+    /// 与 <see cref="IsResizable"/> 那几条一样取**创建时的选项**（<c>Frameless</c> 的取反）：
+    /// 它在窗口生命期内不变，而三平台从原生读回它的代价与可靠性都不一样
+    /// （Windows 上是我们的 <c>WM_NCCALCSIZE</c> 处理，读样式位读不出这个意图；
+    /// GTK 的 getter 报的是**请求值**，Wayland 下合成器可能无视它）。
+    /// </remarks>
+    bool IsDecorated { get; }
+
+    /// <summary>
+    /// 当前是否可缩放。
+    /// </summary>
+    /// <remarks>
+    /// 这条**从原生动实际读取**（Windows 读 <c>WS_THICKFRAME</c>、GTK <c>gtk_window_get_resizable</c>、
+    /// Cocoa <c>styleMask</c> 的 resizable 位），而不是记库里的状态：
+    /// <c>SetResizable</c> 本来就是改原生样式，读回来才能反映"系统实际接受的是什么"。
+    /// </remarks>
+    bool IsResizable { get; }
+
+    /// <summary>
+    /// 当前是否可最大化。
+    /// </summary>
+    /// <remarks>
+    /// <b>Linux 与 macOS 上是 <see cref="IsResizable"/> 的同义值</b>：GTK 没有"可最大化"
+    /// 这个独立概念（最大化跟着 resizable 走），AppKit 同样把 <c>NSWindowStyleMaskResizable</c>
+    /// 当作最大化的前提。Windows 有独立的 <c>WS_MAXIMIZEBOX</c>，所以那边是真读。
+    /// 这个差异如实写出来，而不是在三平台上假装它们一致。
+    /// </remarks>
+    bool IsMaximizable { get; }
+
+    /// <summary>当前是否可最小化。</summary>
+    /// <remarks>
+    /// 同 <see cref="IsMaximizable"/>：Windows 读 <c>WS_MINIMIZEBOX</c>，
+    /// Linux 回落到 <see cref="IsResizable"/>（GTK 无独立概念），
+    /// macOS 读 <c>NSWindowStyleMaskMiniaturizable</c> 位。
+    /// </remarks>
+    bool IsMinimizable { get; }
+
+    /// <summary>
+    /// 当前是否可关闭。
+    /// </summary>
+    /// <remarks>
+    /// Windows 读 <c>WS_SYSMENU</c>（关闭按钮属于系统菜单）、macOS 读
+    /// <c>NSWindowStyleMaskClosable</c>；<b>Linux 恒为 <c>true</c></b>——
+    /// GTK 没有"可关闭"这个概念，窗口总能收到 delete-event（本库的关闭接管是在那之上做的
+    /// 拦截）。给一个恒真的值比给一个猜测的值诚实。
+    /// </remarks>
+    bool IsClosable { get; }
+
     void Show();
     void Hide();
     void Close();

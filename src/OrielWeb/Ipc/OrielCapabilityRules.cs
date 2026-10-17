@@ -178,6 +178,14 @@ internal static class OrielCapabilityRules
         "window.isFocused",
         "window.isFullscreen",
         "window.isAlwaysOnTop",
+        // 又四条：标题栏靠它们决定"要不要显示自绘标题栏"（decorated）与
+        // "哪个按钮该出现"（maximizable / minimizable / closable），theme 决定配色。
+        "window.isDecorated",
+        "window.isResizable",
+        "window.isMaximizable",
+        "window.isMinimizable",
+        "window.isClosable",
+        "window.theme",
         "window.title",
     ];
 

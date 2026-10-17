@@ -185,6 +185,11 @@ internal static unsafe partial class GtkNative
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool GtkWindowIsActive(nint window);
 
+    /// <summary>窗口当前是否可缩放（与 <c>gtk_window_set_resizable</c> 配对）。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_window_get_resizable")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool GtkWindowGetResizable(nint window);
+
     /// <summary>取 GDK 窗口的状态位（最小化、贴边、全屏…）。</summary>
     /// <remarks>
     /// 返回值是 <c>GdkWindowState</c> 的位掩码，要按位判——

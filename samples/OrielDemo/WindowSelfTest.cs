@@ -30,6 +30,9 @@ internal static class WindowSelfTest
 {
     private const string AssetHost = "app.oriel";
     private const string ProbeLabel = "win-probe";
+
+    /// <summary>带系统装饰的对照窗口（见 isDecorated 那一段）。</summary>
+    private const string DecoratedProbeLabel = "decorated-probe";
     private const string ProbeUrl = "https://" + AssetHost + "/win-probe.html";
 
     private static readonly object Gate = new();
@@ -212,7 +215,64 @@ internal static class WindowSelfTest
                 $"window.isAlwaysOnTop 应当与宿主侧一致（页面 {onTopAfterToggle} vs 宿主 {probe.IsAlwaysOnTop}）");
             Check(onTopAfterToggle, "ToggleOnTop() 之后 window.isAlwaysOnTop 应当是 true");
 
-            // ---- 6. 定向销毁：关掉的是目标窗口而不是发起者 ----
+            // ---- 6. 外观与能力的只读查询（M5-2）----
+            //
+            // 这一组断言"页面查询与宿主侧一致"（不依赖环境事实），
+            // 因为假窗口验不了、而真窗口的取值又依赖平台与选项——
+            // "两边一致"是唯一既能证明查询通了、又不假设取值的断言。
+            (string Command, bool HostValue)[] appearanceQueries =
+            [
+                ("window.isResizable", probe.IsResizable),
+                ("window.isMaximizable", probe.IsMaximizable),
+                ("window.isMinimizable", probe.IsMinimizable),
+                ("window.isClosable", probe.IsClosable),
+            ];
+
+            foreach ((string command, bool hostValue) in appearanceQueries)
+            {
+                bool pageValue = (await AskWithLabelAsync(command, ProbeLabel)).GetBoolean();
+
+                Check(
+                    pageValue == hostValue,
+                    $"{command} 应当与宿主侧一致（页面 {pageValue} vs 宿主 {hostValue}）");
+            }
+
+            // 无边框探针窗口 → isDecorated 必须是 false。
+            Check(!(await AskWithLabelAsync("window.isDecorated", ProbeLabel)).GetBoolean(),
+                "探针窗口是无边框的，isDecorated 应当是 false");
+
+            // **正反对照**：demo 的主窗口也是无边框的（自绘标题栏），
+            // 所以"两个都 false"证明不了查询不是写死的——必须另建一个**带装饰**的窗口。
+            // （第一版我拿主窗口当对照，结果那条失败：主窗口本来就是 frameless。）
+            WebviewWindow? decorated = app.CreateWindow(
+                w => w.WithLabel(DecoratedProbeLabel)
+                      .WithTitle("装饰探针")
+                      .WithSize(320, 240)
+                      .WithUrl(ProbeUrl));
+
+            try
+            {
+                await Task.Delay(400);
+
+                Check((await AskWithLabelAsync("window.isDecorated", DecoratedProbeLabel)).GetBoolean(),
+                    "带装饰的窗口 isDecorated 应当是 true");
+
+                // 同一个宿主、同一时刻，两个窗口给出不同的答案——
+                // 这才说明查询真的读了每个窗口自己的状态
+                Check(!(await AskWithLabelAsync("window.isDecorated", ProbeLabel)).GetBoolean(),
+                    "同一时刻无边框窗口仍应当是 false（对照）");
+            }
+            finally
+            {
+                decorated?.Destroy();
+                await Task.Delay(200);
+            }
+
+            // theme：三平台总能读到系统主题，所以给得出 'light' / 'dark'。
+            string theme = (await AskWithLabelAsync("window.theme", ProbeLabel)).GetString() ?? "";
+            Check(theme is "light" or "dark", $"window.theme 应当给 light/dark（实际「{theme}」）");
+
+            // ---- 7. 定向销毁：关掉的是目标窗口而不是发起者 ----
             await AskWithLabelAsync("window.destroy", ProbeLabel);
             await WaitForAsync(() => !app.Windows.Contains(probe), 5000);
 

@@ -245,3 +245,51 @@ test('四条状态查询按 label 寻址（能读别的窗口）', async () => {
 
     clearMocks();
 });
+
+// ---- 外观与能力的只读查询（M5-2）----
+
+test('六条新查询的命令名与 label', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', {
+        'window.isDecorated': true,
+        'window.isResizable': true,
+        'window.isMaximizable': true,
+        'window.isMinimizable': true,
+        'window.isClosable': true,
+        'window.theme': 'dark',
+    });
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    assert.equal(await win.isDecorated(), true);
+    assert.equal(await win.isResizable(), true);
+    assert.equal(await win.isMaximizable(), true);
+    assert.equal(await win.isMinimizable(), true);
+    assert.equal(await win.isClosable(), true);
+    assert.equal(await win.theme(), 'dark');
+
+    assert.deepEqual(calls.map((c) => c[0]), [
+        'window.isDecorated', 'window.isResizable', 'window.isMaximizable',
+        'window.isMinimizable', 'window.isClosable', 'window.theme',
+    ]);
+    for (const [, args] of calls) {
+        assert.deepEqual(args, { label: 'main' });
+    }
+
+    clearMocks();
+});
+
+test('theme 给字符串而不是布尔', async () => {
+    clearMocks();
+    setTransportOverride({ async invoke() { return 'light'; } });
+
+    // Tauri 的 theme() 给 'light' | 'dark' | null；本库总能给得出值（见方法的说明），
+    // 所以断言的是"字符串且在这两个值里"——写成布尔会让页面的 === 'dark' 永远不成立
+    const value = await new Window('main').theme();
+
+    assert.equal(typeof value, 'string');
+    assert.ok(value === 'light' || value === 'dark', `实际 ${value}`);
+
+    clearMocks();
+});

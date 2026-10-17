@@ -67,6 +67,35 @@ internal static class OrielBuiltInWindowApiCommands
                 handler = static (sender, args) => Resolve(sender, args).IsAlwaysOnTop;
                 return true;
 
+            case "window.isDecorated":
+                handler = static (sender, args) => Resolve(sender, args).IsDecorated;
+                return true;
+
+            case "window.isResizable":
+                handler = static (sender, args) => Resolve(sender, args).IsResizable;
+                return true;
+
+            case "window.isMaximizable":
+                handler = static (sender, args) => Resolve(sender, args).IsMaximizable;
+                return true;
+
+            case "window.isMinimizable":
+                handler = static (sender, args) => Resolve(sender, args).IsMinimizable;
+                return true;
+
+            case "window.isClosable":
+                handler = static (sender, args) => Resolve(sender, args).IsClosable;
+                return true;
+
+            case "window.theme":
+                // 对标 Tauri 的 Window.theme()：返回 'light' / 'dark' / null。
+                //
+                // 本库目前**只有"跟随系统"这一种来源**（OrielApp.Theme），没有"按窗口覆写主题"
+                // 的能力，所以永远给得出值、不会返回 null。Tauri 的 null 表示"无法确定"，
+                // 而"系统主题是什么"我们总是知道（三平台都能读）。
+                handler = static (sender, _) => sender.App.Theme == OrielTheme.Dark ? "dark" : "light";
+                return true;
+
             case "window.scaleFactor":
                 // 页面用它把 PhysicalSize 换算成逻辑尺寸（Tauri 的 setSize 两种都收）。
                 // 取窗口所在显示器的值——窗口拖到另一块不同缩放的显示器后它会变。

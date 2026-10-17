@@ -264,6 +264,73 @@ export class Window {
     }
 
     /**
+     * 是否有系统装饰（标题栏与边框）。
+     *
+     * @returns {Promise<boolean>}
+     * @remarks 取创建时的选项，窗口生命期内不变。无边框窗口多用它决定"要不要渲染自绘标题栏"。
+     */
+    isDecorated() {
+        return invoke('window.isDecorated', { label: this.label });
+    }
+
+    /**
+     * 是否可缩放。
+     *
+     * @returns {Promise<boolean>}
+     * @remarks 从**原生实际状态**读回（`setResizable` 改的就是它），
+     * 所以反映的是"系统接受的是什么"。
+     */
+    isResizable() {
+        return invoke('window.isResizable', { label: this.label });
+    }
+
+    /**
+     * 是否可最大化。
+     *
+     * @returns {Promise<boolean>}
+     * @remarks **Linux 与 macOS 上等于 `isResizable()`**：那两个平台没有独立的
+     * "可最大化"概念（GTK 跟着 resizable 走、AppKit 的 zoom 以 resizable 为前提）。
+     * Windows 上才是独立的样式位。
+     */
+    isMaximizable() {
+        return invoke('window.isMaximizable', { label: this.label });
+    }
+
+    /**
+     * 是否可最小化。
+     *
+     * @returns {Promise<boolean>}
+     * @remarks 同 `isMaximizable()`：Linux 上回落到 `isResizable()`。
+     */
+    isMinimizable() {
+        return invoke('window.isMinimizable', { label: this.label });
+    }
+
+    /**
+     * 是否可关闭。
+     *
+     * @returns {Promise<boolean>}
+     * @remarks **Linux 上恒为 `true`**：GTK 没有这个概念（窗口总能收到 delete-event，
+     * 本库的关闭接管是在那之上做的拦截）。
+     */
+    isClosable() {
+        return invoke('window.isClosable', { label: this.label });
+    }
+
+    /**
+     * 当前主题（`'light'` 或 `'dark'`）。
+     *
+     * @returns {Promise<'light' | 'dark'>}
+     * @remarks
+     * 对标 Tauri 的 `Window.theme()`，但有两点不同：
+     * 那边可能返回 `null`（"无法确定"），本库**总是给得出值**——三平台都能读到系统主题，
+     * 而本库目前只有"跟随系统"这一种来源，没有"按窗口覆写主题"的能力。
+     */
+    theme() {
+        return invoke('window.theme', { label: this.label });
+    }
+
+    /**
      * 当前标题（对标 Tauri 的 `title()`）。**无条件放行**（只读查询）。
      *
      * @returns {Promise<string>}

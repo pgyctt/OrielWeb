@@ -283,6 +283,37 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     /// <summary>是否置顶（取库记住的状态，见 <see cref="IWindowBackend.IsAlwaysOnTop"/>）。</summary>
     public bool IsAlwaysOnTop => _isOnTop;
 
+    /// <summary>是否有系统装饰（取创建时的选项，见 <see cref="IWindowBackend.IsDecorated"/>）。</summary>
+    public bool IsDecorated => !_options.Frameless;
+
+    /// <summary>是否可缩放（原生读，见 <see cref="IWindowBackend.IsResizable"/>）。</summary>
+    public bool IsResizable => (CurrentStyleMask() & StyleResizable) != 0;
+
+    /// <summary>
+    /// 是否可最大化（见 <see cref="IWindowBackend.IsMaximizable"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 用 resizable 位：AppKit 的"缩放"（zoom / 绿灯）以
+    /// <c>NSWindowStyleMaskResizable</c> 为前提，没有独立的最大化位。
+    /// </remarks>
+    public bool IsMaximizable => (CurrentStyleMask() & StyleResizable) != 0;
+
+    /// <summary>是否可最小化（原生读，见 <see cref="IWindowBackend.IsMinimizable"/>）。</summary>
+    public bool IsMinimizable => (CurrentStyleMask() & StyleMiniaturizable) != 0;
+
+    /// <summary>是否可关闭（原生读，见 <see cref="IWindowBackend.IsClosable"/>）。</summary>
+    public bool IsClosable => (CurrentStyleMask() & StyleClosable) != 0;
+
+    /// <summary>
+    /// 读当前的 <c>styleMask</c>。
+    /// </summary>
+    /// <remarks>
+    /// 每次读一次而不是缓存：<c>SetResizable</c> 就是改这个位，
+    /// 缓存会与"AppKit 实际接受的状态"脱节。
+    /// </remarks>
+    private nuint CurrentStyleMask()
+        => _nsWindow == 0 ? 0 : (nuint)ObjCRuntime.SendId(_nsWindow, ObjCRuntime.Sel("styleMask"));
+
     // ---- 导航操作（WKWebView 内建历史；无历史时调用是空操作）----
     // _webview 在窗口销毁后被置 0，判空是必需的。
 

@@ -288,16 +288,10 @@ const METHOD_GAP_GROUPS = [
         ],
     },
     {
-        reason: '只读状态查询。宿主还没有对应的查询命令——已经做了的是 `isVisible` / `isMaximized` / ' +
-            '`title` / `isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop`（都是自绘标题栏' +
-            '必需的，所以进了白名单）。其余要新增宿主查询。',
-        methods: [
-            'window.Window#isClosable',
-            'window.Window#isDecorated', 'window.Window#isEnabled',
-            'window.Window#isMaximizable', 'window.Window#isMinimizable',
-            'window.Window#isResizable',
-            'window.Window#theme',
-        ],
+        reason: '只读状态查询**已经全部做完**（isVisible / isMaximized / title / isMinimized / ' +
+            'isFocused / isFullscreen / isAlwaysOnTop / isDecorated / isResizable / isMaximizable / ' +
+            'isMinimizable / isClosable / theme）。这一组只剩 `isEnabled`：',
+        methods: ['window.Window#isEnabled'],
     },
     {
         reason: '窗口状态设置。宿主还没有对应的命令（其中 `setMaxSize` / `setSizeConstraints` / ' +

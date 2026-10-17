@@ -1945,6 +1945,30 @@ internal partial class Win32WindowHost : IWindowBackend
     /// <summary>是否置顶（取库记住的状态，见 <see cref="IWindowBackend.IsAlwaysOnTop"/>）。</summary>
     public bool IsAlwaysOnTop => _isOnTop;
 
+    /// <summary>是否有系统装饰（取创建时的选项，见 <see cref="IWindowBackend.IsDecorated"/>）。</summary>
+    public bool IsDecorated => !_options.Frameless;
+
+    /// <summary>是否可缩放（原生读，见 <see cref="IWindowBackend.IsResizable"/>）。</summary>
+    public bool IsResizable => (CurrentStyle() & Win32Constants.WS_THICKFRAME) != 0;
+
+    /// <summary>是否可最大化（原生读，见 <see cref="IWindowBackend.IsMaximizable"/>）。</summary>
+    public bool IsMaximizable => (CurrentStyle() & Win32Constants.WS_MAXIMIZEBOX) != 0;
+
+    /// <summary>是否可最小化（原生读，见 <see cref="IWindowBackend.IsMinimizable"/>）。</summary>
+    public bool IsMinimizable => (CurrentStyle() & Win32Constants.WS_MINIMIZEBOX) != 0;
+
+    /// <summary>是否可关闭（原生读，见 <see cref="IWindowBackend.IsClosable"/>）。</summary>
+    public bool IsClosable => (CurrentStyle() & Win32Constants.WS_SYSMENU) != 0;
+
+    /// <summary>
+    /// 读当前窗口样式位。
+    /// </summary>
+    /// <remarks>
+    /// 每次读一次而不是缓存：<c>SetResizable</c> 之类就是改这个样式位，
+    /// 缓存会与"系统实际接受的状态"脱节——而"读回来反映实际"正是这一组查询的用途。
+    /// </remarks>
+    private nint CurrentStyle() => _hwnd == 0 ? 0 : Win32.GetWindowLongPtrW(_hwnd, Win32Constants.GWL_STYLE);
+
     /// <summary>
     /// 显示窗口：**先** <c>SW_SHOW</c> 宿主，**再**把 WebView2 置为可见。
     /// </summary>
