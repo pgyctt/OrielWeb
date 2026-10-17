@@ -140,6 +140,26 @@ export class Window {
     } | [number, number] | null): Promise<void>;
     /** 居中。需要 `window.center` 被允许。 */
     center(): Promise<any>;
+    /** 客户区尺寸（逻辑像素）。需要 `window.innerSize` 被允许。 */
+    innerSize(): Promise<LogicalSize>;
+    /**
+     * 整窗尺寸（逻辑像素）。
+     *
+     * @remarks
+     * Linux/Wayland 下可能与 `innerSize()` 相等——合成器不告诉客户端装饰尺寸。
+     * 需要 `window.outerSize` 被允许。
+     */
+    outerSize(): Promise<LogicalSize>;
+    /** 窗口左上角（屏幕逻辑坐标）。需要 `window.outerPosition` 被允许。 */
+    outerPosition(): Promise<LogicalPosition>;
+    /**
+     * 客户区左上角（屏幕逻辑坐标）。
+     *
+     * @remarks
+     * Linux 上目前恒等于 `outerPosition()`（GTK 不暴露装饰偏移）。
+     * 需要 `window.innerPosition` 被允许。
+     */
+    innerPosition(): Promise<LogicalPosition>;
     /**
      * 开始拖动窗口（对标 Tauri 的 `startDragging`）。
      *
@@ -220,3 +240,5 @@ export class Window {
         payload: null;
     }) => void): Promise<() => void>;
 }
+import { LogicalSize } from './dpi.js';
+import { LogicalPosition } from './dpi.js';

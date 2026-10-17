@@ -187,6 +187,38 @@ internal static class ApiSelfTest
                 check('window.getFocusedWindow() 恒为 null（如实标注）',
                     (await win.getFocusedWindow()) === null, 'M3');
 
+                // ---- 几何查询（E2）：断言形状与单位，不断言具体数值 ----
+                // 具体数值依赖平台与主题（边框 16、标题栏 39 在别的系统上会变），
+                // 而"是不是 LogicalSize 实例、type 对不对"不依赖——后者才是包该保证的。
+                const innerSize = await current.innerSize();
+                check('window.innerSize() 返回 LogicalSize 实例（type=Logical）',
+                    innerSize instanceof dpi.LogicalSize && innerSize.type === 'Logical',
+                    innerSize && (innerSize.type + ' ' + innerSize.width + 'x' + innerSize.height));
+
+                const outerSize = await current.outerSize();
+                check('window.outerSize() 返回 LogicalSize 实例',
+                    outerSize instanceof dpi.LogicalSize && outerSize.type === 'Logical',
+                    outerSize && outerSize.type);
+
+                const outerPos = await current.outerPosition();
+                check('window.outerPosition() 返回 LogicalPosition 实例',
+                    outerPos instanceof dpi.LogicalPosition && outerPos.type === 'Logical',
+                    outerPos && outerPos.type);
+
+                const innerPos = await current.innerPosition();
+                check('window.innerPosition() 返回 LogicalPosition 实例',
+                    innerPos instanceof dpi.LogicalPosition && innerPos.type === 'Logical',
+                    innerPos && innerPos.type);
+
+                // InnerSize 必须与 setSize 同单位——否则"读出来写回去"会逐次放大/缩小。
+                // 这条比上面三条都关键：它钉的是**单位一致性**，而那正是最容易被改错的地方。
+                const before = await current.innerSize();
+                await current.setSize(before);
+                const after = await current.innerSize();
+                check('setSize(innerSize()) 是不动点（单位一致）',
+                    Math.abs(after.width - before.width) <= 2 && Math.abs(after.height - before.height) <= 2,
+                    before.width + 'x' + before.height + ' -> ' + after.width + 'x' + after.height);
+
                 // ---- mocks ----
                 const mocks = await import(vendor + '/mocks.js');
                 check('mocks.isMocked() 在真实宿主里为 false',

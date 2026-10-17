@@ -56,6 +56,29 @@ internal static class OrielBuiltInWindowApiCommands
                 handler = static (sender, args) => Resolve(sender, args).Title;
                 return true;
 
+            // ---- 几何查询（对标 Tauri 的 innerSize / outerSize / innerPosition / outerPosition）----
+            //
+            // 这四条**刻意不在**标题栏白名单里：自绘标题栏不需要它们，而它们还能按 label
+            // 读到**别的**窗口的几何。所以要用必须显式声明——与 isVisible / title 那几条不同。
+            //
+            // 返回形状与 dpi 模块的 LogicalSize / LogicalPosition 同形（那是 Tauri 侧的形状），
+            // 页面拿到即可直接喂给 setSize / setPosition。
+            case "window.innerSize":
+                handler = static (sender, args) => SizeOf(Resolve(sender, args).InnerSize);
+                return true;
+
+            case "window.outerSize":
+                handler = static (sender, args) => SizeOf(Resolve(sender, args).OuterSize);
+                return true;
+
+            case "window.innerPosition":
+                handler = static (sender, args) => PositionOf(Resolve(sender, args).InnerPosition);
+                return true;
+
+            case "window.outerPosition":
+                handler = static (sender, args) => PositionOf(Resolve(sender, args).OuterPosition);
+                return true;
+
             case "window.getAll":
                 // 返回 label 列表而不是窗口对象：内建命令的返回值要能被 AOT 安全的基元序列化
                 // 直接写出，而自定义 DTO 会要求应用注册 STJ 上下文——内建命令不该要求那个。
@@ -266,6 +289,35 @@ internal static class OrielBuiltInWindowApiCommands
                 return false;
         }
     }
+
+    /// <summary>
+    /// 尺寸 → 页面形状 <c>{ type, width, height }</c>。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 带 <c>type: 'Logical'</c> 是为了让页面拿到的东西**直接就是** <c>LogicalSize</c> 的形状——
+    /// 可以原样喂给 <c>setSize()</c>，做"读出来再写回去"这类运算时不必手工补 <c>type</c>。
+    /// 与 Tauri 的差别是我们给逻辑像素（那边给物理），理由见 <see cref="WebviewWindow.InnerSize"/>。
+    /// </para>
+    /// <para>
+    /// <b>返回 <see cref="JsonElement"/> 而不是匿名对象</b>：内建命令的返回值走
+    /// <see cref="OrielJson.WriteResult"/>，而它只认基元与 <see cref="JsonElement"/> ——
+    /// 匿名对象是普通类型，走 STJ 需要类型信息，于是要求应用注册它的 STJ 上下文。
+    /// 那对内建命令是很不合理的负担（应用凭什么知道库内部有个匿名类型？），
+    /// 漏注册的症状还是运行期报错。手拼 JSON 再解析成 <see cref="JsonElement"/> 是这条路上
+    /// 唯一不需要应用配合的做法（代价是每次调用一次解析，而这些是低频查询）。
+    /// </para>
+    /// </remarks>
+    private static JsonElement SizeOf(OrielSize size)
+        => JsonDocument.Parse(
+            $"{{\"type\":\"Logical\",\"width\":{OrielEventPayload.Number(size.Width)}," +
+            $"\"height\":{OrielEventPayload.Number(size.Height)}}}").RootElement.Clone();
+
+    /// <summary>位置 → 页面形状 <c>{ type, x, y }</c>；理由同 <see cref="SizeOf"/>。</summary>
+    private static JsonElement PositionOf(OrielPosition position)
+        => JsonDocument.Parse(
+            $"{{\"type\":\"Logical\",\"x\":{OrielEventPayload.Number(position.X)}," +
+            $"\"y\":{OrielEventPayload.Number(position.Y)}}}").RootElement.Clone();
 
     /// <summary>
     /// 解析命令的目标窗口：<c>label</c> 缺省时是**发起者**。

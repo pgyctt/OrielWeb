@@ -117,6 +117,10 @@ internal static class GeometrySelfTest
             // 运行期改尺寸是**另一条代码路径**（WebviewWindow.Resize，不是建窗）。
             // 它同样要"逻辑像素的客户区"语义——只测建窗会漏掉这一半。
             await VerifyRuntimeResizeAsync(window, mode);
+
+            // 几何查询（E2）：四个查询与"设进去的值"必须对得上。
+            // 只测"设进去 → 页面看到"会漏掉另一半：读了回来对不对。
+            await VerifyQueriesAsync(window, mode);
         }
         catch (Exception ex)
         {
@@ -172,6 +176,112 @@ internal static class GeometrySelfTest
             $"({mode}) Resize({TargetWidth}, {TargetHeight}) 之后客户区应为 {TargetWidth}x{TargetHeight}，实际 {width}x{height}" +
             DescribeDeviation(width, TargetWidth, horizontal: true, frameless: mode == "frameless") +
             DescribeDeviation(height, TargetHeight, horizontal: false, frameless: mode == "frameless"));
+    }
+
+    /// <summary>
+    /// 几何查询（E2）：<c>InnerSize</c> / <c>OuterSize</c> / <c>InnerPosition</c> / <c>OuterPosition</c>。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 断言的是**关系**而不是具体数值，因为这些关系的成立不依赖平台与主题，
+    /// 而具体数值依赖它们（边框 16、标题栏 39 在别的主题/系统上会变）：
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description><c>InnerSize</c> 必须等于刚 <c>Resize</c> 进去的值——那是库自己的契约；</description></item>
+    ///   <item><description>framed 时 <c>OuterSize</c> ≥ <c>InnerSize</c>（整窗含边框）；
+    ///     frameless 时两者**相等**（客户区铺满整窗）；</description></item>
+    ///   <item><description><c>OuterPosition</c> 必须等于刚 <c>MoveTo</c> 进去的值；</description></item>
+    ///   <item><description><c>InnerPosition</c> 的两个分量都 ≥ <c>OuterPosition</c>（客户区在整窗内）
+    ///     ——frameless 下相等。</description></item>
+    /// </list>
+    /// </remarks>
+    private static async Task VerifyQueriesAsync(WebviewWindow window, string mode)
+    {
+        bool frameless = mode == "frameless";
+
+        // 先把窗口摆到一个尺寸与位置上，好让查询有确定的期望值
+        const int ProbeWidth = 640;
+        const int ProbeHeight = 480;
+        const int ProbeX = 140;
+        const int ProbeY = 110;
+
+        window.Resize(ProbeWidth, ProbeHeight);
+        window.MoveTo(ProbeX, ProbeY);
+        await Task.Delay(300);
+
+        OrielSize inner = window.InnerSize;
+        OrielSize outer = window.OuterSize;
+        OrielPosition outerPos = window.OuterPosition;
+        OrielPosition innerPos = window.InnerPosition;
+
+        Console.WriteLine(
+            $"[geometry-selftest] ({mode}) InnerSize={inner.Width:0.#}x{inner.Height:0.#} " +
+            $"OuterSize={outer.Width:0.#}x{outer.Height:0.#} " +
+            $"OuterPos={outerPos.X:0.#},{outerPos.Y:0.#} InnerPos={innerPos.X:0.#},{innerPos.Y:0.#}");
+
+        // ---- InnerSize：库自己的契约，必须精确 ----
+        Check(
+            Math.Abs(inner.Width - ProbeWidth) <= Tolerance && Math.Abs(inner.Height - ProbeHeight) <= Tolerance,
+            $"({mode}) InnerSize 应等于刚 Resize 进去的 {ProbeWidth}x{ProbeHeight}（实际 {inner.Width:0.#}x{inner.Height:0.#}）");
+
+        // ---- InnerSize 是 Resize 的逆运算：读出来写回去应当不变 ----
+        window.Resize((int)Math.Round(inner.Width), (int)Math.Round(inner.Height));
+        await Task.Delay(200);
+        OrielSize afterRoundTrip = window.InnerSize;
+        Check(
+            Math.Abs(afterRoundTrip.Width - inner.Width) <= Tolerance
+                && Math.Abs(afterRoundTrip.Height - inner.Height) <= Tolerance,
+            $"({mode}) Resize(InnerSize) 应当是不动点（{inner.Width:0.#}x{inner.Height:0.#} → " +
+            $"{afterRoundTrip.Width:0.#}x{afterRoundTrip.Height:0.#}）");
+
+        // ---- OuterSize 与 InnerSize 的关系 ----
+        if (frameless)
+        {
+            // 无边框窗口的客户区铺满整窗，两者必须相等——不等说明 WM_NCCALCSIZE 那条路变了
+            Check(
+                Math.Abs(outer.Width - inner.Width) <= Tolerance && Math.Abs(outer.Height - inner.Height) <= Tolerance,
+                $"({mode}) frameless 下 OuterSize 应等于 InnerSize（实际 {outer.Width:0.#}x{outer.Height:0.#} " +
+                $"vs {inner.Width:0.#}x{inner.Height:0.#}）");
+        }
+        else
+        {
+            Check(
+                outer.Width >= inner.Width - Tolerance && outer.Height >= inner.Height - Tolerance,
+                $"({mode}) framed 下 OuterSize 应 ≥ InnerSize（整窗含边框；实际 {outer.Width:0.#}x{outer.Height:0.#} " +
+                $"vs {inner.Width:0.#}x{inner.Height:0.#}）");
+
+            // 至少有一边应当**严格**大于——两边都相等说明装饰尺寸没读到（Wayland 上的正常现象，
+            // 但 Windows/macOS 上就是实现有问题）。仅对非 Linux 断言。
+            if (!OperatingSystem.IsLinux())
+            {
+                Check(
+                    outer.Width > inner.Width + 1 || outer.Height > inner.Height + 1,
+                    $"({mode}) Windows/macOS 的 framed 窗口应当读到装饰开销" +
+                    $"（OuterSize {outer.Width:0.#}x{outer.Height:0.#} 与 InnerSize {inner.Width:0.#}x{inner.Height:0.#} 一样大，" +
+                    "像是没读到装饰）");
+            }
+        }
+
+        // ---- OuterPosition 应当等于刚 MoveTo 进去的值 ----
+        // 容差放宽到 40：窗口管理器会吸附/约束（Wayland 下甚至不给位置）。
+        // 位置那部分的严格断言在 --selftest windowevents 里已有一份，这里只防"读到别的窗口"。
+        Check(
+            Math.Abs(outerPos.X - ProbeX) <= 40 && Math.Abs(outerPos.Y - ProbeY) <= 40,
+            $"({mode}) OuterPosition 应接近刚 MoveTo 的 ({ProbeX},{ProbeY})（实际 {outerPos.X:0.#},{outerPos.Y:0.#}）");
+
+        // ---- InnerPosition 在整窗之内 ----
+        Check(
+            innerPos.X >= outerPos.X - Tolerance && innerPos.Y >= outerPos.Y - Tolerance,
+            $"({mode}) InnerPosition 不应在 OuterPosition 之外" +
+            $"（inner {innerPos.X:0.#},{innerPos.Y:0.#} vs outer {outerPos.X:0.#},{outerPos.Y:0.#}）");
+
+        if (frameless)
+        {
+            Check(
+                Math.Abs(innerPos.X - outerPos.X) <= Tolerance && Math.Abs(innerPos.Y - outerPos.Y) <= Tolerance,
+                $"({mode}) frameless 下 InnerPosition 应等于 OuterPosition" +
+                $"（实际 {innerPos.X:0.#},{innerPos.Y:0.#} vs {outerPos.X:0.#},{outerPos.Y:0.#}）");
+        }
     }
 
     /// <summary>

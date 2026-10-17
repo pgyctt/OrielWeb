@@ -133,6 +133,45 @@ internal interface IWindowBackend
     /// </remarks>
     double ScaleFactor { get; }
 
+    /// <summary>
+    /// **客户区**尺寸（逻辑像素）——即 <see cref="IWindowBackend.Resize"/> 的逆运算。
+    /// </summary>
+    /// <remarks>
+    /// 三平台都能可靠给出（Windows <c>GetClientRect</c>、Linux <c>gtk_window_get_size</c>、
+    /// macOS <c>contentView.frame</c>）。取不到时返回 <c>default</c>（0x0）而不是抛异常：
+    /// 窗口正在销毁时读几何是正常时序，让它抛只会逼调用方到处包 try。
+    /// </remarks>
+    OrielSize InnerSize { get; }
+
+    /// <summary>
+    /// **整窗**尺寸（逻辑像素，含边框与标题栏）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Windows <c>GetWindowRect</c>、macOS <c>NSWindow.frame</c>、Linux
+    /// <c>gdk_window_get_frame_extents</c>。
+    /// </para>
+    /// <para>
+    /// <b>Linux/Wayland 下可能与 <see cref="InnerSize"/> 相等</b>：合成器不告诉客户端装饰尺寸，
+    /// GDK 只能报它自己知道的那部分。这是平台事实（Tauri 同样如此），不是实现取巧。
+    /// </para>
+    /// </remarks>
+    OrielSize OuterSize { get; }
+
+    /// <summary>窗口**左上角**（含装饰）的屏幕逻辑坐标。</summary>
+    OrielPosition OuterPosition { get; }
+
+    /// <summary>
+    /// **客户区**左上角的屏幕逻辑坐标。
+    /// </summary>
+    /// <remarks>
+    /// <b>Linux 上目前恒等于 <see cref="OuterPosition"/></b>：GTK 不暴露"客户区相对窗口原点的偏移"
+    /// （装饰由 WM 画，客户端看不到它的尺寸）。Windows 用 <c>ClientToScreen</c> 精确给出，
+    /// macOS 用 <c>contentRectForFrameRect:</c>。与其编一个偏移值，不如如实相等——
+    /// 调用方据此判断"这个平台上内外位置是否可区分"。
+    /// </remarks>
+    OrielPosition InnerPosition { get; }
+
     void Focus();
     void Maximize();
     void Minimize();

@@ -100,30 +100,11 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
   这是**唯一一处"包在真页面里被 import 并调用"的取证**：包的单测全跑在 Node 里，
   而那一侧没有浏览器环境，ESM 加载、相对 import 解析、宿主真有那几条命令……
   一件都没验过。
-
-### 修复
-
-- **主题自检不再依赖页面的测试钩子**：原先 `app.js` 会 `postMessage('theme-echo')` 回显给宿主，
-  宿主据此判定。迁移时去掉了那个回显，改为宿主直接轮询页面上的 `<html data-theme>`。
-  两处好处：示例页不再夹带测试钩子；而且验的是"页面真的应用了主题"这个**可见效果**，
-  比验一条旁路回显更接近用户看到的东西。
-- **`Window.getFocusedWindow()`**：签名已就位，但**目前恒返回 `null`**——三平台都还没有
-  "哪个窗口有焦点"的**查询**能力（`FocusChanged` 只上报变化、不记录状态）。
-  保留它是为了让迁移代码能原样编译，而不是假装"没有窗口有焦点"。
-
-### 修复
-
-- **命令返回值支持字符串序列**（`string[]` / `List<string>` / 任何 `IEnumerable<string>`）：
-  此前它们需要应用往 `JsonSerializerContext` 里加 `[JsonSerializable]`，而对一个纯 BCL 类型
-  来说那是很不合理的负担，漏加的症状是"这个命令一调就报错、其它命令都好"。
-  现在手写数组输出（AOT 安全、无反射）。`window.getAll` 返回 label 列表正依赖它。
 - **窗口 `label`**（对标 Tauri 2 的 `Window.label`）：`OrielWindowOptions.Label`（默认 `"main"`，
   自动归一小写，字符集限字母/数字/`-`/`.`/`_`）、`OrielApp.GetWindow(label)`、
   `WebviewWindow.Label`，以及页面侧的 `window.oriel.label`。
   **同一应用内必须唯一**，重复时建窗抛 `InvalidOperationException`——不会自动改名，
   因为自动改名会让 `emitTo('main', …)` 发到错误窗口且毫无症状。
-- `OrielApp.GetFocusedWindow()`：签名已就位，但**目前恒返回 `null`**（三平台都还没有
-  "窗口是否聚焦"的查询能力）。保留它是为了让迁移代码能原样编译。
 - **窗口几何与焦点事件**（对标 Tauri 2 的 `onResized` / `onMoved` / `onFocusChanged`）：
   `WebviewWindow.Resized`（`OrielSizeChangedEventArgs`，逻辑像素的客户区）、
   `WebviewWindow.Moved`（`OrielPositionChangedEventArgs`，左上角原点的屏幕逻辑坐标）、
@@ -135,11 +116,28 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
   不去重会把一次拖动变成几百次托管事件 + 页面 IPC。
   注意 `WM_KILLFOCUS` 此前刻意不处理（把焦点塞回组合宿主会让页面 caret/IME 错乱）——
   现在只**上报**失焦，**不动焦点归属**，两者互不干涉。
-- **`--selftest geometry`**：窗口尺寸语义取证，以及 `GEOMETRY-SELFTEST` 结论行。
-- **`--selftest geometry-frameless`**：钉住反面——无边框窗口不该被多做一次"客户区 → 整窗"换算。
-- **`--selftest windowevents`**：几何/焦点事件的逐平台取证。焦点那一半用"再建一个窗口抢焦点
-  → 收到 false → 关掉它 → 收到 true"造出真实的失焦/获焦，因为直接 `Focus()` 测不出失焦，
-  而失焦正是这个事件最容易写错的一半。
+- **`OrielApp.GetFocusedWindow()` / JS `getFocusedWindow()`**：签名已就位，但**目前恒返回 `null`**
+  ——三平台都还没有"哪个窗口有焦点"的**查询**能力（`FocusChanged` 只上报变化、不记录状态）。
+  保留它是为了让迁移代码能原样编译，而不是假装"没有窗口有焦点"。
+- **几何查询**（E2/E3，对标 Tauri 的 `innerSize` / `outerSize` / `innerPosition` / `outerPosition`）：
+  `WebviewWindow.InnerSize` / `OuterSize` / `InnerPosition` / `OuterPosition`，
+  内建命令 `window.innerSize` 等四条，JS 侧 `Window.innerSize()` 等四个方法
+  （返回 `LogicalSize` / `LogicalPosition` 实例）。
+  **这四条刻意不在标题栏白名单里**：自绘标题栏不需要它们，而它们能按 label 读到**别的**窗口
+  的几何，所以要用必须显式声明。
+  **与 Tauri 的差别**：Tauri 返回 `PhysicalSize` / `PhysicalPosition`，本库返回逻辑像素
+  （库对页面只暴露逻辑像素）；字段名一致、返回对象又能直接喂回 `setSize`/`setPosition`，
+  所以迁移代码通常感觉不到。
+  **平台事实**（已写进文档，不假装支持）：Linux/Wayland 下 `OuterSize` 可能与 `InnerSize` 相等
+  （合成器不给装饰尺寸）、`InnerPosition` 恒等于 `OuterPosition`（GTK 不暴露装饰偏移）、
+  `OuterPosition` 在 Wayland 下恒为 `(0,0)`（合成器不告诉客户端窗口在哪）。
+- **`--selftest geometry` / `geometry-frameless` / `windowevents` / `event` / `close` / `window` / `api`**：
+  本批新增的七项无人自检（尺寸语义、几何/焦点事件、事件投递、关闭接管、窗口 API、前端包）。
+  其中 `geometry` 在本批扩展了"查询"那半：`InnerSize` 必须等于刚 `Resize` 进去的值、
+  `Resize(InnerSize)` 是不动点、frameless 下内外尺寸相等、framed 下外框严格更大（Linux 除外，
+  因为 Wayland 是平台事实）、`OuterPosition` 接近刚 `MoveTo` 的值、`InnerPosition` 在整窗之内。
+  实测数值与 `WithSize` 那处修复**交叉吻合**：framed 下 `Outer - Inner = 16x39`、
+  `InnerPos - OuterPos = 8,31`。
 
 ### 修复
 
@@ -154,6 +152,19 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
   运行期 `Resize(640, 480)` 同样精确；`--selftest geometry-frameless` 确认无边框形态未被误伤。
   **影响面**：装饰窗口（`Frameless` 默认 false，即平台原生形态）的内容区会**变大**到与另两个平台一致；
   无边框窗口行为不变（demo 与多数工业界面用的就是它）。
+- **命令返回值支持字符串序列**（`string[]` / `List<string>` / 任何 `IEnumerable<string>`）：
+  此前它们需要应用往 `JsonSerializerContext` 里加 `[JsonSerializable]`，而对一个纯 BCL 类型
+  来说那是很不合理的负担，漏加的症状是"这个命令一调就报错、其它命令都好"。
+  现在手写数组输出（AOT 安全、无反射）。`window.getAll` 返回 label 列表正依赖它。
+- **几何查询的返回值最初用匿名对象，会要求应用注册库内部的类型**：它们走
+  `OrielJson.WriteResult`，而那条路只认基元与 `JsonElement`——匿名对象是普通类型、
+  需要 STJ 类型信息，于是运行期报错说"请为 `<>f__AnonymousType0\`3` 添加 [JsonSerializable]"
+  （应用凭什么知道库内部有个匿名类型？）。现改为手拼 JSON 再解析成 `JsonElement`
+  （文档里那个逃生口），不需要应用配合。
+- **主题自检不再依赖页面的测试钩子**：原先 `app.js` 会 `postMessage('theme-echo')` 回显给宿主，
+  宿主据此判定。迁移时去掉了那个回显，改为宿主直接轮询页面上的 `<html data-theme>`。
+  两处好处：示例页不再夹带测试钩子；而且验的是"页面真的应用了主题"这个**可见效果**，
+  比验一条旁路回显更接近用户看到的东西。
 - **`API.md` 里 macOS 退出的说法与实现相反**：两处仍写着 `NSApplication.terminate:`，
   而 0.3.5 已改成 `stop:`（`terminate:` 不让 `Run()` 返回，退出清理被整个跳过）。
   文档已更正。
@@ -178,6 +189,10 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
 - **`tauri://destroyed` 永远收不到**：窗口销毁时页面正在被拆掉，事件送不出去。
   需要"即将关闭"的通知请用 `tauri://close-requested`（其前提是宿主开了关闭接管）。
 - **`tauri://scale-change` / `tauri://theme-changed` / `tauri://window-created` 未实现**。
+- **`innerSize` 等几何查询的 Linux 平台限制**（是 Wayland/X11 的平台事实，不是实现取巧）：
+  `OuterSize` 可能与 `InnerSize` 相等（合成器不给装饰尺寸）、`InnerPosition` 恒等于
+  `OuterPosition`（GTK 不暴露装饰偏移）、`OuterPosition` 在 Wayland 下恒为 `(0,0)`
+  （合成器出于隐私不告诉客户端窗口在哪）。三平台里只有 Windows 与 macOS 能给出完整的内外几何。
 
 ## 0.3.5 - 2026-10-14
 

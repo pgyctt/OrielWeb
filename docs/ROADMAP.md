@@ -115,6 +115,21 @@
   （跳过失败的症状是"无边框窗口比请求的大一圈"，即多了一整套边框 + 标题栏）。
 - 状态：Windows 100% 已验；**高 DPI 与另两个平台均未取证**。
 
+#### 几何查询在 Linux / macOS 上的实际行为（`--selftest geometry`）
+- 背景：新增四个查询（`InnerSize` / `OuterSize` / `InnerPosition` / `OuterPosition`）。
+  Windows 100% 缩放下已取证，数值与边框开销**交叉吻合**（`Outer - Inner = 16x39`、
+  `InnerPos - OuterPos = 8,31`）。
+- 环境：Linux **X11 与 Wayland 各一次**（两者行为差别很大）、macOS 装饰窗口与无边框窗口各一次。
+- 步骤：`OrielDemo --selftest geometry`，再 `--selftest geometry-frameless`。
+- 预期：两者都 `GEOMETRY-SELFTEST: PASS`。**Wayland 下允许部分关系不成立**
+  （代码里已对 Linux 放宽"外框必须严格更大"那条）：`OuterSize` 可能等于 `InnerSize`、
+  `InnerPosition` 恒等于 `OuterPosition`、`OuterPosition` 恒为 `(0,0)`
+  ——合成器出于隐私不告诉客户端这些。
+- 若不符：X11 下若 `OuterSize == InnerSize`，检查 `gdk_window_get_frame_extents` 是否真被调到
+  （它要求窗口已 realize）；macOS 下若 `InnerPosition.Y == OuterPosition.Y` 而窗口有标题栏，
+  检查 `contentView.frame` 读出来的是不是内容区高度（应当比整窗矮一个标题栏）。
+- 状态：**未取证**。上述平台限制已写进 API.md 与 CHANGELOG，不假装支持。
+
 #### Linux 高 DPI 下的拖动是否跟手（拖动已在库侧，不要折算）
 - 环境：Linux 桌面 + 真实高 DPI 缩放（X11 与 Wayland 各一次；`GDK_SCALE=2` 只在 X11 下生效）。
 - 步骤：在 200% 缩放下跑 demo；按住标题栏拖动；双击标题栏。

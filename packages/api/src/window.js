@@ -15,7 +15,39 @@
 import { invoke } from './core.js';
 import { getTransport } from './internal.js';
 import { listen, TauriEvent } from './event.js';
-import { normalizeSize, normalizePosition, physicalToLogical } from './dpi.js';
+import {
+    LogicalSize,
+    LogicalPosition,
+    normalizeSize,
+    normalizePosition,
+    physicalToLogical,
+} from './dpi.js';
+
+/**
+ * 把宿主返回的尺寸对象包成 {@link LogicalSize} 实例。
+ *
+ * @param {unknown} raw
+ * @returns {LogicalSize}
+ * @remarks
+ * 宿主给的是 `{ type, width, height }` 的普通对象；包成类实例是为了让 `instanceof LogicalSize`
+ * 成立、并能原样喂回 `setSize()`（那里按 `type` 分派）。两者形状本就一致，所以这里只做包装不回读校验——
+ * 真拿到畸形值会在调用点立刻炸，比在这里静默补默认值好。
+ */
+function toLogicalSize(raw) {
+    const value = /** @type {{ width?: number, height?: number }} */ (raw ?? {});
+    return new LogicalSize(Number(value.width ?? 0), Number(value.height ?? 0));
+}
+
+/**
+ * 把宿主返回的位置对象包成 {@link LogicalPosition} 实例；理由同 {@link toLogicalSize}。
+ *
+ * @param {unknown} raw
+ * @returns {LogicalPosition}
+ */
+function toLogicalPosition(raw) {
+    const value = /** @type {{ x?: number, y?: number }} */ (raw ?? {});
+    return new LogicalPosition(Number(value.x ?? 0), Number(value.y ?? 0));
+}
 
 /** 本窗口的 label（宿主注入，见 OrielWindowOptions.Label）。 */
 function currentLabel() {
@@ -306,6 +338,49 @@ export class Window {
     /** 居中。需要 `window.center` 被允许。 */
     center() {
         return invoke('window.center', { label: this.label });
+    }
+
+    // ---- 几何查询 ----
+    //
+    // 四条都需要 `Allow`（它们不在标题栏白名单里）。
+    //
+    // **与 Tauri 的一处语义差别**：Tauri 的这四个方法返回 `PhysicalSize` / `PhysicalPosition`；
+    // 本库返回 `LogicalSize` / `LogicalPosition`（`type: 'Logical'`）。
+    // 理由是库对页面只暴露逻辑像素——混入物理像素会让"这个值是哪种单位"变成每个调用点
+    // 都要想一遍的问题，而算错的症状是"在 Retina/150% 屏上偏一倍"。
+    // 字段名（width/height/x/y）与 Tauri 一致，返回的对象又能直接喂回 setSize/setPosition，
+    // 所以迁移代码通常感觉不到差别。
+
+    /** 客户区尺寸（逻辑像素）。需要 `window.innerSize` 被允许。 */
+    async innerSize() {
+        return toLogicalSize(await invoke('window.innerSize', { label: this.label }));
+    }
+
+    /**
+     * 整窗尺寸（逻辑像素）。
+     *
+     * @remarks
+     * Linux/Wayland 下可能与 `innerSize()` 相等——合成器不告诉客户端装饰尺寸。
+     * 需要 `window.outerSize` 被允许。
+     */
+    async outerSize() {
+        return toLogicalSize(await invoke('window.outerSize', { label: this.label }));
+    }
+
+    /** 窗口左上角（屏幕逻辑坐标）。需要 `window.outerPosition` 被允许。 */
+    async outerPosition() {
+        return toLogicalPosition(await invoke('window.outerPosition', { label: this.label }));
+    }
+
+    /**
+     * 客户区左上角（屏幕逻辑坐标）。
+     *
+     * @remarks
+     * Linux 上目前恒等于 `outerPosition()`（GTK 不暴露装饰偏移）。
+     * 需要 `window.innerPosition` 被允许。
+     */
+    async innerPosition() {
+        return toLogicalPosition(await invoke('window.innerPosition', { label: this.label }));
     }
 
     // ---- 拖动 ----

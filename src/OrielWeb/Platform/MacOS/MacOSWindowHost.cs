@@ -781,6 +781,129 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         }
     }
 
+    /// <summary>
+    /// 客户区尺寸（逻辑像素）；见 <see cref="IWindowBackend.InnerSize"/>。
+    /// </summary>
+    /// <remarks>
+    /// 读 <c>contentView.frame</c> 而不是整窗 frame 减标题栏：contentView 就是客户区，
+    /// 无边框（FullSizeContentView）与装饰窗口下它都给出正确答案，而"减标题栏"要猜高度。
+    /// 注意 macOS 的"点"与逻辑像素一一对应，所以**不**需要除缩放比。
+    /// </remarks>
+    public OrielSize InnerSize
+    {
+        get
+        {
+            if (ReadContentFrame() is not { } content)
+            {
+                return default;
+            }
+
+            return new OrielSize(content.Width, content.Height);
+        }
+    }
+
+    /// <summary>整窗尺寸（逻辑像素）；见 <see cref="IWindowBackend.OuterSize"/>。</summary>
+    public OrielSize OuterSize
+    {
+        get
+        {
+            if (_nsWindow == 0)
+            {
+                return default;
+            }
+
+            (_, _, double width, double height) = ReadFrame();
+            return new OrielSize(width, height);
+        }
+    }
+
+    /// <summary>
+    /// 窗口左上角（逻辑像素、左上角原点）；见 <see cref="IWindowBackend.OuterPosition"/>。
+    /// </summary>
+    /// <remarks>
+    /// cocoa 的原点在左下、y 向上，而公共契约是左上角原点——所以按主屏高度换算：
+    /// <c>y_app = maxY - (origin.y + height)</c>。与 <c>ReportPosition</c> 用的是同一套换算。
+    /// </remarks>
+    public OrielPosition OuterPosition
+    {
+        get
+        {
+            if (_nsWindow == 0)
+            {
+                return default;
+            }
+
+            (double originX, double originY, _, double height) = ReadFrame();
+            return new OrielPosition(originX, ScreenMaxY() - (originY + height));
+        }
+    }
+
+    /// <summary>
+    /// 客户区左上角（逻辑像素、左上角原点）；见 <see cref="IWindowBackend.InnerPosition"/>。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 不需要 <c>contentRectForFrameRect:</c>：**contentView 锚在窗口的左下角**
+    /// （cocoa 的 y 向上，窗口底边就是内容区底边），所以内容区顶边 = <c>frame.origin.y + contentHeight</c>。
+    /// 两者之差正好是标题栏高度。装饰窗口与无边框窗口（<c>StyleFullSizeContentView</c>）
+    /// 都成立——后者的 contentHeight 等于 frameHeight，于是内外位置相等。
+    /// </para>
+    /// <para>
+    /// 那个 ObjC 方法的返回值是 NSRect 结构体，msgSend 直取要走 stret（x86_64）/ 隐式 sret（arm64），
+    /// 绑定里没有那条路。上面的算法用两次已有的 frame 读取就得出同样结果，没有理由再引一层结构体传参。
+    /// </para>
+    /// </remarks>
+    public OrielPosition InnerPosition
+    {
+        get
+        {
+            if (_nsWindow == 0 || ReadContentFrame() is not { } content)
+            {
+                return OuterPosition;
+            }
+
+            (double originX, double originY, _, _) = ReadFrame();
+            return new OrielPosition(originX, ScreenMaxY() - (originY + content.Height));
+        }
+    }
+
+    /// <summary>读 contentView 的 frame（客户区，cocoa 点）；取不到时返回 null。</summary>
+    private (double X, double Y, double Width, double Height)? ReadContentFrame()
+    {
+        if (_nsWindow == 0)
+        {
+            return null;
+        }
+
+        nint contentView = ObjCRuntime.SendId(_nsWindow, ObjCRuntime.Sel("contentView"));
+        if (contentView == 0)
+        {
+            return null;
+        }
+
+        nint boxed = ObjCRuntime.SendIdObj(
+            contentView, ObjCRuntime.Sel("valueForKey:"), ObjCRuntime.MakeNSString("frame"));
+        if (boxed == 0)
+        {
+            return null;
+        }
+
+        nint buffer = System.Runtime.InteropServices.Marshal.AllocHGlobal(32);
+        try
+        {
+            ObjCRuntime.SendVoidObj(boxed, ObjCRuntime.Sel("getValue:"), buffer);
+            return (
+                BitConverter.Int64BitsToDouble(System.Runtime.InteropServices.Marshal.ReadInt64(buffer, 0)),
+                BitConverter.Int64BitsToDouble(System.Runtime.InteropServices.Marshal.ReadInt64(buffer, 8)),
+                BitConverter.Int64BitsToDouble(System.Runtime.InteropServices.Marshal.ReadInt64(buffer, 16)),
+                BitConverter.Int64BitsToDouble(System.Runtime.InteropServices.Marshal.ReadInt64(buffer, 24)));
+        }
+        finally
+        {
+            System.Runtime.InteropServices.Marshal.FreeHGlobal(buffer);
+        }
+    }
+
     public void Focus()
     {
         ObjCRuntime.SendVoidObj(_nsWindow, ObjCRuntime.Sel("makeKeyAndOrderFront:"), 0);

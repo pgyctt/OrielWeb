@@ -822,6 +822,89 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     /// <summary>窗口所在显示器的缩放比（见 <see cref="IWindowBackend.ScaleFactor"/>）。</summary>
     public double ScaleFactor => CurrentScaleFactor();
 
+    /// <summary>客户区尺寸（逻辑像素）；见 <see cref="IWindowBackend.InnerSize"/>。</summary>
+    /// <remarks>
+    /// <c>gtk_window_get_size</c> 给的是**客户区**（不含 WM 装饰）——GTK 拿不到装饰尺寸，
+    /// 这也是 <see cref="WebviewWindow.Resize"/> 在 Linux 上本就是客户区语义的原因。
+    /// </remarks>
+    public OrielSize InnerSize
+    {
+        get
+        {
+            if (!WindowAlive)
+            {
+                return default;
+            }
+
+            GtkNative.GtkWindowGetSize(_gtkWindow, out int width, out int height);
+            double scale = CurrentScaleFactor();
+            return new OrielSize(width / scale, height / scale);
+        }
+    }
+
+    /// <summary>
+    /// 整窗尺寸（逻辑像素）；见 <see cref="IWindowBackend.OuterSize"/>。
+    /// </summary>
+    /// <remarks>
+    /// 走 <c>gdk_window_get_frame_extents</c>。**Wayland 下它可能只返回客户区**
+    /// （合成器不给装饰尺寸），这时外框与客户区相等——调用方据此判断该平台能不能区分内外。
+    /// </remarks>
+    public OrielSize OuterSize
+    {
+        get
+        {
+            if (!WindowAlive)
+            {
+                return default;
+            }
+
+            nint gdkWindow = GtkNative.GtkWidgetGetWindow(_gtkWindow);
+            if (gdkWindow == 0)
+            {
+                return InnerSize;
+            }
+
+            GtkNative.GdkWindowGetFrameExtents(gdkWindow, out GdkRectangle rect);
+            if (rect.Width <= 0 || rect.Height <= 0)
+            {
+                // 取不到装饰矩形时退回客户区，而不是报 0x0：0x0 会让调用方以为窗口没了
+                return InnerSize;
+            }
+
+            double scale = CurrentScaleFactor();
+            return new OrielSize(rect.Width / scale, rect.Height / scale);
+        }
+    }
+
+    /// <summary>窗口左上角（逻辑像素）；见 <see cref="IWindowBackend.OuterPosition"/>。</summary>
+    /// <remarks>
+    /// <c>gtk_window_get_position</c> 在 **Wayland 下恒返回 (0,0)**——合成器不告诉客户端
+    /// 窗口在哪（这是 Wayland 的隐私设计，不是缺陷）。X11 下可用。
+    /// </remarks>
+    public OrielPosition OuterPosition
+    {
+        get
+        {
+            if (!WindowAlive)
+            {
+                return default;
+            }
+
+            GtkNative.GtkWindowGetPosition(_gtkWindow, out int x, out int y);
+            double scale = CurrentScaleFactor();
+            return new OrielPosition(x / scale, y / scale);
+        }
+    }
+
+    /// <summary>
+    /// 客户区左上角（逻辑像素）；见 <see cref="IWindowBackend.InnerPosition"/>。
+    /// </summary>
+    /// <remarks>
+    /// <b>目前恒等于 <see cref="OuterPosition"/></b>：GTK 不暴露"客户区相对窗口原点的偏移"
+    /// （装饰由 WM 画，客户端看不到尺寸）。与其编一个偏移值，不如如实相等。
+    /// </remarks>
+    public OrielPosition InnerPosition => OuterPosition;
+
     /// <summary>
     /// 判定一次关闭请求（宿主否决 → 页面接管 → 放行）。
     /// </summary>

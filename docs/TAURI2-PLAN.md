@@ -319,7 +319,23 @@ F1 ─→ F2（scope 系统是 convertFileSrc 的前置）
 | **D1** `window.*` 命令族 | ✅ 完成（Windows 已验证） | 26 条命令，**可按 label 寻址**；门禁只为标题栏必需那组 + 三条只读查询放行（`OrielCapabilityRules.AlwaysAllowedWindowCommands`），其余 deny-by-default。新增 `window.setEventForwarding`（按需转发）、`window.scaleFactor`、`window.title` |
 | **D2** `window` 模块 JS 侧 | ✅ 完成 | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow` + `Window` 类（方法名与 Tauri 一一对应，命令名映射在包内）；`onCloseRequested` / `onResized` / `onMoved` / `onFocusChanged`；`TauriEvent` 名字映射 + 自动打开转发。新增 30 项前端包测试与 `--selftest window` 12 项断言 |
 | **G** demo 迁到前端包 | ✅ 完成（Windows 已验证） | `app.js` / `manual-check.js` 改用 `@orielweb/api`，页面脚本改 `type="module"`；包源码**直接内嵌**（不复制、不提交副本）；新增 `--selftest api` 18 项断言（唯一一处"包在真页面里被 import 并调用"的取证） |
-| E2 / E3 / F / H | ⬜ 未开始 | 见 §4.1 |
+| **E2** inner/outer 查询 | ✅ 完成（Windows 已验证） | `WebviewWindow.InnerSize` / `OuterSize` / `InnerPosition` / `OuterPosition` + `window.*` 四条命令 + JS 四个方法。**刻意不在标题栏白名单里**（能按 label 读别的窗口几何）。`--selftest geometry` 扩展"查询"那半，实测与 E1 的边框开销**交叉吻合**：framed 下 `Outer - Inner = 16x39`、`InnerPos - OuterPos = 8,31` |
+| **E3** dpi 多态接进 window 模块 | ✅ 完成 | `setSize` / `setPosition` / `setMinSize` 接受 `LogicalSize` 与 `PhysicalSize`（后者按窗口所在显示器的缩放比换算）；查询返回 `LogicalSize` / `LogicalPosition` 实例，`setSize(innerSize())` 是**不动点**（单测 + 真页面断言都有） |
+| **F** / **H** | ⬜ 未开始 | 见 §4.1 |
+
+### M3 的状态（2026-10-17）
+
+M3 的两项（E2 几何查询、E3 dpi 多态）都已完成，**M3 的退出条件成立**：
+
+| M3 退出条件 | 状态 |
+|---|---|
+| 三平台先一致（装饰窗口下客户区逐像素相同） | ✅ E1（Windows 实测 `784x561` → `800x600`；另两平台本就是客户区语义） |
+| `scaleFactor` 三平台可用 | ✅ D1 顺带完成（Windows `GetDpiForWindow/96`、Linux `gtk_widget_get_scale_factor`、macOS `backingScaleFactor`） |
+| inner/outer 拆分 | ✅ E2 |
+| JS 多态 | ✅ E3 |
+| `--selftest geometry` 三档缩放逐像素 | ⚠️ **100% 缩放已验**；125%/150%/200% 未验（本机只有一台 100% 显示器） |
+
+唯一没打勾的是高 DPI 那档，属**环境限制**而非能力缺口，已记在 CHANGELOG 的"已知限制"与 ROADMAP 的待真机清单里。
 
 ### M2 已收口（2026-10-17）
 

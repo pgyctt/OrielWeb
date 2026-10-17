@@ -202,6 +202,8 @@ WebviewWindow? again = app.GetWindow("settings");   // 按 label 取回（不存
 | `SetTitle(string title)` / `SetResizable(bool enabled)` | — |
 | `SetMinSize(int width, int height)` | — |
 | `MoveTo(int x, int y)` / `Resize(int width, int height)` / `Center()` | 坐标是**屏幕**坐标、**左上角**原点（**逻辑像素**：HiDPI 下由库按窗口 DPI 折算，调用方不要预折算，见 §2）——`MoveTo` 的原点语义三平台一致。`Resize` 的宽高是**客户区**（对标 Tauri 的 `setSize`）：Windows 会把客户区换算成整窗，frameless 窗口不换算（客户区已等于整窗） |
+| `OrielSize InnerSize { get; }` / `OrielSize OuterSize { get; }` | **客户区** / **整窗**尺寸，都是逻辑像素。`Resize(InnerSize)` 是不动点（同一单位）。**与 Tauri 的差别**：Tauri 的 `innerSize()` 返回 `PhysicalSize`，本库返回逻辑像素——库对页面只暴露逻辑像素，混入物理会让"这个值是哪种单位"变成每个调用点都要想一遍的问题。**Linux/Wayland 下 `OuterSize` 可能与 `InnerSize` 相等**（合成器不给装饰尺寸） |
+| `OrielPosition InnerPosition { get; }` / `OrielPosition OuterPosition { get; }` | **客户区** / **整窗**左上角的屏幕逻辑坐标。**Linux 上 `InnerPosition` 恒等于 `OuterPosition`**：GTK 不暴露"客户区相对窗口原点的偏移"（装饰由 WM 画，客户端看不到尺寸）。比编一个偏移值诚实 |
 | **拖动** | |
 | `BeginDrag()` | Windows：进入原生模态拖动（**阻塞到松开鼠标**） |
 | `BeginDragStreaming(double px, double py, double wx, double wy, double ww, double wh, double sh)` | macOS/Linux 的流式拖动起点；参数含义见 §2。**库自己接管标题栏拖动时走的就是它** |
@@ -857,7 +859,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 |---|---|---|
 | 标题栏必需 | `minimize` `toggleMaximize` `toggleFullscreen` `toggleOnTop` `close` `destroy` `drag*` `pickFile` `contextMenu` | **否**（无条件放行，理由见 §4） |
 | 只读查询自己的窗口 | `isVisible` `isMaximized` `title` | **否** |
-| 其余 | `show` `hide` `focus` `maximize` `restore` `setTitle` `setResizable` `setFullscreen` `setOnTop` `setMinSize` `moveTo` `resize` `center` `scaleFactor` `getAll` `setCloseIntercept` `setEventForwarding` | **是**：`Allow("window.*")` 或逐条声明 |
+| 其余 | `show` `hide` `focus` `maximize` `restore` `setTitle` `setResizable` `setFullscreen` `setOnTop` `setMinSize` `moveTo` `resize` `center` `scaleFactor` `innerSize` `outerSize` `innerPosition` `outerPosition` `getAll` `setCloseIntercept` `setEventForwarding` | **是**：`Allow("window.*")` 或逐条声明 |
 
 > **`window.*` 与 `win.*` 的分工**：`win.*` 是早期的库内建命令（**只能作用于发起者**、整族始终放行）；
 > `window.*` 是为对齐 Tauri 2 建的族（**可按 `label` 寻址**、只有上面那两组无条件放行）。

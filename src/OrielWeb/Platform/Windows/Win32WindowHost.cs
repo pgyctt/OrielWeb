@@ -1810,6 +1810,78 @@ internal partial class Win32WindowHost : IWindowBackend
     /// <summary>窗口所在显示器的缩放比（见 <see cref="IWindowBackend.ScaleFactor"/>）。</summary>
     public double ScaleFactor => CurrentScaleFactor();
 
+    /// <summary>客户区尺寸（逻辑像素）；见 <see cref="IWindowBackend.InnerSize"/>。</summary>
+    public OrielSize InnerSize
+    {
+        get
+        {
+            if (_hwnd == 0 || !Win32.GetClientRect(_hwnd, out RECT rect))
+            {
+                return default;
+            }
+
+            double scale = CurrentScaleFactor();
+            return new OrielSize((rect.Right - rect.Left) / scale, (rect.Bottom - rect.Top) / scale);
+        }
+    }
+
+    /// <summary>整窗尺寸（逻辑像素）；见 <see cref="IWindowBackend.OuterSize"/>。</summary>
+    public OrielSize OuterSize
+    {
+        get
+        {
+            if (_hwnd == 0 || !Win32.GetWindowRect(_hwnd, out RECT rect))
+            {
+                return default;
+            }
+
+            double scale = CurrentScaleFactor();
+            return new OrielSize((rect.Right - rect.Left) / scale, (rect.Bottom - rect.Top) / scale);
+        }
+    }
+
+    /// <summary>窗口左上角（逻辑像素）；见 <see cref="IWindowBackend.OuterPosition"/>。</summary>
+    public OrielPosition OuterPosition
+    {
+        get
+        {
+            if (_hwnd == 0 || !Win32.GetWindowRect(_hwnd, out RECT rect))
+            {
+                return default;
+            }
+
+            double scale = CurrentScaleFactor();
+            return new OrielPosition(rect.Left / scale, rect.Top / scale);
+        }
+    }
+
+    /// <summary>
+    /// 客户区左上角（逻辑像素）；见 <see cref="IWindowBackend.InnerPosition"/>。
+    /// </summary>
+    /// <remarks>
+    /// 用 <c>ClientToScreen(hwnd, (0,0))</c> 而不是"外框位置 + 边框厚度"：
+    /// 后者要分别猜左右边框与标题栏三处，而 Win32 直接给了精确答案。
+    /// </remarks>
+    public OrielPosition InnerPosition
+    {
+        get
+        {
+            if (_hwnd == 0)
+            {
+                return default;
+            }
+
+            var origin = new POINT(0, 0);
+            if (!Win32.ClientToScreen(_hwnd, ref origin))
+            {
+                return default;
+            }
+
+            double scale = CurrentScaleFactor();
+            return new OrielPosition(origin.X / scale, origin.Y / scale);
+        }
+    }
+
     internal void PostWebMessageOnUi(string json) => PostMessageOnUi(json);
 
     private void PostMessageOnUi(string json)

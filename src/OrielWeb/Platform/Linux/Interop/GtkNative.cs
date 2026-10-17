@@ -417,6 +417,17 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gtk, EntryPoint = "gtk_widget_get_scale_factor")]
     internal static partial int GtkWidgetGetScaleFactor(nint widget);
 
+    /// <summary>
+    /// 窗口**含装饰**的边框矩形（根窗口坐标）。
+    /// </summary>
+    /// <remarks>
+    /// <b>Wayland 下会失败或只返回客户区</b>：合成器不告诉客户端装饰尺寸，GDK 只能报
+    /// 它自己知道的那部分。所以调用方必须容忍"外框 == 客户区"——这是平台事实
+    /// （Tauri 的 <c>outer_size</c> 在 Wayland 上同样不可靠）。
+    /// </remarks>
+    [LibraryImport(Gdk, EntryPoint = "gdk_window_get_frame_extents")]
+    internal static partial void GdkWindowGetFrameExtents(nint gdkWindow, out GdkRectangle rect);
+
     // ---- GObject / Glib ----
 
     [LibraryImport(GOject, EntryPoint = "g_signal_connect_data", StringMarshalling = StringMarshalling.Utf8)]
@@ -684,6 +695,17 @@ internal static unsafe partial class GtkNative
     /// </summary>
     [LibraryImport(WebKit, EntryPoint = "webkit_web_view_execute_editing_command", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void WebkitWebViewExecuteEditingCommand(nint webView, string command);
+}
+
+/// <summary>GDK 的矩形（<c>GdkRectangle</c>）：四个 32 位整数。</summary>
+/// <remarks>与 <c>cairo_rectangle_int_t</c> 是同一个布局，GDK 直接拿它当公开类型用。</remarks>
+[StructLayout(LayoutKind.Sequential)]
+internal struct GdkRectangle
+{
+    public int X;
+    public int Y;
+    public int Width;
+    public int Height;
 }
 
 /// <summary>GDK 的 RGBA 颜色：四个 0..1 的 double（<c>webkit_web_view_set_background_color</c> 的参数）。</summary>

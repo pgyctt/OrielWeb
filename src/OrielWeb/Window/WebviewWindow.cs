@@ -310,6 +310,42 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// </remarks>
     public string Title => Backend.Title;
 
+    /// <summary>
+    /// **客户区**尺寸（逻辑像素）——即 <see cref="Resize"/> 的逆运算。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="Resize"/> / <see cref="OrielWindowOptions.Width"/> 同一单位（逻辑像素的客户区），
+    /// 所以 <c>Resize(InnerSize)</c> 接近恒等操作。
+    /// <para>
+    /// 与 Tauri 的差别（如实标注）：Tauri 的 <c>innerSize()</c> 返回 <c>PhysicalSize</c>，
+    /// 本库返回 <see cref="OrielSize"/>（逻辑像素）——**库对页面只暴露逻辑像素**，
+    /// 混入物理像素会让"这个值是哪种单位"变成每个调用点都要想一遍的问题。
+    /// 两个字段名（<c>Width</c> / <c>Height</c>）都还在，迁移代码取字段本身不受影响。
+    /// </para>
+    /// </remarks>
+    public OrielSize InnerSize => Backend.InnerSize;
+
+    /// <summary>
+    /// **整窗**尺寸（逻辑像素，含边框与标题栏）。
+    /// </summary>
+    /// <remarks>
+    /// Linux/Wayland 下可能与 <see cref="InnerSize"/> 相等：合成器不告诉客户端装饰尺寸。
+    /// 完整说明见 <see cref="IWindowBackend.OuterSize"/>。
+    /// </remarks>
+    public OrielSize OuterSize => Backend.OuterSize;
+
+    /// <summary>窗口**左上角**（含装饰）的屏幕逻辑坐标。</summary>
+    public OrielPosition OuterPosition => Backend.OuterPosition;
+
+    /// <summary>
+    /// **客户区**左上角的屏幕逻辑坐标。
+    /// </summary>
+    /// <remarks>
+    /// Linux 上目前恒等于 <see cref="OuterPosition"/>（GTK 不暴露装饰偏移）。
+    /// 完整说明见 <see cref="IWindowBackend.InnerPosition"/>。
+    /// </remarks>
+    public OrielPosition InnerPosition => Backend.InnerPosition;
+
     public void Focus() => Backend.Focus();
     public void Maximize() => Backend.Maximize();
     public void Minimize() => Backend.Minimize();

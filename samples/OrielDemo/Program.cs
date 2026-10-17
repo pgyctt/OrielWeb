@@ -215,7 +215,16 @@ internal static class Program
                         "window.setTitle",
                         "window.destroy",
                         "window.setCloseIntercept",
-                        "window.setEventForwarding");
+                        "window.setEventForwarding",
+                        // 几何查询（E2）：**刻意不放进标题栏白名单**——自绘标题栏不需要它们，
+                        // 而它们能按 label 读到**别的**窗口的几何。所以要用必须显式声明。
+                        "window.innerSize",
+                        "window.outerSize",
+                        "window.innerPosition",
+                        "window.outerPosition",
+                        // api 自检还要做一次"读出来写回去"的不动点断言，所以也要 resize。
+                        // （window.setResizable 刻意仍不声明——它做拒绝路径的对照。）
+                        "window.resize");
                 }
             })
             .UseDebug()
