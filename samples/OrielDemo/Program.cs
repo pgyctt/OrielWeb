@@ -248,6 +248,14 @@ internal static class Program
                     c.Allow(
                         "fs.*",
                         scope => scope.AllowPath(fsRoot.Replace('\\', '/') + "/**"));
+
+                    // convertFileSrc（F2）走**独立的 scope**（`asset.read`），不共用 fs 的——
+                    // 照 Tauri 的设计（那边 assetProtocol.scope 与 fs 的 scope 是两套配置）。
+                    // "把图片显示出来"与"以程序的方式读写文件"是两种意图，
+                    // 共用一个 scope 会让只想显示一张图的应用顺带获得读任意文本的能力。
+                    c.Allow(
+                        OrielAssetFileServer.ScopeCommand,
+                        scope => scope.AllowPath(fsRoot.Replace('\\', '/') + "/**"));
                 }
             })
             .UseDebug()

@@ -82,7 +82,8 @@ internal static class Win32AssetScheme
     /// （症状是页面白屏，而宿主侧什么都不报）。
     /// </returns>
     internal static CoreWebView2WebResourceRequestedEventHandler Attach(
-        ICoreWebView2Environment environment, ICoreWebView2 webView, EmbeddedAssetStore store, string host)
+        ICoreWebView2Environment environment, ICoreWebView2 webView, EmbeddedAssetStore store, string host,
+        Func<string, bool>? authorizeFileRead = null)
     {
         ArgumentNullException.ThrowIfNull(environment);
         ArgumentNullException.ThrowIfNull(webView);
@@ -94,7 +95,7 @@ internal static class Win32AssetScheme
             COREWEBVIEW2_WEB_RESOURCE_CONTEXT.COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
 
         var handler = new CoreWebView2WebResourceRequestedEventHandler(
-            (sender, args) => OnRequest(environment, args, store, host));
+            (sender, args) => OnRequest(environment, args, store, host, authorizeFileRead));
 
         // 订阅返回 void（生成的绑定不回报 HRESULT），失败会在"资源加载不出来"上体现；
         // handler 的存活由调用方负责。
@@ -107,7 +108,8 @@ internal static class Win32AssetScheme
         ICoreWebView2Environment environment,
         ICoreWebView2WebResourceRequestedEventArgs args,
         EmbeddedAssetStore store,
-        string host)
+        string host,
+        Func<string, bool>? authorizeFileRead)
     {
         // 任何异常都不能漏出去：这里跑在 WebView2 的回调里，抛出等于让引擎等一个永不到来的应答。
         try
@@ -120,6 +122,32 @@ internal static class Win32AssetScheme
 
             // 用扩展属性而不是 get_Uri(out PWSTR)：字符串的释放交给包装层，这里不碰 PWSTR。
             string uri = request.Uri ?? string.Empty;
+
+            // 磁盘文件（convertFileSrc）走**另一个 host**，所以要先判它——
+            // 否则会被下面的 TryResolve 当成"别的 host 的资源"而放给网络层，
+            // 表现为文件加载不出来（而不是被拒）。
+            if (AssetUrl.TryResolveFile(uri, out string filePath))
+            {
+                // 没接授权器时一律拒绝：那是"应用没启用文件服务"的情形，
+                // 而"没配置"绝不能被解释成"不限制"。
+                OrielAssetFileServer.Result result = authorizeFileRead is null
+                    ? new OrielAssetFileServer.Result(
+                        Stream.Null, "text/plain; charset=utf-8", 403, "应用未启用 convertFileSrc")
+                    : OrielAssetFileServer.Serve(filePath, authorizeFileRead);
+
+                if (result.Reason is { } denyReason)
+                {
+                    // 理由只进日志、不进响应：进响应会变成一个探测器，
+                    // 页面能用它区分"文件不存在"与"路径不在 scope 内"。
+                    OrielDiagnostics.Report($"[OrielWeb] 拒绝文件请求（{result.Status}）：{denyReason}");
+                }
+
+                SetResponse(
+                    environment, args, result.Payload, result.Status,
+                    result.Status == 200 ? "OK" : "Forbidden",
+                    result.ContentType);
+                return;
+            }
 
             if (!AssetUrl.TryResolve(uri, host, out string relative))
             {

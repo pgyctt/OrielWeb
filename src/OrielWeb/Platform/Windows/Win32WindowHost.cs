@@ -1043,7 +1043,17 @@ internal partial class Win32WindowHost : IWindowBackend
             if (_assets is not null)
             {
                 // 返回的事件处理器必须存着：托管侧没人引用它时，拦截会静默失效（页面白屏但无报错）。
-                _assetSchemeHandler = Win32AssetScheme.Attach(_environment.Object, _webView.Object, _assets, _assetHost);
+                //
+                // 第三个参数是 convertFileSrc 的授权器：**只接一个"这个绝对路径能不能读"的判定**，
+                // 而 scope 与标识符留在应用侧（这里拿不到也不该知道）。传 null 也能跑，
+                // 那样所有文件请求都会被 403——"没启用"绝不能被解释成"不限制"。
+                _assetSchemeHandler = Win32AssetScheme.Attach(
+                    _environment.Object,
+                    _webView.Object,
+                    _assets,
+                    _assetHost,
+                    absolutePath => App.Guard.TryAuthorizePath(
+                        OrielAssetFileServer.ScopeCommand, absolutePath, App.Info.Identifier, out _));
             }
 
             if (_webView.Settings is { } settings)

@@ -35,6 +35,14 @@ export interface OrielTransport {
     /** 本窗口的 label（P0-2 之后可用）。 */
     label?: string;
 
+    /**
+     * 把本地路径拼成页面能用的 URL（对标 Tauri 的 `convertFileSrc`）。
+     *
+     * **同步**：只拼字符串，不发 IPC、不查权限——真正的强制点在宿主侧
+     * （页面请求那个 URL 时查 `asset.read` 的 scope）。
+     */
+    convertFileSrc?(filePath: string): string;
+
     /** 桥接脚本就绪的 Promise。 */
     ready?: Promise<void>;
 

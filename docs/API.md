@@ -896,7 +896,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 
 | 模块 | 内容 |
 |---|---|
-| `core` | `invoke` / `isTauri` / `convertFileSrc`（未实现，显式抛错） |
+| `core` | `invoke` / `isTauri` / `convertFileSrc`（同步；宿主侧查 `asset.read` 的 scope） |
 | `event` | `listen` / `once` / `emit` / `emitTo` / `TauriEvent` |
 | `window` | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow`（恒 `null`，见下）+ `Window` 类 |
 | `path` | `sep` / `delimiter`（**同步**）+ `join` / `normalize` / `dirname` / `extname` / `basename` / `isAbsolute` / `resolve` |
@@ -975,6 +975,35 @@ await resolveResource('assets/a.svg'); // 资源目录下拼，带越界校验
 
 > **`runtimeDir` 在 `XDG_RUNTIME_DIR` 缺失时明确失败**，不退到 `/tmp`：
 > `/tmp` 是全局共享的，不是"本用户的运行时目录"那个语义，给个错值比明确失败糟得多。
+
+### `convertFileSrc`：把文件显示出来
+
+```js
+import { convertFileSrc } from '@orielweb/api/core';
+
+const url = convertFileSrc('C:\\data\\photo.png');   // 同步，不查权限
+img.src = url;                                       // 页面请求时宿主才查 scope
+```
+
+| 要点 | 说明 |
+|---|---|
+| **同步** | 与 Tauri 一致：只拼字符串、不发 IPC |
+| **强制点在服务端** | 页面请求那个 URL 时，宿主查 **`asset.read`** 的 scope；不在内就 403（空响应体） |
+| **独立 scope** | 不共用 `fs.*`——"把图片显示出来"与"以程序的方式读写文件"是两种意图 |
+| **与页面不同源** | host 是 `file.oriel`，所以磁盘上的 HTML 被导航到也**拿不到桥接** |
+
+```csharp
+// 声明它才能真的取到内容
+c.Allow(OrielAssetFileServer.ScopeCommand, s => s.AllowPath("$APPDATA/images/**"));
+```
+
+**不在 `convertFileSrc` 里查权限**（Tauri 亦然）：页面自己也能拼出同样的 URL，
+在那一层拦没有意义。真正的判定在服务端：先归一、再查 scope、最后才碰磁盘；
+不在 scope 内、文件不存在、或者是目录，**一律 403 且响应体为空**——
+理由只进日志，因为"文件不存在"与"路径不在 scope 内"可区分就等于一个路径探测器。
+
+⚠️ **平台覆盖**：目前只有 **Windows** 真的提供内容。Linux 与 macOS 会**一律 403**（fail-closed）——
+`convertFileSrc` 能拼出 URL 但取不到内容。宁可"用不了"，也不要"某平台漏了 scope 检查"。
 
 ### `fs` 模块：两道关都必过
 

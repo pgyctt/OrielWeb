@@ -194,11 +194,55 @@ test('isTauri：真实宿主存在时为 true', () => {
     }
 });
 
-test('convertFileSrc 尚未实现时必须抛错，而不是返回看似可用的 URL', () => {
-    assert.throws(
-        () => convertFileSrc('/tmp/a.png'),
-        /尚未实现/,
-    );
+test('convertFileSrc 走桥接（同步，不自己拼一份编码实现）', () => {
+    clearMocks();
+
+    // **不在这里自己拼 URL**：那样会出现两份必须严格对称的编码实现
+    // （宿主侧的 AssetUrl.FileUrl 与包里的），而它们一旦不一致，
+    // 症状是"某些路径就是取不到"——且往往只在特定平台/特定字符下出现。
+    const seen = [];
+    setTransportOverride({
+        convertFileSrc(path) {
+            seen.push(path);
+            return 'oriel://file.oriel/STUB';
+        },
+        async invoke() { return null; },
+    });
+
+    assert.equal(convertFileSrc('/tmp/a.png'), 'oriel://file.oriel/STUB');
+    assert.deepEqual(seen, ['/tmp/a.png']);
+
+    clearMocks();
+});
+
+test('convertFileSrc 对空路径与非缺省协议名抛错', () => {
+    clearMocks();
+    setTransportOverride({
+        convertFileSrc: () => 'oriel://file.oriel/x',
+        async invoke() { return null; },
+    });
+
+    assert.throws(() => convertFileSrc(''), TypeError);
+    assert.throws(() => convertFileSrc(/** @type {any} */ (null)), TypeError);
+
+    // 传非缺省协议名要**明确报错**而不是静默忽略——静默的后果是
+    // "我在配置里指定了协议名，但页面加载不出来"，而那个现象与协议名无关
+    assert.throws(() => convertFileSrc('/tmp/a.png', 'myproto'), /不支持自定义协议名/);
+
+    // 缺省值 'asset'（Tauri 的默认）要接受：迁移时可能照抄了
+    assert.equal(convertFileSrc('/tmp/a.png', 'asset'), 'oriel://file.oriel/x');
+
+    clearMocks();
+});
+
+test('convertFileSrc 在旧宿主上明确报错（而不是抛个 undefined 调用错）', () => {
+    clearMocks();
+    // 老宿主没有这个成员
+    setTransportOverride({ async invoke() { return null; } });
+
+    assert.throws(() => convertFileSrc('/tmp/a.png'), /当前宿主不支持/);
+
+    clearMocks();
 });
 
 // ---- 结构化错误（F7）：code / data 到页面 ----

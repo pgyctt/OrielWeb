@@ -270,6 +270,41 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
   本库的 IPC 是纯 JSON，没有 Tauri 的二进制 body 通道。一个字节要变成两三个字符，
   所以**几十 MB 级别的文件不适用**——已在文档写明。
 
+#### 文件内容显示（F2：`convertFileSrc`）
+
+- **`convertFileSrc(path)` 可用**（对标 Tauri 的 `convertFileSrc`）：同步返回
+  `oriel://file.oriel/<编码后的路径>`，可以直接放进 `<img src>` / `<video src>` / `fetch()`。
+  之前它是显式抛错的（那时还没有 asset 协议）。
+- **文件内容与页面**不同源**：用的是专用 host `file.oriel` 而不是应用的 host。
+  桥接只注入到可信来源，所以磁盘上任何一个 HTML 文件被导航到都**拿不到 IPC 能力**。
+  少了这一步，"下载一个 .html 到应用数据目录、再让应用打开它"就是一条提权路径。
+  （换 host 之所以真能隔开，是因为登记 scheme 时开了 `HasAuthorityComponent`——
+  host 参与来源计算。）
+- **它有独立的 scope（`asset.read`），不共用 `fs.*` 的**（照 Tauri 的 `assetProtocol.scope`）：
+  "把图片显示出来"与"以程序的方式读写文件"是两种意图，共用一个 scope 会让
+  只想显示一张图的应用顺带获得读任意文本的能力。
+  ```csharp
+  c.Allow(OrielAssetFileServer.ScopeCommand, s => s.AllowPath("$APPDATA/images/**"));
+  ```
+- **强制点在服务端，不在 `convertFileSrc`**（Tauri 亦然）：那个函数只拼字符串，
+  页面自己也能拼出同样的 URL，所以拦它没有意义。真正的判定在 webview 去请求时
+  （`OrielAssetFileServer.Serve`）：先归一、再查 scope、最后才碰磁盘；
+  不在 scope 内、文件不存在、或者是目录，**一律回 403 且响应体为空**。
+  理由只进日志、不进响应——进响应会变成一个探测器，页面能用它区分
+  "文件不存在"与"路径不在 scope 内"，进而枚举出这台机器上有哪些路径。
+- **URL 把整条路径编成**一个**路径段**（分隔符也编进去）。这一点是踩过才定的：
+  URI 的 path 总以 `/` 开头，逐段编码会让"绝对路径的前导斜杠"与"拼 URL 加的那个"在解析时
+  无法区分——`/tmp/a.png` 会解成 `tmp/a.png`，在 POSIX 上就从绝对路径变成相对路径。
+  代价是 URL 不可读（`oriel://file.oriel/%2Ftmp%2Fa.png`），可以接受。
+- **`protocol` 参数**：只接受缺省（Tauri 的 `'asset'`）；传别的值**明确报错**而不是静默忽略。
+  本库只登记一个自定义 scheme，静默忽略的后果是"我在配置里指定了协议名，但页面加载不出来"，
+  而那个现象与协议名毫无关系。
+
+> **平台覆盖**：目前只有 **Windows** 真的提供文件内容（`Win32AssetScheme` 里接了授权器）。
+> Linux 与 macOS 的请求会**一律 403**（fail-closed）——`convertFileSrc` 能拼出 URL、
+> 但取不到内容。这是刻意的：宁可"用不了"，也不要"某平台漏了 scope 检查"。
+> 已在 ROADMAP 里记为待办。
+
 ### 修复
 
 - **`fs.writeTextFile` 会写 UTF-8 BOM**：用了 `File.WriteAllText(..., Encoding.UTF8)`，

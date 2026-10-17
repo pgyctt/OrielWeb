@@ -106,6 +106,23 @@
             sep: __ORIEL_PLATFORM__ === 'windows' ? '\\' : '/',
             delimiter: __ORIEL_PLATFORM__ === 'windows' ? ';' : ':',
         },
+        // 把本地路径拼成页面能用的 URL（对标 Tauri 的 convertFileSrc）。
+        //
+        // **同步**（Tauri 亦然）：只拼字符串，不发 IPC、不查权限。
+        //
+        // **强制点在宿主侧**：页面拿这个 URL 去请求时，宿主查 `asset.read` 的 scope。
+        // 在这里拦没有意义——页面自己也能拼出同样的字符串。
+        //
+        // 分隔符**不**归一、整条路径编成一个段。理由与宿主侧 AssetUrl.FileUrl 的说明一致：
+        // URI 的 path 总以 '/' 开头，逐段编码会让"绝对路径的前导斜杠"与"拼 URL 加的那个斜杠"
+        // 在解析时无法区分，于是 /tmp/a.png 在 POSIX 上会变成相对路径 tmp/a.png。
+        // 服务器侧的解码必须与这里**严格对称**（见 AssetUrl.FileUrl / TryResolveFile）。
+        convertFileSrc(filePath) {
+            if (typeof filePath !== 'string' || filePath === '') {
+                throw new TypeError('oriel.convertFileSrc: filePath 必须为非空字符串');
+            }
+            return 'oriel://file.oriel/' + encodeURIComponent(filePath);
+        },
         ready: ready,
         // 命令回执超时（毫秒），可在页面侧改写为其他值；<=0 表示不启用超时。
         // 没有它时，命令永不回执（如宿主侧异常导致 sink 未投递）会让 Promise

@@ -138,9 +138,23 @@ internal static class ApiSelfTest
                 check('core.invoke 能往返', Array.isArray(todos), Array.isArray(todos) ? todos.length : typeof todos);
 
                 // convertFileSrc 尚未实现（P1-2）：必须**明确抛错**，不能返回一个看似可用的 URL
-                let convertThrew = false;
-                try { core.convertFileSrc('/tmp/a.png'); } catch (_) { convertThrew = true; }
-                check('core.convertFileSrc 未实现时明确抛错', convertThrew, 'P1-2');
+                // convertFileSrc 现在**能用**了（F2），所以这里验契约而不是"抛错"。
+                // 早先它显式抛错（那时还没有 asset 协议），断言写的是"必须抛"——
+                // 实现变了之后那条断言就成了"验证缺陷存在"，必须一起改。
+                let convertUrl = '';
+                try {
+                    convertUrl = core.convertFileSrc('/tmp/a.png');
+                } catch (_) { /* 下面断言 */ }
+                check('core.convertFileSrc 返回 oriel://file.oriel/ 形态的 URL',
+                    convertUrl.startsWith('oriel://file.oriel/'), convertUrl);
+
+                let emptyThrew = false;
+                try { core.convertFileSrc(''); } catch (_) { emptyThrew = true; }
+                check('core.convertFileSrc 对空路径抛错', emptyThrew, 'ok');
+
+                let protocolThrew = false;
+                try { core.convertFileSrc('/tmp/a.png', 'myproto'); } catch (_) { protocolThrew = true; }
+                check('core.convertFileSrc 对自定义协议名明确抛错（不静默忽略）', protocolThrew, 'ok');
 
                 // ---- app（F4a）：只读元信息 ----
                 const app = await import(vendor + '/app.js');
@@ -247,6 +261,56 @@ internal static class ApiSelfTest
                 }
                 check('fs 用 .. 逃逸出 scope → path_not_allowed（归一再判定）',
                     dotdotCode === 'path_not_allowed', dotdotCode);
+
+                // ---- convertFileSrc（F2）：URL 形态 + 服务端 scope 强制 ----
+                //
+                // 这一条必须在**真页面**里验：`convertFileSrc` 是同步拼字符串，
+                // 真正的强制点在 webview 去请求那个 URL 时。而"请求能不能成功"
+                // 只有真发起一次请求才知道——尤其要确认 Chromium 没有把路径里的
+                // %2F 归一掉（那会让整段编码的方案失效）。
+                const imgFile = fsRoot + '/api-selftest.png';
+                // 一个最小的合法 PNG（1x1 透明）
+                const pngBytes = [
+                    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82,
+                    0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137,
+                    0, 0, 0, 10, 73, 68, 65, 84, 120, 156, 99, 0, 1, 0, 0, 5, 0, 1,
+                    13, 10, 45, 180, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+                ];
+                await fs.writeFile(imgFile, new Uint8Array(pngBytes));
+
+                const imgUrl = core.convertFileSrc(imgFile);
+                check('convertFileSrc 给出 oriel://file.oriel/ 形态的 URL',
+                    imgUrl.startsWith('oriel://file.oriel/'), imgUrl);
+
+                // 真请求一次：这是"整段编码没被引擎归一掉"的唯一取证方式
+                const imgOk = await new Promise(function (resolve) {
+                    const probe = new Image();
+                    probe.onload = function () { resolve(probe.naturalWidth === 1); };
+                    probe.onerror = function () { resolve(false); };
+                    probe.src = imgUrl;
+                });
+                check('页面能真的加载 convertFileSrc 出来的 URL（%2F 没被引擎归一）', imgOk, imgUrl);
+
+                // **scope 之外的必须加载失败**：这是 convertFileSrc 的关键安全性质——
+                // 否则它就是一个绕过 fs scope 的读取通道
+                const outsideUrl = core.convertFileSrc('C:\\Windows\\win.ini');
+                const outsideOk = await new Promise(function (resolve) {
+                    const probe = new Image();
+                    probe.onload = function () { resolve(true); };
+                    probe.onerror = function () { resolve(false); };
+                    probe.src = outsideUrl;
+                });
+                check('scope 之外的文件 URL 加载失败（403）', outsideOk === false, outsideUrl);
+
+                // 目录也不能通过这条通道列出来
+                const dirUrl = core.convertFileSrc(fsRoot);
+                const dirOk = await new Promise(function (resolve) {
+                    const probe = new Image();
+                    probe.onload = function () { resolve(true); };
+                    probe.onerror = function () { resolve(false); };
+                    probe.src = dirUrl;
+                });
+                check('目录不能通过文件通道取到', dirOk === false, dirUrl);
 
                 // ---- path（F1）：同步常量 + 路径运算 ----
                 const path = await import(vendor + '/path.js');

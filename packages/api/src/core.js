@@ -72,17 +72,58 @@ export function isTauri() {
 /**
  * 把本地文件路径转成页面可直接用的 URL（对标 `convertFileSrc`）。
  *
- * **尚未实现**（P1-2）。这里显式抛错而不是返回一个看似可用的字符串：
- * 一个 404 的 `<img>` 表现为"图片不显示"，而原因（没有 asset 协议）在页面侧看不见。
- *
- * @param {string} filePath
- * @param {string} [protocol]
- * @returns {string}
+ * @param {string} filePath 宿主上的路径（绝对路径，或相对**进程当前目录**的路径）。
+ * @param {string} [protocol] 仅接受缺省值。见下面的说明。
+ * @returns {string} 形如 `oriel://file.oriel/<路径>`。
+ * @throws {TypeError | Error} 参数类型不对、或传了不支持的 `protocol` 时抛出。
+ * @remarks
+ * <para>
+ * **同步**（与 Tauri 一致）：这一步只拼字符串，不发 IPC、也不查任何权限。
+ * </para>
+ * <para>
+ * **真正的强制点在宿主侧**：页面把 URL 放进 `<img src>` / `fetch()` 时，
+ * webview 会去请求它，宿主在那时查 **`asset.read` 的 scope**，不在 scope 内就回 403。
+ * 在这边提前拦没有意义——页面自己也能拼出一个同样的 URL。
+ * </para>
+ * <para>
+ * **`asset.read` 是独立的 scope，不共用 `fs.*` 的**（照 Tauri 的 `assetProtocol.scope`）：
+ * "把图片显示出来"与"以程序的方式读写文件"是两种意图，共用一个 scope 会让
+ * 只想显示一张图的应用顺带获得读任意文本的能力。
+ * </para>
+ * <para>
+ * **文件内容与页面不同源**：URL 的 host 是 `file.oriel` 而不是应用的 host，
+ * 所以磁盘上的 HTML 文件被导航到也**拿不到桥接**（桥接只注入到可信来源）。
+ * 少了这一步，"下载一个 .html 到应用数据目录、再打开它"就是一条提权路径。
+ * </para>
+ * <para>
+ * **`protocol` 参数**：Tauri 用它指定自定义协议名（可配置多个资产协议）。
+ * 本库只登记了一个自定义 scheme，文件固定走 `file.oriel`，所以传非缺省值会**明确报错**
+ * 而不是被静默忽略——静默忽略的后果是"我在配置里指定了协议名，但页面加载不出来"，
+ * 而那个现象与协议名无关。
+ * </para>
  */
 export function convertFileSrc(filePath, protocol) {
-    void filePath;
-    void protocol;
-    throw new Error(
-        'convertFileSrc 尚未实现（计划中的 P1-2）：本库还没有文件 asset 协议与路径 scope。' +
-        '目前请把文件读进内存（宿主命令）或用内嵌资源。');
+    if (typeof filePath !== 'string' || filePath === '') {
+        throw new TypeError('convertFileSrc: filePath 必须为非空字符串');
+    }
+
+    // Tauri 的默认值是 'asset'。缺省时接受，显式传 'asset' 也接受（迁移时可能照抄了）。
+    if (protocol !== undefined && protocol !== null && protocol !== 'asset') {
+        throw new Error(
+            `convertFileSrc: 不支持自定义协议名「${protocol}」——本库的文件内容固定走 oriel://file.oriel/。` +
+            '请省略第二个参数。');
+    }
+
+    // **走桥接的同步实现**：与 Tauri 一样只拼字符串、不发 IPC。
+    // 不在包内自己拼一份：那样会出现两份必须严格对称的编码实现
+    // （宿主侧的 AssetUrl.FileUrl 与这里），而它们一旦不一致，
+    // 症状是"某些路径就是取不到"——且往往只在特定平台/特定字符下出现。
+    const transport = getTransport();
+    if (typeof transport.convertFileSrc !== 'function') {
+        throw new Error(
+            'convertFileSrc: 当前宿主不支持（需要 OrielWeb 0.5.0+）。' +
+            '旧宿主上没有文件 asset 协议。');
+    }
+
+    return transport.convertFileSrc(filePath);
 }
