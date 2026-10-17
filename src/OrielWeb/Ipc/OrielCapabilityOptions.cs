@@ -1,3 +1,5 @@
+using OrielWeb.Ipc;
+
 namespace OrielWeb;
 
 /// <summary>
@@ -28,6 +30,15 @@ public sealed class OrielCapabilityOptions
 
     internal List<string> AllowedOrigins { get; } = [];
 
+    /// <summary>
+    /// 命令模式 → 路径 scope（对标 Tauri 的"权限条目自带 scope"）。
+    /// </summary>
+    /// <remarks>
+    /// 一个模式可以有多条 scope 条目（多次 <see cref="Allow(string, Action{OrielPathScope})"/>），
+    /// 判定时"任意一条允许 且 没有任何一条拒绝"。
+    /// </remarks>
+    internal List<(string Pattern, OrielPathScope Scope)> PathScopes { get; } = [];
+
     /// <summary>允许页面调用这些命令（精确名或 <c>前缀.*</c>；<c>*</c> 表示全部）。可多次调用。</summary>
     public OrielCapabilityOptions Allow(params string[] patterns)
     {
@@ -35,7 +46,120 @@ public sealed class OrielCapabilityOptions
         return this;
     }
 
-    /// <summary>拒绝页面调用这些命令（<b>优先于 <see cref="Allow"/></b>）。可多次调用。</summary>
+    /// <summary>
+    /// 允许这些命令，并给它们声明**路径 scope**（仅对 <c>fs.*</c> 这类要碰路径的命令有意义）。
+    /// </summary>
+    /// <param name="pattern">命令模式（精确名或 <c>前缀.*</c>）。</param>
+    /// <param name="configure">配置 scope：<c>s =&gt; s.AllowPath("$APPDATA/**")</c>。</param>
+    /// <example>
+    /// <code>
+    /// c.Allow("fs.readTextFile",  s => s.AllowPath("$APPDATA/**"))
+    ///  .Allow("fs.writeTextFile", s => s.AllowPath("$APPDATA/**").DenyPath("$APPDATA/secrets/**"));
+    /// </code>
+    /// </example>
+    /// <remarks>
+    /// <para>
+    /// <b>只允许命令、不给 scope，等于什么都不允许</b>——不是"不限制"。
+    /// 这一条是本层最容易误解的地方，所以它有一条专门的错误文案
+    /// （见 <see cref="OrielPathScope.IsMatch"/>）。
+    /// 反过来若空 scope 表示"不限制"，那 <c>Allow("fs.readTextFile")</c> 就成了"能读整台机器"。
+    /// </para>
+    /// <para>
+    /// 形状照 Tauri：那边每个权限条目自带 <c>allow</c> / <c>deny</c> 两个路径数组，
+    /// 所以"读"与"写"可以各自 scope（读整个数据目录、写只到子目录）。
+    /// </para>
+    /// </remarks>
+    public OrielCapabilityOptions Allow(string pattern, Action<OrielPathScope> configure)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pattern);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        // 命令本身也要进 allow 名单：scope 是**附加**约束，不是授权本身。
+        // 少了这一步的后果是"声明了 scope 却仍然被拒"，而错误文案会说"命令没授权"——
+        // 那会把人引向完全错的方向。
+        AllowedCommands.Add(pattern);
+
+        var scope = new OrielPathScope();
+        configure(scope);
+
+        if (scope.IsEmpty)
+        {
+            throw new ArgumentException(
+                $"Allow(\"{pattern}\", …) 的 scope 是空的：空 scope 表示不允许任何路径，" +
+                $"那与不声明 scope 没有区别。要么用 AllowPath 声明允许的路径，" +
+                $"要么用普通的 Allow(\"{pattern}\") 只授权命令（那样所有路径都会被拒）。",
+                nameof(configure));
+        }
+
+        PathScopes.Add((pattern, scope));
+        return this;
+    }
+
+    /// <summary>
+    /// 判定某个路径能不能被某条命令访问。
+    /// </summary>
+    /// <param name="commandName">命令名（如 <c>fs.readTextFile</c>）。</param>
+    /// <param name="absolutePath">宿主上的绝对路径。</param>
+    /// <param name="appIdentifier">展开 <c>$APP*</c> 变量用。</param>
+    /// <param name="reason">被拒时给出原因。</param>
+    /// <remarks>
+    /// 命中多条 scope 时：**任意一条允许 且 没有任何一条拒绝**。
+    /// 拒绝跨条目生效是刻意的——写了两条 scope、只在其中一条加 deny 时，
+    /// 另一条不该绕过它（那正是"先写宽的、再挖例外"这种写法的常见翻车点）。
+    /// </remarks>
+    internal bool IsPathAllowed(string commandName, string absolutePath, string appIdentifier, out string? reason)
+    {
+        reason = null;
+
+        // 两遍扫描，**先 deny 再 allow**：
+        //
+        // 单遍扫描（逐条 "IsMatch 成功就放行"）会让"先写宽的、再挖例外"这种写法失效——
+        // 宽的那条放行了，窄的那条里的 deny 就白写了。而那种写法恰恰是最常见的。
+        // 所以 deny 必须跨条目先生效。
+        var matched = new List<OrielPathScope>();
+
+        foreach ((string pattern, OrielPathScope scope) in PathScopes)
+        {
+            if (OrielCapabilityRules.IsAllowed(commandName, [pattern], []))
+            {
+                matched.Add(scope);
+            }
+        }
+
+        if (matched.Count == 0)
+        {
+            reason = "该命令没有声明任何路径 scope（空 scope 表示不允许任何路径，不是不限制）。" +
+                     $"请用 Allow(\"{commandName}\", s => s.AllowPath(\"$APPDATA/**\")) 声明。";
+            return false;
+        }
+
+        // 第一遍：任一命中的 scope 里有 deny 命中 → 拒绝
+        foreach (OrielPathScope scope in matched)
+        {
+            if (scope.MatchesAnyDeny(absolutePath, appIdentifier, out string? deniedBy))
+            {
+                reason = $"路径落在拒绝名单里（命中「{deniedBy}」）。";
+                return false;
+            }
+        }
+
+        // 第二遍：任一命中的 scope 里有 allow 命中 → 允许
+        string? allowReason = null;
+        foreach (OrielPathScope scope in matched)
+        {
+            if (scope.MatchesAnyAllow(absolutePath, appIdentifier, out string? scopeReason))
+            {
+                return true;
+            }
+
+            allowReason ??= scopeReason;
+        }
+
+        reason = allowReason;
+        return false;
+    }
+
+    /// <summary>拒绝页面调用这些命令（<b>优先于授权</b>）。可多次调用。</summary>
     public OrielCapabilityOptions Deny(params string[] patterns)
     {
         AddAll(DeniedCommands, patterns, nameof(patterns));
