@@ -95,6 +95,19 @@ internal static unsafe partial class ObjCRuntime
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial void SendVoidNint(nint self, nint sel, nint arg);
 
+    /// <summary>
+    /// 一个 <c>CGFloat</c>（double）参数、无返回值的调用（如 <c>NSStatusItem setLength:</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <b>别用 <see cref="SendVoidNint"/> 代替它</b>：<c>CGFloat</c> 是浮点，arm64 上浮点参数走
+    /// <c>d0-d7</c>、整数走 <c>x0-x7</c>——把 CGFloat 塞进整数寄存器，被调方读到的就是垃圾值。
+    /// 实测后果是 **SIGSEGV**（崩溃报告：<c>EXC_BAD_ACCESS</c> + "possible pointer authentication
+    /// failure"，崩在 <c>objc_msgSend</c>），而且**非确定性**：寄存器里恰好残留什么决定崩不崩，
+    /// 于是同一条代码路径有时过、有时崩。这类错误只有真机 + 正确签名才能根治。
+    /// </remarks>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial void SendVoidDouble(nint self, nint sel, double arg);
+
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial nint SendIdObj(nint self, nint sel, nint arg);
 

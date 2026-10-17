@@ -97,11 +97,18 @@ internal sealed class MacOSTrayBackend : ITrayBackend
         ObjCRuntime.SendVoidObj(
             _button, ObjCRuntime.Sel("setTitle:"), ObjCRuntime.MakeNSString(title ?? string.Empty));
 
-        // 有文字时给按钮一个固定宽度，否则文字会被图标挤掉
-        ObjCRuntime.SendVoidNint(
+        // 有文字时给按钮一个固定宽度，否则文字会被图标挤掉。
+        //
+        // **必须用 double 重载**：`NSStatusItem.setLength:` 的参数是 `CGFloat`（浮点），
+        // 而 arm64 上整数参数走 x0-x7、浮点走 d0-d7——用 SendVoidNint 把 CGFloat 塞进整数
+        // 寄存器，AppKit 读到的就是垃圾值。实测后果是 **SIGSEGV**（崩溃报告：
+        // EXC_BAD_ACCESS + "possible pointer authentication failure"，崩在 objc_msgSend）：
+        // 状态项拿到荒谬的长度后去分配对应缓冲区，指针认证随即失败。
+        // 同一个道理，上面 statusItemWithLength: 用的也是 SendIdDouble。
+        ObjCRuntime.SendVoidDouble(
             _statusItem,
             ObjCRuntime.Sel("setLength:"),
-            string.IsNullOrEmpty(title) ? (nint)VariableStatusItemLength : 0);
+            string.IsNullOrEmpty(title) ? VariableStatusItemLength : 0);
     }
 
     /// <summary>
