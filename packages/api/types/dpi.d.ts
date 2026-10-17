@@ -59,6 +59,13 @@ export class LogicalSize {
     type: SizeType;
     width: number;
     height: number;
+    /**
+     * 换算成物理像素尺寸（对标 Tauri 的 `LogicalSize.toPhysical(scaleFactor)`）。
+     *
+     * @param {number} scaleFactor
+     * @returns {PhysicalSize}
+     */
+    toPhysical(scaleFactor: number): PhysicalSize;
 }
 /**
  * 物理像素尺寸（对标 `PhysicalSize`）。
@@ -73,6 +80,13 @@ export class PhysicalSize {
     type: SizeType;
     width: number;
     height: number;
+    /**
+     * 换算成逻辑像素尺寸（对标 Tauri 的 `PhysicalSize.toLogical(scaleFactor)`）。
+     *
+     * @param {number} scaleFactor
+     * @returns {LogicalSize}
+     */
+    toLogical(scaleFactor: number): LogicalSize;
 }
 /**
  * 逻辑坐标位置（对标 `LogicalPosition`）。
@@ -87,6 +101,13 @@ export class LogicalPosition {
     type: SizeType;
     x: number;
     y: number;
+    /**
+     * 换算成物理坐标（对标 Tauri 的 `LogicalPosition.toPhysical(scaleFactor)`）。
+     *
+     * @param {number} scaleFactor
+     * @returns {PhysicalPosition}
+     */
+    toPhysical(scaleFactor: number): PhysicalPosition;
 }
 /**
  * 物理坐标位置（对标 `PhysicalPosition`）。
@@ -101,6 +122,13 @@ export class PhysicalPosition {
     type: SizeType;
     x: number;
     y: number;
+    /**
+     * 换算成逻辑坐标（对标 Tauri 的 `PhysicalPosition.toLogical(scaleFactor)`）。
+     *
+     * @param {number} scaleFactor
+     * @returns {LogicalPosition}
+     */
+    toLogical(scaleFactor: number): LogicalPosition;
 }
 export type SizeType = "Logical" | "Physical";
 export type SizeObject = {

@@ -59,9 +59,14 @@ jobs:
         # @orielweb/api 的单元测试（core / dpi / event / mocks）。它是页面侧公开 API 的载体，
         # 形状错了的表现是"前端迁移后行为不对"，而那种问题在 C# 侧一个断言都抓不到。
         # 无构建步骤（JS + JSDoc），所以直接跑 node --test。
+        #
+        # **`npm ci` 而不是只装 typescript**：`tauri-alignment` 测试要把
+        # `@tauri-apps/api` 与官方插件当**参照实现**来机械比对导出面。
+        # 那是"模块名与 Tauri 一一对应"这句话的取证——不装参照实现的话那份测试会跳过，
+        # 而"跳过的门禁"等于没有门禁。
         working-directory: packages/api
         run: |
-          npm install --no-save typescript@5
+          npm ci
           npm test
 
       - name: Frontend API typecheck

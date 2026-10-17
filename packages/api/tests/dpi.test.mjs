@@ -128,3 +128,65 @@ test('换算往返在常见缩放比下无损', () => {
         assert.equal(physicalToLogical(physical, scale), 800, `scale=${scale}`);
     }
 });
+
+// ---- 实例方法（对标 Tauri 的 toPhysical / toLogical）----
+//
+// 这几个方法是 `tauri-alignment` 测试发现缺的：导出名两边都有 `LogicalSize`，
+// 但 Tauri 的那个有 `toPhysical(scaleFactor)`，我们的一开始没有。
+// 只比导出名看不出来，而调用方一用就炸。
+
+test('LogicalSize.toPhysical / PhysicalSize.toLogical 往返', () => {
+    const logical = new LogicalSize(800, 600);
+
+    const physical = logical.toPhysical(2);
+
+    assert.ok(physical instanceof PhysicalSize);
+    assert.deepEqual([physical.width, physical.height], [1600, 1200]);
+
+    const back = physical.toLogical(2);
+
+    assert.ok(back instanceof LogicalSize);
+    assert.deepEqual([back.width, back.height], [800, 600]);
+});
+
+test('LogicalPosition.toPhysical / PhysicalPosition.toLogical 往返', () => {
+    const logical = new LogicalPosition(100, 50);
+
+    const physical = logical.toPhysical(1.5);
+
+    assert.ok(physical instanceof PhysicalPosition);
+    assert.deepEqual([physical.x, physical.y], [150, 75]);
+
+    const back = physical.toLogical(1.5);
+
+    assert.ok(back instanceof LogicalPosition);
+    assert.deepEqual([back.x, back.y], [100, 50]);
+});
+
+test('换算复刻 .NET 的舍入（ToEven），与宿主一致', () => {
+    // 3 * 1.5 = 4.5；Math.round 会给 5，而 .NET 的 Math.Round 给 4。
+    // 与宿主不一致的话，反复 setSize(size.toPhysical(s).toLogical(s)) 会漂移
+    assert.equal(new LogicalSize(3, 0).toPhysical(1.5).width, 4);
+    assert.equal(new LogicalPosition(5, 0).toPhysical(1.5).x, 8);
+});
+
+test('两个方向的舍入**不对称**：往物理要舍入，往逻辑不舍入', () => {
+    // 物理像素是**整数**（设备像素），所以 logicalToPhysical 必须舍入；
+    // 而逻辑像素可以是小数，physicalToLogical 舍入会丢精度
+    // （4 / 1.5 = 2.667，舍成 3 就多算了 12%）。
+    assert.equal(new LogicalSize(3, 0).toPhysical(1.5).width, 4);
+
+    const back = new PhysicalSize(4, 0).toLogical(1.5).width;
+    assert.ok(Math.abs(back - 2.6666666666666665) < 1e-12, `实际 ${back}`);
+});
+
+test('window 模块也转出了 dpi 的四个类（Tauri 的 window 会 re-export）', async () => {
+    // 这条是 `tauri-alignment` 的导出面比对发现的：页面里写
+    // `import { LogicalSize } from '@tauri-apps/api/window'` 在 Tauri 下能跑，
+    // 所以我们的 window 也必须转出来，否则迁移后直接报"没有这个导出"。
+    const windowModule = await import('../src/window.js');
+
+    for (const name of ['LogicalSize', 'LogicalPosition', 'PhysicalSize', 'PhysicalPosition']) {
+        assert.equal(typeof windowModule[name], 'function', `window 没转出 ${name}`);
+    }
+});

@@ -401,6 +401,54 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
   macOS `NSAlert`。Linux 与 macOS **支持自定义按钮文案**，Windows 不支持（平台限制，
   已记入"已知限制"）。
 
+#### 迁移对照（H：把"一一对应"变成可证伪的）
+
+- **`packages/api/tests/tauri-alignment.test.mjs`**：把 `@tauri-apps/api` 与官方插件当
+  **参照实现**，机械比对导出面与方法。
+  「模块名与 `@tauri-apps/api` 一一对应，迁移只需替换 import 前缀」是一句**可证伪的话**——
+  写进文档只是声明，拿真正的 Tauri 包跑一遍比对才是取证。三个方向都管：
+
+  | 方向 | 要求 |
+  |---|---|
+  | 参照有、我们没有 | 必须在 `GAPS` 里逐条给出原因（这就是**迁移会撞上的缺口清单**） |
+  | 我们有、参照没有 | 必须在 `EXTRAS` 里给出原因（防止"偷偷发明一套自己的 API"） |
+  | 清单里列着但其实已实现 | 报错（清单过期了） |
+
+  另有一条**方法级**比对：导出名对了不代表能用——`LogicalSize` 两边都有，但 Tauri 的那个有
+  `toPhysical(scaleFactor)`，我们的一开始没有。只比导出名看不出来，而调用方一用就炸。
+- **参照实现是 devDependency**：CI 改用 `npm ci`（并加了 `package-lock.json`）。
+  没装时那份测试会**跳过**并在输出里说明——离线环境不该让它变红，但 CI 装了、所以 CI 强制检查。
+  "跳过的门禁等于没有门禁"，所以 CI 那条是必须的。
+- **比对的结果（当前规模）**：
+
+  | 模块 | 参照导出 | 我们有 | 缺口 |
+  |---|---|---|---|
+  | `dialog` / `opener` / `autostart` | 5 / 3 / 3 | 同 | **0** |
+  | `event` / `mocks` | 5 / 4 | 7 / 7 | **0** |
+  | `path` | 34 | 33 | 1 |
+  | `dpi` | 6 | 8 | 2 |
+  | `clipboard` | 7 | 3 | 4 |
+  | `core` | 11 | 3 | 8 |
+  | `window` / `fs` | 17 / 24 | 9 / 14 | 10 / 10 |
+  | `app` | 16 | 5 | 11 |
+  | `notification` | 19 | 3 | 16 |
+
+  方法级：比对了 19 个同名类，`window.Window` 上有 62 处未实现的方法，
+  已按**类别**（事件入口 / 只读查询 / 状态设置 / 特效 / 光标 / 任务栏 / 移动端专有）
+  记进 `METHOD_GAP_GROUPS`——**那就是 M5 的工作清单**。
+- **比对抓到的两个真实缺陷（本批已修）**：
+  1. **`window` 模块没有转出 dpi 的四个类**。Tauri 的 `@tauri-apps/api/window` 会 re-export
+     它们，所以 `import { LogicalSize } from '@tauri-apps/api/window'` 在 Tauri 下能跑；
+     我们没转出，那种写法迁移后会直接报"没有这个导出"——看起来像"包不完整"，实际只差一次转出。
+  2. **dpi 的类缺 `toPhysical` / `toLogical`**（Tauri 有）。纯数学，已补。
+     补的时候发现一处**舍入不对称**并写进了测试：`logicalToPhysical` 要舍入
+     （设备像素是整数），`physicalToLogical` **不**舍入（逻辑像素可以是小数，
+     4/1.5 = 2.667，舍成 3 就多算了 12%）。
+- **一处有意的分歧**（记在 `METHOD_DIVERGENCES`）：**不实现 Tauri 2 的 `toJSON` /
+  `__TAURI_TO_IPC_KEY__`**。Tauri 2 把 dpi 值编成 `{ Logical: { x, y } }`（外部标记枚举），
+  本库的线格式是 `{ type: "Logical", x, y }`（Tauri 1 的形状），宿主只认后者。
+  改过去要**同时改宿主协议**，而页面看不到差别（它只是把对象原样传回 `setSize`）。
+
 ### 修复
 
 - **`dialog.js` 里形参遮蔽了同名导出函数**：`ask(message, options)` 与

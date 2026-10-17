@@ -108,6 +108,18 @@ import { listen } from "./vendor/orielweb-api/event.js";
    桥接脚本在 document 创建时就同步装好了，页面脚本运行时它已经就绪。
    该问的是"我在不在宿主里"，即 `isTauri()`。
 
+## 与 Tauri 的一致性是被测试强制的
+
+	ests/tauri-alignment.test.mjs 把 `@tauri-apps/api` 与官方插件当**参照实现**，
+机械比对导出面与方法：
+
+* **参照有、我们没有** → 必须在测试的 `GAPS` 里逐条给出原因（那就是迁移会撞上的缺口清单）；
+* **我们有、参照没有** → 必须在 `EXTRAS` 里给出原因（防止偷偷发明一套自己的 API）；
+* **清单里列着但其实已实现** → 报错（清单过期）。
+
+参照实现是 devDependency。没装时那份测试会**跳过**（离线环境不该变红），
+CI 用 `npm ci` 装好，所以门禁是强制生效的。
+
 ## 开发
 
 ```bash

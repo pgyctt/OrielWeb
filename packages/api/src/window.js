@@ -23,6 +23,17 @@ import {
     physicalToLogical,
 } from './dpi.js';
 
+// **把 dpi 的四个类转出去**（对标 Tauri 的 window 模块）。
+//
+// Tauri 的 `@tauri-apps/api/window` 会 re-export 它们，所以页面里写
+// `import { LogicalSize } from '@tauri-apps/api/window'` 是能跑的。
+// 少了这一行，那种写法在迁移后会直接报"没有这个导出"——
+// 它看起来像"包不完整"，实际只差一次转出。
+//
+// 这条是 `tauri-alignment` 测试机械比对出来的（见那个文件）：
+// 我在 API.md 里写了"dpi 横跨 window 与 dpi 两处"，但没有真的把它转出来。
+export { LogicalSize, LogicalPosition, PhysicalSize, PhysicalPosition } from './dpi.js';
+
 /**
  * 把宿主返回的尺寸对象包成 {@link LogicalSize} 实例。
  *

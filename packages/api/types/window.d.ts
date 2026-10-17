@@ -240,5 +240,4 @@ export class Window {
         payload: null;
     }) => void): Promise<() => void>;
 }
-import { LogicalSize } from './dpi.js';
-import { LogicalPosition } from './dpi.js';
+export { LogicalSize, LogicalPosition, PhysicalSize, PhysicalPosition } from "./dpi.js";
