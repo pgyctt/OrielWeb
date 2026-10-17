@@ -115,23 +115,15 @@ internal static class OrielBridgeTemplate
     }
 
     /// <summary>
-    /// 注入给页面的库版本：程序集版本的前三段（<c>Major.Minor.Build</c>）。
+    /// 注入给页面的库版本字面量（见 <see cref="OrielLibrary.Version"/>）。
     /// </summary>
     /// <remarks>
     /// 以前这里是脚本里写死的 <c>'0.1.0'</c>，与包版本各自漂移——而 <c>oriel.version</c> 正是给页面
-    /// 做能力探测用的，一个恒定的旧版本号会静默地误导所有基于它的兼容判断。改为从程序集读，
-    /// 版本号就只有一个来源（csproj 的 <c>&lt;Version&gt;</c>）。
+    /// 做能力探测用的，一个恒定的旧版本号会静默地误导所有基于它的兼容判断。
+    /// 现在唯一的来源是 <see cref="OrielLibrary.Version"/>（最终来自 csproj 的 <c>&lt;Version&gt;</c>），
+    /// 页面侧的 <c>oriel.version</c> 与 <c>app.getTauriVersion()</c> 共用它。
     /// </remarks>
-    private static string VersionLiteral
-    {
-        get
-        {
-            Version? version = typeof(OrielBridgeTemplate).Assembly.GetName().Version;
-            return version is null
-                ? "0.0.0"
-                : $"{version.Major}.{version.Minor}.{Math.Max(version.Build, 0)}";
-        }
-    }
+    private static string VersionLiteral => JsonText.EncodeString(OrielLibrary.Version);
 
     private static string LoadSource()
     {

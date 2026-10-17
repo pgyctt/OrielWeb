@@ -37,6 +37,10 @@
       "types": "./types/path.d.ts",
       "default": "./src/path.js"
     },
+    "./app": {
+      "types": "./types/app.d.ts",
+      "default": "./src/app.js"
+    },
     "./window": {
       "types": "./types/window.d.ts",
       "default": "./src/window.js"

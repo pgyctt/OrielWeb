@@ -163,7 +163,7 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
   实测数值与 `WithSize` 那处修复**交叉吻合**：framed 下 `Outer - Inner = 16x39`、
   `InnerPos - OuterPos = 8,31`。
 
-### 新增（路径运算，F1）
+#### 路径运算（F1）
 
 - **`@orielweb/api/path`**（对标 `@tauri-apps/api/path` 的路径运算部分）：`sep` / `delimiter`
   （**同步**，读宿主注入的常量）+ `join` / `normalize` / `dirname` / `extname` / `basename` /
@@ -185,8 +185,42 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
   本库用 `Path.GetFullPath`，纯词法，对不存在的路径也能正确工作。
   需要"真实路径"应当是 `fs` 模块的一个显式操作，而不是 `normalize` 偷偷做的事。
 
+#### 应用元信息（F4a）
+
+- **`OrielAppInfo`**（`OrielApp.Info`）+ `OrielAppBuilder.WithAppInfo(name, version, identifier)`：
+  应用自身的名称 / 版本 / 标识符，对标 Tauri 的 `tauri.conf.json` 里那三个字段。
+  三项**独立**退化（只给其中一项时其余仍从入口程序集推断）——"只想改个显示名"
+  不必把版本号也抄一遍，而抄一遍的后果是它从此不再跟随程序集、静默过期。
+  默认来源：名称取 `AssemblyProduct` → `AssemblyTitle` → 程序集名；版本取
+  `AssemblyInformationalVersion`（**去掉 `+` 之后的构建元数据**，那是 git 提交号，
+  参与版本比较会让同一个发布版本看起来"不相等"）→ 程序集版本；标识符取程序集名小写化。
+- **标识符在 `Build()` 时校验**：只允许字母、数字、`-`、`_`、`.`，因为它是**应用数据目录的
+  组成部分**。路径分隔符被明确拒绝（`/` 或 `\` 会让数据目录跳到别的地方去，
+  而那是从配置里读出来的值）。`"."` / `".."` 这类"能过字符集但作为目录名指向别处"的输入
+  单独挡住。校验放在启动而不是"第一次写配置"：后者故障点离原因很远。
+- **`OrielLibrary.Version`**：库版本的**唯一来源**（程序集版本前三段）。
+  桥接模板注入的 `oriel.version` 与 `app.getTauriVersion()` 共用它——
+  两个来源会让"我该信哪个"变成一个没有答案的问题。
+- **内建命令族 `app.*`**（5 条只读元信息）+ **`@orielweb/api/app`**：
+  `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`。
+  **整组始终放行**（见 `OrielCapabilityRules.AlwaysAllowedAppCommands`）：读的都是宿主
+  本来就会告诉页面的东西。放行的是**列举出来的那几条**、不是 `app.*` 前缀——
+  将来加 `exit` / `show` / `hide` 时它们不在名单里，会照旧走能力校验（有测试钉住这条）。
+  **刻意不含**：`exit` / `show` / `hide` / `setTheme` / `setDockVisibility`（是能力不是元信息）、
+  `getBundleType` / `BundleType`（返回 Tauri 打包器的产物类型，本库是库不是打包器，
+  **给不出这个值**——编一个比不提供更糟，迁移代码会基于错信息分支）。
+
 ### 修复
 
+- **`oriel.version` 被双重编码**：`__ORIEL_VERSION__` 在模板里原本写着 `'__ORIEL_VERSION__'`
+  （自带引号），而本轮把宿主的注入值改成了 JSON 字符串字面量，于是生成的脚本成了
+  `version: '"0.3.5"',`——页面拿到的是**连引号一起**的 `"0.3.5"`，所有基于
+  `oriel.version` 的版本比较会静默给出错答案，而打印出来几乎看不出来（两边都有引号）。
+  模板改成不带引号的写法（与 `label` 同一模式：token 展开成一段 **JS 表达式**）。
+  **这是真页面自检抓到的**——Node 侧的桥接测试当时也一起红了（夹具注入裸值导致语法错），
+  但双重编码那个更阴的变体只有把值打出来看才认得出。
+  现在夹具统一用 `JSON.stringify` 注入，并加了一条断言：`oriel.version` 是 string 且
+  **不含引号**。token 的契约（"展开成表达式"）也写进了夹具注释。
 - **`extname` 对隐藏文件的口径**：.NET 的 `Path.GetExtension(".gitignore")` 给 `gitignore`，
   而 Rust 的 `Path::extension()`（Tauri 的 `extname`）与 Node 的 `path.extname` 都给**空串**
   ——整个名字是文件名，前导点不算扩展名分隔符。从 Tauri 迁来的代码走的是 Rust 口径，

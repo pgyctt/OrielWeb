@@ -56,6 +56,43 @@ public sealed class OrielAppBuilder
     internal JsonSerializerContext? JsonContext { get; private set; }
 
     /// <summary>
+    /// 应用自身的元信息（名称 / 版本 / 标识符；见 <see cref="OrielAppInfo"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 默认从入口程序集推断，所以最小示例不必配。正式应用应当显式给——
+    /// 尤其标识符，它将成为数据目录的组成部分。
+    /// </remarks>
+    internal OrielAppInfo AppInfo { get; private set; } = OrielAppInfo.Detect();
+
+    /// <summary>
+    /// 设置应用元信息（对标 Tauri 的 <c>tauri.conf.json</c> 里 <c>productName</c> /
+    /// <c>version</c> / <c>identifier</c>）。
+    /// </summary>
+    /// <param name="name">应用显示名；省略则从入口程序集的产品名推断。</param>
+    /// <param name="version">应用版本；省略则从入口程序集的版本信息推断。</param>
+    /// <param name="identifier">应用标识符，形如 <c>com.example.app</c>；省略则从程序集名推断。</param>
+    /// <remarks>
+    /// <para>
+    /// 三项**独立**处理：只给其中一项时，另两项仍走自动推断。所以"我只想改个显示名"
+    /// 不必把版本号也抄一遍——抄一遍的后果是那个版本号从此不再跟随程序集，静默地过期。
+    /// </para>
+    /// <para>
+    /// 标识符的字符集会在 <c>Build()</c> 时校验（只允许字母、数字、<c>-</c>、<c>_</c>、<c>.</c>），
+    /// 因为它是数据目录的组成部分。详见 <see cref="OrielAppInfo"/> 的 remarks。
+    /// </para>
+    /// </remarks>
+    public OrielAppBuilder WithAppInfo(string? name = null, string? version = null, string? identifier = null)
+    {
+        AppInfo = new OrielAppInfo
+        {
+            Name = string.IsNullOrWhiteSpace(name) ? AppInfo.Name : name,
+            Version = string.IsNullOrWhiteSpace(version) ? AppInfo.Version : version,
+            Identifier = string.IsNullOrWhiteSpace(identifier) ? AppInfo.Identifier : identifier,
+        };
+        return this;
+    }
+
+    /// <summary>
     /// 注册 STJ 源生成的 <see cref="JsonSerializerContext"/>：DTO 命令参数/返回值由此实现 AOT 安全序列化。
     /// </summary>
     /// <remarks>

@@ -323,7 +323,9 @@ F1 ─→ F2（scope 系统是 convertFileSrc 的前置）
 | **E3** dpi 多态接进 window 模块 | ✅ 完成 | `setSize` / `setPosition` / `setMinSize` 接受 `LogicalSize` 与 `PhysicalSize`（后者按窗口所在显示器的缩放比换算）；查询返回 `LogicalSize` / `LogicalPosition` 实例，`setSize(innerSize())` 是**不动点**（单测 + 真页面断言都有） |
 | **F7** 错误模型 | ✅ 完成（Windows 已验证） | 回执带可选 `code` / `data` → 页面 `Error` 上可读；8 个库级错误码（`OrielIpcErrorCodes`）；应用可自带 `OrielIpcException.Code` / `.Details`；**逐次调用超时**（`invoke(cmd, args, { timeout })`，宿主显式声明 `supportsPerCallTimeout`）；回执改为整对象传递（`_onResult(result)`），消除三平台的抽取漂移。新增 13 项单测 + 桥接 24 项 + 真页面 5 项 |
 | **F1** `path` 模块 | ✅ 完成（Windows 已验证） | 内建命令族 `path.*`（7 条）+ `@orielweb/api/path`；`sep` / `delimiter` 由宿主注入（**同步**）；**整族始终放行**（不做 I/O 是那条放行的前提）。两处对接 Rust 口径（`extname` 不带点、隐藏文件无扩展名、`basename`/`dirname` 忽略尾随分隔符）；`normalize` **不做 I/O**（与 Tauri 的 `canonicalize` 有意分歧）。新增 37 项单测 + 前端 11 项 + 真页面 14 项 |
-| **F** 其余（dialog / app / opener / clipboard / convertFileSrc） / **H** | ⬜ 未开始 | 见 §4.1 |
+| **F4a** `app` 元信息 | ✅ 完成（Windows 已验证） | `OrielAppInfo` + `WithAppInfo(name, version, identifier)`（三项独立从入口程序集退化）；标识符在 `Build()` 时校验字符集（它是数据目录的组成部分）；`OrielLibrary.Version` 成为库版本唯一来源；内建 `app.*` 五条只读 + `@orielweb/api/app`，**整组始终放行**（放行的是列举的那几条，不是前缀——有测试钉住）。刻意不含 `exit`/`show`/`hide`（是能力）与 `getBundleType`（本库不是打包器，给不出）。新增 47 项单测 + 前端 6 项 + 真页面 6 项 |
+| **F4b** 目录解析 + `fs` scope | ⬜ 未开始 | 见 §4.1（与 D-3 合并做） |
+| **F** 其余（dialog / opener / clipboard / convertFileSrc） / **H** | ⬜ 未开始 | 见 §4.1 |
 
 ### M3 的状态（2026-10-17）
 

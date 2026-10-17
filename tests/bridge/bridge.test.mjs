@@ -67,12 +67,20 @@ function buildScript(
         label = injectedLabel,
     } = {},
 ) {
+    // **占位符的契约：每个 token 展开成一段 JS 表达式**，不是"一段文本"。
+    //
+    // 字符串 token 必须由注入方带引号（`JSON.stringify` 或 `'...'`），因为模板里
+    // **没有**引号。这一条踩过一次：`__ORIEL_VERSION__` 在模板里从 `'...'` 改成裸 token
+    // 之后，夹具仍注入裸值，生成的脚本成了 `version: 9.8.7,`（语法错），
+    // 而更阴的变体是"注入方带引号 + 模板也带引号"→ 双重编码，页面拿到 `"0.3.5"`（连引号），
+    // 所有版本比较静默失败。所以夹具这里统一用 JSON.stringify，
+    // 并且有一条测试断言 `oriel.version === injectedVersion`（见"版本"那节）。
     const script = template
         .replaceAll('__ORIEL_PLATFORM__', `'${bridge.platform}'`)
         .replaceAll('__ORIEL_POST__', bridge.post)
         .replaceAll('__ORIEL_CONSOLE_ENABLED__', forwardConsole ? 'true' : 'false')
         .replaceAll('__ORIEL_ZOOM_ENABLED__', zoomEnabled ? 'true' : 'false')
-        .replaceAll('__ORIEL_VERSION__', injectedVersion)
+        .replaceAll('__ORIEL_VERSION__', JSON.stringify(injectedVersion))
         .replaceAll('__ORIEL_TOKEN__', token)
         .replaceAll('__ORIEL_TRUSTED__', JSON.stringify(trusted))
         // 数值走 InvariantCulture（见 OrielBridgeTemplate.NumberLiteral），
@@ -480,6 +488,14 @@ for (const bridge of bridges) {
         assert.ok(env.window.oriel, 'window.oriel 未安装');
         assert.equal(env.window.oriel.platform, bridge.platform);
         assert.equal(env.window.oriel.version, injectedVersion, 'oriel.version 未采用注入值');
+
+        // 类型与"没有多余引号"都要钉住：`oriel.version` 是给页面做能力探测用的，
+        // 而"双重编码"（注入方带引号 + 模板也带引号）会得到一个**看起来像版本号、
+        // 实际多两个引号**的字符串——`'0.1.0' <= '0.3.5'` 这类比较会静默给出错答案，
+        // 且从控制台打印出来几乎看不出来（两边都有引号）。
+        assert.equal(typeof env.window.oriel.version, 'string');
+        assert.doesNotMatch(env.window.oriel.version, /["']/, 'oriel.version 里不该带引号（双重编码？）');
+
         await env.window.oriel.ready;
     });
 

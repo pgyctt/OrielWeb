@@ -135,6 +135,15 @@ internal sealed class OrielIpcGuard
             return true;
         }
 
+        // app.* 里那几条只读元信息同样整族放行（逐条理由见 IsAlwaysAllowedAppCommand）。
+        // 注意放行的是**列举出来的那几条**，不是 app.* 前缀——将来加 exit/show/hide 时
+        // 它们不在名单里，会照旧走能力校验。
+        if (OrielCapabilityRules.IsAlwaysAllowedAppCommand(commandName))
+        {
+            denialReason = null;
+            return true;
+        }
+
         if (_options is null)
         {
             if (_isDebugBuild)

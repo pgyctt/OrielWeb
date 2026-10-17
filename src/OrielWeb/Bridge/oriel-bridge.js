@@ -89,7 +89,11 @@
         label: __ORIEL_LABEL__,
         // 由宿主注入的库版本（见 OrielBridgeTemplate）。页面用它做能力探测，
         // 因此**不能**在这里写死字面量——写死会与包版本各自漂移，静默误导所有兼容判断。
-        version: '__ORIEL_VERSION__',
+        //
+        // 注意这里**没有引号**：注入的是一段 JSON 字符串字面量（含引号），
+        // 与下面的 label 同一个模式。写成 `'__ORIEL_VERSION__'` 会双重编码，
+        // 页面拿到的是 `"0.3.5"`（连引号一起），而所有版本比较都会静默失败。
+        version: __ORIEL_VERSION__,
         // 平台路径常量（对标 Tauri 的 path.sep / path.delimiter）。
         //
         // **这两个是同步的**（Tauri 亦然）：它们是纯常量，为了它们走一次异步 IPC

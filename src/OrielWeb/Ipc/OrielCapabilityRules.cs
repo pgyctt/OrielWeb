@@ -229,6 +229,44 @@ internal static class OrielCapabilityRules
     }
 
     /// <summary>
+    /// 始终放行的 <c>app.*</c> 命令（只读元信息）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 放行的理由与 <c>path.*</c> 同类：这几条读的都是**宿主本来就会告诉页面**的东西。
+    /// 页面已经知道自己的来源 URL、窗口 label、平台标识；再加上应用名/版本/标识符，
+    /// 没有任何一条是"应用不该知道"的信息。
+    /// </para>
+    /// <para>
+    /// 反过来说，<b>有状态的那几条刻意不在本族</b>：<c>exit</c> / <c>show</c> / <c>hide</c>
+    /// 会改变应用状态，它们是能力而不是元信息。Tauri 把两者放在同一个 <c>app</c> 模块里，
+    /// 但门禁是按命令名判的，所以在这一点上分得开——将来加它们时各自单独判断。
+    /// </para>
+    /// </remarks>
+    private static readonly string[] AlwaysAllowedAppCommands =
+    [
+        "app.getName",
+        "app.getVersion",
+        "app.getIdentifier",
+        "app.getTauriVersion",
+        "app.supportsMultipleWindows",
+    ];
+
+    /// <summary>判断某个 <c>app.*</c> 命令是否属于"始终放行"的那几条只读元信息。</summary>
+    internal static bool IsAlwaysAllowedAppCommand(string name)
+    {
+        foreach (string allowed in AlwaysAllowedAppCommands)
+        {
+            if (string.Equals(allowed, name, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// 按 allow / deny 两组模式判定一个命令名。
     /// </summary>
     /// <remarks>

@@ -127,6 +127,34 @@ internal static class ApiSelfTest
                 try { core.convertFileSrc('/tmp/a.png'); } catch (_) { convertThrew = true; }
                 check('core.convertFileSrc 未实现时明确抛错', convertThrew, 'P1-2');
 
+                // ---- app（F4a）：只读元信息 ----
+                const app = await import(vendor + '/app.js');
+
+                const appName = await app.getName();
+                check('app.getName() 给非空应用名',
+                    typeof appName === 'string' && appName.length > 0, appName);
+
+                const appVersion = await app.getVersion();
+                check('app.getVersion() 形如 主.次.修订',
+                    /^\d+\.\d+\.\d+$/.test(appVersion), appVersion);
+
+                const appId = await app.getIdentifier();
+                check('app.getIdentifier() 是目录安全的标识符',
+                    /^[A-Za-z0-9._-]+$/.test(appId) && appId === appId.toLowerCase(), appId);
+
+                // getTauriVersion 与 oriel.version **必须同源**：两处做能力探测
+                // 得到矛盾答案的话，"该信哪个"就变成一个没有答案的问题。
+                const orielVersion = await app.getTauriVersion();
+                check('app.getTauriVersion() 与 window.oriel.version 同源',
+                    orielVersion === window.oriel.version,
+                    orielVersion + ' vs ' + window.oriel.version);
+
+                check('app.supportsMultipleWindows() 为 true',
+                    (await app.supportsMultipleWindows()) === true, 'ok');
+
+                // demo 的能力名单里没有任何 app.* 条目——这几条能跑通就是"只读元信息放行"的证据
+                check('app.* 元信息无需能力声明即可用', true, '见 Program.cs 的能力名单');
+
                 // ---- path（F1）：同步常量 + 路径运算 ----
                 const path = await import(vendor + '/path.js');
 

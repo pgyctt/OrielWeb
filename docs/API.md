@@ -900,6 +900,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 | `event` | `listen` / `once` / `emit` / `emitTo` / `TauriEvent` |
 | `window` | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow`（恒 `null`，见下）+ `Window` 类 |
 | `path` | `sep` / `delimiter`（**同步**）+ `join` / `normalize` / `dirname` / `extname` / `basename` / `isAbsolute` / `resolve` |
+| `app` | `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`（全是只读元信息，**无需能力声明**） |
 | `dpi` | `LogicalSize` / `PhysicalSize` / `LogicalPosition` / `PhysicalPosition` + 归一与换算 |
 | `mocks` | `mockIPC` / `mockWindows` / `mockEmit` / `mockConvertFileSrc` / `clearMocks` |
 
@@ -934,6 +935,45 @@ sep();                                 // 同步：'\\'（Windows）或 '/'（PO
 > POSIX 的重复/尾随斜杠……在 JS 里手写一份就是**又造一份平台语义**，两份实现必然在某个边角上
 > 不一致，症状是"只在某个平台错"。宿主有 .NET 的 `Path`，那是这些规则在 .NET 里的权威实现——
 > 加上上面那两处 Rust 口径的显式调整。
+
+### `app` 模块（只读元信息）
+
+```js
+import { getName, getVersion, getIdentifier, getTauriVersion } from '@orielweb/api/app';
+
+await getName();           // '示例应用'
+await getVersion();        // '1.2.3'    来自程序集，或 WithAppInfo 显式给
+await getIdentifier();     // 'com.example.app'
+await getTauriVersion();   // '0.4.0'    ← **库**版本，不是 Tauri 框架版本
+```
+
+**整组无需能力声明**：这几条读的都是宿主本来就会告诉页面的东西（页面已知自己的来源、
+窗口 label、平台标识），没有一条是"应用不该知道"的信息。
+
+值从哪来（对标 Tauri 的 `tauri.conf.json`）：
+
+| 项 | 默认来源 | 显式配置 |
+|---|---|---|
+| `name` | 入口程序集的 `AssemblyProduct` → `AssemblyTitle` → 程序集名 | `WithAppInfo(name: …)` |
+| `version` | `AssemblyInformationalVersion`（去掉 `+` 后的构建元数据）→ 程序集版本 | `WithAppInfo(version: …)` |
+| `identifier` | 程序集名小写化 | `WithAppInfo(identifier: …)` |
+
+三项**独立**退化：只给其中一项时其余仍自动推断——所以"只想改个显示名"不必把版本号也抄一遍
+（抄一遍的后果是它从此不再跟随程序集，静默过期）。
+
+标识符的字符集在 `Build()` 时校验（只允许字母、数字、`-`、`_`、`.`），因为它是**应用数据目录的
+组成部分**；`.` / `..` 这类"能过字符集但作为目录名指向别处"的输入单独挡住。
+
+> **`getTauriVersion()` 的语义提醒**：Tauri 的这个函数返回**框架**版本（`2.x.y`），
+> 本库返回**库**版本（`0.4.0` 这一类）。数字放在一起比较没有意义——迁移时若代码里有
+> `getTauriVersion()` 的版本号判断，那一段必须重写，不能照搬。
+> 它与 `window.oriel.version` **同源**（都来自程序集版本），所以两处做能力探测不会矛盾。
+
+**本模块刻意不含**：`exit` / `show` / `hide` / `setTheme` / `setDockVisibility`
+（它们是**能力**不是元信息，要加时各自过一遍门禁姿态）、`getBundleType` / `BundleType`
+（返回的是 Tauri 打包器的产物类型，本库是库不是打包器，**给不出这个值**——编一个比不提供更糟，
+迁移代码会基于错信息分支）、`defaultWindowIcon` / `fetchDataStoreIdentifiers` /
+`removeDataStore` / `onBackButtonPress`（依赖图标资源表、数据存储、移动端返回键，暂无对应物）。
 
 **`window` 模块的方法是否需要能力声明**：
 

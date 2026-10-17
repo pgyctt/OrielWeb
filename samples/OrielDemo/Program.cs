@@ -178,6 +178,10 @@ internal static class Program
         var builder = Oriel.CreateBuilder(args)
             .UseEmbeddedAssets(AssetHost)
             .UseJsonContext(AppJsonContext.Default)
+            // 应用元信息：显式给。不显式给时也会从程序集推（产品名 / 版本 / 程序集名），
+            // 但标识符会变成 "orieldemo" 这种从程序集名来的东西——而它将成为应用数据目录的
+            // 组成部分（见 docs/API.md 的 app 模块一节），所以正式应用应当显式指定。
+            .WithAppInfo(name: "OrielWeb 示例", identifier: "com.orielweb.demo")
             .AddCommands<TodoCommands>()
             .AddCommands<ManualCommands>()
             // 能力模型：声明页面真正会调用的命令（都写在这里的用途是当示范——Release 下

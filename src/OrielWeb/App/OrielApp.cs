@@ -10,9 +10,24 @@ public sealed class OrielApp : IDisposable
     private readonly OrielAppBuilder _builder;
     private IPlatformBackend? _backend;
 
+    /// <summary>
+    /// 应用自身的元信息（名称 / 版本 / 标识符）。
+    /// </summary>
+    /// <remarks>
+    /// 来自 <see cref="OrielAppBuilder.WithAppInfo"/>；没配时从入口程序集推断。
+    /// 在 <c>Build()</c> 期间已校验过，所以读到的值一定可用。
+    /// </remarks>
+    public OrielAppInfo Info { get; }
+
     internal OrielApp(OrielAppBuilder builder)
     {
         _builder = builder;
+
+        // 元信息在这里校验（= Build() 期间）：标识符要拼进应用数据目录，
+        // 而"启动后第一次写配置"才发现它非法，故障点离原因很远。
+        builder.AppInfo.Validate();
+        Info = builder.AppInfo;
+
         Guard = new OrielIpcGuard(
             builder.Capabilities,
             OrielBuildConfiguration.IsDebugBuild(System.Reflection.Assembly.GetEntryAssembly()),
