@@ -79,6 +79,9 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     // 上一次已上报的焦点状态；null 表示"还没报过"（首个 didBecomeKey 必须报，哪怕值相同）
     private bool? _lastReportedFocus;
 
+    // 强制销毁中：Destroy() 置它，用来让关闭路径上的判断看出"这次不受拦"。
+    private bool _forceDestroy;
+
     private event Action? Loaded;
     private event Action<OrielCloseRequestEventArgs>? Closing;
     private event Action? Closed;
@@ -217,6 +220,7 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         _title = options.Title;
         // 策略是可写属性（运行时能改），初值取自 options
         ContextMenuPolicy = options.ContextMenuPolicy;
+        CloseInterceptEnabled = options.InterceptClose;
         if (options.MinWidth is int minWidth) _minWidth = minWidth;
         if (options.MinHeight is int minHeight) _minHeight = minHeight;
         _messageHandler = new MacOSWebMessageHandler(this);
@@ -610,11 +614,34 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     // 生命周期回调（由 trampoline 调用，UI 线程）
     // ------------------------------------------------------------------
 
-    internal bool OnWindowShouldClose()
+    /// <summary>
+    /// Cocoa <c>windowShouldClose:</c>：返回 true 表示**允许**关闭。
+    /// </summary>
+    /// <remarks>
+    /// 与 Linux 的 <c>delete-event</c> 相反（那边 true = 阻止），是本平台内的翻译点。
+    /// </remarks>
+    internal bool OnWindowShouldClose() => DecideClose() == OrielCloseDecision.Proceed;
+
+    /// <summary>
+    /// 判定一次关闭请求（宿主否决 → 页面接管 → 放行）。
+    /// </summary>
+    /// <remarks>
+    /// "页面可决定"要求页面已开启接管**且已加载完成**：那条 <c>close-requested</c>
+    /// 送不到未加载的页面，挂起只会让窗口变成点 X 没反应。
+    /// </remarks>
+    internal OrielCloseDecision DecideClose()
     {
-        var args = new OrielCloseRequestEventArgs();
-        Closing?.Invoke(args);
-        return !args.Cancel;
+        // 强制销毁途中不再问任何人：Destroy() 之后的任何关闭请求都直接放行，
+        // 否则"页面接管"会把强制销毁也拦下来（那与 Destroy 的语义直接冲突）。
+        if (_forceDestroy)
+        {
+            return OrielCloseDecision.Proceed;
+        }
+
+        return OrielClosePipeline.Decide(
+            Closing,
+            pageCanDecide: CloseInterceptEnabled && _pageReady,
+            emitCloseRequested: () => PushEventOnUi(OrielClosePipeline.CloseRequestedEventName, "null"));
     }
 
     internal void OnWindowWillClose()
@@ -700,6 +727,27 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     public void Hide() => ObjCRuntime.SendVoidObj(_nsWindow, ObjCRuntime.Sel("orderOut:"), 0);
 
     public void Close() => ObjCRuntime.SendVoidObj(_nsWindow, ObjCRuntime.Sel("performClose:"), 0);
+
+    /// <summary>强制销毁窗口：绕过 <c>Closing</c> 与页面接管（对标 Tauri 2 的 <c>destroy</c>）。</summary>
+    /// <remarks>
+    /// <b>必须置 <c>_forceDestroy</c> 再 <c>close</c></b>：Cocoa 没有"直接销毁"的入口，
+    /// <c>close</c> 一定会先问委托的 <c>windowShouldClose:</c>。那条路是我们自己接的，
+    /// 所以让 <see cref="DecideClose"/> 在强制销毁时直接放行即可——
+    /// 这与 Windows/Linux 用"不发 WM_CLOSE / 不走 delete-event"达到的效果相同。
+    /// </remarks>
+    public void Destroy()
+    {
+        if (_nsWindow == 0)
+        {
+            return;
+        }
+
+        _forceDestroy = true;
+        ObjCRuntime.SendVoid(_nsWindow, ObjCRuntime.Sel("close"));
+    }
+
+    /// <summary>是否让页面接管关闭；初值取自 <see cref="OrielWindowOptions.InterceptClose"/>。</summary>
+    public bool CloseInterceptEnabled { get; set; }
 
     public void Focus()
     {

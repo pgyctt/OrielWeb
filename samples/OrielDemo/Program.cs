@@ -52,7 +52,7 @@ internal static class Program
     /// <c>--selftest</c> 认得的名字。加一个自检只需在这里加名字 + 在 Main 里加一行判定。
     /// </summary>
     private static readonly string[] SelfTestNames =
-        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowevents", "event"];
+        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowevents", "event", "close"];
 
     /// <summary>本次请求的自检名字是否就是 <paramref name="name"/>（忽略大小写与首尾空白）。</summary>
     private static bool IsSelfTest(string? requested, string name)
@@ -149,6 +149,9 @@ internal static class Program
         // event：event.emit 的广播与定向投递（页面 → 宿主 → 页面）。
         // 它的主窗口要载探针页面，且能力名单必须放行 event.emit——那正是"新命令族默认不放行"的体现。
         var eventSelfTest = IsSelfTest(selfTest, "event");
+        // close：关闭接管（可阻止关闭）。四条路径逐条取证，见 CloseSelfTest 的说明。
+        // 它自己建探针窗口，主窗口只需正常存在。
+        var closeSelfTest = IsSelfTest(selfTest, "close");
         // --manual-check：手动验证操作台（停在那里等人点，不自动退出）。
         // 与 --selftest shell 的分工：那个是给 CI 的无人断言，这个是给人看的——
         // 每项做成按钮，托管侧的回调（托盘菜单项、通知点击、快捷键、拖放）回显到页面。
@@ -160,7 +163,8 @@ internal static class Program
         bool anySelfTest = navSelfTest || ipcSelfTest || themeSelfTest
             || singleInstanceSelfTest || shellSelfTest || capabilitySelfTest || multiWindowSelfTest
             || schemeSelfTest || exitSelfTest || threadingSelfTest || traySelfTest || trayJsSelfTest
-            || geometrySelfTest || geometryFramelessSelfTest || windowEventsSelfTest || eventSelfTest;
+            || geometrySelfTest || geometryFramelessSelfTest || windowEventsSelfTest || eventSelfTest
+            || closeSelfTest;
         var manualCheck = !anySelfTest && !args.Contains("--todo");
 
         // 主题自检需要 OrielApp（主题是应用级的），所以这里显式 Build 再 Run；
@@ -315,6 +319,12 @@ internal static class Program
                     EventSelfTest.AttachEvents(win);
                     win.Loaded += EventSelfTest.Begin;
                 }
+                if (closeSelfTest)
+                {
+                    // 关闭自检：它自己建探针窗口，所以等主窗口 Loaded（App 可用）再开始。
+                    WebviewWindow created = win;
+                    created.Loaded += () => CloseSelfTest.Begin(created.App, created);
+                }
                 if (traySelfTest || trayJsSelfTest)
                 {
                     // 托盘是应用级资源，要在 UI 线程上建；Loaded 时后端已就位
@@ -405,6 +415,7 @@ internal static class Program
             || (geometryFramelessSelfTest && GeometrySelfTest.Failed)
             || (windowEventsSelfTest && WindowEventsSelfTest.Failed)
             || (eventSelfTest && EventSelfTest.Failed)
+            || (closeSelfTest && CloseSelfTest.Failed)
             || ((traySelfTest || trayJsSelfTest) && TraySelfTest.Failed))
         {
             Environment.ExitCode = 1;

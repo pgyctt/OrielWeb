@@ -89,6 +89,9 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     // 上一次已上报的焦点状态；null 表示"还没报过"（首个 focus-in 必须报，哪怕值相同）
     private bool? _lastReportedFocus;
 
+    // 强制销毁中：Destroy() 置它，用来让关闭路径上的判断看出"这次不受拦"。
+    private bool _forceDestroy;
+
     private event Action? Loaded;
     private event Action<OrielCloseRequestEventArgs>? Closing;
     private event Action? Closed;
@@ -193,6 +196,7 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         _title = options.Title;
         // 策略是可写属性（运行时能改），初值取自 options
         ContextMenuPolicy = options.ContextMenuPolicy;
+        CloseInterceptEnabled = options.InterceptClose;
         if (options.MinWidth is int minWidth) _minWidth = minWidth;
         if (options.MinHeight is int minHeight) _minHeight = minHeight;
         _messageHandler = new LinuxWebMessageHandler(this);
@@ -631,11 +635,20 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     // 生命周期回调（由 LinuxSignalHandlers 转发，UI 线程）
     // ------------------------------------------------------------------
 
+    /// <summary>
+    /// GTK <c>delete-event</c>：返回 true 表示**吞掉**该事件（窗口不销毁）。
+    /// </summary>
+    /// <remarks>
+    /// GTK 的返回值语义与另外两个平台相反，这里是唯一的翻译点：
+    /// <c>true</c> = 阻止关闭，<c>false</c> = 放行。
+    /// </remarks>
     internal bool OnWindowShouldClose()
     {
-        var args = new OrielCloseRequestEventArgs();
-        Closing?.Invoke(args);
-        return !args.Cancel;
+        OrielCloseDecision decision = DecideClose();
+
+        // Proceed → false（放行，GTK 继续销毁窗口）
+        // Cancel / Suspend → true（吞掉事件，窗口留在打开状态）
+        return decision != OrielCloseDecision.Proceed;
     }
 
     internal void OnWindowDestroyed()
@@ -786,6 +799,43 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     {
         if (!WindowAlive) { return; }
         GtkNative.GtkWindowClose(_gtkWindow);
+    }
+
+    /// <summary>强制销毁窗口：绕过 <c>Closing</c> 与页面接管（对标 Tauri 2 的 <c>destroy</c>）。</summary>
+    /// <remarks>
+    /// 用 <c>gtk_widget_destroy</c> 而不是 <c>gtk_window_close</c>：后者会先发 <c>delete-event</c>
+    /// （正是可被拦下的那条路），前者直接销毁。这正是 Destroy 要的"不受拦"语义。
+    /// </remarks>
+    public void Destroy()
+    {
+        if (!WindowAlive) { return; }
+        _forceDestroy = true;
+        GtkNative.GtkWidgetDestroy(_gtkWindow);
+    }
+
+    /// <summary>是否让页面接管关闭；初值取自 <see cref="OrielWindowOptions.InterceptClose"/>。</summary>
+    public bool CloseInterceptEnabled { get; set; }
+
+    /// <summary>
+    /// 判定一次关闭请求（宿主否决 → 页面接管 → 放行）。
+    /// </summary>
+    /// <remarks>
+    /// "页面可决定"要求页面已开启接管**且已加载完成**：那条 <c>close-requested</c>
+    /// 送不到未加载的页面，挂起只会让窗口变成点 X 没反应。
+    /// </remarks>
+    internal OrielCloseDecision DecideClose()
+    {
+        // 强制销毁途中不再问任何人：Destroy() 之后的任何关闭请求都直接放行，
+        // 否则"页面接管"会把强制销毁也拦下来（那与 Destroy 的语义直接冲突）。
+        if (_forceDestroy)
+        {
+            return OrielCloseDecision.Proceed;
+        }
+
+        return OrielClosePipeline.Decide(
+            Closing,
+            pageCanDecide: CloseInterceptEnabled && _pageReady,
+            emitCloseRequested: () => PushEventOnUi(OrielClosePipeline.CloseRequestedEventName, "null"));
     }
 
     public void Focus()

@@ -33,6 +33,19 @@ internal interface IOrielWindowControl
 
     void Close();
 
+    /// <summary>强制销毁窗口：绕过 <c>Closing</c> 与页面接管（对标 Tauri 2 的 <c>destroy</c>）。</summary>
+    void Destroy();
+
+    /// <summary>
+    /// 是否让页面接管关闭；页面侧用它实现"确认后关闭"。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="Destroy"/> 同属"关闭"这一族能力，因此也归在 <c>win.*</c> 的放行名单里。
+    /// 它只能影响**自己这个窗口**，且最坏后果是"把窗口变得更难关"（自伤而非越权）——
+    /// 应用始终可以从宿主侧关掉它。
+    /// </remarks>
+    bool CloseInterceptEnabled { get; set; }
+
     bool ToggleFullscreen();
 
     bool ToggleOnTop();

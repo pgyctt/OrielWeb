@@ -84,6 +84,25 @@ internal interface IWindowBackend
     void Show();
     void Hide();
     void Close();
+
+    /// <summary>
+    /// 强制销毁窗口：**绕过 <see cref="Closing"/> 与页面接管**（对标 Tauri 2 的 <c>Window.destroy</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 页面的"可阻止关闭"需要一个不受阻止的出口：页面自己同意关闭时调的就是它。
+    /// 若它也能被 <see cref="Closing"/> 拦下，"确认后关闭"这条路会被宿主否决逻辑
+    /// 无声地变成"关不掉"——而调用方以为用户已经确认过了。
+    /// </remarks>
+    void Destroy();
+
+    /// <summary>
+    /// 是否让**页面**接管关闭（置真后关闭请求会推 <c>close-requested</c> 并挂起）。
+    /// </summary>
+    /// <remarks>
+    /// 详见 <see cref="OrielWindowOptions.InterceptClose"/>。做成可写属性而不是只读选项，
+    /// 是因为页面往往只在"有未保存内容"时接管——那是个运行期状态。
+    /// </remarks>
+    bool CloseInterceptEnabled { get; set; }
     void Focus();
     void Maximize();
     void Minimize();

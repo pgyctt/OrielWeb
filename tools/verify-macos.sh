@@ -203,7 +203,7 @@ section "机器断言自检：nav / ipc / theme / capability / multiwindow / sch
 SELFTEST_FAILED=0
 # 未通过模式的结论行汇总，最后拼进一条 GitHub 注解（注解用 API 就能读，不必登录翻日志）
 SELFTEST_FAIL_DETAIL=""
-for mode in nav ipc theme capability multiwindow scheme threading tray tray-js geometry geometry-frameless windowevents event; do
+for mode in nav ipc theme capability multiwindow scheme threading tray tray-js geometry geometry-frameless windowevents event close; do
     selftest_log="$OUT/selftest-$mode.log"
     # 自检开关已合并：--selftest <名字>；输出结论行格式未变（NAV-SELFTEST: PASS 等）
     "$APP_EXE" --selftest "$mode" >"$selftest_log" 2>&1 &
@@ -221,7 +221,7 @@ for mode in nav ipc theme capability multiwindow scheme threading tray tray-js g
         selftest_code=$?
     fi
 
-    selftest_verdict="$(grep -E '^(NAV|IPC|THEME|CAPABILITY|MULTIWINDOW|SCHEME|THREADING|TRAY|TRAY-JS|GEOMETRY|WINDOWEVENTS|EVENT)-SELFTEST: ' "$selftest_log" | tail -1 || true)"
+    selftest_verdict="$(grep -E '^(NAV|IPC|THEME|CAPABILITY|MULTIWINDOW|SCHEME|THREADING|TRAY|TRAY-JS|GEOMETRY|WINDOWEVENTS|EVENT|CLOSE)-SELFTEST: ' "$selftest_log" | tail -1 || true)"
     echo "  [$mode] 退出码=${selftest_code} 结论=${selftest_verdict:-无}"
     # 明细总是回显到 CI 日志：artifact 里有完整文件，但日志能直接看
     sed 's/^/    /' "$selftest_log" || true

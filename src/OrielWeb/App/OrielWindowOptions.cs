@@ -67,6 +67,40 @@ public sealed class OrielWindowOptions
         return label.ToLowerInvariant();
     }
 
+    /// <summary>
+    /// 是否让**页面**接管关闭（默认 <c>false</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 置真后：用户点关闭（或程序调 <see cref="WebviewWindow.Close"/>）会推一个
+    /// <c>close-requested</c> 事件给页面，窗口**先不销毁**。页面同意关闭就调
+    /// <see cref="WebviewWindow.Destroy"/>，不同意就什么都不做。
+    /// 对标 Tauri 2 的 <c>onCloseRequested</c> + <c>preventDefault</c>。
+    /// </para>
+    /// <para>
+    /// <b>为什么必须是显式开关，不能"页面监听了就自动接管"</b>：Windows 的 <c>WM_CLOSE</c>
+    /// 是同步消息，宿主必须**当场**决定销不销毁，没有机会先问页面"你监听了吗"。
+    /// 所以"页面要接管"这件事必须提前登记。
+    /// </para>
+    /// <para>
+    /// 运行期可改（<see cref="WebviewWindow.CloseInterceptEnabled"/>）：页面常常只在
+    /// "有未保存内容"时接管，那是个状态而不是常量。
+    /// </para>
+    /// <para>
+    /// <b>宿主的 <see cref="WebviewWindow.Closing"/> 优先</b>：应用在 <c>Closing</c> 里置了
+    /// <c>Cancel</c> 就直接否决，不再问页面。顺序不能颠倒——否则页面会收到一个它无权决定的
+    /// 通知，还会把宿主的否决误当成"用户在确认框里点了取消"。
+    /// </para>
+    /// <para>
+    /// <b>页面加载完成前不生效</b>：那条事件送不到未加载的页面，挂起只会让窗口
+    /// 变成点 X 没反应（用户唯一的出路是任务管理器）。这与 <c>win.*</c> 后门要防的是同一类事故。
+    /// </para>
+    /// </remarks>
+    public bool InterceptClose { get; set; }
+
+    /// <summary>让页面接管关闭；语义与限制见 <see cref="InterceptClose"/>。</summary>
+    public OrielWindowOptions WithInterceptClose(bool enabled = true) { InterceptClose = enabled; return this; }
+
     public string Title { get; set; } = "Oriel";
     public int Width { get; set; } = 1000;
     public int Height { get; set; } = 700;

@@ -64,6 +64,7 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 
 | 属性 | 默认 | 链式写法 |
 |---|---|---|
+| `bool InterceptClose` | `false` | `WithInterceptClose(bool = true)`。**让页面接管关闭**：用户点关闭时推一个 `close-requested` 事件给页面，窗口**先不销毁**；页面同意就调 `WebviewWindow.Destroy()`，不同意就什么都不做。对标 Tauri 2 的 `onCloseRequested` + `preventDefault`。**宿主的 `Closing` 优先**（置了 `Cancel` 就不再问页面）；**页面加载完成前不生效**（事件送不到未加载的页面，挂起只会让窗口变成点 X 没反应） |
 | `string Label` | `"main"` | `WithLabel(string)`。**窗口的稳定标识**（对标 Tauri 2 的 `Window.label`），也是寻址单位：`OrielApp.GetWindow(label)` 按它取窗口。字符集限字母/数字/`-`/`.`/`_`，**自动归一小写**（三平台的大小写规则不同，不归一会出现"只在某个平台错配"）。**同一应用内必须唯一**，重复会在建窗时抛 `InvalidOperationException`——不会自动改名（自动改名会让 `emitTo('main', …)` 发到错误窗口且毫无症状）。页面侧读 `window.oriel.label` |
 | `string Title` | `"Oriel"` | `WithTitle(string)` |
 | `int Width` / `int Height` | `1000` / `700` | `WithSize(int, int)`。**逻辑像素的客户区**（三平台一致）：Windows 在 Per-Monitor-V2 下按窗口 DPI 折算，并把"客户区 → 整窗"换算掉（`AdjustWindowRectExForDpi`）；Linux/macOS 的原生 API 本就是客户区语义。**frameless 窗口不做这层换算**——它的客户区已铺满整窗 |
@@ -186,6 +187,8 @@ WebviewWindow? again = app.GetWindow("settings");   // 按 label 取回（不存
 | `OrielApp App { get; }` | 所属应用 |
 | **显隐与状态** | |
 | `Show()` `Hide()` `Close()` `Focus()` | `Close()` 会先触发 `Closing`（可取消） |
+| `Destroy()` | **强制销毁**：绕过 `Closing` 与页面接管。页面实现"确认后关闭"用的就是它——若它也能被拦下，那条路会被宿主否决逻辑无声地变成"关不掉"，而页面以为用户已经确认过了 |
+| `bool CloseInterceptEnabled { get; set; }` | 是否让页面接管关闭；初值来自 `OrielWindowOptions.InterceptClose`，运行期可改（页面常只在"有未保存内容"时接管） |
 | `Maximize()` `Minimize()` `Restore()` | — |
 | `SetFullscreen(bool enabled)` `SetOnTop(bool enabled)` | — |
 | `bool IsMaximized { get; }` / `bool ToggleMaximize()` | 切换后是否最大化（页面据此换图标） |
@@ -223,7 +226,7 @@ WebviewWindow? again = app.GetWindow("settings");   // 按 label 取回（不存
 | 事件 | 参数 | 触发时机 |
 |---|---|---|
 | `event Action? Loaded` | — | 首次加载完成（每窗口一次） |
-| `event Action<OrielCloseRequestEventArgs>? Closing` | `bool Cancel { get; set; }` | 关闭前；置 `Cancel = true` 阻止关闭 |
+| `event Action<OrielCloseRequestEventArgs>? Closing` | `bool Cancel { get; set; }` | 关闭前；置 `Cancel = true` 阻止关闭。**优先于页面接管**——应用说"不许关"就立刻生效，不再问页面 |
 | `event Action? Closed` | — | 窗口已关闭 |
 | `event Action<string>? TitleChanged` | 新标题 | 标题变化（含页面 `<title>` 与 `SetTitle`） |
 | `event Action<bool>? MaximizedChanged` | 是否最大化 | 最大化状态变化 |
@@ -245,6 +248,26 @@ WebviewWindow? again = app.GetWindow("settings");   // 按 label 取回（不存
 > 且拿不到窗口位置（`window.screenX` 在多屏与 HiDPI 下三平台行为不一致）。
 
 `OrielMessageBoxIcon`：`Info`（默认）/ `Warning` / `Error` / `Question`。
+
+### 关闭管线：宿主否决 → 页面接管 → 放行
+
+用户点关闭、或程序调 `Close()` 时，判定固定按这个顺序走一遍（`OrielClosePipeline`，三平台同一份逻辑）：
+
+| 顺序 | 判据 | 结果 |
+|---|---|---|
+| 1 | 宿主的 `Closing` 里置了 `Cancel` | **否决**：窗口不关，**且不再问页面**（应用说"不许关"就该立刻生效，不该先问页面再被拒绝——那会让页面收到一个它无权决定的通知，还会把宿主的否决误当成"用户在确认框点了取消"） |
+| 2 | `CloseInterceptEnabled` 且页面已加载完成 | **挂起**：推 `close-requested` 给页面，窗口**不销毁**。页面同意就调 `Destroy()`，不同意就什么都不做 |
+| 3 | 以上都不成立 | **放行**：真正销毁窗口 |
+
+> **为什么必须"挂起"而不是"等待"**：Windows 的 `WM_CLOSE` 是**同步消息**，页面回执却是异步 IPC。
+> 在消息处理里等回执等于把 UI 线程锁死（而回执的处理本身也要 UI 线程）——必然死锁。
+> 所以只能"当场不销毁 + 推事件"，由页面稍后主动调 `Destroy()` 补上那一步。这也是 Tauri 的做法。
+>
+> **页面没加载完不挂起**：那条 `close-requested` 送不到未加载的页面，挂起只会让窗口变成点 X 没反应
+> ——用户唯一的出路是任务管理器。这与 `win.*` 后门要防的是同一类事故。
+>
+> **`Destroy()` 不受任何拦截**：它是页面"确认后关闭"的出口。若它也能被 `Closing` 拦下，
+> 那条路会被宿主否决逻辑无声地变成"关不掉"，而调用方以为用户已经确认过了。
 
 > **命令线程模型**：命令从 UI 线程进入；`await` 之后的续体**回到 UI 线程**（三平台一致——
 > 三平台都安装了基于主线程队列的 `SynchronizationContext`）。因此命令里 `await` 之后可以直接
@@ -903,7 +926,8 @@ sudo apt-get install -y fonts-noto-cjk   # 中文界面必需，否则渲染成�
 | 桥接测试（`tests/bridge/bridge.test.mjs`） | 三平台共用脚本的行为一致性：就绪、事件、往返、回执、超时、不可信来源不安装、每条出站消息带令牌、`oriel.label` 注入 |
 | 前端包测试（`packages/api/tests/*.test.mjs`） | `@orielweb/api` 的 `core` / `dpi` / `event` / `mocks`：mock 往返、参数原样透传、per-call 超时未支持时明确拒绝、DPI 换算与宿主侧舍入一致（含 .NET 的 ToEven）、事件包装与 once 语义、`emit`/`emitTo` 的参数形状 |
 | 事件投递取证（`--selftest event`） | `event.emit` 的**跨窗口**投递：广播（发起窗口自己也收到）、定向（只有目标收到）、定向到不存在的窗口返回 0 且不抛。断言靠探针页面回显 label——证明"页面 → 宿主 → 页面"整条通路是通的 |
-| 无人自检（`OrielDemo --selftest <名字>`） | `nav` `ipc` `theme` `single-instance` `shell` `capability` `multiwindow` `scheme` `exit` `exit-timeout` `threading` `tray` `tray-js` `geometry` `geometry-frameless` `windowevents` `event`——自己驱动页面、打印结论行、以退出码表达成败 |
+| 关闭接管取证（`--selftest close`） | 四条路径逐条取证：**页面阻止**（什么都不做 → 窗口必须留开）、**页面放行**（调 `win.destroy` → 必须真的关掉）、**宿主否决优先**（`Closing` 里 Cancel → 页面**不该**收到事件）、**未接管**（直接关掉且页面不该收到事件）。另有"`Destroy()` 能强制关掉被接管的窗口"这条逃生口断言 |
+| 无人自检（`OrielDemo --selftest <名字>`） | `nav` `ipc` `theme` `single-instance` `shell` `capability` `multiwindow` `scheme` `exit` `exit-timeout` `threading` `tray` `tray-js` `geometry` `geometry-frameless` `windowevents` `event` `close`——自己驱动页面、打印结论行、以退出码表达成败 |
 | 几何/焦点事件取证（`--selftest windowevents`） | `Resized`（程序调 `Resize` 后参数应为逻辑像素的客户区）、`Moved`（`MoveTo` 后应为屏幕逻辑坐标）、`FocusChanged`（**再建一个窗口抢焦点 → 收到 false；关掉它 → 收到 true**）、以及去重（重复设同一尺寸不再触发）。三平台的原生来源完全不同，只能逐平台真机取证——"我接上了信号"与"事件真的到了"是两件事 |
 | 尺寸语义取证（`--selftest geometry` / `geometry-frameless`） | **三平台尺寸语义一致性**。前者用**装饰窗口**取证：`WithSize(800,600)` 的客户区必须是 `800x600`（修复前 Windows 上是 `784x561`，见 [TAURI2-PLAN.md](TAURI2-PLAN.md) 的 E-1），并再验一次运行期 `Resize(640,480)`。后者用**无边框窗口**取证反面：客户区不该被多做一次"客户区 → 整窗"换算 |
 | 托盘后端取证（`--selftest tray`） | 26 项：`app.png`/`app.ico` **双格式解码**、多托盘（建两个 + 按 id 取回 + 互不影响）、图标对象与**模板标记**如实回读、运行期换图（对象与路径两条入口）、菜单、显隐、标题、按 id 移除、重复 id 抛异常 |

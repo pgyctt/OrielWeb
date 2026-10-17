@@ -315,7 +315,20 @@ F1 ─→ F2（scope 系统是 convertFileSrc 的前置）
 | **C2** 三平台事件接线 | ✅ 完成（Windows 已验证，另两平台待 CI） | Windows `WM_SIZE`+`WM_MOVE`+`WM_SETFOCUS`/`WM_KILLFOCUS`；Linux 新接 `configure-event` + `focus-in/out-event`（含 `GdkEventConfigure` 结构体映射）；macOS 新接 `windowDidMove:` + `windowDidBecomeKey:`/`windowDidResignKey:`。三平台都做 0.5 逻辑像素去重。新增 `--selftest windowevents` 7 项断言 |
 | **C3** `event` 模块 | ✅ 完成 | `packages/api/event.js`：`listen` / `once` / `emit` / `emitTo` / `TauriEvent`；事件对象 `{event,id,payload}` **包装在包内**，底层 `oriel.on` 仍裸 payload（既有页面零影响）。`mocks` 新增 `mockEmit` 供前端单测造宿主事件 |
 | **C4** `event.emit` 内建命令 | ✅ 完成（Windows 已验证） | 广播 / 按 label 定向；目标不存在静默丢弃并返回 0。**唯一一处"库内建但不始终放行"**：必须显式 `Allow("event.emit")`。新增 `ORIELWEB107` 诊断与 `--selftest event` 7 项断言 |
-| C5 / D / E2 / E3 / F / G / H | ⬜ 未开始 | 见 §4.1 |
+| **C5** 关闭接管状态机 | ✅ 完成（Windows 已验证） | `OrielClosePipeline`（宿主否决 → 页面接管 → 放行，三平台共用一份判定）；`InterceptClose` / `CloseInterceptEnabled` / `Destroy()`；内建命令 `win.destroy` / `win.setCloseIntercept`。三平台原生入口的**相反返回值语义**只在各自入口处翻译。新增 `--selftest close` 17 项断言（四条路径 + 逃生口） |
+| D / E2 / E3 / F / G / H | ⬜ 未开始 | 见 §4.1 |
+
+### M2 的状态：宿主侧已完成，页面侧待 D2
+
+M2 的退出条件里有一条是"页面 `onCloseRequested(e => e.preventDefault())` 能真正阻止关闭"。
+**宿主侧已完整并取证**（`--selftest close` 证明四条路径都对），但 Tauri 形状的
+`getCurrentWindow().onCloseRequested(handler)` 属于 window 模块（D2）——页面现在可以用裸通道
+`oriel.on('close-requested')` + `oriel.invoke('win.destroy')` 达到同样效果。
+
+所以 M2 **还不能算完全收口**，差的是 JS 包那一层包装。这也意味着 `TauriEvent` 里
+`WINDOW_RESIZED` / `WINDOW_CLOSE_REQUESTED` 等常量目前订阅不到东西——它们要等 D2 把
+宿主事件名映射过去（宿主侧事件名是 `resize`/`move`/`focus`/`blur`/`close-requested`，
+Tauri 是 `tauri://resize` 等）。
 
 ### C1/C2 的一处实现教训（写计划时未知）
 

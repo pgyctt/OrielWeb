@@ -40,6 +40,23 @@ internal static class OrielBuiltInWindowCommands
                 handler = static (window, _) => Mutate(window.Close);
                 return true;
 
+            // 强制关闭：绕过 Closing 与页面接管。页面实现"确认后关闭"用的就是它——
+            // 若它也能被拦下，那条路会被宿主否决逻辑无声地变成"关不掉"，
+            // 而页面以为用户已经确认过了。
+            case "win.destroy":
+                handler = static (window, _) => Mutate(window.Destroy);
+                return true;
+
+            // 关闭接管开关：页面常只在"有未保存内容"时打开它，所以必须能在运行期改。
+            case "win.setCloseIntercept":
+                handler = static (window, args) =>
+                {
+                    bool enabled = Bool(args, "enabled") ?? true;
+                    window.CloseInterceptEnabled = enabled;
+                    return enabled;
+                };
+                return true;
+
             case "win.toggleFullscreen":
                 handler = static (window, _) => window.ToggleFullscreen();
                 return true;
@@ -148,5 +165,18 @@ internal static class OrielBuiltInWindowCommands
            && args.TryGetProperty(property, out JsonElement element)
            && element.ValueKind == JsonValueKind.String
             ? element.GetString()
+            : null;
+
+    /// <summary>读一个可选布尔参数；缺了或不是布尔时返回 null（由调用方决定默认值）。</summary>
+    /// <remarks>
+    /// 不把"缺了"当成 <c>false</c>：<c>win.setCloseIntercept</c> 这类开关的调用方
+    /// 少写一个字段时，两种默认值的后果完全不同（一个是"别拦我"，一个是"拦着我"）。
+    /// 返回 null 让调用方显式选，比替它猜安全。
+    /// </remarks>
+    private static bool? Bool(JsonElement args, string property)
+        => args.ValueKind == JsonValueKind.Object
+           && args.TryGetProperty(property, out JsonElement element)
+           && element.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? element.GetBoolean()
             : null;
 }

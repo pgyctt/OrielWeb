@@ -134,6 +134,9 @@ internal partial class Win32WindowHost : IWindowBackend
     // 上一次已上报的焦点状态；null 表示"还没报过"（首个 WM_SETFOCUS 必须报，哪怕值相同）
     private bool? _lastReportedFocus;
 
+    // 强制销毁中：Destroy() 置它，用来让关闭路径上的判断看出"这次不受拦"。
+    private bool _forceDestroy;
+
     // 最近一次 NavigationStarting 的 URL。WebView2 的 NavigationCompleted 参数里没有 URL
     // （它只有 IsSuccess / WebErrorStatus / NavigationId），而事件参数要带上 URL，故在开始时缓存。
     private string _lastNavigationUri = string.Empty;
@@ -156,6 +159,7 @@ internal partial class Win32WindowHost : IWindowBackend
         }
         // 策略是可写属性（运行时能改），所以把 options 里的初值取出来存进属性，而不是每次回头读 options
         ContextMenuPolicy = options.ContextMenuPolicy;
+        CloseInterceptEnabled = options.InterceptClose;
         _title = options.Title;
         // 可见性意图的初值：WithHidden() 起手时窗口不上屏（PostCreate 据此 SW_HIDE），
         // 且 WebView2 装配时也要按这个初值恢复（不能硬置 true，见 InitializeWebView2Async）。
@@ -859,13 +863,22 @@ internal partial class Win32WindowHost : IWindowBackend
             }
 
             case Win32Constants.WM_CLOSE:
-                var closeArgs = new OrielCloseRequestEventArgs();
-                Closing?.Invoke(closeArgs);
-                if (closeArgs.Cancel)
+                // WM_CLOSE 是**同步消息**，而页面回执是异步 IPC——不可能在这里等页面答复
+                // （等它就是锁死 UI 线程，而回执的处理恰好也要 UI 线程）。所以判定只有三种出路：
+                //   放行 → 当场销毁；宿主否决 / 页面接管 → 不销毁（见 OrielClosePipeline）。
+                switch (DecideClose())
                 {
-                    return 0;
+                    case OrielCloseDecision.Proceed:
+                        Win32.DestroyWindow(hwnd);
+                        break;
+
+                    // Cancel 与 Suspend 都只是"这次不销毁"，但原因不同（见 OrielCloseDecision）：
+                    //   Cancel  = 宿主的 Closing 拒绝了
+                    //   Suspend = 页面接管了，等它稍后调 win.destroy
+                    default:
+                        break;
                 }
-                Win32.DestroyWindow(hwnd);
+
                 return 0;
 
             case Win32Constants.WM_DROPFILES:
@@ -1404,6 +1417,43 @@ internal partial class Win32WindowHost : IWindowBackend
         PushEventOnUi("maximized", isMaximized ? "true" : "false");
     }
 
+    /// <summary>
+    /// 判定一次关闭请求（宿主否决 → 页面接管 → 放行）。
+    /// </summary>
+    /// <remarks>
+    /// "页面可决定"要求两件事同时成立：页面**已开启接管**、且页面**已加载完成**。
+    /// 后半条不能省——那条 <c>close-requested</c> 送不到未加载的页面，
+    /// 挂起只会让窗口变成点 X 没反应（用户唯一的出路是任务管理器）。
+    /// </remarks>
+    private OrielCloseDecision DecideClose()
+    {
+        // 强制销毁途中不再问任何人：Destroy() 之后的任何关闭请求都直接放行，
+        // 否则"页面接管"会把强制销毁也拦下来（那与 Destroy 的语义直接冲突）。
+        if (_forceDestroy)
+        {
+            return OrielCloseDecision.Proceed;
+        }
+
+        return OrielClosePipeline.Decide(
+            Closing,
+            pageCanDecide: CloseInterceptEnabled && _loadedRaised,
+            emitCloseRequested: () => PushEventOnUi(OrielClosePipeline.CloseRequestedEventName, "null"));
+    }
+
+    public void Destroy()
+    {
+        if (_hwnd == 0)
+        {
+            return;
+        }
+
+        // DestroyWindow **不发 WM_CLOSE**（它直接走销毁流程），所以天然绕过了
+        // Closing 与页面接管——这正是 Destroy 要的语义。标记一下是为了让
+        // 销毁路径上的其它判断（如果将来有）能看出"这是强制销毁"。
+        _forceDestroy = true;
+        Win32.DestroyWindow(_hwnd);
+    }
+
     internal void UpdateBounds()
     {
         SyncMaximizedState();
@@ -1728,6 +1778,11 @@ internal partial class Win32WindowHost : IWindowBackend
 
     /// <remarks>本类为 internal，public 成员不增加对外 API 面；它实现 <see cref="IWindowBackend.IsOnUiThread"/>。</remarks>
     public bool IsOnUiThread() => _backend.IsOnUiThread();
+
+    /// <summary>
+    /// 是否让页面接管关闭；初值取自 <see cref="OrielWindowOptions.InterceptClose"/>。
+    /// </summary>
+    public bool CloseInterceptEnabled { get; set; }
 
     internal void PostWebMessageOnUi(string json) => PostMessageOnUi(json);
 

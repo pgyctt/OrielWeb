@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <title>Oriel Close Probe</title>
+</head>
+<body>
+    <!-- 关闭接管自检的探针页面（--selftest close 专用，不给人看）。
+
+         宿主用 EvaluateJs 设 window.__closeMode，本页面据此决定收到 close-requested 之后做什么：
+           'allow'   → 调 win.destroy 真正关掉（模拟"用户点了确认"）
+           'prevent' → 什么都不做（模拟"用户点了取消"，窗口应留在打开状态）
+
+         每次收到 close-requested 都回显一条，宿主据此断言"事件真的到了页面"。 -->
+    <p id="status">close probe</p>
+    <script src="close-probe.js"></script>
+</body>
+</html>

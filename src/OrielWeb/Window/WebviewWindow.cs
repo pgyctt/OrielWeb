@@ -244,6 +244,37 @@ public sealed class WebviewWindow : IOrielWindowControl
     public void Show() => Backend.Show();
     public void Hide() => Backend.Hide();
     public void Close() => Backend.Close();
+
+    /// <summary>
+    /// 强制销毁窗口：**绕过 <see cref="Closing"/> 与页面接管**（对标 Tauri 2 的 <c>destroy</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 页面侧实现"确认后关闭"用的就是它：收到 <c>close-requested</c>、用户点了「确认」，
+    /// 调它真正关掉。若这里也能被 <see cref="Closing"/> 拦下，那条路会被宿主否决逻辑
+    /// 无声地变成"关不掉"，而页面以为用户已经确认过了。
+    /// </para>
+    /// <para>
+    /// 与 <see cref="Close"/> 的分工：<c>Close</c> 是"请求关闭"（可被拦），
+    /// <c>Destroy</c> 是"就是这么办"（不可拦）。后者是逃生口，不要用它绕过
+    /// 应用的未保存检查——那是 <see cref="Closing"/> 该管的事。
+    /// </para>
+    /// </remarks>
+    public void Destroy() => Backend.Destroy();
+
+    /// <summary>
+    /// 是否让**页面**接管关闭。初始值来自 <see cref="OrielWindowOptions.InterceptClose"/>，运行期可改。
+    /// </summary>
+    /// <remarks>
+    /// 页面常常只在"有未保存内容"时接管，所以它是个状态而不是常量。
+    /// 完整语义（含"宿主 <see cref="Closing"/> 优先""加载完成前不生效"）见
+    /// <see cref="OrielWindowOptions.InterceptClose"/>。
+    /// </remarks>
+    public bool CloseInterceptEnabled
+    {
+        get => Backend.CloseInterceptEnabled;
+        set => Backend.CloseInterceptEnabled = value;
+    }
     public void Focus() => Backend.Focus();
     public void Maximize() => Backend.Maximize();
     public void Minimize() => Backend.Minimize();

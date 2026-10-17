@@ -33,6 +33,22 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
   （注册成功但永不可达）。只按**精确名**判——`event.` 前缀不保留，`event.onUserAction` 之类完全合法。
 - **`--selftest event`**：跨窗口事件投递取证。广播（发起窗口自己也收到）、定向（只有目标收到）、
   定向到不存在的窗口返回 0。
+- **关闭接管（可阻止关闭）**：`OrielWindowOptions.InterceptClose` / `WithInterceptClose()`、
+  `WebviewWindow.CloseInterceptEnabled`（运行期可改）、`WebviewWindow.Destroy()`，
+  以及内建命令 `win.destroy` / `win.setCloseIntercept`。
+  用户点关闭时推 `close-requested` 给页面，窗口**先不销毁**；页面同意就调 `Destroy()`，
+  不同意就什么都不做。对标 Tauri 2 的 `onCloseRequested` + `preventDefault`。
+  判定固定按**宿主否决 → 页面接管 → 放行**三层走（`OrielClosePipeline`，三平台同一份逻辑）：
+  * **宿主的 `Closing` 优先**：置了 `Cancel` 就立刻生效、不再问页面。顺序颠倒的话，
+    页面会收到一个它无权决定的通知，还会把宿主的否决误当成"用户在确认框点了取消"。
+  * **页面加载完成前不挂起**：那条事件送不到未加载的页面，挂起只会让窗口变成点 X 没反应
+    （用户唯一的出路是任务管理器）——与 `win.*` 后门要防的是同一类事故。
+  * **`Destroy()` 不受任何拦截**：它是页面"确认后关闭"的出口。若它也能被拦下，那条路会被
+    宿主否决逻辑无声地变成"关不掉"，而调用方以为用户已经确认过了。
+  * 三平台的原生入口语义相反（GTK `delete-event` 返回 true = 阻止；Cocoa `windowShouldClose:`
+    返回 true = 允许），翻译只发生在各自的入口处，判定逻辑共用一份。
+- **`--selftest close`**：四条路径逐条真机取证（页面阻止 / 页面放行 / 宿主否决优先 / 未接管），
+  外加"`Destroy()` 能强制关掉被接管的窗口"这条逃生口断言。
 - **窗口 `label`**（对标 Tauri 2 的 `Window.label`）：`OrielWindowOptions.Label`（默认 `"main"`，
   自动归一小写，字符集限字母/数字/`-`/`.`/`_`）、`OrielApp.GetWindow(label)`、
   `WebviewWindow.Label`，以及页面侧的 `window.oriel.label`。
@@ -85,10 +101,13 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
 - **Windows 高 DPI 下的换算未实测**：本机只有一台 100% 缩放显示器。
   `AdjustWindowRectExForDpi` 按**窗口所在显示器**的 DPI 取值，逻辑上正确，
   但 125%/150%/200% 下的逐像素结果没有取证。需要时在有缩放显示器的机器上跑 `--selftest geometry`。
-- **`--selftest geometry` / `windowevents` 尚未在 Linux / macOS 上跑过**：
+- **`--selftest geometry` / `windowevents` / `event` / `close` 尚未在 Linux / macOS 上跑过**：
   代码已通过这两个目标的交叉编译（`linux-x64` / `osx-arm64` / `osx-x64` 均 0 警告 0 错误），
-  但运行期行为需要 CI 取证。尤其 Linux 的 `configure-event` 与 macOS 的 `windowDidMove:`
-  都是本次新接的信号——"编译通过"不等于"事件真的到了"。
+  但运行期行为需要 CI 取证。尤其 Linux 的 `configure-event`、macOS 的 `windowDidMove:`
+  与三平台的关闭接管路径都是本次新接的——"编译通过"不等于"事件真的到了"。
+- **页面侧的 `onCloseRequested` 尚未进 JS 包**：宿主侧的关闭接管已完成并取证，
+  页面目前要用裸通道（`oriel.on('close-requested')` + `oriel.invoke('win.destroy')`）。
+  Tauri 形状的 `getCurrentWindow().onCloseRequested(handler)` 属于 window 模块（批次 D2）。
 
 ## 0.3.5 - 2026-10-14
 

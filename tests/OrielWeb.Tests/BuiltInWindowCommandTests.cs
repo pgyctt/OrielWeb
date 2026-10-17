@@ -41,6 +41,12 @@ public sealed class BuiltInWindowCommandTests
 
         public void Close() => Calls.Add("close");
 
+        /// <summary>强制关闭。与 <see cref="Close"/> 分开记录——两者语义不同，混在一起就断言不了"调的是哪一个"。</summary>
+        public void Destroy() => Calls.Add("destroy");
+
+        /// <summary>关闭接管开关；可写是为了断言 <c>win.setCloseIntercept</c> 真的改了它。</summary>
+        public bool CloseInterceptEnabled { get; set; }
+
         public bool ToggleFullscreen()
         {
             Calls.Add("toggleFullscreen");
@@ -173,6 +179,57 @@ public sealed class BuiltInWindowCommandTests
 
         // 剪切/复制/粘贴 + 全选 + 关闭 + 两条分隔线 = 7 项
         Assert.Equal(["showContextMenu:7"], window.Calls);
+    }
+
+    // ---- 关闭接管（C5）----
+
+    [Fact]
+    public async Task win_destroy_调用强制关闭而不是可拦的关闭()
+    {
+        // 两者语义不同，混在一起会让"确认后关闭"变成"永远关不掉"：
+        // Close 会被 Closing 与页面接管拦下，Destroy 不会。
+        var window = new FakeWindow();
+        var (reply, _) = await TestHarness.DispatchAsync(
+            CreateDispatcher(), "win.destroy", null, window: window);
+
+        Assert.True(reply.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal(["destroy"], window.Calls);
+    }
+
+    [Fact]
+    public async Task win_setCloseIntercept_打开接管()
+    {
+        var window = new FakeWindow { CloseInterceptEnabled = false };
+        var (reply, _) = await TestHarness.DispatchAsync(
+            CreateDispatcher(), "win.setCloseIntercept", new { enabled = true }, window: window);
+
+        Assert.True(reply.RootElement.GetProperty("ok").GetBoolean());
+        Assert.True(window.CloseInterceptEnabled);
+        Assert.True(reply.Value().GetBoolean(), "返回值应当是设置后的状态，便于页面确认");
+    }
+
+    [Fact]
+    public async Task win_setCloseIntercept_关闭接管()
+    {
+        var window = new FakeWindow { CloseInterceptEnabled = true };
+        var (reply, _) = await TestHarness.DispatchAsync(
+            CreateDispatcher(), "win.setCloseIntercept", new { enabled = false }, window: window);
+
+        Assert.False(window.CloseInterceptEnabled);
+        Assert.False(reply.Value().GetBoolean());
+    }
+
+    [Fact]
+    public async Task win_setCloseIntercept_缺enabled时默认打开()
+    {
+        // 省略参数按"打开"算：页面调用它几乎总是为了"我要接管"，
+        // 而漏写字段时打开接管是可排查的（窗口不关 → 去查页面），
+        // 静默关掉接管则是"确认框没弹就直接关了"，那是数据丢失。
+        var window = new FakeWindow { CloseInterceptEnabled = false };
+        await TestHarness.DispatchAsync(
+            CreateDispatcher(), "win.setCloseIntercept", null, window: window);
+
+        Assert.True(window.CloseInterceptEnabled);
     }
 }
 
