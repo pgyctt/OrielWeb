@@ -65,6 +65,43 @@ internal sealed class OrielIpcGuard
     /// <summary>是否已显式配置过能力。</summary>
     internal bool IsConfigured => _options is not null;
 
+    /// <summary>
+    /// 判定某个 <c>fs.*</c> 命令能不能访问某个具体路径。
+    /// </summary>
+    /// <param name="commandName">命令名（如 <c>fs.readTextFile</c>）。</param>
+    /// <param name="absolutePath">**已经归一**的绝对路径。</param>
+    /// <param name="appIdentifier">展开 <c>$APP*</c> 变量用。</param>
+    /// <param name="reason">被拒时给出原因。</param>
+    /// <remarks>
+    /// <para>
+    /// <b>没配能力（<see cref="_options"/> 为 null）时的姿态与命令授权一致</b>：
+    /// Debug 构建放行、Release 拒绝。不这样做的话会出现"命令被拒但路径放行"或反过来的
+    /// 不一致——同一个配置项在两处的解释不同是最难解释的一类问题。
+    /// </para>
+    /// <para>
+    /// 调用方**必须**先归一路径（解析掉 <c>..</c>）再进来：否则
+    /// <c>$APPDATA/../../etc/passwd</c> 这类会绕过 scope。那条归一在
+    /// <c>OrielBuiltInFsCommands</c> 里做，不在这里——因为这里拿不到"相对谁解析"的上下文。
+    /// </para>
+    /// </remarks>
+    internal bool TryAuthorizePath(string commandName, string absolutePath, string appIdentifier, out string? reason)
+    {
+        if (_options is null)
+        {
+            if (_isDebugBuild)
+            {
+                reason = null;
+                return true;
+            }
+
+            reason = "未配置能力（Release 构建默认拒绝一切文件访问）。" +
+                     "请在应用入口调用 UseCapabilities(...) 并声明 fs 命令的路径 scope。";
+            return false;
+        }
+
+        return _options.IsPathAllowed(commandName, absolutePath, appIdentifier, out reason);
+    }
+
     /// <summary>追加一个可信来源（URL 前缀）。<c>UseCapabilities(AllowOrigin)</c> 放行的开发期来源由此进来。</summary>
     internal void AddTrustedPrefix(string prefix)
     {

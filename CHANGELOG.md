@@ -240,8 +240,61 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
   `/tmp` 是全局共享的，不是"本用户的运行时目录"那个语义，给个错值比明确失败糟得多
   （调用方会把 socket 放进 `/tmp`）。
 
+#### 文件访问（F4b-2）
+
+- **内建命令族 `fs.*`（14 条）+ `@orielweb/api/fs`**：`readTextFile` / `writeTextFile` /
+  `readFile` / `writeFile` / `exists` / `size` / `readDir` / `stat` / `lstat` /
+  `mkdir` / `remove` / `rename` / `copyFile` / `truncate`。
+- **本族是唯一"两道关都必过"的命令族**：命令授权（`Allow("fs.readTextFile")`）
+  **加** 路径 scope（`Allow("fs.readTextFile", s => s.AllowPath("$APPDATA/**"))`）。
+  命令授权解决"能不能做这件事"，scope 解决"能做在什么上"——少了后者，
+  一条 XSS 就能把 `~/.ssh/id_rsa` 读走。所以 `fs.*` **不整族放行**，
+  与"只做运算所以整族放行"的 `path.*` 形成对照。
+- **两种失败分开报**：命令没授权 → `not_allowed`；授权了但路径不在 scope 内 →
+  **`path_not_allowed`**（新增错误码）。混成一个码会让"我明明声明了 fs.readTextFile"
+  把人带向完全错的方向。
+- **`rename` / `copyFile` 的两个路径都要过 scope**：只查源不查目标的话，
+  页面能把允许目录里的文件"搬"到 scope 之外（那是一次写）。
+- **归一在 scope 判定之前**（实现里写明了顺序）：反过来的话
+  `$APPDATA/../../etc/passwd` 会先被判成"在 $APPDATA 之内"（字面量确实在内），
+  然后归一后指到别处——这就是经典的 scope 绕过。
+  12 条带路径的命令各有一条专门的逃逸测试。
+- **`writeTextFile` 不写 BOM**：见下面的缺陷条目。
+- **`readDir` / `stat` 的字段名是 camelCase**（`isDirectory` 而不是 `IsDirectory`）：
+  内建命令的返回值由库手写 JSON 保证，不依赖应用注册 STJ 上下文
+  （应用凭什么知道库内部有个 `DirEntry` 类型？）。
+- **不含句柄式 API**（`open` / `create` / `FileHandle` / `seek` / `read` / `write` /
+  `readTextFileLines` / `watch`）：那些靠一张 `rid` 句柄表，而本库没有句柄表——
+  加它是一整套新机制，不该混在"文件操作"里做。整文件读写覆盖了 webview 界面里绝大多数场景。
+- **二进制走 JSON 数字数组**（`readFile` 给 `Uint8Array`、`writeFile` 收它）：
+  本库的 IPC 是纯 JSON，没有 Tauri 的二进制 body 通道。一个字节要变成两三个字符，
+  所以**几十 MB 级别的文件不适用**——已在文档写明。
+
 ### 修复
 
+- **`fs.writeTextFile` 会写 UTF-8 BOM**：用了 `File.WriteAllText(..., Encoding.UTF8)`，
+  而那个静态属性写文件时**会写 BOM**（`EF BB BF`）。后果很具体：写 5 个汉字，
+  `fs.size` 给的是 18 而不是 15——而调用方算的是字符数乘 3。
+  更麻烦的是下游：BOM 会让 JSON/CSV/shell 解析器把首字节当内容的一部分。
+  Tauri 的 `writeTextFile` 走 `String::into_bytes()`、**不写 BOM**，现已对齐
+  （读这边不必改：`File.ReadAllText` 会自己探测并去掉 BOM，所以别人写的带 BOM 文件照样能读）。
+  **这是真页面自检抓到的**——单测里我用的 `File.WriteAllText(file, "12345")`
+  两参重载默认不写 BOM，所以那条路一直是绿的。
+- **`byte[]` 返回值需要 STJ 上下文**：`fs.readFile` 返回 `byte[]`，
+  而 `OrielJson.WriteResult` 只认基元、`JsonElement` 与字符串序列——
+  `byte[]` 是纯 BCL 类型，要求应用为它加 `[JsonSerializable]` 并不合理，
+  漏加的症状是"这个命令一调就报错"。现手写循环输出数字数组（AOT 安全、无反射）。
+- **`fs` 的 `AuthorizePath` 里补了命令授权检查**：分发器已经查过，所以这不影响正常运行；
+  但它让"没声明这个命令"与"声明了命令但路径不对"在**任何入口**下都能分开报。
+  少了这一遍的话，直接调处理函数会把"命令没授权"报成 `path_not_allowed`——
+  那个错因描述会把人引向错的方向。
+- **`--selftest api` 不幂等**：它在临时目录里真建文件，而第二次跑时
+  `fs.mkdir` 会因为"目录已存在"（非递归会报错）而失败。
+  这种"第一次跑过、第二次不过"的失败最难查——它看起来像随机失败。现在开头先清理。
+- **一条"探针脚本解析失败"的诊断手段**：手写的探针脚本里出现重复的 `let` 声明时，
+  整个脚本**解析失败、一条输出都没有**，表现是"自检超时"——而超时这个现象完全指不到
+  "有个重复的 const"这种根因。现在支持 `ORIEL_PROBE_DUMP=1` 把生成的脚本落盘，
+  一条 `node --check` 就能定位。（这个开关不是假设出来的：调试这一批时就撞上了。）
 - **`Video` 目录那格把 `macName` 与 `windowsFolder` 写反了**
   （`UserDir("Videos", …, "Movies")`，正确是 `UserDir("Movies", …, KnownFolder.Videos)`）。
   运行到那一格才炸，而炸出来的是 `ArgumentException: Requested value 'Movies' was not found`

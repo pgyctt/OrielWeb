@@ -199,6 +199,31 @@ internal sealed class OrielCommandDispatcher
             return;
         }
 
+        // 内建文件命令族（fs.*）：**不整族放行**，而且每个命令还要过**路径 scope**。
+        //
+        // 这是本库唯一一处"两道关都必过"的命令族：命令授权说"能调读文件这个动作"，
+        // scope 说"能读哪些文件"。少了后者，一条 XSS 就能把 ~/.ssh/id_rsa 读走。
+        // 与 path.* 的区别正在这里——path.* 只做运算不碰文件系统，所以能整族放行。
+        if (OrielBuiltInFsCommands.TryGet(name, out var fsBuiltIn))
+        {
+            if (window is null)
+            {
+                ReplyError(sink, id, ErrorReply.Text($"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。", OrielIpcErrorCodes.NoSourceWindow));
+                return;
+            }
+
+            try
+            {
+                ReplyOk(sink, id, fsBuiltIn(window, name, args));
+            }
+            catch (Exception ex)
+            {
+                ReplyError(sink, id, DescribeBuiltInFailure(name, ex));
+            }
+
+            return;
+        }
+
         // 内建应用命令族（app.*）：只读元信息，对标 Tauri 2 的 @tauri-apps/api/app。
         //
         // 与 path.* 的差别：本族需要**应用实例**（`window.App`），所以要有来源窗口。

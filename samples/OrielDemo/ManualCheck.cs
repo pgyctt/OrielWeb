@@ -169,6 +169,18 @@ public sealed partial class ManualCommands
         NotificationsSupported: App.NotificationsSupported,
         AutoStartEnabled: App.IsAutoStartEnabled);
 
+    /// <summary>
+    /// fs 自检用的可写根目录（<c>--selftest api</c> 拿它拼测试文件路径）。
+    /// </summary>
+    /// <remarks>
+    /// 用临时目录而不是应用数据目录：自检不该在用户的数据目录里留下垃圾，
+    /// 而临时目录在三个平台上都有，不需要为它再写一份平台分支。
+    /// 它同时**必须与 Program.cs 里声明的 fs scope 一致**——不一致的话自检会
+    /// 以 path_not_allowed 失败，而那个失败看起来像"scope 没生效"。
+    /// </remarks>
+    [OrielCommand("demo.fsRoot")]
+    public static string FsRoot() => Path.Combine(Path.GetTempPath(), "oriel-demo-selftest");
+
     // ---- 托盘与通知 ----
 
     [OrielCommand("manual.notify")]

@@ -67,7 +67,22 @@ internal static class ApiSelfTest
                 TimeSpan.FromSeconds(60),
                 Timeout.InfiniteTimeSpan);
 
-            await main.EvaluateJs(BuildProbeScript());
+            string probeScript = BuildProbeScript();
+
+            // 诊断开关：设 ORIEL_PROBE_DUMP=1 时把生成的脚本落盘。
+            //
+            // 为什么值得留一个开关：**探针脚本解析失败时一条输出都没有**，
+            // 表现是"自检超时"而不是"某条断言失败"——而超时这个现象完全指不到
+            // "有个重复的 const"这种根因。落盘之后一条 `node --check` 就能定位。
+            // （这条经验不是假设：调试这一批时就撞上了重复的 `let`。）
+            if (Environment.GetEnvironmentVariable("ORIEL_PROBE_DUMP") is { Length: > 0 })
+            {
+                string dumpPath = Path.Combine(Path.GetTempPath(), "oriel-api-probe.js");
+                File.WriteAllText(dumpPath, probeScript);
+                Console.WriteLine($"[api-selftest] 探针脚本已落盘：{dumpPath}");
+            }
+
+            await main.EvaluateJs(probeScript);
 
             // 结论由页面回显带回来（见 OnMessage）；这里只负责别让 CI 白等
             int waited = 0;
@@ -154,6 +169,84 @@ internal static class ApiSelfTest
 
                 // demo 的能力名单里没有任何 app.* 条目——这几条能跑通就是"只读元信息放行"的证据
                 check('app.* 元信息无需能力声明即可用', true, '见 Program.cs 的能力名单');
+
+                // ---- fs（F4b-2b）：两道关（命令授权 + 路径 scope）----
+                const fs = await import(vendor + '/fs.js');
+
+                // demo 把 fs 的 scope 声明在临时目录下（见 Program.cs），所以这里能真读写
+                const fsRoot = await core.invoke('demo.fsRoot');
+
+                // **先把上次运行留下的清掉**：自检必须幂等，否则第二次跑会因为
+                // "目录已存在"（非递归 mkdir 会报错）或"文件已存在"而失败。
+                // 这种"第一次跑过、第二次不过"的失败最难查——它看起来像随机失败。
+                await fs.remove(fsRoot, { recursive: true });
+
+                const fsFile = fsRoot + '/api-selftest.txt';
+
+                await fs.writeTextFile(fsFile, '你好，世界');
+                check('fs.writeTextFile + readTextFile 往返',
+                    (await fs.readTextFile(fsFile)) === '你好，世界', await fs.readTextFile(fsFile));
+
+                check('fs.exists 对存在的文件为 true', (await fs.exists(fsFile)) === true, 'ok');
+                check('fs.size 给出字节数（UTF-8 下 5 个汉字 = 15 字节）',
+                    (await fs.size(fsFile)) === 15, await fs.size(fsFile));
+
+                // 二进制：真通道上验 Uint8Array 的转换（JSON 不认它，必须转数组）
+                const binFile = fsRoot + '/api-selftest.bin';
+                await fs.writeFile(binFile, new Uint8Array([0, 1, 127, 128, 255]));
+                const readBack = await fs.readFile(binFile);
+                check('fs.writeFile + readFile 二进制往返（含 0 与 255 两个边界）',
+                    readBack instanceof Uint8Array
+                        && readBack.length === 5
+                        && readBack[0] === 0
+                        && readBack[4] === 255,
+                    String(readBack));
+
+                const stat = await fs.stat(fsFile);
+                check('fs.stat 给 camelCase 字段与毫秒时间戳',
+                    stat.isFile === true && typeof stat.mtime === 'number' && stat.mtime > 0,
+                    JSON.stringify(stat));
+
+                const dir = fsRoot + '/api-selftest-dir';
+                await fs.mkdir(dir);
+                check('fs.mkdir 建出目录', (await fs.exists(dir)) === true, dir);
+                const entries = await fs.readDir(fsRoot);
+                check('fs.readDir 列出的项是 camelCase 形状',
+                    Array.isArray(entries) && entries.some(function (e) { return e.name === 'api-selftest.txt'; }),
+                    JSON.stringify(entries));
+
+                await fs.rename(binFile, fsRoot + '/api-selftest-renamed.bin');
+                check('fs.rename 生效',
+                    (await fs.exists(fsRoot + '/api-selftest-renamed.bin')) === true
+                        && (await fs.exists(binFile)) === false, 'ok');
+
+                await fs.copyFile(fsFile, fsRoot + '/api-selftest-copy.txt');
+                check('fs.copyFile 生效', (await fs.exists(fsRoot + '/api-selftest-copy.txt')) === true, 'ok');
+
+                await fs.truncate(fsFile, 3);
+                check('fs.truncate 截断到指定长度', (await fs.size(fsFile)) === 3, await fs.size(fsFile));
+
+                await fs.remove(fsRoot + '/api-selftest-copy.txt');
+                check('fs.remove 删掉文件', (await fs.exists(fsRoot + '/api-selftest-copy.txt')) === false, 'ok');
+
+                // **scope 逃逸必须被挡**：demo 只声明了临时目录，所以这里必然被拒
+                let fsEscapeCode = 'unset';
+                try {
+                    await fs.readTextFile('C:\\Windows\\win.ini');
+                } catch (e) {
+                    fsEscapeCode = e && e.code;
+                }
+                check('fs 读 scope 之外的绝对路径 → path_not_allowed',
+                    fsEscapeCode === 'path_not_allowed', fsEscapeCode);
+
+                let dotdotCode = 'unset';
+                try {
+                    await fs.readTextFile(fsRoot + '\\..\\..\\escape.txt');
+                } catch (e) {
+                    dotdotCode = e && e.code;
+                }
+                check('fs 用 .. 逃逸出 scope → path_not_allowed（归一再判定）',
+                    dotdotCode === 'path_not_allowed', dotdotCode);
 
                 // ---- path（F1）：同步常量 + 路径运算 ----
                 const path = await import(vendor + '/path.js');

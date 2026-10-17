@@ -901,6 +901,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 | `window` | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow`（恒 `null`，见下）+ `Window` 类 |
 | `path` | `sep` / `delimiter`（**同步**）+ `join` / `normalize` / `dirname` / `extname` / `basename` / `isAbsolute` / `resolve` |
 | `app` | `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`（全是只读元信息，**无需能力声明**） |
+| `fs` | `readTextFile` / `writeTextFile` / `readFile` / `writeFile` / `exists` / `size` / `readDir` / `stat` / `lstat` / `mkdir` / `remove` / `rename` / `copyFile` / `truncate`（**两道关都必过**，见下） |
 | `dpi` | `LogicalSize` / `PhysicalSize` / `LogicalPosition` / `PhysicalPosition` + 归一与换算 |
 | `mocks` | `mockIPC` / `mockWindows` / `mockEmit` / `mockConvertFileSrc` / `clearMocks` |
 
@@ -974,6 +975,58 @@ await resolveResource('assets/a.svg'); // 资源目录下拼，带越界校验
 
 > **`runtimeDir` 在 `XDG_RUNTIME_DIR` 缺失时明确失败**，不退到 `/tmp`：
 > `/tmp` 是全局共享的，不是"本用户的运行时目录"那个语义，给个错值比明确失败糟得多。
+
+### `fs` 模块：两道关都必过
+
+这是全库**唯一**一处"命令授权 + 路径 scope 都必须声明"的命令族。理由：
+
+```csharp
+// 只说"能调读文件这个动作"
+c.Allow("fs.readTextFile");
+
+// 还要说"能读哪些文件"——少了这一句，一条 XSS 就能把 ~/.ssh/id_rsa 读走
+c.Allow("fs.readTextFile", s => s.AllowPath("$APPDATA/**"));
+
+// 读得宽、写得窄：Tauri 的权限条目各自带 scope，所以这是能表达的
+c.Allow("fs.writeTextFile", s => s.AllowPath("$APPDATA/reports/**").DenyPath("$APPDATA/reports/tmp/**"));
+```
+
+| 情形 | 错误码 |
+|---|---|
+| 命令没声明 | `not_allowed` |
+| 声明了命令，但**路径不在任何 scope 模式内** | `path_not_allowed` |
+| 声明了命令但**完全没给 scope** | `path_not_allowed`（空 scope 表示不允许任何路径，**不是不限制**） |
+| 路径命中了某条 deny | `path_not_allowed` |
+
+两条错误码分开是刻意的：混成一个的话，"我明明声明了 `fs.readTextFile`"会把人带向错的方向。
+
+**scope 的规则**（与 Tauri 的 fs scope 一致）：
+
+- 模式是 glob，变量前缀与目录一一对应：`$APPDATA` `$APPCONFIG` `$APPLOCALDATA`
+  `$APPCACHE` `$APPLOG` `$AUDIO` `$CACHE` `$CONFIG` `$DATA` `$LOCALDATA` `$DESKTOP`
+  `$DOCUMENT` `$DOWNLOAD` `$EXE` `$FONT` `$HOME` `$PICTURE` `$PUBLIC` `$RESOURCE`
+  `$RUNTIME` `$TEMP` `$TEMPLATE` `$VIDEO`
+- `*` 匹配一层内的任意字符（**不跨分隔符**），`**` 匹配零到多层，
+  `?` 一个字符，`[abc]` / `[a-z]` / `[!abc]` 字符集，`{a,b}` 择一
+- **deny 优先，且跨条目生效**：写了两条 scope、只在其中一条加 deny 时，另一条不会绕过它
+- **路径先归一（解析掉 `..`）再判 scope**：反过来的话 `$APPDATA/../../etc/passwd`
+  会被判成"在 $APPDATA 之内"（字面量确实在内），然后归一后指到别处
+- 页面给的路径可以是相对的，按**进程当前目录**解析
+
+**与 Tauri 的差别**：
+
+| 项 | 本库 | Tauri |
+|---|---|---|
+| 句柄式 API（`open`/`FileHandle`/`seek`/`watch`…） | ⛔ 不提供（没有 rid 句柄表） | ✅ |
+| 二进制通道 | JSON 数字数组（几十 MB 的文件不适用） | `invoke` 的二进制 body |
+| `stat` 的时间 | 毫秒时间戳（数字） | `Date` |
+| `requireLiteralLeadingDot` | ⛔ 未实现（默认为 false，与我们的行为一致） | ✅ |
+| 变量名大小写 | **不敏感**（`$appdata` 也能用） | 敏感 |
+| 大小写敏感性 | 跟随文件系统（Linux 敏感） | 固定 |
+
+**`writeTextFile` 不写 BOM**（Tauri 亦然）：用 `Encoding.UTF8` 写文件会带上
+`EF BB BF`，后果是"写 5 个汉字得到 18 字节"，且下游的 JSON/CSV/shell 解析器
+会把首字节当内容。读这边会自己探测并去掉 BOM，所以别人写的带 BOM 文件照样能读。
 
 ### `app` 模块（只读元信息）
 

@@ -230,6 +230,25 @@ internal static class Program
                         // （window.setResizable 刻意仍不声明——它做拒绝路径的对照。）
                         "window.resize");
                 }
+
+                if (apiSelfTest)
+                {
+                    // fs 自检（F4b-2）：**两道关都要声明**——
+                    // 命令授权（Allow）+ 路径 scope（AllowPath）。
+                    //
+                    // 这里顺带是这个 API 的示范：scope 只给临时目录，而自检里那两条
+                    // "读 C:\Windows\win.ini"与"用 .. 逃逸"的断言，验的就是它真的挡住了。
+                    // 若这里改成 Allow("fs.*") 而**不给** scope，那两条会以
+                    // path_not_allowed 失败——空 scope 表示不允许任何路径，不是不限制。
+                    //
+                    // demo 自己的命令（demo.fsRoot）也要授权：它给自检提供拼路径的根。
+                    c.Allow("demo.fsRoot");
+
+                    string fsRoot = Path.Combine(Path.GetTempPath(), "oriel-demo-selftest");
+                    c.Allow(
+                        "fs.*",
+                        scope => scope.AllowPath(fsRoot.Replace('\\', '/') + "/**"));
+                }
             })
             .UseDebug()
             .OnWebView2RuntimeMissing(HandleWebView2RuntimeMissing)

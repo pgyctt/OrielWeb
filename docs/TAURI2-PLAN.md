@@ -325,7 +325,8 @@ F1 ─→ F2（scope 系统是 convertFileSrc 的前置）
 | **F1** `path` 模块 | ✅ 完成（Windows 已验证） | 内建命令族 `path.*`（7 条）+ `@orielweb/api/path`；`sep` / `delimiter` 由宿主注入（**同步**）；**整族始终放行**（不做 I/O 是那条放行的前提）。两处对接 Rust 口径（`extname` 不带点、隐藏文件无扩展名、`basename`/`dirname` 忽略尾随分隔符）；`normalize` **不做 I/O**（与 Tauri 的 `canonicalize` 有意分歧）。新增 37 项单测 + 前端 11 项 + 真页面 14 项 |
 | **F4a** `app` 元信息 | ✅ 完成（Windows 已验证） | `OrielAppInfo` + `WithAppInfo(name, version, identifier)`（三项独立从入口程序集退化）；标识符在 `Build()` 时校验字符集（它是数据目录的组成部分）；`OrielLibrary.Version` 成为库版本唯一来源；内建 `app.*` 五条只读 + `@orielweb/api/app`，**整组始终放行**（放行的是列举的那几条，不是前缀——有测试钉住）。刻意不含 `exit`/`show`/`hide`（是能力）与 `getBundleType`（本库不是打包器，给不出）。新增 47 项单测 + 前端 6 项 + 真页面 6 项 |
 | **F4b-1** 目录解析 | ✅ 完成（Windows 已验证） | 24 条 `path.*Dir` 命令 + JS 24 个函数，**逐格对齐 Tauri 的 `PathResolver`**（Windows `SHGetKnownFolderPath` / Linux XDG / macOS `~/Library/*`）。实测 .NET 的 `SpecialFolder` 有三格对不上，故 Windows 侧直接用已知文件夹 API；Tauri 标记"不支持"的三格**照 Tauri 拒绝**（新增 `not_supported` 码）。`resolveResource` 带越界校验。放行名单由目录清单派生（不再手抄）。新增 43 项单测 + 前端 4 项 + 真页面 10 项 |
-| **F4b-2** `fs` scope + `fs.*` 命令 | ⬜ 未开始 | 与 D-3 合并做：Tauri 的 glob + `$VAR` scope 模型 |
+| **F4b-2a** 路径 scope 引擎 | ✅ 完成（Windows 已验证） | glob（`glob` crate 语义：`**` 吃零段、`*` 不跨分隔符）+ 23 个 `$VAR` + allow/deny。**空 scope 拒绝一切**（不是不限制）、**不认识的变量保守拒绝**、**deny 跨条目优先**。新增 56 项单测 |
+| **F4b-2b** `fs.*` 命令 + JS 模块 | ✅ 完成（Windows 已验证） | 14 条命令 + `@orielweb/api/fs`，**两道关都必过**（命令授权 + 路径 scope）。新增 `path_not_allowed` 码；归一在 scope 判定之前；`rename`/`copyFile` 两个路径都查。不含句柄式 API（无 rid 表）。新增 36 项单测 + 前端 16 项 + 真页面 22 项 |
 | **F** 其余（dialog / opener / clipboard / convertFileSrc） / **H** | ⬜ 未开始 | 见 §4.1 |
 
 ### M3 的状态（2026-10-17）

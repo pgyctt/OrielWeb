@@ -41,6 +41,10 @@
       "types": "./types/app.d.ts",
       "default": "./src/app.js"
     },
+    "./fs": {
+      "types": "./types/fs.d.ts",
+      "default": "./src/fs.js"
+    },
     "./window": {
       "types": "./types/window.d.ts",
       "default": "./src/window.js"

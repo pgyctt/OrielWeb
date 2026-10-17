@@ -333,6 +333,27 @@ public static class OrielJson
 
                 writer.WriteEndArray();
                 return;
+
+            // 字节序列（fs.readFile 的返回值）：写成数字数组。
+            //
+            // 与上面那条同一个理由——`byte[]` 是纯 BCL 类型，要求应用为它往
+            // JsonSerializerContext 里加 [JsonSerializable] 是不合理的负担，
+            // 而漏加的症状是"这个命令一调就报错"。手写循环没有任何反射。
+            //
+            // 没有走 STJ 的"Base64 字符串"那条路：页面侧期望的是
+            // `new Uint8Array(arr)`（与 Tauri 的 readFile 返回 Uint8Array 对齐），
+            // 而 Base64 会让调用方多一步解码、且形状与 Tauri 不一致。
+            // 代价是体积（一个字节 1~4 个字符），已在文档里写明
+            // ——几十 MB 的文件不适用本通道。
+            case byte[] bytes:
+                writer.WriteStartArray();
+                foreach (byte item in bytes)
+                {
+                    writer.WriteNumberValue(item);
+                }
+
+                writer.WriteEndArray();
+                return;
         }
 
         var type = value.GetType();

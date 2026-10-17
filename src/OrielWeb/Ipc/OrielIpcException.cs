@@ -50,6 +50,16 @@ public static class OrielIpcErrorCodes
     /// </remarks>
     public const string NotSupported = "not_supported";
 
+    /// <summary>
+    /// 命令被授权了，但**路径不在它的 scope 内**。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="NotAllowed"/> 分开是刻意的：那个是"没声明这个命令"，
+    /// 这个是"声明了命令但没声明这个路径"。混成一个码的话，排障时
+    /// "我明明声明了 fs.readTextFile"会把人带向完全错的方向。
+    /// </remarks>
+    public const string PathNotAllowed = "path_not_allowed";
+
     /// <summary>库内部的意外失败（**不是**应用命令自己抛的异常）。</summary>
     /// <remarks>
     /// 应用命令抛的异常不带码——那是应用的错误分类，库不该替它编。
