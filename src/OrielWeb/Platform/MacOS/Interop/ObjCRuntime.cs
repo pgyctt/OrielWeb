@@ -79,6 +79,12 @@ internal static unsafe partial class ObjCRuntime
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial void SendVoidObjObj(nint self, nint sel, nint a, nint b);
 
+    /// <summary>
+    /// 两个对象参数 + 一个 BOOL、无返回值的调用（如 <c>NSApplication postEvent:atStart:</c>）。
+    /// </summary>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial void SendVoidObjObjBool(nint self, nint sel, nint a, nint b, [MarshalAs(UnmanagedType.Bool)] bool flag);
+
     /// <summary>两个对象参数、返回对象（如 <c>readObjectsForClasses:options:</c>）。</summary>
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial nint SendIdObjObj(nint self, nint sel, nint a, nint b);
@@ -276,6 +282,56 @@ internal static unsafe partial class ObjCRuntime
 
     [LibraryImport(CoreGraphicsLib, EntryPoint = "CGDataProviderRelease")]
     internal static partial void CGDataProviderRelease(nint provider);
+
+    /// <summary>
+    /// 造一个"应用自定义"空事件：<c>+[NSEvent otherEventWithType:location:modifierFlags:
+    /// timestamp:windowNumber:context:subtype:data1:data2:]</c>。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 用途只有一个：<c>NSApplication.stop:</c> 之后投它唤醒 run loop（见
+    /// <c>MacOSPlatformBackend.Quit</c>）。<c>stop:</c> 是"处理完**当前**事件后退出循环"
+    /// （Apple 文档原话），若此刻队列里没有事件，循环会一直等到下一个真实事件才检查标志——
+    /// 表现为"调了 Quit 却退不掉"。
+    /// </para>
+    /// <para>
+    /// <b>类型是 <c>NSEvent*</c>，不是 <c>CGEventRef</c></b>：<c>postEvent:atStart:</c> 要的是
+    /// 前者，把后者传进去是未定义行为。这里照 [matplotlib 的 _macosx.m](
+    /// https://github.com/matplotlib/matplotlib/blob/main/src/_macosx.m) 的标准做法
+    /// （<c>stopWithEvent()</c>）用 <c>otherEventWithType:</c> 造 NSEvent。
+    /// </para>
+    /// <para>
+    /// <b>ABI 说明</b>：这个方法混合了整数与浮点参数（<c>NSPoint</c> 与 <c>NSTimeInterval</c>
+    /// 都是 double），因此寄存器分配不是"按顺序往后排"那么简单——.NET 的封送层按平台 ABI
+    /// 分别处理整数寄存器（x64 的 rdi/rsi/rdx/rcx/r8/r9、arm64 的 x0-x7）与浮点寄存器
+    /// （xmm0-、d0-），所以这里的声明顺序只要与 ObjC 签名一致即可。
+    /// <c>subtype</c> 原生是 <c>short</c>（会提升为 int），用 <see cref="nint"/> 传 0 是安全的。
+    /// </para>
+    /// </remarks>
+    /// <param name="eventType">NSEventType；<c>NSEventTypeApplicationDefined</c> = 15。</param>
+    /// <param name="locationX">事件位置 x（<c>NSZeroPoint</c> 时为 0）。</param>
+    /// <param name="locationY">事件位置 y。</param>
+    /// <param name="modifierFlags">修饰键掩码。</param>
+    /// <param name="timestamp">时间戳（秒）。</param>
+    /// <param name="windowNumber">窗口编号（无窗口时为 0）。</param>
+    /// <param name="context">已废弃的图形上下文参数（传 0）。</param>
+    /// <param name="subtype">子类型（原生 <c>short</c>）。</param>
+    /// <param name="data1">自定义数据 1。</param>
+    /// <param name="data2">自定义数据 2。</param>
+    /// <param name="self">ObjC 接收者。</param>
+    /// <param name="sel">selector。</param>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendIdNintDouble2NuintDoubleNintNintNintNintNint(
+        nint self, nint sel,
+        nint eventType,
+        double locationX, double locationY,
+        nuint modifierFlags,
+        double timestamp,
+        nint windowNumber,
+        nint context,
+        nint subtype,
+        nint data1,
+        nint data2);
 
     /// <summary>[[NSString stringWithUTF8String:]]（autoreleased，主循环自动排空）。</summary>
     internal static nint MakeNSString(string value)

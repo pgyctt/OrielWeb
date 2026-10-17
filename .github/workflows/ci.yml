@@ -285,12 +285,14 @@ jobs:
         #               退出语义的"结论行 + 退出码"双断言/单实例双进程）
         # 实现与判读标准全在 tools/verify-windows.ps1 里——内联在 workflow 里的脚本
         # 没法在本地跑、没法单独 review、diff 时也看不出改的是哪一段逻辑。
-        # 自检跑的是**要发布的那份 AOT 产物**（dist/demo），不是 bin 里的 IL 构建：
-        #   Linux 与 macOS 的验证跑的也是 AOT 产物，Windows 用 IL 构建才是异类。
+        #
+        # **-Publish 而不是在这里先 publish**：`dotnet publish -o dist/demo` 会把
+        # bin/Release/net10.0/win-x64/ 重建成 OrielDemo.dll + deps/runtimeconfig——
+        # 于是冒烟阶段要找的那个 IL 构建产物 `OrielDemo.exe` **在 publish 之后就不存在了**。
+        # 顺序必须是「先冒烟（用 IL 构建）→ 再发布 AOT（给打包与自检用）」，
+        # 这也是原来那三步的次序。交给脚本自己按阶段做，就不会再被顺序绊住。
         shell: pwsh
-        run: |
-          dotnet publish samples/OrielDemo -c Release -r win-x64 -p:DebugType=none -o dist/demo
-          pwsh tools/verify-windows.ps1
+        run: pwsh tools/verify-windows.ps1 -Publish
   smoke-macos:
     runs-on: macos-latest
     # 与 smoke-linux（needs compile-linux）、smoke-windows（needs compile-windows）对齐：

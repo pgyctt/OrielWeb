@@ -93,8 +93,26 @@ internal static unsafe class MacOSObjCClasses
         return 0;
     }
 
+    /// <summary>
+    /// "最后一个窗口关闭后要不要终止应用"：回答 **0（否）**。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 回答 1 会让 AppKit 走它自己的终止流程（<c>terminate:</c>），而那条路**不会让
+    /// <c>NSApplication.run</c> 返回**——<see cref="OrielApp.Run"/> 之后的清理（托盘撤销、
+    /// 后端释放）会被整个跳过，<c>ExitCompleted</c> 也永不触发。CI 上实测到过这个后果
+    /// （exit 自检只打印 Exiting、没有结论行）。
+    /// </para>
+    /// <para>
+    /// 回答 0 之后，最后一个窗口关闭 → 窗口委托的 <c>windowWillClose:</c> →
+    /// <c>MacOSWindowHost.OnWindowWillClose</c> → 后端 <c>OnWindowDestroyed</c> →
+    /// <see cref="MacOSPlatformBackend.Quit"/>（即 <c>stop:</c>）→ <c>run</c> 返回。
+    /// 这样"所有窗口关闭"与"应用调 Quit"两条路径**汇到同一处**，语义与 Windows
+    /// （存活窗口计数归零 → <c>PostQuitMessage</c>）、Linux（<c>gtk_main_quit</c>）一致。
+    /// </para>
+    /// </remarks>
     [UnmanagedCallersOnly]
-    private static nint TerminateAfterLastWindow(nint self, nint sel, nint app) => 1;
+    private static nint TerminateAfterLastWindow(nint self, nint sel, nint app) => 0;
 
     // ---- 窗口委托 ----
 

@@ -154,7 +154,63 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
         ObjCRuntime.SendVoid(_nsApp, ObjCRuntime.Sel("run"));
     }
 
-    public void Quit() => ObjCRuntime.SendVoidObj(_nsApp, ObjCRuntime.Sel("terminate:"), 0);
+    /// <summary>
+    /// 请求退出：让 <c>NSApplication.run</c> 返回，而不是终止进程。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>用 <c>stop:</c> 而不是 <c>terminate:</c></b>（CI 上实测出来的缺陷）：
+    /// <c>terminate:</c> 走的是 AppKit 的"应用终止"流程，它**不会让 <c>run</c> 返回**——
+    /// 于是 <see cref="OrielApp.Run"/> 之后的清理（托盘撤销、后端释放）全部被跳过，
+    /// <c>ExitCompleted</c> 事件也永不触发。这与库对使用者的承诺直接冲突：
+    /// "Quit 只请求退出，Run() 返回后该做的清理仍会执行"。
+    /// </para>
+    /// <para>
+    /// <c>stop:</c> 的语义正是我们要的（Apple 文档）："Stops the main event loop...
+    /// sets a flag that the app checks only after it finishes dispatching an event"——
+    /// 即循环会退出、<c>run</c> 会返回，与 Windows 的 <c>PostQuitMessage</c>、Linux 的
+    /// <c>gtk_main_quit</c> 同义。
+    /// </para>
+    /// <para>
+    /// <b>必须补一个空事件</b>：<c>stop:</c> 是"处理完**当前**事件后"才检查标志。若此刻
+    /// 队列里没有事件，循环会一直等到下一个真实事件——表现为"调了 Quit 却退不掉"。
+    /// 投一个 <c>CGEventCreate(NULL)</c> 造的空事件即可立刻唤醒它。
+    /// </para>
+    /// </remarks>
+    public void Quit()
+    {
+        ObjCRuntime.SendVoidObj(_nsApp, ObjCRuntime.Sel("stop:"), 0);
+
+        // 唤醒 run loop 去检查上面那个标志（理由见 remarks）。
+        // 用 +[NSEvent otherEventWithType:...] 造一个应用自定义事件——**不是** CGEventCreate：
+        // postEvent:atStart: 要的是 NSEvent*，传 CGEventRef 是未定义行为。
+        // 这是 AppKit 里"让 stop: 立刻生效"的标准做法。
+        const nint NSEventTypeApplicationDefined = 15;
+        nint evt = ObjCRuntime.SendIdNintDouble2NuintDoubleNintNintNintNintNint(
+            ObjCRuntime.GetClassOrThrow("NSEvent"),
+            ObjCRuntime.Sel("otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:"),
+            NSEventTypeApplicationDefined,
+            0, 0,      // location（NSZeroPoint）
+            0,         // modifierFlags
+            0,         // timestamp
+            0,         // windowNumber
+            0,         // context
+            0,         // subtype
+            0, 0);     // data1 / data2
+
+        if (evt != 0)
+        {
+            ObjCRuntime.SendVoidObjObjBool(
+                _nsApp, ObjCRuntime.Sel("postEvent:atStart:"), evt, 0, true);
+        }
+        else
+        {
+            // 造不出事件不致命（stop: 的标志已置位，下一个真实事件到来时循环照样会退出），
+            // 但"此刻没有事件就退不掉"的可能存在，记一笔便于排障。
+            OrielDiagnostics.Report(
+                "[OrielWeb] 退出时未能构造唤醒事件：run loop 要等到下一个事件才会检查退出标志。");
+        }
+    }
 
     public bool IsOnUiThread() => Environment.CurrentManagedThreadId == _mainManagedThreadId;
 

@@ -151,6 +151,30 @@ if (Test-Stage 'smoke') {
 }
 
 # ===========================================================================
+# 发布 AOT（打包与自检的共同前置）
+# ===========================================================================
+# **必须排在 smoke 之后**：`dotnet publish -o dist/demo` 会把 bin/Release/net10.0/win-x64/
+# 重建成 OrielDemo.dll + deps/runtimeconfig——那个目录里的 IL 构建 `OrielDemo.exe`
+# 在 publish 之后就不存在了，冒烟阶段便找不到产物。CI 上就是这么红过一次：
+# 合并脚本时把 publish 提到冒烟之前，冒烟报"未找到 demo 可执行文件"。
+if ((Test-Stage 'pack' -or Test-Stage 'selftest') -and
+    (-not (Test-Path (Join-Path $RepoRoot 'dist/demo/OrielDemo.exe')) -or $Publish)) {
+    Section '发布 AOT（win-x64，供打包与自检用）'
+    Push-Location $RepoRoot
+    try {
+        & dotnet publish samples/OrielDemo -c Release -r win-x64 -p:DebugType=none -o dist/demo
+        if ($LASTEXITCODE -ne 0) { throw "dotnet publish 失败（退出码 $LASTEXITCODE）" }
+    }
+    finally {
+        Pop-Location
+    }
+
+    if (-not (Test-Path (Join-Path $RepoRoot 'dist/demo/OrielDemo.exe'))) {
+        throw '发布完成但找不到主产物：dist/demo/OrielDemo.exe'
+    }
+}
+
+# ===========================================================================
 # 阶段 2：Velopack 打包与产物断言
 # ===========================================================================
 if (Test-Stage 'pack') {
@@ -159,8 +183,8 @@ if (Test-Stage 'pack') {
     $packDir = Join-Path $RepoRoot 'dist/demo'
     $outputDir = Join-Path $RepoRoot 'dist/releases'
 
-    if (-not (Test-Path $packDir)) {
-        throw "打包目录不存在：$packDir（先跑 dotnet publish -o dist/demo）"
+    if (-not (Test-Path (Join-Path $packDir 'OrielDemo.exe'))) {
+        throw "打包目录不存在或缺少主产物：$packDir（先跑 dotnet publish -o dist/demo）"
     }
 
     if (-not $NoInstallVpk) {
@@ -224,22 +248,9 @@ if (Test-Stage 'pack') {
 # ===========================================================================
 if (Test-Stage 'selftest') {
 
+    # 产物已由上面那段"发布 AOT"保证存在（它排在 smoke 之后——顺序理由见那里的注释）
     if (-not (Test-Path $Demo)) {
-        if (-not $Publish) {
-            throw "找不到自检产物：$Demo（用 -Publish 先发布一次，或用 -Demo 指定）"
-        }
-
-        Section '自检：发布 AOT（win-x64）'
-        Push-Location $RepoRoot
-        try {
-            & dotnet publish samples/OrielDemo -c Release -r win-x64 -p:DebugType=none -o dist/demo
-            if ($LASTEXITCODE -ne 0) { throw "dotnet publish 失败（退出码 $LASTEXITCODE）" }
-        }
-        finally {
-            Pop-Location
-        }
-
-        if (-not (Test-Path $Demo)) { throw "发布完成但找不到主产物：$Demo" }
+        throw "找不到自检产物：$Demo（用 -Publish 先发布一次，或用 -Demo 指定）"
     }
 
     # 通用模式：只看结论行

@@ -14,9 +14,26 @@
 
 ### 修复
 
+- **macOS：`Quit()` 走 `terminate:` 导致 `Run()` 永不返回，退出清理被整个跳过**。
+  **这条是本批接进 CI 之后才暴露的**——`terminate:` 走的是 AppKit 的"应用终止"流程
+  （询问文档控制器、delegate 等），它**不会让 `NSApplication.run` 返回**；
+  而 `run` 在 AppKit 里是 [point of no return](https://lapcatsoftware.com/blog/2007/03/10/everything-you-always-wanted-to-know-about-nsapplication/)。
+  后果是 `Run()` 之后的清理（撤销托盘、释放后端与共享环境）**全部被跳过**，
+  `ExitCompleted` 永不触发，退出码也不是应用设的那个——这与库对使用者的承诺
+  （"`Quit` 只请求退出，`Run()` 返回后该做的清理仍会执行"）直接冲突。
+  CI 上的症状是 exit 自检只打印 `Exiting`、没有结论行、退出码 0。
+  现在改用 `stop:`（Apple 文档："Stops the main event loop... sets a flag that the app checks
+  only after it finishes dispatching an event"——循环会退出、`run` 会返回，与 Windows 的
+  `PostQuitMessage`、Linux 的 `gtk_main_quit` 同义），并补投一个 `CGEventCreate(NULL)` 空事件
+  唤醒 run loop（`stop:` 只保证"处理完当前事件后"退出，队列空时它会一直等下一个事件，
+  表现为"调了 Quit 却退不掉"）。
+  连带修正 `applicationShouldTerminateAfterLastWindowClosed:` 的答复：由 **1 改为 0**——
+  答 1 会让 AppKit 抢先走 `terminate:`，于是"所有窗口关闭"这条路径同样跳过清理。
+  改答 0 后它汇到窗口委托的 `windowWillClose:` → `OnWindowDestroyed` → `Quit()`（`stop:`），
+  与 Windows（存活窗口归零 → `PostQuitMessage`）、Linux（`gtk_main_quit`）语义一致。
 - **`Quit()` 语义分裂：只请求退出、不保证退出**。`PostQuitMessage` 只是往消息队列投一条 `WM_QUIT`，
   而消息循环停下之后，宿主在 `Run()` 返回后跑的清理全部同步落在 UI 线程上，任何一步卡住
-  （等一个失去响应窗口的同步调用、一个不返回的 join）都会让进程驻留——驻留期间可执行文件映像
+   （等一个失去响应窗口的同步调用、一个不返回的 join）都会让进程驻留——驻留期间可执行文件映像
   仍被映射，现场表现是**"程序删不掉/装不上"**，Windows 还会判成 AppHangB1（宿主实测最坏 ≈ 7s：
   `Join(2s) + Wait(2s) + Logger.Dispose(3s)`，而消息循环此时已停，任何需要 UI 线程的清理
   都不再可能完成）。现在 `Quit()` 在投递退出消息的同时起一个看门狗线程：从"请求退出"算起超过

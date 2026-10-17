@@ -100,6 +100,19 @@ APP_BUNDLE="$OUT/OrielDemo.app"
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 cp "$DEMO_EXE" "$APP_BUNDLE/Contents/MacOS/OrielDemo"
+
+# 图标文件也要拷进 bundle 的 MacOS/ 目录：demo 按 AppContext.BaseDirectory + "app.png" 找它，
+# 而在 .app 里那个目录就是 Contents/MacOS/。不拷的话 tray 自检会报"图像文件不存在"——
+# 那是**测试脚手架的缺口**，不是库或应用的问题（CI 上红过一次）。
+# app.ico 只在 Windows 上是原生格式，这里一并拷上是为了让托盘自检的"双格式解码"
+# 在 macOS 上也能成立（解码器本身是三平台共用的托管实现，与宿主平台无关）。
+for asset in app.png app.ico; do
+    asset_src="$REPO_ROOT/samples/OrielDemo/$asset"
+    if [[ -f "$asset_src" ]]; then
+        cp "$asset_src" "$APP_BUNDLE/Contents/MacOS/$asset"
+    fi
+done
+
 cat > "$APP_BUNDLE/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -256,20 +269,24 @@ fi
 section "退出语义：正常退出 / 超时强杀（子进程取证）"
 # 这两项必须**子进程**取证：看门狗超时走 Environment.Exit，会把测试运行器一起带走。
 #
-# 判定口径（刻意与另外两个平台不同，理由是本脚本上面已经记录过的那个坑）：
-#  · 结论行是**主**判据（与其它自检一致）。
-#  · 退出码只在 exit-timeout 上判定：它由 Environment.Exit(ForceExitCode) **直接终止进程**，
-#    不经过 AppKit，因此退出码可靠。
-#  · exit 的退出码**只记录不判定**：正常退出走的是 Run() 返回 → Main 返回 → AppKit 的
-#    terminate（applicationShouldTerminateAfterLastWindowClosed），实测它会吃掉 Main 里设的
-#    Environment.ExitCode（本脚本的注释里记过："nav 自检打印 FAIL 却返回 0"）。
-#    在这里断言"必须为 0"会在 macOS 上引入一个永远红的假失败，而那不是真实缺陷。
-#    想真正验证退出码，应当由宿主在 Main 里显式 Environment.Exit 收尾——那属于应用侧约定。
+# 判定口径：**结论行与退出码都判**（与 Linux/Windows 一致）。
+#  · exit          —— 正常退出，退出码必须是 0。
+#  · exit-timeout  —— 看门狗超时强杀，退出码必须是 ForceExitCode（默认 2）。
+# 只看结论行会漏掉"看门狗没真的强杀"（进程正常退出了）；
+# 只看退出码会漏掉"事件没触发"。两者缺一都不算通过。
+#
+# 历史说明（这段断言口径变过一次，值得记下来）：
+# 本脚本原先**刻意不判 exit 的退出码**，理由是当时 macOS 的 Quit() 走
+# `NSApplication.terminate:`，而它不让 `run` 返回——于是 Main 里设的 Environment.ExitCode
+# 根本传不出来（同一现象也解释过"nav 自检打印 FAIL 却返回 0"）。
+# 那个行为后来被判定为**真实缺陷**（它让 Run() 之后的清理整个被跳过），已改用 `stop:`：
+# 现在 run 会返回、Main 会跑完，退出码因此可靠。这里把断言补回来，
+# 顺带让"退出码传不出来"这类回归能被立刻发现。
 exit_timeout_code_expected=2
 for mode in exit exit-timeout; do
     case "$mode" in
-        exit)         pattern='^EXIT-SELFTEST: ' ;;
-        exit-timeout) pattern='^EXIT-TIMEOUT-SELFTEST: ' ;;
+        exit)         pattern='^EXIT-SELFTEST: ';         expected_code=0 ;;
+        exit-timeout) pattern='^EXIT-TIMEOUT-SELFTEST: '; expected_code="$exit_timeout_code_expected" ;;
     esac
     log="$OUT/selftest-$mode.log"
 
@@ -290,7 +307,7 @@ for mode in exit exit-timeout; do
     fi
 
     verdict="$(grep -E "$pattern" "$log" | tail -1 || true)"
-    echo "  [$mode] 退出码=${code} 结论=${verdict:-无}"
+    echo "  [$mode] 退出码=${code}（期望 ${expected_code}） 结论=${verdict:-无}"
     sed 's/^/    /' "$log" || true
 
     if [[ "$verdict" != *PASS* ]]; then
@@ -298,12 +315,10 @@ for mode in exit exit-timeout; do
         fail_tail="$(grep -v '^[[:space:]]*$' "$log" | tail -n 2 | tr '\n' ' ' | tr -s ' ')"
         SELFTEST_FAIL_DETAIL="${SELFTEST_FAIL_DETAIL:+$SELFTEST_FAIL_DETAIL }[$mode] ${verdict:-无结论行}（退出码 ${code}）：${fail_tail:0:300}"
         echo "    （未读到 PASS 结论行，按失败处理）"
-    elif [ "$mode" = "exit-timeout" ] && [ "$code" -ne "$exit_timeout_code_expected" ]; then
-        # 结论行 PASS 但退出码不对 ⇒ 看门狗没有真的强杀（进程自己退出了）。
-        # 这正是"只看结论行会漏掉"的那一类，所以这里必须判。
+    elif [ "$code" -ne "$expected_code" ]; then
         SELFTEST_FAILED=1
-        SELFTEST_FAIL_DETAIL="${SELFTEST_FAIL_DETAIL:+$SELFTEST_FAIL_DETAIL }[$mode] 退出码应为 ${exit_timeout_code_expected}，实际 ${code}——看门狗可能没有真的强杀"
-        echo "    （退出码不符：期望 ${exit_timeout_code_expected}，实际 ${code}）"
+        SELFTEST_FAIL_DETAIL="${SELFTEST_FAIL_DETAIL:+$SELFTEST_FAIL_DETAIL }[$mode] 退出码应为 ${expected_code}，实际 ${code}"
+        echo "    （退出码不符：期望 ${expected_code}，实际 ${code}）"
     fi
 done
 
