@@ -5,6 +5,10 @@
 // 这一页存在的理由：demo 在 Windows 上是 WinExe（**没有控制台**），自检的 stdout 看不见；
 // 而托管侧的回调（托盘菜单项、上下文菜单项、拖放）恰恰都是"点了才知道"的东西。
 // 所以把它们统统推回页面显示——看得见的回调才算验证过了。
+//
+// 与 app.js 一样吃前端包（相对路径 import 的理由见那边的文件头）。
+import { invoke } from "./vendor/orielweb-api/core.js";
+import { listen } from "./vendor/orielweb-api/event.js";
 
 const logEl = document.getElementById("log");
 
@@ -21,8 +25,9 @@ function log(text, kind) {
     logEl.scrollTop = logEl.scrollHeight;
 }
 
-// 宿主 → 页面：托管侧的事件都经这一条通道推过来
-window.oriel.on("manual.log", (entry) => log(entry.text, "evt"));
+// 宿主 → 页面：托管侧的事件都经这一条通道推过来。
+// payload 在 e.payload 里（包把宿主事件包成 { event, id, payload }）。
+listen("manual.log", (e) => log(e.payload.text, "evt"));
 
 document.getElementById("clear-log").addEventListener("click", () => {
     logEl.replaceChildren();
@@ -34,7 +39,7 @@ document.querySelectorAll("[data-cmd]").forEach((button) => {
     button.addEventListener("click", async () => {
         const label = button.textContent.trim();
         try {
-            const result = await window.oriel.invoke(button.dataset.cmd);
+            const result = await invoke(button.dataset.cmd);
             const text = result === undefined || result === null
                 ? "（无返回值）"
                 : typeof result === "object" ? JSON.stringify(result) : String(result);
@@ -49,10 +54,16 @@ document.querySelectorAll("[data-cmd]").forEach((button) => {
 
 (async () => {
     try {
-        const state = await window.oriel.invoke("manual.state");
+        const state = await invoke("manual.state");
         const line = (label, value) => `<div>${label}：<b>${value}</b></div>`;
+
+        // `platform` 还没有进包：它属于 os 模块（计划中的 M3），Tauri 那边在
+        // @tauri-apps/plugin-os 里，不在 core。所以这里读裸传输层——那不是遗漏，
+        // 是"包只提供 Tauri 形状的东西"这条原则的体现。
+        const platform = /** @type {any} */ (window).oriel?.platform ?? "未知";
+
         document.getElementById("state").innerHTML =
-            line("平台", window.oriel.platform) +
+            line("平台", platform) +
             line("托盘", state.trayCreated ? "已创建" : "未创建") +
             line("托盘当前可见", state.trayVisible ? "是" : "否（无头/无托盘宿主时正常）") +
             line("系统通知可用", state.notificationsSupported ? "是" : "否") +
@@ -72,9 +83,9 @@ function setMaximizedIcon(maximized) {
     maxBtn.classList.toggle("is-maximized", !!maximized);
 }
 
-document.getElementById("btn-min").addEventListener("click", () => window.oriel.invoke("win.minimize"));
-maxBtn.addEventListener("click", async () => setMaximizedIcon(await window.oriel.invoke("win.toggleMaximize")));
-document.getElementById("btn-close").addEventListener("click", () => window.oriel.invoke("win.close"));
+document.getElementById("btn-min").addEventListener("click", () => invoke("win.minimize"));
+maxBtn.addEventListener("click", async () => setMaximizedIcon(await invoke("win.toggleMaximize")));
+document.getElementById("btn-close").addEventListener("click", () => invoke("win.close"));
 
 // 用户经原生路径最大化（双击标题栏、Win+↑）时页面察觉不到，靠宿主推送
-window.oriel.on("maximized", setMaximizedIcon);
+listen("maximized", (e) => setMaximizedIcon(e.payload));

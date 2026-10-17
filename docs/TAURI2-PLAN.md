@@ -318,7 +318,8 @@ F1 ─→ F2（scope 系统是 convertFileSrc 的前置）
 | **C5** 关闭接管状态机 | ✅ 完成（Windows 已验证） | `OrielClosePipeline`（宿主否决 → 页面接管 → 放行，三平台共用一份判定）；`InterceptClose` / `CloseInterceptEnabled` / `Destroy()`；内建命令 `win.destroy` / `win.setCloseIntercept`。三平台原生入口的**相反返回值语义**只在各自入口处翻译。新增 `--selftest close` 17 项断言（四条路径 + 逃生口） |
 | **D1** `window.*` 命令族 | ✅ 完成（Windows 已验证） | 26 条命令，**可按 label 寻址**；门禁只为标题栏必需那组 + 三条只读查询放行（`OrielCapabilityRules.AlwaysAllowedWindowCommands`），其余 deny-by-default。新增 `window.setEventForwarding`（按需转发）、`window.scaleFactor`、`window.title` |
 | **D2** `window` 模块 JS 侧 | ✅ 完成 | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow` + `Window` 类（方法名与 Tauri 一一对应，命令名映射在包内）；`onCloseRequested` / `onResized` / `onMoved` / `onFocusChanged`；`TauriEvent` 名字映射 + 自动打开转发。新增 30 项前端包测试与 `--selftest window` 12 项断言 |
-| E2 / E3 / F / G / H | ⬜ 未开始 | 见 §4.1 |
+| **G** demo 迁到前端包 | ✅ 完成（Windows 已验证） | `app.js` / `manual-check.js` 改用 `@orielweb/api`，页面脚本改 `type="module"`；包源码**直接内嵌**（不复制、不提交副本）；新增 `--selftest api` 18 项断言（唯一一处"包在真页面里被 import 并调用"的取证） |
+| E2 / E3 / F / H | ⬜ 未开始 | 见 §4.1 |
 
 ### M2 已收口（2026-10-17）
 
@@ -330,9 +331,11 @@ F1 ─→ F2（scope 系统是 convertFileSrc 的前置）
 | `window` 模块基础 + 现有能力包装 | ✅ D1/D2（26 条命令 + `Window` 类） |
 | 新命令族过门禁 | ✅ C4（`event.emit`）+ D1（`window.*` 白名单） |
 | `--selftest event` + `--selftest window` | ✅ 7 + 12 项断言，Windows 全 PASS |
-| demo 迁移到 `@orielweb/api` | ⬜ 批次 G |
+| demo 迁移到 `@orielweb/api` | ✅ 批次 G |
 
 唯一没打勾的是**批次 G（demo 迁移）**——那是验收性的一步，不是 M2 的能力缺口。
+
+> 更新（2026-10-17）：批次 G 也已完成，M2 的全部退出条件成立。
 
 ### C1/C2 的一处实现教训（写计划时未知）
 

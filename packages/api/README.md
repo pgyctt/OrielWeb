@@ -63,6 +63,50 @@ const un = await win.onCloseRequested(async () => {
 
 `mocks` 里的 `mockEmit(name, payload)` 可以模拟宿主推事件，写前端测试时用它造"窗口被 resize 了"这类场景。
 
+## 怎么把它引进页面
+
+包**没有打包器依赖**，`exports` 直接指向 `src/*.js`。两条路：
+
+| 场景 | 做法 |
+|---|---|
+| 有打包器（Vite / esbuild / …） | `import { invoke } from '@orielweb/api/core'` —— 裸标识符由打包器解析 |
+| 没有打包器（内嵌静态页） | 两种：配一个 import map；或直接 `import ... from './vendor/orielweb-api/core.js'` |
+
+`samples/OrielDemo` 走的是第二条路的相对路径形式（它要把包源码内嵌进程序集，
+见 `OrielDemo.csproj` 的 vendor 段落——**直接内嵌源码而不是复制一份**，所以不存在副本漂移）：
+
+```html
+<script type="module" src="app.js"></script>
+```
+
+```js
+// app.js
+import { invoke, isTauri } from "./vendor/orielweb-api/core.js";
+import { listen } from "./vendor/orielweb-api/event.js";
+```
+
+> **import map 在 WebView2 上可用，但 WebKitGTK 的支持版本不确定**，所以示例不依赖它。
+> 要用的话写成逐模块条目（不能让 `@orielweb/api/core` 解析成无扩展名的 URL——
+> 内嵌资源表是按完整相对路径查的）：
+>
+> ```html
+> <script type="importmap">
+> { "imports": {
+>     "@orielweb/api/core": "./vendor/orielweb-api/core.js",
+>     "@orielweb/api/event": "./vendor/orielweb-api/event.js",
+>     "@orielweb/api/window": "./vendor/orielweb-api/window.js"
+> } }
+> </script>
+> ```
+
+### 迁移时最容易漏掉的两处
+
+1. **事件回调要取 `e.payload`** —— 包把宿主事件包成 `{ event, id, payload }`（Tauri 形状），
+   而裸通道给的是裸值。`oriel.on('maximized', b => …)` 迁移后是 `listen('maximized', e => …e.payload…)`。
+2. **`await window.oriel.ready` 没有对应物** —— 包与 Tauri 一样没有 `ready`：
+   桥接脚本在 document 创建时就同步装好了，页面脚本运行时它已经就绪。
+   该问的是"我在不在宿主里"，即 `isTauri()`。
+
 ## 开发
 
 ```bash

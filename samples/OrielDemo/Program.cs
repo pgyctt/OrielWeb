@@ -52,7 +52,7 @@ internal static class Program
     /// <c>--selftest</c> 认得的名字。加一个自检只需在这里加名字 + 在 Main 里加一行判定。
     /// </summary>
     private static readonly string[] SelfTestNames =
-        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowevents", "event", "close", "window"];
+        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowevents", "event", "close", "window", "api"];
 
     /// <summary>本次请求的自检名字是否就是 <paramref name="name"/>（忽略大小写与首尾空白）。</summary>
     private static bool IsSelfTest(string? requested, string name)
@@ -154,6 +154,8 @@ internal static class Program
         var closeSelfTest = IsSelfTest(selfTest, "close");
         // window：window.* 命令族的按 label 寻址 + 能力门禁。它要建第二个窗口当被操作对象。
         var windowSelfTest = IsSelfTest(selfTest, "window");
+        // api：前端包在真实页面里能不能用（ESM 加载 / 各类往返）。
+        var apiSelfTest = IsSelfTest(selfTest, "api");
         // --manual-check：手动验证操作台（停在那里等人点，不自动退出）。
         // 与 --selftest shell 的分工：那个是给 CI 的无人断言，这个是给人看的——
         // 每项做成按钮，托管侧的回调（托盘菜单项、通知点击、快捷键、拖放）回显到页面。
@@ -166,7 +168,7 @@ internal static class Program
             || singleInstanceSelfTest || shellSelfTest || capabilitySelfTest || multiWindowSelfTest
             || schemeSelfTest || exitSelfTest || threadingSelfTest || traySelfTest || trayJsSelfTest
             || geometrySelfTest || geometryFramelessSelfTest || windowEventsSelfTest || eventSelfTest
-            || closeSelfTest || windowSelfTest;
+            || closeSelfTest || windowSelfTest || apiSelfTest;
         var manualCheck = !anySelfTest && !args.Contains("--todo");
 
         // 主题自检需要 OrielApp（主题是应用级的），所以这里显式 Build 再 Run；
@@ -192,7 +194,7 @@ internal static class Program
                     c.Allow("event.emit");
                 }
 
-                if (windowSelfTest)
+                if (windowSelfTest || apiSelfTest)
                 {
                     // **刻意逐条声明而不是 Allow("window.*")**：window 自检要同时验
                     // "放行分支"与"拒绝分支"，所以留一条（window.setResizable）不声明，
@@ -200,6 +202,9 @@ internal static class Program
                     //
                     // 注意这里没有 window.minimize / window.close 之类——它们在白名单里，
                     // 不声明也放行（见 OrielCapabilityRules.IsAlwaysAllowedWindowCommand）。
+                    //
+                    // api 自检复用这一块：它要逐模块验包能用，而 window 模块的
+                    // getAllWindows / scaleFactor 需要声明（title / isVisible 在白名单里）。
                     c.Allow(
                         "window.getAll",
                         "window.isVisible",
@@ -357,6 +362,13 @@ internal static class Program
                     WebviewWindow created = win;
                     created.Loaded += () => WindowSelfTest.Begin(created.App);
                 }
+                if (apiSelfTest)
+                {
+                    // 前端包自检：订阅同样要早于导航——探针脚本在页面解析时就会跑完并回显。
+                    ApiSelfTest.AttachEvents(win);
+                    WebviewWindow created = win;
+                    created.Loaded += ApiSelfTest.Begin;
+                }
                 if (traySelfTest || trayJsSelfTest)
                 {
                     // 托盘是应用级资源，要在 UI 线程上建；Loaded 时后端已就位
@@ -449,6 +461,7 @@ internal static class Program
             || (eventSelfTest && EventSelfTest.Failed)
             || (closeSelfTest && CloseSelfTest.Failed)
             || (windowSelfTest && WindowSelfTest.Failed)
+            || (apiSelfTest && ApiSelfTest.Failed)
             || ((traySelfTest || trayJsSelfTest) && TraySelfTest.Failed))
         {
             Environment.ExitCode = 1;

@@ -85,6 +85,28 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
   （Windows `GetDpiForWindow/96`、Linux `gtk_widget_get_scale_factor`、macOS `backingScaleFactor`），
   后者是"标题现在是什么"的查询（与 `TitleChanged` **不同**：那个只在页面文档标题变化时触发）。
 - **`--selftest window`**：按 label 寻址 + 能力门禁两侧的逐条真机取证。
+- **demo 迁到前端包**（批次 G）：`samples/OrielDemo/wwwroot/app.js` 与 `manual-check.js`
+  改用 `@orielweb/api`（`invoke` / `listen` / `isTauri`），页面脚本改为 `type="module"`。
+  包源码**直接内嵌**（csproj 里 `packages/api/src/*.js` → `wwwroot/vendor/orielweb-api/`），
+  **不复制、不提交副本**——从根上不存在"副本过期"这种漂移。
+  demo 用**相对路径 import** 是因为它没有打包器；真实项目的两条路（打包器用裸标识符 /
+  没有就配 import map）写在 `packages/api/README.md` 里。
+  两处迁移要点：① 事件回调要取 `e.payload`（包把宿主事件包成 `{event,id,payload}`）；
+  ② `await window.oriel.ready` → `isTauri()`（包与 Tauri 一样没有 `ready`，
+  桥接脚本在 document 创建时就同步装好了）。
+- **`--selftest api`**：18 项断言，逐模块验证包在**真实页面**里可用——ESM 动态 import、
+  `core.invoke` 往返、`dpi` 舍入复刻 .NET 的 ToEven、`TauriEvent` 同名同值、
+  `getCurrentWindow().label`、`getAllWindows` 含本窗口、`mocks.isMocked() === false` 等。
+  这是**唯一一处"包在真页面里被 import 并调用"的取证**：包的单测全跑在 Node 里，
+  而那一侧没有浏览器环境，ESM 加载、相对 import 解析、宿主真有那几条命令……
+  一件都没验过。
+
+### 修复
+
+- **主题自检不再依赖页面的测试钩子**：原先 `app.js` 会 `postMessage('theme-echo')` 回显给宿主，
+  宿主据此判定。迁移时去掉了那个回显，改为宿主直接轮询页面上的 `<html data-theme>`。
+  两处好处：示例页不再夹带测试钩子；而且验的是"页面真的应用了主题"这个**可见效果**，
+  比验一条旁路回显更接近用户看到的东西。
 - **`Window.getFocusedWindow()`**：签名已就位，但**目前恒返回 `null`**——三平台都还没有
   "哪个窗口有焦点"的**查询**能力（`FocusChanged` 只上报变化、不记录状态）。
   保留它是为了让迁移代码能原样编译，而不是假装"没有窗口有焦点"。

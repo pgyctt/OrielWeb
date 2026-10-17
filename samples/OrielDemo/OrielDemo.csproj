@@ -50,4 +50,19 @@
                        LogicalName="$(AssemblyName).wwwroot/$([System.String]::Copy('%(RecursiveDir)').Replace('\','/'))%(Filename)%(Extension)" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 前端包（packages/api/src）**直接内嵌**，落在 wwwroot/vendor/orielweb-api/ 下。
+
+         **不复制、不提交副本**：页面 import 的就是包的源码本身，从根上不存在"副本过期"这种漂移。
+         复制一份到 wwwroot 再提交是更常见的做法，但那会引入一个永久的同步负担——
+         改了包忘了拷，页面跑的是旧代码，而症状是"包的新功能在 demo 里看不到"。
+
+         为什么用相对路径 import 而不是裸标识符 `@orielweb/api/core`：
+         demo **没有打包器**，浏览器/WebView 不认 node_modules 解析。真实项目走两条路之一——
+         有打包器就用裸标识符，没有就配 import map。两条路都写在 packages/api/README.md 里。
+         （import map 在 WebView2 上可用，但 WebKitGTK 的支持版本不确定，所以示例不依赖它。） -->
+    <EmbeddedResource Include="..\..\packages\api\src\*.js"
+                      LogicalName="$(AssemblyName).wwwroot/vendor/orielweb-api/%(Filename)%(Extension)" />
+  </ItemGroup>
+
 </Project>
