@@ -134,6 +134,11 @@
         // 典型例子：用户在原生路径下最大化/还原（双击标题栏、拖边框到屏幕顶端、Win+↑）时
         // 刷新标题栏的"最大化/还原"图标。
         // 返回取消订阅函数。
+        //
+        // **这是裸 payload 语义，保持不变**：@orielweb/api/event 的 listen() 在这一层之上
+        // 包成 { event, id, payload }（包装在 JS 包里做，不在这个脚本里做），
+        // 直接调 oriel.on 的既有页面完全不受影响。两套并存是刻意的——
+        // 迁移不应该是"要么全改、要么不改"。
         on(name, handler) {
             if (typeof name !== 'string' || !name || typeof handler !== 'function') {
                 throw new Error('oriel.on: 需要 (name: string, handler: function)');

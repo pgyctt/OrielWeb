@@ -1,0 +1,19 @@
+// 只产出 .d.ts 的编译配置（`npm run build:types`）。
+//
+// 为什么需要它：包的 `exports` 里 `types` 字段必须指向真实的 `.d.ts`——
+// 指向 `.js` 不行（TypeScript 不会从 JSDoc 在消费方推断 `export` 的形状签名），
+// 而不写 `types` 会让 `import { listen } from '@orielweb/api/event'` 在消费方
+// 变成隐式 any。这与 D-1 的"无打包器"不冲突：这里产的是类型，不是运行时代码，
+// `exports.default` 仍然直接指向 `src/*.js`。
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationDir": "./types",
+    "stripInternal": true
+  },
+  "include": ["src/**/*.js", "src/**/*.d.ts"],
+  "exclude": ["src/internal.js"]
+}

@@ -23,9 +23,21 @@ import { invoke } from '@orielweb/api/core';
 | 模块 | 状态 |
 |---|---|
 | `core` | ✅ `invoke` / `isTauri` / `convertFileSrc`（显式未实现） |
+| `event` | ✅ `listen` / `once` / `emit` / `emitTo` + `TauriEvent` 常量 |
 | `dpi` | ✅ 四个类 + 归一 + 换算 |
-| `mocks` | ✅ `mockIPC` / `mockWindows` / `mockConvertFileSrc` / `clearMocks` |
-| `event` / `window` / `app` / `path` / `tray` / … | 尚未实现，见 [TAURI2-PLAN.md](../../docs/TAURI2-PLAN.md) |
+| `mocks` | ✅ `mockIPC` / `mockWindows` / `mockEmit` / `mockConvertFileSrc` / `clearMocks` |
+| `window` / `app` / `path` / `tray` / … | 尚未实现，见 [TAURI2-PLAN.md](../../docs/TAURI2-PLAN.md) |
+
+## `event` 的现状（迁移必读）
+
+| 项 | 状态 |
+|---|---|
+| `listen` / `once` / `emit` / `emitTo` | ✅ 可用 |
+| 事件对象 `{ event, id, payload }` | ✅ **包装在包内做**——直接调 `window.oriel.on` 的既有页面不受影响 |
+| `emit` / `emitTo` 的宿主命令 | ✅ `event.emit`，**必须显式 `Allow("event.emit")`**（不走 `win.*` 的后门） |
+| `TauriEvent` 的内置事件名 | ⚠️ 常量已就位，但 `tauri://resize` 等**尚未推到页面通道**——订阅它们现在收不到 |
+
+`mocks` 里的 `mockEmit(name, payload)` 可以模拟宿主推事件，写前端测试时用它造"窗口被 resize 了"这类场景。
 
 ## 开发
 

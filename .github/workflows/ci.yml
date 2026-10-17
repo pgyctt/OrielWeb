@@ -55,8 +55,8 @@ jobs:
         # 注意：必须显式给出文件路径——Node 把纯目录参数当作入口模块解析。
         run: node --test tests/bridge/bridge.test.mjs
 
-      - name: Frontend API package tests
-        # @orielweb/api 的单元测试（core / dpi / mocks）。它是页面侧公开 API 的载体，
+      - name: Frontend API tests
+        # @orielweb/api 的单元测试（core / dpi / event / mocks）。它是页面侧公开 API 的载体，
         # 形状错了的表现是"前端迁移后行为不对"，而那种问题在 C# 侧一个断言都抓不到。
         # 无构建步骤（JS + JSDoc），所以直接跑 node --test。
         working-directory: packages/api
@@ -69,6 +69,19 @@ jobs:
         # 关掉它的话，JSDoc 里的类型声明会慢慢与实现漂移，而漂移只在消费方 IDE 里可见。
         working-directory: packages/api
         run: npx tsc -p . --noEmit
+
+      - name: Frontend API types are up to date
+        # types/ 是 `tsc -p tsconfig.types.json` 的产物，**提交进仓库**（包的 exports.types 指向它）。
+        # 这里重新生成再比对：手改了 src 却忘了重新生成时，消费方会拿到过期的 .d.ts，
+        # 而症状是"IDE 显示的方法签名与运行期不一致"——极难归因。宁可在 PR 上红。
+        #
+        # 为什么不干脆在发布时生成：那样漂移只会在 publish 那一刻才被发现，
+        # 而那时已经没有办法 review 差异了。
+        run: |
+          cd packages/api
+          npx tsc -p tsconfig.types.json
+          cd ../..
+          git diff --exit-code packages/api/types/
 
       - name: Package build logic (in-package MSBuild targets)
         # 包内 buildTransitive/OrielWeb.targets 的消费链路：打包 → 零配置消费工程 → 断言

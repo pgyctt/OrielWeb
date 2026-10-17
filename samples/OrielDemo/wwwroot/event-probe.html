@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <title>Oriel Event Probe</title>
+</head>
+<body>
+    <!-- 事件自检的探针页面（--selftest event 专用，不给人看）。
+         它做两件事：
+           1. 页面就绪时向宿主报一次 ready（带自己的 label），宿主据此知道两个窗口都装好了；
+           2. 订阅 probe.event，收到就把「我的 label + payload」回显给宿主——
+              跨窗口投递的断言全靠这条回显：谁的 label 出现在宿主侧，就说明事件真的到了谁那里。 -->
+    <p id="status">probe</p>
+    <script src="event-probe.js"></script>
+</body>
+</html>

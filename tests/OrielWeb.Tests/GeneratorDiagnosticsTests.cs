@@ -175,4 +175,44 @@ public sealed class GeneratorDiagnosticsTests
         Assert.Equal("ORIELWEB106", warning.Id);
         Assert.Equal(DiagnosticSeverity.Warning, warning.Severity);
     }
+
+    // ---- ORIELWEB107：event.emit 与库内建命令重合 ----
+
+    [Fact]
+    public void ReservedEventEmitName_IsWarnedButStillGenerates()
+    {
+        // event.emit 是库内建（@orielweb/api/event 的 emit/emitTo 依赖它），
+        // 应用同名命令会被它遮蔽——注册成功但永不可达。
+        var diagnostics = OrielDiagnostics("""
+            public static class Commands
+            {
+                [OrielWeb.Ipc.OrielCommand("event.emit")]
+                public static string Ok() => "ok";
+            }
+            """);
+
+        var warning = Assert.Single(diagnostics);
+        Assert.Equal("ORIELWEB107", warning.Id);
+        Assert.Equal(DiagnosticSeverity.Warning, warning.Severity);
+    }
+
+    [Theory]
+    [InlineData("event.onUserAction")]
+    [InlineData("event.log")]
+    [InlineData("events.emit")]
+    [InlineData("event")]
+    public void OtherEventLikeNames_AreNotWarned(string commandName)
+    {
+        // 只保留了 event.emit **这一个名字**，不是整个 event. 前缀——
+        // 应用定义 event.onUserAction 之类完全合法，按前缀警告只会制造噪音。
+        var diagnostics = OrielDiagnostics($$"""
+            public static class Commands
+            {
+                [OrielWeb.Ipc.OrielCommand("{{commandName}}")]
+                public static string Ok() => "ok";
+            }
+            """);
+
+        Assert.Empty(diagnostics);
+    }
 }

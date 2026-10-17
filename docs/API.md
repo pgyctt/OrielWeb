@@ -472,7 +472,8 @@ window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
 | 模式 | 精确名 `todo.add`、前缀通配 `todo.*`（末尾的 `.` 是模式的一部分，所以**不**匹配 `todo`）、`*`。**刻意不支持正则**——配错的代价是静默放行 |
 | `deny` 优先 | 两条都命中按拒绝算。"先宽泛 allow、再 deny 挖例外"是最常见的写法，若 allow 优先那条 deny 等于没写 |
 | 默认拒绝 | 两条都不命中即拒绝 |
-| `win.` 前缀始终放行 | 那是无边框窗口的标题栏按钮与拖动，只操作自己那个窗口，不是"能力"；它们由库内建，自定义同名命令会被遮蔽。**应用自己的命令请避开这个前缀** |
+| `win.` 前缀始终放行 | 那是无边框窗口的标题栏按钮与拖动，只操作自己那个窗口，不是"能力"；它们由库内建，自定义同名命令会被遮蔽。**应用自己的命令请避开这个前缀**。`tray.` 前缀同理 |
+| **`event.emit` 不放行** | 唯一一处"库内建但**不**始终放行"的命令。它让一个窗口的页面能驱动**另一个窗口**的行为（跨窗口指令通道），而自绘标题栏完全不依赖它——没有开后门的理由。要用必须显式 `Allow("event.emit")` 或 `Allow("event.*")`。注意它只保留了这一个**名字**，`event.` 前缀本身不保留 |
 | 只管 `invoke` | 单向的 `postMessage` 没有命令名，由来源与令牌两层覆盖 |
 | `win.` 只保留**命令名**段 | 事件名不受限：`EmitEvent("win.state.changed", …)` 不会被拦（库不校验事件名，事件命名空间是页面自己的）。但为了与"保留前缀"的口径一致，建议避开这个段（下游反馈 2026-10-11 的 P2-3） |
 
@@ -799,7 +800,7 @@ window.ContextMenuPolicy = OrielContextMenuPolicy.Editing;  // Editing（默认�
 | `oriel.dragRegion(target?)` | 登记拖动区域（见 §2）：不传参数 = 重新扫描整个文档；返回登记的元素数 |
 | `oriel.invoke(name, args)` | → `Promise`；失败时 reject 带原因 |
 | `oriel.postMessage(name, payload)` | 单向通知 |
-| `oriel.on(name, handler)` | 订阅宿主事件，返回退订函数 |
+| `oriel.on(name, handler)` | 订阅宿主事件，返回退订函数。**参数是裸 payload**（`maximized` 给 `bool`、`theme.changed` 给字符串）——新代码建议用 `@orielweb/api/event` 的 `listen`，它包成 `{ event, id, payload }` |
 | `oriel.tray` | **托盘 API**（对标 Tauri 2 的 `@tauri-apps/api/tray`）：`new` / `getById` / `getAll` / `removeById` / `onEvent`，句柄上 `setIcon` / `setMenu` / `setTooltip` / `setTitle` / `setVisible` / `setIconAsTemplate` / `close`——完整对照表见 §7 |
 
 托盘事件的 payload（推给 `oriel.tray.onEvent` 的处理器）：
@@ -900,8 +901,9 @@ sudo apt-get install -y fonts-noto-cjk   # 中文界面必需，否则渲染成�
 |---|---|
 | 单测（`tests/OrielWeb.Tests`） | 分发器与回执协议、能力模型、内建窗口命令表、资源 URL 解析与请求路径归一（含穿越拒绝）、资源名约定、文件/Shell/对话框的纯函数、快照回退与数值格式化 |
 | 桥接测试（`tests/bridge/bridge.test.mjs`） | 三平台共用脚本的行为一致性：就绪、事件、往返、回执、超时、不可信来源不安装、每条出站消息带令牌、`oriel.label` 注入 |
-| 前端包测试（`packages/api/tests/*.test.mjs`） | `@orielweb/api` 的 `core` / `dpi` / `mocks`：mock 往返、参数原样透传、per-call 超时未支持时明确拒绝、DPI 换算与宿主侧舍入一致（含 .NET 的 ToEven） |
-| 无人自检（`OrielDemo --selftest <名字>`） | `nav` `ipc` `theme` `single-instance` `shell` `capability` `multiwindow` `scheme` `exit` `exit-timeout` `threading` `tray` `tray-js` `geometry` `geometry-frameless` `windowevents`——自己驱动页面、打印结论行、以退出码表达成败 |
+| 前端包测试（`packages/api/tests/*.test.mjs`） | `@orielweb/api` 的 `core` / `dpi` / `event` / `mocks`：mock 往返、参数原样透传、per-call 超时未支持时明确拒绝、DPI 换算与宿主侧舍入一致（含 .NET 的 ToEven）、事件包装与 once 语义、`emit`/`emitTo` 的参数形状 |
+| 事件投递取证（`--selftest event`） | `event.emit` 的**跨窗口**投递：广播（发起窗口自己也收到）、定向（只有目标收到）、定向到不存在的窗口返回 0 且不抛。断言靠探针页面回显 label——证明"页面 → 宿主 → 页面"整条通路是通的 |
+| 无人自检（`OrielDemo --selftest <名字>`） | `nav` `ipc` `theme` `single-instance` `shell` `capability` `multiwindow` `scheme` `exit` `exit-timeout` `threading` `tray` `tray-js` `geometry` `geometry-frameless` `windowevents` `event`——自己驱动页面、打印结论行、以退出码表达成败 |
 | 几何/焦点事件取证（`--selftest windowevents`） | `Resized`（程序调 `Resize` 后参数应为逻辑像素的客户区）、`Moved`（`MoveTo` 后应为屏幕逻辑坐标）、`FocusChanged`（**再建一个窗口抢焦点 → 收到 false；关掉它 → 收到 true**）、以及去重（重复设同一尺寸不再触发）。三平台的原生来源完全不同，只能逐平台真机取证——"我接上了信号"与"事件真的到了"是两件事 |
 | 尺寸语义取证（`--selftest geometry` / `geometry-frameless`） | **三平台尺寸语义一致性**。前者用**装饰窗口**取证：`WithSize(800,600)` 的客户区必须是 `800x600`（修复前 Windows 上是 `784x561`，见 [TAURI2-PLAN.md](TAURI2-PLAN.md) 的 E-1），并再验一次运行期 `Resize(640,480)`。后者用**无边框窗口**取证反面：客户区不该被多做一次"客户区 → 整窗"换算 |
 | 托盘后端取证（`--selftest tray`） | 26 项：`app.png`/`app.ico` **双格式解码**、多托盘（建两个 + 按 id 取回 + 互不影响）、图标对象与**模板标记**如实回读、运行期换图（对象与路径两条入口）、菜单、显隐、标题、按 id 移除、重复 id 抛异常 |

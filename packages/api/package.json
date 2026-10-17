@@ -25,6 +25,10 @@
       "types": "./types/core.d.ts",
       "default": "./src/core.js"
     },
+    "./event": {
+      "types": "./types/event.d.ts",
+      "default": "./src/event.js"
+    },
     "./dpi": {
       "types": "./types/dpi.d.ts",
       "default": "./src/dpi.js"

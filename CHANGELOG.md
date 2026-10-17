@@ -15,10 +15,24 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
 ### 新增
 
 - **`@orielweb/api` 前端包**（`packages/api`）：模块名与 `@tauri-apps/api` 一一对应，
-  迁移时只需替换 import 前缀。首批提供 `core`（`invoke` / `isTauri`）、`dpi`
+  迁移时只需替换 import 前缀。首批提供 `core`（`invoke` / `isTauri`）、`event`
+  （`listen` / `once` / `emit` / `emitTo` / `TauriEvent`）、`dpi`
   （`LogicalSize` / `PhysicalSize` / `LogicalPosition` / `PhysicalPosition` + 归一与换算）、
-  `mocks`（`mockIPC` / `mockWindows` / `mockConvertFileSrc` / `clearMocks`）。
-  **JS + JSDoc，无打包器**：`exports` 直接指向 `src/*.js`，`tsc` 只做类型门禁（`--noEmit`）。
+  `mocks`（`mockIPC` / `mockWindows` / `mockEmit` / `mockConvertFileSrc` / `clearMocks`）。
+  **JS + JSDoc，无打包器**：`exports` 直接指向 `src/*.js`，`tsc` 只做类型门禁（`--noEmit`）；
+  `.d.ts` 由 `tsc -p tsconfig.types.json` 生成并**提交进仓库**，CI 校验无漂移。
+- **`event` 模块的事件对象包装**：`listen` / `once` 的回调收到 `{ event, id, payload }`
+  （Tauri 形状），而底层 `window.oriel.on` **仍是裸 payload**——包装在包内做，
+  既有页面零影响。两套并存是刻意的：迁移不应该是"要么全改、要么不改"。
+- **内建命令 `event.emit`**：页面把事件广播给所有窗口或定向到某个 label
+  （对标 Tauri 的 `emit` / `emitTo`）。目标窗口不存在时**静默丢弃**（返回 0，不抛）——
+  多窗口应用里窗口随时可能被关掉，"发的时候还在、到的时候没了"是正常时序。
+  **它是唯一一处"库内建但不始终放行"的命令**：广播是真正的跨窗口能力，必须显式
+  `Allow("event.emit")`；而自绘标题栏不依赖它，没有开后门的理由。
+- **生成器诊断 `ORIELWEB107`**：应用定义 `event.emit` 与库内建重名时给出 Warning
+  （注册成功但永不可达）。只按**精确名**判——`event.` 前缀不保留，`event.onUserAction` 之类完全合法。
+- **`--selftest event`**：跨窗口事件投递取证。广播（发起窗口自己也收到）、定向（只有目标收到）、
+  定向到不存在的窗口返回 0。
 - **窗口 `label`**（对标 Tauri 2 的 `Window.label`）：`OrielWindowOptions.Label`（默认 `"main"`，
   自动归一小写，字符集限字母/数字/`-`/`.`/`_`）、`OrielApp.GetWindow(label)`、
   `WebviewWindow.Label`，以及页面侧的 `window.oriel.label`。

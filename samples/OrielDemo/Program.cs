@@ -52,7 +52,7 @@ internal static class Program
     /// <c>--selftest</c> 认得的名字。加一个自检只需在这里加名字 + 在 Main 里加一行判定。
     /// </summary>
     private static readonly string[] SelfTestNames =
-        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowevents"];
+        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowevents", "event"];
 
     /// <summary>本次请求的自检名字是否就是 <paramref name="name"/>（忽略大小写与首尾空白）。</summary>
     private static bool IsSelfTest(string? requested, string name)
@@ -146,6 +146,9 @@ internal static class Program
         // windowevents：宿主侧几何/焦点事件（Resized / Moved / FocusChanged）。
         // 三平台的原生来源完全不同，只能逐平台真机取证——"我接上了信号"与"事件真的到了"是两件事。
         var windowEventsSelfTest = IsSelfTest(selfTest, "windowevents");
+        // event：event.emit 的广播与定向投递（页面 → 宿主 → 页面）。
+        // 它的主窗口要载探针页面，且能力名单必须放行 event.emit——那正是"新命令族默认不放行"的体现。
+        var eventSelfTest = IsSelfTest(selfTest, "event");
         // --manual-check：手动验证操作台（停在那里等人点，不自动退出）。
         // 与 --selftest shell 的分工：那个是给 CI 的无人断言，这个是给人看的——
         // 每项做成按钮，托管侧的回调（托盘菜单项、通知点击、快捷键、拖放）回显到页面。
@@ -157,7 +160,7 @@ internal static class Program
         bool anySelfTest = navSelfTest || ipcSelfTest || themeSelfTest
             || singleInstanceSelfTest || shellSelfTest || capabilitySelfTest || multiWindowSelfTest
             || schemeSelfTest || exitSelfTest || threadingSelfTest || traySelfTest || trayJsSelfTest
-            || geometrySelfTest || geometryFramelessSelfTest || windowEventsSelfTest;
+            || geometrySelfTest || geometryFramelessSelfTest || windowEventsSelfTest || eventSelfTest;
         var manualCheck = !anySelfTest && !args.Contains("--todo");
 
         // 主题自检需要 OrielApp（主题是应用级的），所以这里显式 Build 再 Run；
@@ -171,7 +174,18 @@ internal static class Program
             .AddCommands<ManualCommands>()
             // 能力模型：声明页面真正会调用的命令（都写在这里的用途是当示范——Release 下
             // 不声明的话一律拒绝，见 README「能力模型」）。win.* 是库保留前缀，始终放行，不必列。
-            .UseCapabilities(c => c.Allow("todo.*", "sys.info", "manual.*", CapabilitySelfTest.AllowedCommand))
+            //
+            // **event.emit 必须显式声明**：它刻意不在"始终放行"的名单里（广播是真正的跨窗口能力，
+            // 自绘标题栏不依赖它）。这个示范本身也是在说明"新命令族默认不放行"这条原则。
+            .UseCapabilities(c =>
+            {
+                c.Allow("todo.*", "sys.info", "manual.*", CapabilitySelfTest.AllowedCommand);
+
+                if (eventSelfTest)
+                {
+                    c.Allow("event.emit");
+                }
+            })
             .UseDebug()
             .OnWebView2RuntimeMissing(HandleWebView2RuntimeMissing)
             .AddWindow(w =>
@@ -198,7 +212,15 @@ internal static class Program
                     // 操作台走独立页面：Todo 页保持它作为"API 用法示例"的干净面貌
                     w.WithUrl($"https://{AssetHost}/manual-check.html");
                 }
-                w.WithTitle(manualCheck ? "Oriel Demo — 手动验证" : "Oriel Demo — Todo")
+                if (eventSelfTest)
+                {
+                    // 事件自检要走探针页面（它订阅 probe.event 并回显自己的 label）。
+                    // 用 https 别名只是为了与 manualCheck 的写法一致——导航前会归一成 oriel://。
+                    w.WithUrl($"https://{AssetHost}/event-probe.html");
+                }
+                w.WithTitle(manualCheck ? "Oriel Demo — 手动验证"
+                          : eventSelfTest ? "Oriel Demo — 事件探针"
+                          : "Oriel Demo — Todo")
                     .WithSize((geometrySelfTest || geometryFramelessSelfTest) ? GeometrySelfTest.Width : 1024,
                               (geometrySelfTest || geometryFramelessSelfTest) ? GeometrySelfTest.Height : 720)
                     .WithMinSize(640, 480)
@@ -284,6 +306,14 @@ internal static class Program
                     // 所以挂在 Loaded 上。
                     WebviewWindow created = win;
                     created.Loaded += () => WindowEventsSelfTest.Attach(created.App, created);
+                }
+                if (eventSelfTest)
+                {
+                    // **分两步**：订阅必须在 onCreated（早于导航），
+                    // 因为探针页面在解析时就发 probe.ready，等 Loaded 再订阅会漏掉它。
+                    // 而 App 要到 Loaded 才可用（窗口后端那时才 Attach 上），所以开始跑放在 Loaded。
+                    EventSelfTest.AttachEvents(win);
+                    win.Loaded += EventSelfTest.Begin;
                 }
                 if (traySelfTest || trayJsSelfTest)
                 {
@@ -374,6 +404,7 @@ internal static class Program
             || (geometrySelfTest && GeometrySelfTest.Failed)
             || (geometryFramelessSelfTest && GeometrySelfTest.Failed)
             || (windowEventsSelfTest && WindowEventsSelfTest.Failed)
+            || (eventSelfTest && EventSelfTest.Failed)
             || ((traySelfTest || trayJsSelfTest) && TraySelfTest.Failed))
         {
             Environment.ExitCode = 1;

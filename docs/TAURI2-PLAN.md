@@ -313,7 +313,9 @@ F1 ─→ F2（scope 系统是 convertFileSrc 的前置）
 | **E1** 尺寸语义修 bug | ✅ 完成（Windows 已验证） | Windows 侧加 `AdjustWindowRectExForDpi` 换算，`Create` / `Resize` / `WM_GETMINMAXINFO` 三条路径全部改为客户区语义；**frameless 明确不换算**。`--selftest geometry` 由红转绿：`784x561` → `800x600`，运行期 `Resize(640,480)` 也精确。新增 `--selftest geometry-frameless` 钉住反面 |
 | **C1** 后端事件接口 | ✅ 完成 | `IWindowBackend` 新增 `Resized` / `Moved` / `FocusChanged`；`OrielSizeChangedEventArgs` / `OrielPositionChangedEventArgs`；`WebviewWindow` 三个公开事件 |
 | **C2** 三平台事件接线 | ✅ 完成（Windows 已验证，另两平台待 CI） | Windows `WM_SIZE`+`WM_MOVE`+`WM_SETFOCUS`/`WM_KILLFOCUS`；Linux 新接 `configure-event` + `focus-in/out-event`（含 `GdkEventConfigure` 结构体映射）；macOS 新接 `windowDidMove:` + `windowDidBecomeKey:`/`windowDidResignKey:`。三平台都做 0.5 逻辑像素去重。新增 `--selftest windowevents` 7 项断言 |
-| C3 / C4 / C5 / D / E2 / E3 / F / G / H | ⬜ 未开始 | 见 §4.1 |
+| **C3** `event` 模块 | ✅ 完成 | `packages/api/event.js`：`listen` / `once` / `emit` / `emitTo` / `TauriEvent`；事件对象 `{event,id,payload}` **包装在包内**，底层 `oriel.on` 仍裸 payload（既有页面零影响）。`mocks` 新增 `mockEmit` 供前端单测造宿主事件 |
+| **C4** `event.emit` 内建命令 | ✅ 完成（Windows 已验证） | 广播 / 按 label 定向；目标不存在静默丢弃并返回 0。**唯一一处"库内建但不始终放行"**：必须显式 `Allow("event.emit")`。新增 `ORIELWEB107` 诊断与 `--selftest event` 7 项断言 |
+| C5 / D / E2 / E3 / F / G / H | ⬜ 未开始 | 见 §4.1 |
 
 ### C1/C2 的一处实现教训（写计划时未知）
 
@@ -325,6 +327,17 @@ F1 ─→ F2（scope 系统是 convertFileSrc 的前置）
 现在改成 `Marshal.PtrToStructure<GdkEventConfigure>`，并加了 `GdkStructLayoutTests` 钉住
 字段顺序、连续性与 `send_event` 必须是 `byte` 而不是 `bool`（.NET 的 `bool` 默认 marshal 成
 4 字节 Win32 BOOL，会让后续字段整体偏移 3 字节）。
+
+### C3/C4 的一处实现教训（写计划时未知）
+
+**`EvaluateJs` 不会替调用方 await Promise**。自检里读 `window.oriel.invoke(...)` 的返回值，
+`ExecuteScriptAsync` 得到的是 Promise 的序列化形态 `{}`——症状是"命令返回了空对象"，
+而看起来像是宿主侧序列化坏了。正确做法是让页面 `.then()` 后经 `postMessage` 回显。
+这条与 E1 的"自检必须挂 UI 线程"同属"自检写法的坑"，会反复出现在后续所有基于页面的取证里。
+
+另一条：**探针页面的 ready 必须早于 `Loaded` 订阅**。页面在解析时就发 `postMessage`，
+而 `Loaded` 在导航完成后才触发——订阅晚于消息会让 ready 永远收不到。所以监听要挂在
+`onCreated`（早于导航），而需要 `App` 的逻辑仍放 `Loaded`。
 
 ### E1 的验收状态（如实标注）
 

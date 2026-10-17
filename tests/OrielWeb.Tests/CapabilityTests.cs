@@ -80,6 +80,56 @@ public sealed class CapabilityTests
     public void BuiltInPrefixIsExact(string command, bool expected)
         => Assert.Equal(expected, OrielCapabilityRules.IsBuiltInCommand(command));
 
+    // ---- event.emit 刻意不开后门（安全红线）----
+    //
+    // 这是本库唯一一处"库内建命令**不**始终放行"的地方，因此值得单独钉死：
+    //   * win.* / tray.* 始终放行，因为它们只操作本应用自己的窗口与托盘，
+    //     而拒掉 win.* 会让无边框窗口变成关不掉的窗口（自绘标题栏没有替代入口）；
+    //   * event.emit 不同——它让一个窗口的页面能驱动**另一个窗口**的行为，
+    //     那是真正的跨窗口能力，而自绘标题栏完全不依赖它，没有开后门的理由。
+    //
+    // 写错的后果很具体：多窗口应用里，任意一个被 XSS 的页面都能给所有窗口发指令。
+
+    [Theory]
+    [InlineData("event.emit")]
+    [InlineData("event.anything")]
+    [InlineData("event.")]
+    public void EventCommands_AreNotAlwaysAllowed(string command)
+    {
+        // 关键：它**不**在"始终放行"名单里，所以要走完整的命令授权。
+        Assert.False(
+            OrielCapabilityRules.IsBuiltInCommand(command),
+            $"'{command}' 不在始终放行的名单里——它必须过能力门禁。");
+    }
+
+    [Fact]
+    public void EventEmit_IsDeniedByDefault()
+    {
+        // deny-by-default：没声明就是没有这个能力（Release 下的默认姿态）。
+        Assert.False(OrielCapabilityRules.IsAllowed("event.emit", [], []));
+    }
+
+    [Fact]
+    public void EventEmit_IsAllowedWhenListed()
+    {
+        Assert.True(OrielCapabilityRules.IsAllowed("event.emit", ["event.emit"], []));
+        Assert.True(OrielCapabilityRules.IsAllowed("event.emit", ["event.*"], []));
+    }
+
+    [Fact]
+    public void EventEmit_CanBeDeniedEvenWhenPrefixAllowed()
+    {
+        // "先宽泛 allow、再用 deny 挖例外"：deny 必须优先，否则那条 deny 等于没写
+        Assert.False(OrielCapabilityRules.IsAllowed("event.emit", ["event.*"], ["event.emit"]));
+    }
+
+    [Fact]
+    public void EventEmit_WouldBeDeniedByARealisticNarrowCapabilityList()
+    {
+        // 一个只声明了业务命令的应用（本仓库 demo 就是这种形态）不该意外获得广播能力。
+        Assert.False(OrielCapabilityRules.IsAllowed("event.emit", ["todo.*", "sys.info", "manual.*"], []));
+    }
+
     // ---- 令牌 ----
 
     [Fact]

@@ -29,6 +29,16 @@ let handler = null;
 let mockWindowLabels = ['main'];
 
 /**
+ * mock 传输层的事件订阅表：事件名 → 处理器集合。
+ *
+ * 真实传输层由桥接脚本提供 `on()`；mock 侧必须自己实现一份，否则
+ * `listen`/`once` 在 Node 里根本没法测——而那正是 `mocks` 存在的理由。
+ *
+ * @type {Map<string, Set<(payload: unknown) => void>>}
+ */
+let mockListeners = new Map();
+
+/**
  * 装一个假的 IPC 传输层。
  *
  * @param {MockHandler} invoke
@@ -53,7 +63,52 @@ export function mockIPC(invoke) {
 
             return current(name, args ?? null);
         },
+        on(name, listener) {
+            let set = mockListeners.get(name);
+            if (!set) {
+                set = new Set();
+                mockListeners.set(name, set);
+            }
+
+            set.add(listener);
+            return () => {
+                set.delete(listener);
+                if (set.size === 0) {
+                    mockListeners.delete(name);
+                }
+            };
+        },
     });
+}
+
+/**
+ * 模拟一次**宿主 → 页面**的事件（测试专用）。
+ *
+ * 对标真实宿主推事件的路径：`oriel._onEvent(name, payload)` 把裸 payload
+ * 交给订阅者。`@orielweb/api/event` 的 `listen` 再把它包成 `{ event, id, payload }`。
+ *
+ * @param {string} eventName
+ * @param {unknown} [payload]
+ * @returns {void}
+ */
+export function mockEmit(eventName, payload) {
+    if (typeof eventName !== 'string' || eventName === '') {
+        throw new Error('mockEmit: eventName 必须为非空字符串');
+    }
+
+    const set = mockListeners.get(eventName);
+    if (!set) {
+        return;
+    }
+
+    // 复制一份再遍历：处理器内部退订不会影响本次派发（与桥接脚本一致）
+    for (const listener of Array.from(set)) {
+        try {
+            listener(payload === undefined ? null : payload);
+        } catch {
+            // 单个处理器抛出不该中断同一次派发里其它处理器——与桥接脚本的隔离策略一致
+        }
+    }
 }
 
 /**
@@ -109,6 +164,9 @@ export function mockConvertFileSrc(protocol = 'oriel') {
 export function clearMocks() {
     handler = null;
     mockWindowLabels = ['main'];
+    // 事件订阅表也要清：不清的话上一条用例订阅的处理器会在下一条用例的 mockEmit 里
+    // 继续被调用，而那两个用例本该互不干扰——这种污染最难查（症状是"单跑通过、连跑失败"）。
+    mockListeners = new Map();
     setTransportOverride(null);
 }
 

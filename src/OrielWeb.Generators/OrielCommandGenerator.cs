@@ -117,6 +117,21 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
             "ORIELWEB106", "命令名落在保留前缀 win",
             "命令「{0}」以保留前缀 win 开头：内建窗口命令先于应用路由，它注册成功但永不可达，请换个前缀",
             Category, DiagnosticSeverity.Warning, isEnabledByDefault: true);
+
+        /// <summary>
+        /// event.emit 是库内建：@orielweb/api/event 的 emit / emitTo 依赖它，
+        /// 应用同名命令会被内建遮蔽。
+        /// </summary>
+        /// <remarks>
+        /// 与 <see cref="ReservedPrefix"/> 分开（而不是把文案改成"以 win 或 event 开头"）：
+        /// 这两条判据不同——win 是**整个前缀**保留，event 只保留了 <c>event.emit</c> 这一个名字。
+        /// 文案说清楚才不会让人以为 <c>event.*</c> 全都不能用。
+        /// </remarks>
+        public static readonly DiagnosticDescriptor ReservedEventCommand = new(
+            "ORIELWEB107", "命令名与库内建的 event.emit 重合",
+            "命令「{0}」与库内建的事件命令同名：内建命令先于应用路由，它注册成功但永不可达，" +
+            "请换一个名字（只有该内建名被保留，event 前缀本身可用）。",
+            Category, DiagnosticSeverity.Warning, isEnabledByDefault: true);
     }
 
     private static GeneratorOutput Transform(GeneratorAttributeSyntaxContext context, CancellationToken token)
@@ -171,6 +186,16 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
             // 内建窗口命令先于应用路由（见 OrielCommandDispatcher）：应用同名命令注册成功但
             // 永不可达，此前只靠文档约束。Warning 而非 Error：不阻断构建，但必须让人看见。
             diagnostics.Add(Diagnostic.Create(Diagnostics.ReservedPrefix, location, rawName));
+        }
+
+        // event.emit 同样是库内建（页面侧 @orielweb/api/event 的 emit/emitTo 依赖它），
+        // 也会遮蔽同名应用命令。按**精确名**判而不是整个 event. 前缀：只有这一个命令是内建的，
+        // 应用定义的 event.onUserAction 之类完全合法，按前缀警告只会制造噪音。
+        // 这里硬编码命令名是刻意的——生成器不能引用主库（它跑在消费方的编译里），
+        // 而这个名字一旦改动，下面的测试会立刻发现（见 GeneratorDiagnosticsTests）。
+        if (string.Equals(rawName, "event.emit", StringComparison.Ordinal))
+        {
+            diagnostics.Add(Diagnostic.Create(Diagnostics.ReservedEventCommand, location, rawName));
         }
 
         // ---- 宿主与方法本身的可用性：这几类此前会变成生成文件里的 CS 错误（定位在 .g.cs）----

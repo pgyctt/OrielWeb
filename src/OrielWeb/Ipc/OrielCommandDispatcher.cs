@@ -156,6 +156,30 @@ internal sealed class OrielCommandDispatcher
             return;
         }
 
+        // 内建事件命令（event.*）：广播/定向发送。
+        // **注意它不在"始终放行"名单里**（见 OrielCapabilityRules.IsBuiltInCommand）——
+        // 走到这里之前已经过了命令授权，所以能到这一行的调用方是**被允许**的。
+        // 这与 win.* / tray.* 刻意不同：广播是真正的能力（能驱动另一个窗口），
+        // 而自绘标题栏不依赖它，没有开后门的理由。
+        if (OrielBuiltInEventCommands.TryGet(name, out var eventBuiltIn))
+        {
+            if (window is null)
+            {
+                ReplyError(sink, id, $"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。");
+                return;
+            }
+
+            try
+            {
+                ReplyOk(sink, id, eventBuiltIn(window, args));
+            }
+            catch (Exception ex)
+            {
+                ReplyError(sink, id, DescribeBuiltInFailure(name, ex));
+            }
+            return;
+        }
+
         if (!_routes.TryGetValue(name, out var route))
         {
             ReplyError(sink, id, $"未知命令 '{name}'。请确认方法已标注 [OrielCommand] 且所在程序集被应用引用。");

@@ -37,4 +37,17 @@ export interface OrielTransport {
 
     /** 桥接脚本就绪的 Promise。 */
     ready?: Promise<void>;
+
+    /**
+     * 订阅宿主事件（底层通道，**裸 payload**）。
+     *
+     * `@orielweb/api/event` 的 `listen` 在它之上包成 `{ event, id, payload }`。
+     * 直接用它得到的是裸值（`maximized` 给 `bool`、`theme.changed` 给字符串、
+     * `navigation.*` 给对象）——形状不统一，所以不推荐直接用。
+     *
+     * @param name 事件名。
+     * @param handler 处理器，参数是裸 payload。
+     * @returns 退订函数。
+     */
+    on?(name: string, handler: (payload: unknown) => void): () => void;
 }
