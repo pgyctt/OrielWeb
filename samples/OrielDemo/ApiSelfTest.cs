@@ -127,6 +127,59 @@ internal static class ApiSelfTest
                 try { core.convertFileSrc('/tmp/a.png'); } catch (_) { convertThrew = true; }
                 check('core.convertFileSrc 未实现时明确抛错', convertThrew, 'P1-2');
 
+                // ---- 结构化错误（F7）：码要真的到达页面 ----
+                //
+                // 用一条**确定会被拒**的命令取证：demo 刻意没有声明 window.setResizable。
+                // 页面据此能分支（提示"没有权限"而不是"出错了"）——分不清这两者，
+                // 是排障时最费时间的一件事。
+                let deniedCode = null;
+                try {
+                    await core.invoke('window.setResizable', { value: false });
+                } catch (e) {
+                    deniedCode = e && e.code;
+                }
+                check('被拒的命令带着 code=not_allowed 到页面',
+                    deniedCode === 'not_allowed', deniedCode);
+
+                // 未知命令：要用一条**在能力名单里但没注册**的名字。
+                //
+                // 拿 `no.such.command` 试会得到 not_allowed —— 那是**正确**行为：
+                // deny-by-default 下未声明的命令在授权层就被拒，压根走不到路由查找，
+                // 于是它也不泄露"这个命令存不存在"。而 `todo.nonexistent` 命中了
+                // Allow("todo.*")，能走到路由查找，才会给出 unknown_command。
+                let unknownCode = 'unset';
+                try {
+                    await core.invoke('todo.nonexistent');
+                } catch (e) {
+                    unknownCode = e && e.code;
+                }
+                check('未知命令带着 code=unknown_command 到页面',
+                    unknownCode === 'unknown_command', unknownCode);
+
+                // 顺带钉住上面那条口径：名单外的名字（哪怕它也不存在）报的是 not_allowed
+                let outsideCode = 'unset';
+                try {
+                    await core.invoke('no.such.command');
+                } catch (e) {
+                    outsideCode = e && e.code;
+                }
+                check('名单外的命令报 not_allowed（不泄露命令是否存在）',
+                    outsideCode === 'not_allowed', outsideCode);
+
+                // ---- per-call timeout（F7）：真宿主上要能用 ----
+                //
+                // 这一条与"传输层声明了 supportsPerCallTimeout"是两回事：
+                // 声明对但桥接脚本没真读那个参数，页面就会拿到 30 秒默认超时——
+                // 而那种失效在单测里看不出来（mock 不走真桥接）。
+                let perCallOk = false;
+                try {
+                    await core.invoke('todo.list', null, { timeout: 5000 });
+                    perCallOk = true;
+                } catch (e) {
+                    perCallOk = false;
+                }
+                check('per-call timeout 在真宿主上可用（不再被拒）', perCallOk, 'F7');
+
                 // ---- dpi ----
                 const dpi = await import(vendor + '/dpi.js');
                 const size = new dpi.LogicalSize(800, 600);

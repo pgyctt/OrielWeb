@@ -53,6 +53,12 @@ export function mockIPC(invoke) {
 
     handler = invoke;
     setTransportOverride({
+        // 声明支持 per-call timeout。
+        //
+        // 不声明的话，页面在测试里写 `invoke(cmd, args, { timeout })` 会被 core 的显式检查
+        // 拒掉——而那个检查的用意是"老宿主上别静默失效"，不是"测试里也要拒"。
+        // mock 代表的是当前版本的宿主，它就该具备当前版本的能力。
+        supportsPerCallTimeout: true,
         async invoke(name, args) {
             // 真实通道里 `args` 缺省时宿主收到的是 `null`（见 oriel-bridge.js 的 invoke）。
             // 这里保持一致，免得测试里 `args === undefined` 的分支与真机不同。

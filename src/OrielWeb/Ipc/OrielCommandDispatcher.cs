@@ -82,7 +82,7 @@ internal sealed class OrielCommandDispatcher
         // 拒绝的记账（Debug 输出 + IpcRejected 事件）在门禁内部，这里只把原因回给页面。
         if (!_guard.TryAccept(documentUrl, message, out string? rejection))
         {
-            ReplyError(sink, ReadId(message), rejection ?? "IPC 消息被拒绝。");
+            ReplyError(sink, ReadId(message), ErrorReply.Text(rejection ?? "IPC 消息被拒绝。", OrielIpcErrorCodes.NotAllowed));
             return;
         }
 
@@ -98,7 +98,7 @@ internal sealed class OrielCommandDispatcher
 
         if (string.IsNullOrEmpty(name))
         {
-            ReplyError(sink, id, "invoke 消息缺少 name 字段。");
+            ReplyError(sink, id, ErrorReply.Text("invoke 消息缺少 name 字段。", OrielIpcErrorCodes.InvalidMessage));
             return;
         }
 
@@ -107,7 +107,7 @@ internal sealed class OrielCommandDispatcher
         {
             string reason = denialReason ?? "命令未被授权。";
             _guard.Report(OrielIpcRejectionLayer.Command, reason, documentUrl, name);
-            ReplyError(sink, id, reason);
+            ReplyError(sink, id, ErrorReply.Text(reason, OrielIpcErrorCodes.NotAllowed));
             return;
         }
 
@@ -119,7 +119,7 @@ internal sealed class OrielCommandDispatcher
         {
             if (window is null)
             {
-                ReplyError(sink, id, $"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。");
+                ReplyError(sink, id, ErrorReply.Text($"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。", OrielIpcErrorCodes.NoSourceWindow));
                 return;
             }
 
@@ -141,7 +141,7 @@ internal sealed class OrielCommandDispatcher
         {
             if (window is null)
             {
-                ReplyError(sink, id, $"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。");
+                ReplyError(sink, id, ErrorReply.Text($"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。", OrielIpcErrorCodes.NoSourceWindow));
                 return;
             }
 
@@ -165,7 +165,7 @@ internal sealed class OrielCommandDispatcher
         {
             if (window is null)
             {
-                ReplyError(sink, id, $"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。");
+                ReplyError(sink, id, ErrorReply.Text($"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。", OrielIpcErrorCodes.NoSourceWindow));
                 return;
             }
 
@@ -188,7 +188,7 @@ internal sealed class OrielCommandDispatcher
         {
             if (window is null)
             {
-                ReplyError(sink, id, $"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。");
+                ReplyError(sink, id, ErrorReply.Text($"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。", OrielIpcErrorCodes.NoSourceWindow));
                 return;
             }
 
@@ -205,7 +205,7 @@ internal sealed class OrielCommandDispatcher
 
         if (!_routes.TryGetValue(name, out var route))
         {
-            ReplyError(sink, id, $"未知命令 '{name}'。请确认方法已标注 [OrielCommand] 且所在程序集被应用引用。");
+            ReplyError(sink, id, ErrorReply.Text($"未知命令 '{name}'。请确认方法已标注 [OrielCommand] 且所在程序集被应用引用。", OrielIpcErrorCodes.UnknownCommand));
             return;
         }
 
@@ -248,22 +248,68 @@ internal sealed class OrielCommandDispatcher
     /// 把它净化成"命令执行失败"只会让调用方拿到一句无从下手的文案。
     /// </para>
     /// </remarks>
-    private static string DescribeForPage(string name, Exception ex)
+    /// <summary>
+    /// 一条错误回执的内容：文案 + 可选的机器可判别的码与附加数据。
+    /// </summary>
+    /// <param name="Message">给页面看的文案（会进用户可见的提示）。</param>
+    /// <param name="Code">错误码；<c>null</c> 表示没有分类。</param>
+    /// <param name="Details">附加数据（任意 JSON）；<c>null</c> 表示没有。</param>
+    /// <remarks>
+    /// 单独一个类型而不是三个参数：调用点很多，而"忘了传码"在三个参数的位置上太容易发生
+    /// （尤其后面还要加参数时）。<c>with</c> 与命名参数也更顺手。
+    /// </remarks>
+    private readonly record struct ErrorReply(string Message, string? Code, JsonElement? Details)
+    {
+        /// <summary>只有文案的错误。</summary>
+        internal static ErrorReply Text(string message, string? code = null) => new(message, code, null);
+
+        /// <summary>
+        /// 从一个异常构造。
+        /// </summary>
+        /// <param name="ex">异常。</param>
+        /// <param name="fallbackMessage">非 <see cref="OrielIpcException"/> 时给页面的通用文案。</param>
+        /// <remarks>
+        /// 非 <see cref="OrielIpcException"/> 一律归为 <see cref="OrielIpcErrorCodes.Internal"/>：
+        /// 那意味着库的实现出了问题（应用命令的正常失败应当抛 <see cref="OrielIpcException"/>）。
+        /// </remarks>
+        internal static ErrorReply FromException(Exception ex, string fallbackMessage) => ex is OrielIpcException ipc
+            ? new ErrorReply(ipc.Message, ipc.Code, ipc.Details)
+            : new ErrorReply(fallbackMessage, OrielIpcErrorCodes.Internal, null);
+    }
+
+    /// <summary>
+    /// 应用命令的异常 → 给页面的错误回执（净化规则见方法内的说明）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 只有 <see cref="OrielIpcException"/> 的 Message 原样到页面，其余给通用文案——
+    /// 应用的异常 Message 可能含内部路径、SQL、连接串，而页面是"用户看得见的地方"。
+    /// 参数校验错误（缺参数、类型不符）由 <see cref="OrielJson"/> 抛
+    /// <see cref="OrielIpcException"/>，不受影响。命令名可以进文案：它是页面自己发来的。
+    /// </para>
+    /// <para>
+    /// <b>内建命令是另一套口径</b>：它们全部由库自己实现，异常里不会有应用塞进去的内容，
+    /// 而失败原因（"应用尚未运行""托盘不存在"）正是页面排障唯一能看到的东西。
+    /// 所以内建命令的异常**原样透传**——把它净化成"命令执行失败"只会让调用方拿到
+    /// 一句无从下手的文案。
+    /// </para>
+    /// </remarks>
+    private static ErrorReply DescribeForPage(string name, Exception ex)
     {
         if (ex is OrielIpcException)
         {
-            return ex.Message;
+            return ErrorReply.FromException(ex, string.Empty);
         }
 
         OrielDiagnostics.Report($"[OrielWeb] 命令 '{name}' 执行失败（详情不透传页面）：{ex}");
-        return $"命令 '{name}' 执行失败。";
+        return new ErrorReply($"命令 '{name}' 执行失败。", OrielIpcErrorCodes.Internal, null);
     }
 
-    /// <summary>内建命令的异常文案：原样带出（理由见 <see cref="DescribeForPage"/> 的 remarks）。</summary>
-    private static string DescribeBuiltInFailure(string name, Exception ex)
+    /// <summary>内建命令的异常：原样带出（理由见 <see cref="DescribeForPage"/> 的 remarks）。</summary>
+    private static ErrorReply DescribeBuiltInFailure(string name, Exception ex)
     {
         OrielDiagnostics.Report($"[OrielWeb] 内建命令 '{name}' 执行失败：{ex}");
-        return ex.Message;
+        return ErrorReply.FromException(ex, ex.Message);
     }
 
     private static JsonElement ReadId(JsonElement message)
@@ -301,6 +347,22 @@ internal sealed class OrielCommandDispatcher
     }
 
     private static void ReplyError(IIpcReplySink sink, JsonElement id, string error)
+        => ReplyError(sink, id, ErrorReply.Text(error));
+
+    /// <summary>
+    /// 写一条失败回执。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 回执形状：<c>{ "__oriel":"result", id, ok:false, error, code?, data? }</c>。
+    /// </para>
+    /// <para>
+    /// <c>code</c> 与 <c>data</c> **只在有值时才写**：老页面只读 <c>error</c>，多出来的字段
+    /// 对它们是噪音；而"字段存在但是 null"与"字段不存在"在 JS 侧要靠 <c>in</c> 才能区分，
+    /// 那是个容易写错的判断。少写两个字段，页面写 <c>if (e.code)</c> 就够了。
+    /// </para>
+    /// </remarks>
+    private static void ReplyError(IIpcReplySink sink, JsonElement id, ErrorReply reply)
     {
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer))
@@ -309,7 +371,19 @@ internal sealed class OrielCommandDispatcher
             writer.WriteString("__oriel", "result");
             WriteId(writer, id);
             writer.WriteBoolean("ok", false);
-            writer.WriteString("error", error);
+            writer.WriteString("error", reply.Message);
+
+            if (!string.IsNullOrEmpty(reply.Code))
+            {
+                writer.WriteString("code", reply.Code);
+            }
+
+            if (reply.Details is { } details)
+            {
+                writer.WritePropertyName("data");
+                details.WriteTo(writer);
+            }
+
             writer.WriteEndObject();
         }
         sink.PostJson(Encoding.UTF8.GetString(buffer.WrittenSpan));

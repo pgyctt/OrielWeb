@@ -4,20 +4,14 @@
 //   * **参数命名不做自动转换**。Tauri 把 JS 的 camelCase 转成 Rust 的 snake_case；
 //     本库的 `[OrielCommand]` 按方法参数名原样取值（见 Ipc/OrielJson.RequireArgElement），
 //     所以这里**也不转**——转了反而会让两边对不上。要迁移的话，命令参数名自己写成 camelCase。
-//   * **失败值是字符串**（`Error.message`），不是序列化的结构化 `E`。错误码见 P1-7（尚未实现）。
-//   * **有默认 30 秒超时**（Tauri 没有）。长任务必须显式放宽，否则会被静默超时。
+//   * **失败值是 `Error`**：`message` 是宿主文案，另挂可选的 `code` / `data`
+//     （只在宿主给了的时候才挂）。Tauri 的失败值是 Rust `Result::Err` 的序列化结果，
+//     形状由应用自己定；本库统一成 Error 是因为那是最不容易写错的形态。
+//   * **有默认 30 秒超时**（Tauri 没有）。长任务必须显式放宽，否则会被静默超时；
+//     也可以逐次调用给 `options.timeout`。
 //   * **没有 Channel / Resource / transformCallback**：本库无流式回传与句柄表。
 
 import { getTransport, hasTransportOverride } from './internal.js';
-
-/**
- * 传输层是否已支持 `invoke(name, args, { timeout })` 三参形态。
- *
- * 这是**编译期常量而不是运行时探测**：探测（例如看 `invoke.length`）在压缩或包装之后
- * 会给出错误答案，而错误答案的表现是"设了超时却没生效"——那正是要避免的静默失败。
- * F7（P1-7）落地时把它改成 `true`，同时给桥接脚本的 `invoke` 加第三个形参。
- */
-const PER_CALL_TIMEOUT_SUPPORTED = false;
 
 /**
  * 调用宿主命令。
@@ -25,9 +19,13 @@ const PER_CALL_TIMEOUT_SUPPORTED = false;
  * @template T
  * @param {string} cmd 命令名（如 `todo.add`）。
  * @param {Record<string, unknown>} [args] 参数对象；省略等同于"不带参数"。
- * @param {{ timeout?: number }} [options] `timeout` 单位毫秒，`<= 0` 表示不超时。
+ * @param {{ timeout?: number }} [options] `timeout` 单位毫秒，`<= 0` 表示**这次调用不超时**。
  *   省略时用全局默认值（`oriel.timeout`，默认 30000）。
  * @returns {Promise<T>}
+ * @throws {Error} 失败时 reject：`message` 是宿主文案；`code` 是可选的机器可判别错误码
+ *   （库自己的那些见 `OrielIpcErrorCodes`，如 `not_allowed` / `unknown_command` /
+ *   `missing_argument`）；`data` 是可选的附加数据。两个字段**只在宿主给了时才存在**，
+ *   所以写 `if (e.code === 'not_allowed')` 就够了，不必先判 `in`。
  */
 export async function invoke(cmd, args, options) {
     if (typeof cmd !== 'string' || cmd === '') {
@@ -41,12 +39,14 @@ export async function invoke(cmd, args, options) {
         return /** @type {any} */ (transport.invoke)(cmd, args);
     }
 
-    if (!PER_CALL_TIMEOUT_SUPPORTED) {
-        // 静默忽略会让"我设了 5 分钟"变成"30 秒后失败"，而且失败文案是超时——
-        // 排查的人会去查命令实现，而不是查这里。所以明确拒绝。
+    // **显式声明**而不是探测：传输层上有个 `supportsPerCallTimeout: true` 字段。
+    // 探测（`invoke.length`）在包装或压缩之后会给出错误答案，而错误答案的表现是
+    // "设了超时却没生效"——那是最难查的一类。老宿主没这个字段，于是这里的明确拒绝
+    // 就是它的降级行为（而不是静默按 30 秒超时）。
+    if (transport.supportsPerCallTimeout !== true) {
         throw new Error(
-            'invoke: 当前版本不支持 per-call timeout（计划中的 P1-7）。' +
-            '请改全局超时：window.oriel.timeout = 300000，或省略 options.timeout。');
+            'invoke: 当前宿主不支持 per-call timeout（需要 OrielWeb 0.4.0+）。' +
+            '请改全局超时：window.oriel.timeout = 300000；或省略 options.timeout。');
     }
 
     return /** @type {any} */ (transport.invoke)(cmd, args, { timeout });

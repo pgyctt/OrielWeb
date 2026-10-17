@@ -95,14 +95,29 @@
         // 没有它时，命令永不回执（如宿主侧异常导致 sink 未投递）会让 Promise
         // 永不 settle、pending 条目永驻，前端内存持续泄漏。
         timeout: 30000,
-        invoke(name, args) {
+        // **显式声明**本传输层支持 per-call timeout（invoke 的第三个参数）。
+        //
+        // 用声明而不是靠 invoke.length 探测：探测在包装/压缩后会给出错误答案，
+        // 而错误答案的表现是"设了超时却没生效"——那是最难查的一类。
+        // @orielweb/api/core 读这个字段，读到非 true 就明确拒绝 per-call timeout
+        // （老宿主上仍然只支持全局 oriel.timeout）。
+        supportsPerCallTimeout: true,
+        invoke(name, args, options) {
             return new Promise((resolve, reject) => {
                 if (typeof name !== 'string' || !name) {
                     reject(new Error('oriel.invoke: name 必须为非空字符串'));
                     return;
                 }
                 const id = ++seq;
-                const timeoutMs = typeof oriel.timeout === 'number' && oriel.timeout > 0 ? oriel.timeout : 0;
+
+                // per-call 优先于全局：调用方显式给了就用它的（包括 0 = 不超时）。
+                // 传 undefined 才是"没给"，与 null 不同——null 也当没给，
+                // 因为 JSON 里没法区分 undefined，而页面可能从对象里透传一个 null 过来。
+                const perCall = options && typeof options.timeout === 'number' ? options.timeout : null;
+                const timeoutMs = perCall !== null
+                    ? (perCall > 0 ? perCall : 0)
+                    : (typeof oriel.timeout === 'number' && oriel.timeout > 0 ? oriel.timeout : 0);
+
                 const timer = timeoutMs > 0
                     ? setTimeout(() => {
                         if (pending.delete(id)) {
@@ -114,13 +129,46 @@
                 post({ __oriel: 'invoke', id: id, name: name, args: args === undefined ? null : args });
             });
         },
-        _onResult(id, ok, payload) {
-            const entry = pending.get(id);
+        // 回执：**整个回执对象**进来（`{ id, ok, value? , error?, code?, data? }`）。
+        //
+        // 早先的签名是 `(id, ok, payload)`，payload 由宿主侧从回执里抽出来（成功取值、
+        // 失败取文案）。改成整对象传是为了让 code / data 自然流过——否则三平台各要
+        // 抽一遍、各可能漏一个字段。宿主侧现在只是把回执 JSON 原样求值进来。
+        _onResult(result) {
+            if (!result || typeof result !== 'object') return;
+
+            const entry = pending.get(result.id);
             if (!entry) return;
-            pending.delete(id);
+            pending.delete(result.id);
             if (entry.timer !== null) clearTimeout(entry.timer);
-            if (ok) entry.resolve(payload);
-            else entry.reject(new Error(payload || ('oriel 命令失败 (id=' + id + ')')));
+
+            if (result.ok === true) {
+                entry.resolve(result.value);
+                return;
+            }
+
+            entry.reject(oriel._errorFromResult(result));
+        },
+        // 把失败回执转成页面侧的 Error。
+        //
+        // `message` 一定是宿主给的文案（**不是**我们自己编的），因为那是排障时唯一
+        // 能看出"为什么失败"的东西。`code` / `data` 只在宿主给了的时候挂上去——
+        // 挂一个 undefined 会让 `if (e.code)` 这类判断变得不可靠。
+        _errorFromResult(result) {
+            const message = typeof result.error === 'string' && result.error
+                ? result.error
+                : ('oriel 命令失败 (id=' + result.id + ')');
+            const error = new Error(message);
+
+            if (typeof result.code === 'string' && result.code) {
+                error.code = result.code;
+            }
+
+            if (result.data !== undefined) {
+                error.data = result.data;
+            }
+
+            return error;
         },
         // 页面 → 宿主的单向消息（宿主侧 MessageReceived 事件）。与 invoke 的区别：
         // 不等回执、不占用回执 id——用于"通知宿主"这类不需要结果的语义。
@@ -213,7 +261,7 @@
             const d = e.data;
             if (!d) return;
             if (d.__oriel === 'result') {
-                oriel._onResult(d.id, d.ok === true, d.ok === true ? d.value : d.error);
+                oriel._onResult(d);
             } else if (d.__oriel === 'event') {
                 oriel._onEvent(d.name, d.value);
             }

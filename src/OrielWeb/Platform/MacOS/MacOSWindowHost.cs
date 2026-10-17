@@ -1345,15 +1345,15 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
             {
                 return;
             }
-            // 把回执 JSON 转成 _onResult(id, ok, payload) 的页内求值
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            var id = root.GetProperty("id").GetInt32();
-            var ok = root.GetProperty("ok").GetBoolean();
-            string payload = ok
-                ? root.GetProperty("value").GetRawText()
-                : JsonText.EncodeString(root.GetProperty("error").GetString());
-            var js = $"window.oriel._onResult({id}, {(ok ? "true" : "false")}, {payload})";
+            // 把回执**原样**求值进页面：`_onResult` 现在收整个回执对象。
+            //
+            // 早先是宿主侧把回执拆成 `_onResult(id, ok, payload)`——成功取值、失败取文案。
+            // 改成整对象传是为了让 code / data 自然流过：拆的话三平台各要抽一遍、
+            // 各可能漏一个字段，而漏掉的表现是"某个平台拿不到错误码"。
+            //
+            // 直接把 JSON 嵌进 JS 表达式是安全的：JSON 字面量本身就是合法的 JS 表达式，
+            // 而这份 JSON 由宿主自己的 Utf8JsonWriter 产出（不是拼接字符串）。
+            var js = $"window.oriel._onResult({json})";
             ObjCRuntime.SendVoidObjNint(
                 _webview,
                 ObjCRuntime.Sel("evaluateJavaScript:completionHandler:"),

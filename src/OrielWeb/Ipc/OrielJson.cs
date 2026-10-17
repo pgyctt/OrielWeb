@@ -54,11 +54,11 @@ public static class OrielJson
     {
         if (args.ValueKind != JsonValueKind.Object || !args.TryGetProperty(name, out var element))
         {
-            throw new OrielIpcException($"命令缺少必需参数 '{name}'。");
+            throw new OrielIpcException($"命令缺少必需参数 '{name}'。") { Code = OrielIpcErrorCodes.MissingArgument };
         }
         if (element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
         {
-            throw new OrielIpcException($"命令参数 '{name}' 不能为 null（声明为非可空）。");
+            throw new OrielIpcException($"命令参数 '{name}' 不能为 null（声明为非可空）。") { Code = OrielIpcErrorCodes.MissingArgument };
         }
         return element;
     }
@@ -97,11 +97,11 @@ public static class OrielJson
     {
         if (args.ValueKind != JsonValueKind.Object || !args.TryGetProperty(name, out var element))
         {
-            throw new OrielIpcException($"命令缺少必需参数 '{name}'。");
+            throw new OrielIpcException($"命令缺少必需参数 '{name}'。") { Code = OrielIpcErrorCodes.MissingArgument };
         }
         if (element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
         {
-            throw new OrielIpcException($"命令参数 '{name}' 不能为 null（声明为非可空）。");
+            throw new OrielIpcException($"命令参数 '{name}' 不能为 null（声明为非可空）。") { Code = OrielIpcErrorCodes.MissingArgument };
         }
         return DeserializeArg<T>(element, name, jsonContext);
     }
@@ -224,7 +224,7 @@ public static class OrielJson
         }
         catch (JsonException ex)
         {
-            throw new OrielIpcException($"参数 '{name}' 反序列化为 {typeof(T)} 失败：{ex.Message}");
+            throw new OrielIpcException($"参数 '{name}' 反序列化为 {typeof(T)} 失败：{ex.Message}", ex) { Code = OrielIpcErrorCodes.InvalidArgument };
         }
     }
 
@@ -240,7 +240,10 @@ public static class OrielJson
     }
 
     private static OrielIpcException BadArgKind(string name, JsonElement element, string expected)
-        => new($"命令参数 '{name}' 的类型不符：期望 {expected}，实际 {element.ValueKind}。");
+        => new($"命令参数 '{name}' 的类型不符：期望 {expected}，实际 {element.ValueKind}。")
+        {
+            Code = OrielIpcErrorCodes.InvalidArgument,
+        };
 
     // ------------------------------------------------------------------
     // 返回值写入

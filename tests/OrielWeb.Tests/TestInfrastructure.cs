@@ -67,6 +67,24 @@ public sealed partial class TestCommands
     [OrielCommand("t.fail")]
     public void Fail() => throw new OrielIpcException("boom");
 
+    /// <summary>带错误码与附加数据的失败（F7 的结构化错误）。</summary>
+    /// <remarks>
+    /// 应用可以给自己的错误分类——库只负责把它原样送到页面。
+    /// 注意这里用 <c>using</c> + <c>Clone()</c>：<see cref="JsonElement"/> 的生命周期跟着
+    /// 它所属的 <see cref="JsonDocument"/>，不 Clone 的话异常带出去时那个元素已经失效。
+    /// </remarks>
+    [OrielCommand("t.failWithCode")]
+    public void FailWithCode()
+    {
+        using var details = JsonDocument.Parse("""{ "id": 42 }""");
+
+        throw new OrielIpcException("不存在 id=42 的待办事项。")
+        {
+            Code = "todo_not_found",
+            Details = details.RootElement.Clone(),
+        };
+    }
+
     // 非受控异常：验证分发器的净化承诺——只有 OrielIpcException 的 Message 原样到页面，
     // 其余异常（Message 可能含内部路径）给通用文案
     [OrielCommand("t.crash")]

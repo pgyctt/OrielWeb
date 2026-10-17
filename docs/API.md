@@ -516,6 +516,55 @@ window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
 被拒绝时页面侧那个 Promise 会 **reject 并带上原因**（"落进了 Deny 名单"还是"不在 Allow 名单里"），
 而不是让它等到超时——"点了没反应"和"这个命令没被授权"必须能分开。
 
+### 错误形状：文案 + 可选错误码
+
+reject 出来的是一个 `Error`：
+
+| 字段 | 说明 |
+|---|---|
+| `message` | 宿主给的文案。库自己抛的那些只写"是什么错、怎么改" |
+| `code` | 机器可判别的错误码；**只在宿主给了的时候才存在** |
+| `data` | 附加数据（任意 JSON）；同样只在有时才存在 |
+
+写 `if (e.code === 'not_allowed')` 就够了——没给码时那两个属性**不存在**（不是 `undefined`），
+所以 `'code' in e` 与 `e.code === undefined` 会给出同样的答案。
+
+库自己的码（C# 侧是 `OrielIpcErrorCodes` 的常量）：
+
+| 码 | 含义 |
+|---|---|
+| `not_allowed` | 命令名不在能力名单里（或来源/令牌不通过）。**名单外的名字一律报这个**——哪怕那个命令根本不存在，所以它不泄露"有哪些命令" |
+| `unknown_command` | 名字在能力范围内但没注册（拼错、或所在程序集没被引用） |
+| `missing_argument` | 缺少必需参数，或传了 null 给非可空参数 |
+| `invalid_argument` | 参数类型或取值不合法 |
+| `invalid_message` | 消息本身不合法（缺 `name` 等） |
+| `target_not_found` | 按 label 找不到目标窗口 |
+| `no_source_window` | 这次调用没有来源窗口，而该命令必须有窗口才能执行 |
+| `internal` | 库内部的意外失败（**不是**应用命令抛的异常）——意味着该报一个库的缺陷 |
+
+**应用命令抛的异常不带码**：那是应用的错误分类，库不该替它编。要分类就自己写：
+
+```csharp
+throw new OrielIpcException("不存在 id=42 的待办事项。")
+{
+    Code = "todo_not_found",
+    Details = JsonDocument.Parse("""{ "id": 42 }""").RootElement.Clone(),
+};
+```
+
+两个字段会原样到页面（`error.code` / `error.data`）。
+
+### 超时：全局 + 逐次
+
+| 方式 | 写法 |
+|---|---|
+| 全局 | `window.oriel.timeout = 300000`（默认 30000，`<= 0` 不启用） |
+| 逐次 | `invoke(cmd, args, { timeout: 300000 })`（`<= 0` 表示**这次**不超时） |
+
+逐次优先于全局。宿主不支持逐次超时时会**明确拒绝**、而不是静默按全局值走——
+静默的话"我设了 5 分钟"会变成"30 秒后失败"，而排查的人会去查命令实现，
+不会想到是超时没设上。
+
 宿主侧有三个观测点，都只在宿主进程里可见、都对应用可用：
 
 | 观测点 | 看什么 |

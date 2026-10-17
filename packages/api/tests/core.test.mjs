@@ -96,13 +96,32 @@ test('mock 里返回 Promise 时 await 它（不把 Promise 当结果）', async
     clearMocks();
 });
 
-test('per-call timeout 未支持时明确拒绝，不静默忽略', async () => {
+test('per-call timeout：传输层声明支持时透传（不再拒绝）', async () => {
+    clearMocks();
+
+    /** @type {any[]} */
+    const calls = [];
+    setTransportOverride({
+        supportsPerCallTimeout: true,
+        async invoke(name, args, options) {
+            calls.push([name, args, options]);
+            return 'ok';
+        },
+    });
+
+    assert.equal(await invoke('slow.command', { a: 1 }, { timeout: 300000 }), 'ok');
+    assert.deepEqual(calls[0], ['slow.command', { a: 1 }, { timeout: 300000 }]);
+
+    clearMocks();
+});
+
+test('per-call timeout：传输层**没声明**支持时明确拒绝', async () => {
     clearMocks();
 
     let called = false;
-    mockIPC(() => {
-        called = true;
-        return null;
+    setTransportOverride({
+        // 刻意不带 supportsPerCallTimeout：模拟老宿主
+        async invoke() { called = true; return null; },
     });
 
     await assert.rejects(
@@ -117,6 +136,21 @@ test('per-call timeout 未支持时明确拒绝，不静默忽略', async () => 
 
     // 关键：拒绝发生在发送之前——不能"先发出去再报错"，那等于超时已经设错了
     assert.equal(called, false, '拒绝时必须没有真的发出命令');
+
+    clearMocks();
+});
+
+test('per-call timeout：只有 `=== true` 才算声明支持', async () => {
+    clearMocks();
+
+    // 容错写法（`if (transport.supportsPerCallTimeout)`）会让字符串 'true'、数字 1 之类
+    // 也被当成"支持"，而那种值只可能来自包装或压缩后的错误产物。
+    setTransportOverride({
+        supportsPerCallTimeout: /** @type {any} */ ('true'),
+        async invoke() { return null; },
+    });
+
+    await assert.rejects(() => invoke('x', {}, { timeout: 1 }), /不支持 per-call timeout/);
 
     clearMocks();
 });
@@ -165,6 +199,57 @@ test('convertFileSrc 尚未实现时必须抛错，而不是返回看似可用�
         () => convertFileSrc('/tmp/a.png'),
         /尚未实现/,
     );
+});
+
+// ---- 结构化错误（F7）：code / data 到页面 ----
+
+test('失败时 reject 的 Error 上挂着 code 与 data', async () => {
+    clearMocks();
+
+    // 宿主侧造一个带码与数据的错误（真实路径见 bridge.test.mjs：回执里带 code/data）
+    const error = new Error('找不到 label 为「nope」的窗口。');
+    error.code = 'target_not_found';
+    error.data = { label: 'nope' };
+
+    setTransportOverride({
+        async invoke() { throw error; },
+    });
+
+    await assert.rejects(
+        () => invoke('window.title', { label: 'nope' }),
+        (caught) => {
+            assert.equal(caught.message, '找不到 label 为「nope」的窗口。');
+            // 页面按码分支：`not_allowed` 提示权限、`target_not_found` 提示窗口没了……
+            // 分不清"命令没授权"与"命令自己炸了"是排障时最费时间的一件事
+            assert.equal(caught.code, 'target_not_found');
+            assert.deepEqual(caught.data, { label: 'nope' });
+            return true;
+        },
+    );
+
+    clearMocks();
+});
+
+test('没给码时 Error 上没有 code 属性（而不是 undefined）', async () => {
+    clearMocks();
+
+    // 应用命令抛的异常不带码——那是应用的错误分类，库不该替它编
+    setTransportOverride({
+        async invoke() { throw new Error('boom'); },
+    });
+
+    await assert.rejects(
+        () => invoke('todo.fail'),
+        (caught) => {
+            assert.equal(caught.message, 'boom');
+            // `'code' in e` 与 `e.code === undefined` 是两回事；页面写 `if (e.code)` 时
+            // 两者都能用，写 `in` 时只有前者对。所以"没给"就该真的没有。
+            assert.equal('code' in caught, false);
+            return true;
+        },
+    );
+
+    clearMocks();
 });
 
 test('传输层 override 可恢复：clearMocks 之后回到"没有宿主"', async () => {

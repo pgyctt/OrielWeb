@@ -119,6 +119,30 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
 - **`OrielApp.GetFocusedWindow()` / JS `getFocusedWindow()`**：签名已就位，但**目前恒返回 `null`**
   ——三平台都还没有"哪个窗口有焦点"的**查询**能力（`FocusChanged` 只上报变化、不记录状态）。
   保留它是为了让迁移代码能原样编译，而不是假装"没有窗口有焦点"。
+- **结构化错误**（F7）：失败回执带上可选的 `code` 与 `data`，页面 reject 出来的 `Error` 上多了
+  这两个字段，于是能按错误类型分支（提示"没有权限"而不是"出错了"）——
+  分不清"命令没授权"与"命令自己炸了"是排障时最费时间的一件事。
+  两个字段**只在有值时才存在**（不写 `"code":null`），所以 `if (e.code)` 与 `'code' in e`
+  给出同样的答案。C# 侧的码是 `OrielIpcErrorCodes`：`not_allowed` / `unknown_command` /
+  `missing_argument` / `invalid_argument` / `invalid_message` / `target_not_found` /
+  `no_source_window` / `internal`。
+  **应用命令抛的异常不带码**——那是应用的错误分类，库不该替它编；
+  要分类就自己 `new OrielIpcException("…") { Code = …, Details = … }`。
+- **`OrielIpcException.Code` / `.Details`**：可选的错误码与附加数据（`init` 属性，
+  不影响既有构造器）。`Details` 的类型是 `JsonElement` 而不是 `object`——
+  回执要按 AOT 安全的方式写出，而 `JsonElement` 正是那个不需要应用注册 STJ 上下文的逃生口。
+- **逐次调用超时**（`invoke(cmd, args, { timeout })`）：优先于全局 `oriel.timeout`，
+  `<= 0` 表示这次不超时。宿主**显式声明**支持（传输层上的 `supportsPerCallTimeout: true`），
+  不声明时明确拒绝而不是静默按全局值走——静默的后果是"我设了 5 分钟"变成"30 秒后失败"，
+  而排查的人会去查命令实现。
+- **`--selftest api` 扩到 28 项**：新增真页面里的结构化错误取证（被拒的命令带 `not_allowed`、
+  名单外的名字也报 `not_allowed`、能力范围内的未知名字报 `unknown_command`）
+  与 per-call timeout 在真宿主上可用。
+
+> 一条值得记下的口径：**名单外的名字一律报 `not_allowed`，哪怕那个命令根本不存在**——
+> 因为授权发生在路由查找之前。这顺带成了一个好性质：错误码不泄露"这个应用有哪些命令"。
+> 自检里那条断言最初就是写错的（拿 `no.such.command` 去期望 `unknown_command`）。
+
 - **几何查询**（E2/E3，对标 Tauri 的 `innerSize` / `outerSize` / `innerPosition` / `outerPosition`）：
   `WebviewWindow.InnerSize` / `OuterSize` / `InnerPosition` / `OuterPosition`，
   内建命令 `window.innerSize` 等四条，JS 侧 `Window.innerSize()` 等四个方法

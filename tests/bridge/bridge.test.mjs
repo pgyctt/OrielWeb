@@ -270,23 +270,34 @@ function fireDomEvent(env, type) {
 /**
  * 投递命令回执。按桥接实际通道分发：
  * chrome.webview 走 message 事件；webkit 走宿主 evaluateJavaScript 调用 _onResult。
+ *
+ * @param {object} env
+ * @param {number} id
+ * @param {boolean} ok
+ * @param {unknown} payload 成功时是 value、失败时是 error 文案
+ * @param {{ code?: string, data?: unknown }} [extra] 失败时的可选错误码与附加数据
  */
-function deliverResult(env, id, ok, payload) {
+function deliverResult(env, id, ok, payload, extra = {}) {
+    const reply = { __oriel: 'result', id, ok };
+
+    if (ok) {
+        reply.value = payload;
+    } else {
+        reply.error = payload;
+        if (extra.code !== undefined) reply.code = extra.code;
+        if (extra.data !== undefined) reply.data = extra.data;
+    }
+
     if (env.messageListeners.length > 0) {
         for (const listener of env.messageListeners) {
-            listener({
-                data: {
-                    __oriel: 'result',
-                    id,
-                    ok,
-                    value: ok ? payload : undefined,
-                    error: ok ? undefined : payload,
-                },
-            });
+            listener({ data: reply });
         }
         return;
     }
-    env.window.oriel._onResult(id, ok, payload);
+
+    // 宿主侧现在把**整个回执对象**原样交给 _onResult（早先是 (id, ok, payload) 三段）。
+    // 改成整对象是为了让 code / data 自然流过——拆的话三平台各要抽一遍、各可能漏字段。
+    env.window.oriel._onResult(reply);
 }
 
 /**
@@ -640,6 +651,102 @@ for (const bridge of bridges) {
         const promise = env.window.oriel.invoke('x', {});
         deliverResult(env, 1, false, 'boom');
         await assert.rejects(promise, (error) => error.message === 'boom');
+    });
+
+    // ---- 结构化错误（F7）：code / data 要能到达页面 ----
+
+    test(`${label} 回执失败：code 与 data 挂到 Error 上`, async () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const promise = env.window.oriel.invoke('x', {});
+        deliverResult(env, 1, false, '找不到目标窗口', {
+            code: 'target_not_found',
+            data: { label: 'nope' },
+        });
+
+        await assert.rejects(promise, (error) => {
+            assert.equal(error.message, '找不到目标窗口');
+            assert.equal(error.code, 'target_not_found');
+            assert.deepEqual(error.data, { label: 'nope' });
+            return true;
+        });
+    });
+
+    test(`${label} 回执失败：没给 code/data 时那两个属性不存在（而不是 undefined）`, async () => {
+        // 这条比看起来重要：`'code' in error` 与 `error.code === undefined` 是两回事，
+        // 而页面写 `if (e.code)` 时两者都能用、写 `in` 时只有前者对。
+        // 挂一个 undefined 会让两种写法给出不同结果——所以没给就**不挂**。
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const promise = env.window.oriel.invoke('x', {});
+        deliverResult(env, 1, false, 'boom');
+
+        await assert.rejects(promise, (error) => {
+            assert.equal(error.message, 'boom');
+            assert.equal('code' in error, false, 'code 不该存在');
+            assert.equal('data' in error, false, 'data 不该存在');
+            return true;
+        });
+    });
+
+    test(`${label} 回执失败：error 为空时给可排查的兜底文案`, async () => {
+        // 宿主理论上不会写空文案，但页面这边不该因此拿到一个 message 为空的 Error——
+        // 那种东西打到 console 上就是一句 "Error"，什么也看不出来。
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const promise = env.window.oriel.invoke('x', {});
+        deliverResult(env, 1, false, '');   // 新环境的 seq 从 1 开始
+
+        await assert.rejects(promise, /id=1/);
+    });
+
+    test(`${label} 回执：畸形对象不抛（不认识的回执直接忽略）`, () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+
+        // 宿主不该发出这种东西，但桥接脚本跑在页面里——它不该因为一条畸形消息就抛出去
+        // （那会打断调用方的事件处理）。
+        assert.doesNotThrow(() => env.window.oriel._onResult(null));
+        assert.doesNotThrow(() => env.window.oriel._onResult('not-an-object'));
+        assert.doesNotThrow(() => env.window.oriel._onResult({ id: 999, ok: false, error: 'x' }));
+    });
+
+    // ---- per-call timeout（F7）----
+
+    test(`${label} 声明支持 per-call timeout`, () => {
+        // 这是个**显式声明**，@orielweb/api/core 读它决定要不要拒绝 per-call timeout。
+        // 探测 invoke.length 在包装/压缩后会给出错误答案，而错误答案的表现是
+        // "设了超时却没生效"——那是最难查的一类。
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        assert.equal(env.window.oriel.supportsPerCallTimeout, true);
+    });
+
+    test(`${label} per-call timeout：优先于全局值`, async () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        env.window.oriel.timeout = 100000; // 全局给一个很大的值
+
+        // 逐次调用给 10ms，应当按 10ms 超时（而不是等 100 秒）
+        const promise = env.window.oriel.invoke('never', {}, { timeout: 10 });
+        await assert.rejects(promise, /10ms/);
+    });
+
+    test(`${label} per-call timeout：0 表示这次调用不超时`, async () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        env.window.oriel.timeout = 10; // 全局 10ms
+
+        const promise = env.window.oriel.invoke('slow', {}, { timeout: 0 });
+
+        // 等过全局超时的时间，它不该被拒——因为这次调用显式要求不超时
+        await new Promise((resolve) => setTimeout(resolve, 40));
+
+        // 现在补一个回执，应当正常 settle（说明它还在 pending 里，没被超时清掉）
+        deliverResult(env, 1, true, 'done');
+        assert.equal(await promise, 'done');
+    });
+
+    test(`${label} per-call timeout：未给 timeout 时仍用全局值`, async () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        env.window.oriel.timeout = 10;
+
+        // 传了一个不含 timeout 的 options 对象——等同"没给"，走全局
+        const promise = env.window.oriel.invoke('never', {}, {});
+        await assert.rejects(promise, /10ms/);
     });
 
     test(`${label} 参数校验：空 name 立即 reject`, async () => {
