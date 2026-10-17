@@ -17,6 +17,8 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     private const int GtkWinPosCenter = 1;
     private const int GtkResponseOk = -5;
     private const int GtkResponseCancel = -6;
+    private const int GtkResponseYes = -8;
+    private const int GtkResponseNo = -9;
     private const int WebkitLoadFinished = 3;
 
     private readonly WebviewWindow _window;
@@ -1448,6 +1450,87 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         GtkNative.GtkDialogAddButton(dialog, "确定", GtkResponseOk);
         GtkNative.GtkDialogRun(dialog);
         GtkNative.GtkWidgetDestroy(dialog);
+    }
+
+    /// <summary>
+    /// 询问型消息框：返回用户点了哪个语义按钮（见 <see cref="IWindowBackend.ShowMessageDialog"/>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// GTK 这边**支持自定义按钮文案**（<c>gtk_dialog_add_button</c> 直接收文本），
+    /// 所以 Windows 的限制在 Linux 上不存在。
+    /// </para>
+    /// <para>
+    /// 按钮顺序按**添加顺序**排（GTK 的惯例）：肯定性的在前、取消性的在后，
+    /// 所以 <c>YesNoCancel</c> 的添加顺序是 是 → 否 → 取消。响应 ID 用自定义值
+    /// （<c>GtkResponseOk</c>/<c>Cancel</c>/<c>Yes</c>/<c>No</c>）以便回读时区分——
+    /// 全用 <c>GTK_RESPONSE_OK</c> 的话三个按钮就分不出来了。
+    /// </para>
+    /// </remarks>
+    MessageResult? IWindowBackend.ShowMessageDialog(
+        string message, string? title, string kind, MessageButtons buttons, string okLabel, string cancelLabel)
+    {
+        int type = kind switch
+        {
+            "warning" => 1,  // GTK_MESSAGE_WARNING
+            "error" => 3,    // GTK_MESSAGE_ERROR
+            "question" => 2, // GTK_MESSAGE_QUESTION
+            _ => 0,          // GTK_MESSAGE_INFO
+        };
+
+        nint dialog = GtkNative.GtkMessageDialogNew(_gtkWindow, 0, type, 0 /*GTK_BUTTONS_NONE*/, "%s", message);
+        if (dialog == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            if (!string.IsNullOrEmpty(title))
+            {
+                GtkNative.GtkWindowSetTitle(dialog, title);
+            }
+
+            switch (buttons)
+            {
+                case MessageButtons.OkCancel:
+                    GtkNative.GtkDialogAddButton(dialog, okLabel, GtkResponseOk);
+                    GtkNative.GtkDialogAddButton(dialog, cancelLabel, GtkResponseCancel);
+                    break;
+
+                case MessageButtons.YesNo:
+                    GtkNative.GtkDialogAddButton(dialog, okLabel, GtkResponseYes);
+                    GtkNative.GtkDialogAddButton(dialog, cancelLabel, GtkResponseNo);
+                    break;
+
+                case MessageButtons.YesNoCancel:
+                    GtkNative.GtkDialogAddButton(dialog, okLabel, GtkResponseYes);
+                    GtkNative.GtkDialogAddButton(dialog, cancelLabel, GtkResponseNo);
+                    // 第三个按钮没有独立文案参数（Tauri 的 yes/no/cancel 也没有）——
+                    // 用系统惯例的"取消"。
+                    GtkNative.GtkDialogAddButton(dialog, "取消", GtkResponseCancel);
+                    break;
+
+                default:
+                    GtkNative.GtkDialogAddButton(dialog, okLabel, GtkResponseOk);
+                    break;
+            }
+
+            int response = GtkNative.GtkDialogRun(dialog);
+
+            return response switch
+            {
+                GtkResponseOk => MessageResult.Ok,
+                GtkResponseCancel => MessageResult.Cancel,
+                GtkResponseYes => MessageResult.Yes,
+                GtkResponseNo => MessageResult.No,
+                _ => null,
+            };
+        }
+        finally
+        {
+            GtkNative.GtkWidgetDestroy(dialog);
+        }
     }
 
     // ---- 文件对话框（GtkFileChooserDialog）----

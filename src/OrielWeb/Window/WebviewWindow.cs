@@ -510,6 +510,34 @@ public sealed class WebviewWindow : IOrielWindowControl
         => Backend.ShowMessageBox(text, title, icon);
 
     /// <summary>
+    /// 询问框（模态）：返回用户点了哪个语义按钮，或 <c>null</c>（被外部关掉）。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="ShowMessage"/> 的分工：那个只"告诉用户一件事"（返回 void），
+    /// 这个要"问用户一件事"（要知道点了哪个）。两者共用底下的原生对话框。
+    /// </remarks>
+    public MessageResult? ShowDialog(
+        string message,
+        string? title = null,
+        string kind = "info",
+        MessageButtons buttons = MessageButtons.Ok,
+        string okLabel = "确定",
+        string cancelLabel = "取消")
+        => Backend.ShowMessageDialog(message, title, kind, buttons, okLabel, cancelLabel);
+
+    /// <summary>
+    /// <see cref="IOrielWindowControl"/> 上的显式实现：转发到 <see cref="ShowDialog"/>。
+    /// </summary>
+    /// <remarks>
+    /// 显式实现而不是把 <see cref="ShowDialog"/> 直接叫 <c>ShowMessageDialog</c>：
+    /// 公开 API 那边叫 <c>ShowDialog</c> 更好读（它是个询问框，不是"显示一个消息"），
+    /// 而接口上的名字要表达"这是消息对话框家族的一员"。两个名字各自贴自己的语境。
+    /// </remarks>
+    MessageResult? IOrielWindowControl.ShowMessageDialog(
+        string message, string? title, string kind, MessageButtons buttons, string okLabel, string cancelLabel)
+        => ShowDialog(message, title, kind, buttons, okLabel, cancelLabel);
+
+    /// <summary>
     /// 打开文件对话框（可用 <see cref="OrielOpenFileDialogOptions.AllowMultiple"/> 多选）。
     /// 取消返回**空数组**。
     /// </summary>

@@ -61,6 +61,10 @@
       "types": "./types/clipboard.d.ts",
       "default": "./src/clipboard.js"
     },
+    "./dialog": {
+      "types": "./types/dialog.d.ts",
+      "default": "./src/dialog.js"
+    },
     "./window": {
       "types": "./types/window.d.ts",
       "default": "./src/window.js"

@@ -2355,6 +2355,58 @@ internal partial class Win32WindowHost : IWindowBackend
     void IWindowBackend.ShowMessageBox(string text, string? title, OrielMessageBoxIcon icon)
         => MessageBoxResult(text, title, icon);
 
+    /// <summary>
+    /// 询问型消息框：返回用户点了哪个语义按钮（见 <see cref="IWindowBackend.ShowMessageDialog"/>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>自定义按钮文案在 Windows 上不生效</b>：<c>MessageBoxW</c> 只显示系统文案
+    /// （"确定"/"取消"/"是"/"否"），要自定义得上 <c>TaskDialogIndirect</c>，
+    /// 而那个 API 需要 comctl32 v6 的激活清单——为一个文案引入那套机制不划算。
+    /// 返回的是**语义**，所以页面侧的判断不受影响，只有显示出来的文字是系统的。
+    /// </para>
+    /// <para>
+    /// <c>MessageBoxW</c> 返回按钮 ID（<c>IDOK</c>=1、<c>IDCANCEL</c>=2、<c>IDYES</c>=6、
+    /// <c>IDNO</c>=7），而 <c>MB_YESNO</c> 与 <c>MB_OKCANCEL</c> 的"取消"返回的都是
+    /// <c>IDCANCEL</c>——所以映射是"ID → 语义"，不需要（也做不到）靠传进来的按钮集合反推。
+    /// </para>
+    /// </remarks>
+    MessageResult? IWindowBackend.ShowMessageDialog(
+        string message, string? title, string kind, MessageButtons buttons, string okLabel, string cancelLabel)
+    {
+        // 显示文案只能用系统的（MessageBoxW 没有自定义入口）。
+        // 显式丢弃而不是"忘了用"：这两个参数在另两个平台上是有用的。
+        _ = okLabel;
+        _ = cancelLabel;
+
+        uint flags = buttons switch
+        {
+            MessageButtons.OkCancel => Win32Constants.MB_OKCANCEL,
+            MessageButtons.YesNo => Win32Constants.MB_YESNO,
+            MessageButtons.YesNoCancel => Win32Constants.MB_YESNOCANCEL,
+            _ => Win32Constants.MB_OK,
+        };
+
+        flags |= kind switch
+        {
+            "warning" => Win32Constants.MB_ICONWARNING,
+            "error" => Win32Constants.MB_ICONERROR,
+            "question" => Win32Constants.MB_ICONQUESTION,
+            _ => Win32Constants.MB_ICONINFORMATION,
+        };
+
+        int result = Win32.MessageBoxW(_hwnd, message, title ?? _title, flags);
+
+        return result switch
+        {
+            Win32Constants.IDOK => MessageResult.Ok,
+            Win32Constants.IDCANCEL => MessageResult.Cancel,
+            Win32Constants.IDYES => MessageResult.Yes,
+            Win32Constants.IDNO => MessageResult.No,
+            _ => null,                  // 被外部关掉（比如任务管理器）时没有结果
+        };
+    }
+
     /// <summary>IPC 回执通道：必须切回 UI 线程（WebView2 的 COM 绑定在 STA）。</summary>
     private sealed class UiThreadReplySink(Win32WindowHost host) : IIpcReplySink
     {

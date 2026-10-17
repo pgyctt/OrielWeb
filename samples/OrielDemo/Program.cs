@@ -269,6 +269,10 @@ internal static class Program
                     // clipboard（F6）：读写都是能力（写能覆盖用户已复制的内容、读可能读到
                     // 密码管理器刚放进去的东西），所以要声明。
                     c.Allow("clipboard.*");
+
+                    // dialog（F3）：会弹模态对话框并让用户选路径。三条都授权，
+                    // 但自检只走"弹之前就该被拒"的那几条路径（见 ApiSelfTest 的说明）。
+                    c.Allow("dialog.open", "dialog.save", "dialog.message");
                 }
             })
             .UseDebug()

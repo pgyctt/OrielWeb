@@ -84,6 +84,36 @@ public sealed class BuiltInWindowCommandTests
             return null;
         }
 
+        /// <summary>记录多选/过滤器那几项，供 dialog.open 的测试断言。</summary>
+        public string[] ShowOpenFileDialog(OrielOpenFileDialogOptions options)
+        {
+            Calls.Add($"showOpenFileDialogOptions:{options.Title}|{options.AllowMultiple}|{options.InitialDirectory}");
+            return [];
+        }
+
+        public string? ShowSaveFileDialog(OrielSaveFileDialogOptions options)
+        {
+            Calls.Add($"showSaveFileDialog:{options.Title}|{options.InitialDirectory}|{options.DefaultFileName}");
+            return null;
+        }
+
+        public string? ShowFolderDialog(string? title, string? initialDirectory)
+        {
+            Calls.Add($"showFolderDialog:{title}|{initialDirectory}");
+            return null;
+        }
+
+        /// <summary>消息框：默认回"用户点了确认"，测试可以改写 <see cref="MessageResult"/>。</summary>
+        public MessageResult? ShowMessageDialog(
+            string message, string? title, string kind, MessageButtons buttons, string okLabel, string cancelLabel)
+        {
+            Calls.Add($"showMessageDialog:{message}|{title}|{kind}|{buttons}|{okLabel}|{cancelLabel}");
+            return NextMessageResult;
+        }
+
+        /// <summary>下一次 <see cref="ShowMessageDialog"/> 的返回值（null 表示"被外部关掉"）。</summary>
+        public MessageResult? NextMessageResult { get; set; } = MessageResult.Ok;
+
         public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items) => Calls.Add($"showContextMenu:{items.Count}");
     }
 

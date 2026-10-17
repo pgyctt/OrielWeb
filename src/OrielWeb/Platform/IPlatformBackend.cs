@@ -293,6 +293,83 @@ internal interface IWindowBackend
     string? ShowFolderDialog(string? title, string? initialDirectory);
 
     void ShowMessageBox(string text, string? title, OrielMessageBoxIcon icon);
+
+    // 说明：消息框有两个入口，刻意不合并。
+    //
+    //   ShowMessageBox(text, title, icon) → void：既有的"通知型"消息框，只告诉用户一件事。
+    //   ShowMessageDialog(…) → MessageResult：本批为 dialog.* 加的"询问型"消息框，
+    //     需要知道用户点了哪个按钮。
+    //
+    // 不把前者改成返回结果：那会动到公开的 WebviewWindow.ShowMessageBox（void），
+    // 而既有的调用方（demo 的上下文菜单等）并不关心结果。两套入口共享同一个原生调用
+    // （下面各平台都是同一条 MessageBoxW / GtkMessageDialog / NSAlert 路径），
+    // 所以不存在"两份实现漂移"的问题。
+
+    /// <summary>
+    /// 弹一个模态询问对话框，返回**用户点了哪个语义按钮**。
+    /// </summary>
+    /// <param name="message">正文。</param>
+    /// <param name="title">标题；为 null 时用平台默认。</param>
+    /// <param name="kind">语气：<c>info</c> / <c>warning</c> / <c>error</c> / <c>question</c>。</param>
+    /// <param name="buttons">按钮集合。</param>
+    /// <param name="okLabel">确认按钮的**显示**文案（不支持自定义按钮文案的平台会忽略它）。</param>
+    /// <param name="cancelLabel">取消按钮的显示文案（同上）。</param>
+    /// <returns>
+    /// 语义结果，或 <c>null</c>（对话框被外部关掉、没有结果）。
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>为什么返回语义（<see cref="MessageResult.Ok"/> 这类）而不是按钮文案</b>：
+    /// 三平台能显示的自定义文案不同——Windows 的 <c>MessageBoxW</c> **只能显示系统文案**
+    /// （自定义要上 <c>TaskDialogIndirect</c>，那需要 comctl32 v6 激活清单）。
+    /// 若命令返回"实际显示的文案"，页面拿它与自己期望的标签比对，在 Windows 上就会
+    /// **静默得到错误答案**（用户点了"是"，但显示的是"确定"，比较不成立 → 当成否）。
+    /// 返回语义之后，文案只是显示层的事，判断不再受它影响。
+    /// </para>
+    /// <para>
+    /// <b>Windows 上自定义按钮文案不生效</b>（显示系统文案），这是平台限制，
+    /// 已写进文档与 CHANGELOG 的"已知限制"。
+    /// </para>
+    /// </remarks>
+    MessageResult? ShowMessageDialog(
+        string message, string? title, string kind, MessageButtons buttons, string okLabel, string cancelLabel);
+}
+
+/// <summary>消息对话框的按钮集合。</summary>
+/// <remarks>
+/// 用枚举而不是"传一组文案"：三平台各自的按钮**顺序与默认按钮**有差别
+/// （Windows 的 <c>MB_YESNOCANCEL</c> 顺序固定、GTK 按添加顺序、macOS 的按钮顺序决定
+/// 哪个是回车默认），所以"哪个按钮是什么语义"必须由调用方说清，平台实现各自映射。
+/// </remarks>
+public enum MessageButtons
+{
+    /// <summary>只有确认。</summary>
+    Ok,
+
+    /// <summary>确认 + 取消。</summary>
+    OkCancel,
+
+    /// <summary>是 + 否。</summary>
+    YesNo,
+
+    /// <summary>是 + 否 + 取消。</summary>
+    YesNoCancel,
+}
+
+/// <summary>用户点了哪个语义按钮。</summary>
+public enum MessageResult
+{
+    /// <summary>确认。</summary>
+    Ok,
+
+    /// <summary>取消。</summary>
+    Cancel,
+
+    /// <summary>是。</summary>
+    Yes,
+
+    /// <summary>否。</summary>
+    No,
 }
 
 /// <summary>平台后端契约（消息循环 + 主线程调度 + 窗口工厂）。</summary>

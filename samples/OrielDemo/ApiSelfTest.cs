@@ -343,6 +343,44 @@ internal static class ApiSelfTest
                 check('清空之后读不到文本（null 或空串）',
                     afterClear === null || afterClear === '', String(afterClear));
 
+                // ---- dialog（F3）：**只验参数校验，不真弹** ----
+                //
+                // 模态对话框会把自检挂住（它在等一个不会有人点的窗口），所以这里只验
+                // 那些"在弹之前就该被拒"的路径。真弹的验证靠人工（demo 的按钮）——
+                // 无人自检里弹模态框本来就是自相矛盾的要求。
+                const dialog = await import(vendor + '/dialog.js');
+
+                let unsupportedCode = 'unset';
+                try {
+                    await dialog.open({ canCreateDirectories: false });
+                } catch (e) {
+                    unsupportedCode = e && e.code;
+                }
+                check('dialog.open 对未实现的选项明确拒绝（not_supported）',
+                    unsupportedCode === 'not_supported', unsupportedCode);
+
+                let comboCode = 'unset';
+                try {
+                    await dialog.open({ directory: true, multiple: true });
+                } catch (e) {
+                    comboCode = e && e.code;
+                }
+                check('dialog.open 拒绝 directory + multiple 组合（invalid_argument）',
+                    comboCode === 'invalid_argument', comboCode);
+
+                let dialogMissingCode = 'unset';
+                try {
+                    await core.invoke('dialog.message', { title: '没有正文' });
+                } catch (e) {
+                    dialogMissingCode = e && e.code;
+                }
+                check('dialog.message 缺 message 参数报 missing_argument',
+                    dialogMissingCode === 'missing_argument', dialogMissingCode);
+
+                check('dialog 模块导出 open / save / message / ask / confirm',
+                    ['open', 'save', 'message', 'ask', 'confirm'].every(function (k) { return typeof dialog[k] === 'function'; }),
+                    'ok');
+
                 //
                 // 这一条必须在**真页面**里验：`convertFileSrc` 是同步拼字符串，
                 // 真正的强制点在 webview 去请求那个 URL 时。而"请求能不能成功"

@@ -241,10 +241,26 @@ internal static class Win32Constants
     public const int MAX_PATH = 260;
 
     public const uint MB_OK = 0x0;
+
+    /// <summary>按钮集合。这四个的低 4 位共同决定显示哪组按钮（互斥）。</summary>
+    /// <remarks>
+    /// <c>MB_OKCANCEL</c> = 0x1、<c>MB_YESNO</c> = 0x4、<c>MB_YESNOCANCEL</c> = 0x3——
+    /// 注意它们**不是**按顺序排的（0x1/0x3/0x4），不能靠加减推。
+    /// </remarks>
+    public const uint MB_OKCANCEL = 0x1;
+    public const uint MB_YESNOCANCEL = 0x3;
+    public const uint MB_YESNO = 0x4;
+
     public const uint MB_ICONERROR = 0x10;
     public const uint MB_ICONQUESTION = 0x20;
     public const uint MB_ICONWARNING = 0x30;
     public const uint MB_ICONINFORMATION = 0x40;
+
+    /// <summary><c>MessageBoxW</c> 的按钮 ID 返回值。</summary>
+    public const int IDOK = 1;
+    public const int IDCANCEL = 2;
+    public const int IDYES = 6;
+    public const int IDNO = 7;
 
     public static readonly nint DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4;
 }

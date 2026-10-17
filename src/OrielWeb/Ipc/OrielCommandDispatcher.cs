@@ -224,6 +224,32 @@ internal sealed class OrielCommandDispatcher
             return;
         }
 
+        // 内建对话框命令族（dialog.*）：对标 Tauri 的 plugin-dialog。
+        //
+        // **与既有 win.pickFile / window.pickFile 并存**：那两条是既有的公开契约
+        // （冻结不动，只收 title/filter、返回单个路径），本族收 Tauri 形状的 options
+        // （多选 / 过滤器 / 初始目录）。两者共用底下的原生对话框，
+        // 所以不存在"两份实现漂移"——"独立"指的是命令契约独立。
+        if (OrielBuiltInDialogCommands.TryGet(name, out var dialogBuiltIn))
+        {
+            if (window is null)
+            {
+                ReplyError(sink, id, ErrorReply.Text($"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。", OrielIpcErrorCodes.NoSourceWindow));
+                return;
+            }
+
+            try
+            {
+                ReplyOk(sink, id, dialogBuiltIn(window, name, args));
+            }
+            catch (Exception ex)
+            {
+                ReplyError(sink, id, DescribeBuiltInFailure(name, ex));
+            }
+
+            return;
+        }
+
         // 内建平台集成命令族（opener.* / notification.* / autostart.*）：
         // 对标 Tauri 的 plugin-opener / plugin-notification / plugin-autostart。
         //

@@ -906,6 +906,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 | `notification` | `isPermissionGranted` / `requestPermission` / `sendNotification`（桌面子集） |
 | `autostart` | `isEnabled` / `enable` / `disable` |
 | `clipboard` | `readText` / `writeText` / `clear`（纯文本） |
+| `dialog` | `open` / `save` / `message` / `ask` / `confirm` |
 | `dpi` | `LogicalSize` / `PhysicalSize` / `LogicalPosition` / `PhysicalPosition` + 归一与换算 |
 | `mocks` | `mockIPC` / `mockWindows` / `mockEmit` / `mockConvertFileSrc` / `clearMocks` |
 
@@ -979,6 +980,43 @@ await resolveResource('assets/a.svg'); // 资源目录下拼，带越界校验
 
 > **`runtimeDir` 在 `XDG_RUNTIME_DIR` 缺失时明确失败**，不退到 `/tmp`：
 > `/tmp` 是全局共享的，不是"本用户的运行时目录"那个语义，给个错值比明确失败糟得多。
+
+### 对话框：`dialog`
+
+```js
+import { open, save, message, ask, confirm } from '@orielweb/api/dialog';
+
+const file = await open({ filters: [{ name: '图片', extensions: ['png', 'jpg'] }] });
+const many = await open({ multiple: true });            // → string[]
+const dir  = await open({ directory: true });           // → string | null（只支持单选）
+const out  = await save({ defaultPath: '/tmp/报告.txt' });
+
+await message('已完成', { kind: 'info' });
+if (await ask('继续吗？')) { /* ... */ }
+if (await confirm('确定删除？', { okLabel: '删除' })) { /* ... */ }
+```
+
+需要能力声明（`Allow("dialog.open")` 等）——它们会弹模态对话框，
+而"能弹对话框"在无人值守流程里是有意义的。
+
+| 要点 | 说明 |
+|---|---|
+| **`open` 的返回值随 options 变形** | 单选 → `string`、多选 → `string[]`、取消 → `null`（与 Tauri 一致） |
+| **`directory` 只支持单选** | `directory + multiple` 会报错而不是静默只取第一个（与 Tauri 一致） |
+| **`message` 返回被点按钮的文案** | 所以 `ask`/`confirm` 能拿它与期望标签比对；被外部关掉时是 `null` |
+| **命令层返回语义、页面层映射文案** | Windows 的 `MessageBoxW` 只能显示系统文案，见下 |
+| **自定义按钮文案** | Linux/macOS 生效；**Windows 上不生效**（显示系统文案），已记入"已知限制" |
+
+**为什么 `message` 那套要分两层**：Tauri 的 `message` 返回"实际显示的文案"。
+但 Windows 的 `MessageBoxW` 无法自定义按钮文字（要 `TaskDialogIndirect`，需要 comctl32 v6
+激活清单），所以若照搬"返回文案"，页面拿它与期望标签比对时会**静默得到错误答案**——
+用户点了"是"、显示的是"确定"，`ask` 就返回了 `false`。
+本库的命令层返回**语义**（`ok`/`cancel`/`yes`/`no`），文案映射在 `dialog.js` 里做。
+
+**与 `Window.pickFile()` 的关系**：那条是既有的公开契约（只收标题与过滤器、返回单个路径），
+**冻结不动**；本模块是新入口。两者共用底下的原生对话框，所以行为不会分叉。
+
+**未实现**（会明确报错，不静默忽略）：`canCreateDirectories`、`recursive`。
 
 ### 系统剪贴板：`clipboard`
 

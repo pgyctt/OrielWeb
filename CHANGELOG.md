@@ -374,7 +374,48 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
 > 真的接对了的方式（单测里没有后端，只测得到"没后端时不抛"）。
 > 代价是**会把用户当前的剪贴板内容覆盖掉**——跑这个自检之前请先存好心内容。
 
+#### 对话框（F3：open / save / message）
+
+- **`@orielweb/api/dialog`**（`open` / `save` / `message` / `ask` / `confirm`）+ 内建命令族
+  `dialog.*`，对标 Tauri 的 `plugin-dialog`。
+- **与既有 `win.pickFile` / `window.pickFile` 的关系**（一个刻意的决定）：那两条是既有的
+  公开契约，**冻结不动**（只收 `title` / `filter`、返回单个路径）。本族是**新入口**，
+  收 Tauri 形状的 options（多选 / 过滤器 / 初始目录）。
+  两者**共用底下的原生对话框**（`IPlatformBackend.ShowOpenFileDialog` 本来就收 options
+  对象）——把原生实现抄第二份才是真的错。所以"独立"指的是**命令契约独立**
+  （互不影响、可各自演进），不是复制原生代码。有一条测试专门钉住
+  "`win.pickFile` 走的仍是宽松签名那条路"。
+- **`message` 系列：命令层返回语义，页面层映射成文案**。这是本批最重要的一个设计决定。
+  Tauri 的 `message` 返回**被点按钮的文案**，而 Windows 的 `MessageBoxW` **只能显示系统文案**
+  （自定义要上 `TaskDialogIndirect`，那需要 comctl32 v6 激活清单）。
+  若让命令返回"实际显示的文案"，页面拿它与期望标签比对时会**静默得到错误答案**——
+  用户点了"是"、显示的却是"确定"，比较不成立，`ask` 就返回了 `false`。
+  返回语义之后，文案只是页面层的事，判断不再受影响。
+- **`dialog.open` 在命令层返回数组**，由页面层按"是不是多选"摊平：命令层的返回值形状稳定，
+  而页面拿到的形状与 Tauri 一致（单选 `string` / 多选 `string[]` / 取消 `null`）。
+- **三处"明确拒绝"**：`canCreateDirectories` / `recursive`（没有对应能力）、
+  `directory + multiple`（目录选择器只支持单选，与 Tauri 一致）。
+  静默忽略一个布尔选项最危险的地方是**调用方以为它生效了**——
+  比如 `canCreateDirectories: false` 被忽略后用户仍能新建目录，而调用方已不再校验那条路径。
+- **`dialog.message` 需要新的原生代码**：Windows `MessageBoxW`、Linux `GtkMessageDialog`、
+  macOS `NSAlert`。Linux 与 macOS **支持自定义按钮文案**，Windows 不支持（平台限制，
+  已记入"已知限制"）。
+
 ### 修复
+
+- **`dialog.js` 里形参遮蔽了同名导出函数**：`ask(message, options)` 与
+  `confirm(message, options)` 里的形参 `message` 遮蔽了导出的 `message` 函数，
+  于是内部写 `message(...)` 会得到 **"message is not a function"**。
+  TypeScript 在 `checkJs` 下抓到了它，但那是"碰巧被抓到"——形参改名就不会了。
+  所以结构上避开：抽一个内部 `sendMessage(text, options)`，三个导出都调它。
+  （Tauri 那边把它叫 `messageCommand` 正是躲这个。）
+
+- **`--selftest windowevents` 在当前桌面会话下失败（环境依赖，经回滚验证非本批引入）**：
+  "另一个窗口关闭后，本窗口应收到 `FocusChanged(true)`" 这一条不成立。
+  **验证方式**：把工作区退到上一批（F6）重新构建，同一个二进制**同样失败**，
+  所以不是本批的回归。现场特征：残留进程为 0，而 `GetForegroundWindow()` 取不到
+  前台窗口标题——当前会话没有把前台交给这个进程，于是关闭第二个窗口时
+  `WM_SETFOCUS` 不会到来。这一条本来就依赖真实的 OS 焦点交接。
 
 - **`--selftest api` 的超时消息说不出根因**：探针脚本解析失败时（例如一个重复的
   `const`）**一条输出都没有**，表现是"60 秒超时"——而超时这个现象与"有个重复的变量名"

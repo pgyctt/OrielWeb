@@ -250,7 +250,7 @@ public sealed class BuiltInWindowApiCommandTests
     /// <remarks>
     /// 直接复用那个类会带上一堆与本文件无关的成员断言；这里只需要"记录被调了什么"。
     /// </remarks>
-    private sealed class RecordingWindow : IOrielWindowControl
+    internal sealed class RecordingWindow : IOrielWindowControl
     {
         public List<string> Calls { get; } = [];
         public OrielApp App { get; set; } = Oriel.CreateBuilder().Build();
@@ -270,10 +270,41 @@ public sealed class BuiltInWindowApiCommandTests
         public void EndDrag() => Calls.Add("endDrag");
         public string? ShowOpenFileDialog(string? title, string? filter, string? initialDirectory)
         {
-            Calls.Add("showOpenFileDialog");
+            Calls.Add($"showOpenFileDialog:{title}|{filter}|{initialDirectory}");
             return null;
         }
 
         public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items) => Calls.Add("showContextMenu");
+
+        // 下面四个是 IOrielWindowControl 为 dialog.* 加的新成员。
+        // 本文件测的是 window.*，不调它们，所以只记录、不回值。
+
+        public string[] ShowOpenFileDialog(OrielOpenFileDialogOptions options)
+        {
+            Calls.Add($"showOpenFileDialogOptions:{options.Title}|{options.AllowMultiple}|{options.InitialDirectory}");
+            return [];
+        }
+
+        public string? ShowSaveFileDialog(OrielSaveFileDialogOptions options)
+        {
+            Calls.Add($"showSaveFileDialog:{options.Title}|{options.InitialDirectory}|{options.DefaultFileName}");
+            return null;
+        }
+
+        public string? ShowFolderDialog(string? title, string? initialDirectory)
+        {
+            Calls.Add($"showFolderDialog:{title}|{initialDirectory}");
+            return null;
+        }
+
+        /// <summary>下一次 <see cref="ShowMessageDialog"/> 的返回值（null 表示"被外部关掉"）。</summary>
+        public MessageResult? NextMessageResult { get; set; } = MessageResult.Ok;
+
+        public MessageResult? ShowMessageDialog(
+            string message, string? title, string kind, MessageButtons buttons, string okLabel, string cancelLabel)
+        {
+            Calls.Add($"showMessageDialog:{message}|{title}|{kind}|{buttons}|{okLabel}|{cancelLabel}");
+            return NextMessageResult;
+        }
     }
 }

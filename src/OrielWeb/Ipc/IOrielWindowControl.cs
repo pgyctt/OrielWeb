@@ -69,5 +69,25 @@ internal interface IOrielWindowControl
 
     string? ShowOpenFileDialog(string? title, string? filter, string? initialDirectory);
 
+    /// <summary>
+    /// 打开文件对话框（**收 options**，支持多选与过滤器）。
+    /// </summary>
+    /// <remarks>
+    /// 与上面那个"宽松签名"重载并存：那个是 <c>win.pickFile</c> 用的既有契约
+    /// （只收一个过滤器字符串、返回单个路径），**冻结不动**；
+    /// 这个是 <c>dialog.open</c> 用的新入口。两者共用底下的原生对话框。
+    /// </remarks>
+    string[] ShowOpenFileDialog(OrielOpenFileDialogOptions options);
+
+    /// <summary>保存文件对话框（<c>dialog.save</c> 用）。</summary>
+    string? ShowSaveFileDialog(OrielSaveFileDialogOptions options);
+
+    /// <summary>目录选择对话框（<c>dialog.open({ directory: true })</c> 用）。</summary>
+    string? ShowFolderDialog(string? title, string? initialDirectory);
+
+    /// <summary>询问型消息框（<c>dialog.message</c> 用），返回用户点了哪个语义按钮。</summary>
+    MessageResult? ShowMessageDialog(
+        string message, string? title, string kind, MessageButtons buttons, string okLabel, string cancelLabel);
+
     void ShowContextMenu(IReadOnlyList<OrielMenuItem> items);
 }
