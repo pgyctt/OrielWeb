@@ -118,7 +118,7 @@ internal partial class AppJsonContext : JsonSerializerContext;
 `%(RecursiveDir)` 在 Windows 上带**反斜杠**，所以上面那行显式把它归一成 `/`：不归一的话子目录资源名会是
 `MyApp.wwwroot/assets\img\logo.svg` 这种混合形态——库读取时会归一（`EmbeddedAssetStore` 那道安全网），
 但资源名就不长成这里承诺的样子了。自己声明资源时请照抄上面那行的写法（`samples/OrielDemo` 与
-`tools/verify-pack.ps1` 的场景 B1 都是）。
+`tools/verify-package.ps1` 的场景 B1 都是）。
 
 构建日志会说明它做了什么（在 `-v:n` 及以上可见，默认的 `dotnet build` 看不到）：
 
@@ -138,7 +138,7 @@ OrielWeb: 已自动内嵌 12 个 wwwroot 资源（LogicalName 用显式 '/' 分�
 
 > **仓库内用 `ProjectReference` 的工程要自己声明**：`build/` 与 `buildTransitive/` 是 NuGet 包的机制，
 > 只随包分发——`ProjectReference` 不带它们。所以本仓库的 `samples/OrielDemo` 自己写了带 `LogicalName`
-> 的那一行，而零配置只有从**包**消费时才生效（`samples/OrielMinimal` 与 `tools/verify-pack.ps1` 走的
+> 的那一行，而零配置只有从**包**消费时才生效（`samples/OrielMinimal` 与 `tools/verify-package.ps1` 走的
 > 就是那条路）。踩这个坑的症状是启动即 `未找到前缀为 '…wwwroot/' 的内嵌资源`。
 >
 > 这类工程既然不导入 targets，构建期那道 `ORIELWEB001` 也拦不到它——**运行期**会以"检测到旧写法内嵌资源"
@@ -147,7 +147,7 @@ OrielWeb: 已自动内嵌 12 个 wwwroot 资源（LogicalName 用显式 '/' 分�
 > **旧写法为什么被删掉**（2026-10-03）：不带 `LogicalName` 时 MSBuild 会把 `%(RecursiveDir)` 里的分隔符压成 `.`，
 > 于是 `app.min.js` 与 `app/min.js` 生成的资源名**完全一样**——库只能靠"最后一个 `.` 是扩展名"去猜，
 > 而猜错的表现是页面 404 白屏、宿主侧毫无异常。既然无法正确解释，就不要装作能解释：这种写法现在在**构建期**
-> 被 `ORIELWEB001` 拦下，错误信息里直接给出正确写法。回归证据是 `tools/verify-pack.ps1` 的场景 B1
+> 被 `ORIELWEB001` 拦下，错误信息里直接给出正确写法。回归证据是 `tools/verify-package.ps1` 的场景 B1
 > （带 `LogicalName` 的自声明受支持）与 B2（旧写法必须构建失败）。
 
 ### C# 侧的开关
@@ -227,7 +227,7 @@ MIME 由库按扩展名给出（自定义 scheme 下引擎不再替你推断，�
 
 ### 验证账
 
-- `tools/verify-pack.ps1`（CI 的 `test` job 每轮跑）造四种消费形态并断言资源名：
+- `tools/verify-package.ps1`（CI 的 `test` job 每轮跑）造四种消费形态并断言资源名：
   **A 零配置** → 显式分隔符形式（`MyApp.wwwroot/app.min.js`，不会被拆成 `app/min.js`）；
   **B1 自带 `LogicalName` 的自声明** → 与零配置逐字符一致，且 targets 确实跳过了（没有重复嵌入）；
   **B2 旧写法（不带 `LogicalName`）** → **构建失败**并给出正确写法（错误码 `ORIELWEB001`）；
@@ -253,7 +253,7 @@ MIME 由库按扩展名给出（自定义 scheme 下引擎不再替你推断，�
 | 导航与 IPC | 前进/后退/刷新、导航事件（含失败原因）、`invoke`（有回执）/`postMessage`（单向）/`EmitEvent`（宿主→页面）/console 转发 |
 | 安全与能力模型 | 来源 + 令牌 + 按命令授权三层；不可信来源的页面根本拿不到桥接脚本 |
 | 主题 / 单实例 | 深浅色检测与变更事件、第二实例唤醒首实例 |
-| 平台集成 | 托盘、系统通知、窗口上下文菜单、Shell（打开外链/定位文件）、开机自启 |
+| 平台集成 | 托盘（**对标 Tauri 2**：多托盘按 id 管理、图标是已解码的 RGBA 对象、富事件 Click/DoubleClick/Enter/Move/Leave、前端 `oriel.tray` 与后端同名同义）、系统通知、窗口上下文菜单、Shell（打开外链/定位文件）、开机自启 |
 | 对话框 | 打开（可多选）/ 保存 / 选文件夹，支持结构化过滤器与初始目录 |
 | 文件拖放 | 拖入文件/文件夹 → 本地路径列表 + 事件 |
 | 内建右键菜单 | 默认只留剪切/复制/粘贴，可切平台原样或完全禁用 |
@@ -334,8 +334,20 @@ pwsh tools/publish.ps1 -Bundle                  # AOT 发布 + Velopack 打包
 pwsh tools/wsl_publish.ps1 -Bundle              # 在 WSL 里发 Linux 产物（同上）
 ```
 
-`tools/` 下是验证与取证脚本（Linux/macOS 的窗口、托盘、通知、拖放等），由 CI 调用；
-用法见各脚本头部的注释。
+`tools/` 下是验证与取证脚本，由 CI 调用；用法见各脚本头部的注释。
+
+**三平台的验证脚本命名与职责一一对应**——每个平台一个脚本、内部按阶段分节，CI 里各自只调用一行：
+
+| 脚本 | 语言 | 阶段 |
+|---|---|---|
+| `verify-linux.sh` | bash | `selftest`（机器断言）+ `shell`（托盘/通知/Shell/自启）+ `smoke`（运行取证 + 截图） |
+| `verify-windows.ps1` | PowerShell | `smoke`（进程存活）+ `pack`（Velopack 打包与产物断言）+ `selftest`（机器断言） |
+| `verify-macos.sh` | bash | 自检 + 运行取证 + 截图（含签名与 `.app` 组装这两个 macOS 特有的前置） |
+
+三者都支持 `--stages` / `-Stages` 只跑某一阶段、`--no-publish` / `-Publish` 控制是否先发布，
+并在失败时逐阶段给结论 + 写一条 GitHub 注解。其余脚本是**跨平台或专项**的，不带平台名：
+`verify-package.ps1`（包内 targets 的消费链路）、`publish.ps1` / `wsl_publish.ps1`（发布与打包）、
+`make-macos-app.sh`（组装 macOS `.app`）、`fake-notification-service.py` / `fake-notify-send.py`（通知替身）。
 
 ## 平台运行要求
 

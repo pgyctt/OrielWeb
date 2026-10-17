@@ -15,6 +15,15 @@ namespace OrielWeb.Ipc;
 /// </remarks>
 internal interface IOrielWindowControl
 {
+    /// <summary>
+    /// 本窗口所属的应用。
+    /// </summary>
+    /// <remarks>
+    /// 内建 <c>tray.*</c> 命令要用它：托盘是**应用级**资源（不属于任何窗口），
+    /// 但命令是从某个窗口的页面发起的，只能经这个属性拿到应用。
+    /// </remarks>
+    OrielApp App { get; }
+
     /// <summary>窗口当前是否"显示中"（供内建 <c>win.isVisible</c> 查询）。</summary>
     bool IsVisible { get; }
 

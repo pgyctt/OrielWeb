@@ -64,11 +64,31 @@
 - 步骤：直接运行 demo（不传 `--icon`）——Linux 看任务栏、macOS 看 Dock、Windows 看任务栏与 Alt-Tab；GNOME 上再装一份 `.desktop`（`StartupWMClass` 必须等于 `xprop WM_CLASS` 的 res_class）。
 - 预期：任务栏/Dock 显示项目图标；`xprop -id <窗口id> _NET_WM_ICON` 有图标数据。
 - 若不符：先确认产物是**新构建的**（`dist/<rid>/app.png` 在不在）；GNOME 上 `StartupWMClass` 是否与 `WM_CLASS` 逐字符相同。
+- 状态：**图标文件缺失的降级路径与相对路径解析基准已在 Windows 真机取证**（2026-10-14：`--icon probe-icon.ico --require-icon` 从 cwd `E:\` 启动仍成功 ⇒ 按 exe 目录解析；缺失 + 不开严格模式 ⇒ 降级且退出码 0；缺失 + 严格模式 ⇒ 如期抛 `FileNotFoundException`）。**图标最终显示效果仍是人眼项**。
 
 #### macOS 隐藏启动
 - 环境：macOS 桌面。
 - 步骤：`OrielDemo --hidden`，用 `CGWindowList` 断言窗口不在 on-screen 列表里。
 - 预期：窗口不上屏，但页面照常加载、IPC 照常往返（Linux 侧已在 WSL 验证过同样的语义）。
+
+#### 退出看门狗与退出事件（Linux / macOS 未验）
+- 状态：**Windows 已真机取证**（2026-10-14）：`--selftest exit` 正常退出两个事件都触发、退出码 `0`；
+  `--selftest exit-timeout` 在 `Run()` 返回后堵死 UI 线程，看门狗 3 秒后强杀、退出码 `2`、
+  `ExitTimeout` 事件先于强杀触发（并指出了卡住的阶段）。Linux/macOS 侧实现同源但**未在真机跑过**。
+- 环境：Linux（GTK）与 macOS（AppKit）桌面各一次。
+- 步骤：`OrielDemo --selftest exit`，再 `--selftest exit-timeout`（后者 3 秒后以退出码 2 结束是**预期**）。
+- 预期：与 Windows 一致——`Exiting` → `ExitCompleted`，超时模式下看门狗强杀且退出码为 `ForceExitCode`。
+- 若不符：先确认该平台的 `Quit` 真的结束了消息循环（Linux `GtkMainQuit`、macOS `NSApplication.terminate:`），
+  再看 `Thread.Sleep` 的看门狗线程是否真的起来了（它是后台线程，不该阻止进程退出）。
+
+#### 线程归属与编组（Linux / macOS 未验）
+- 状态：**Windows 已真机取证**（2026-10-14，`--selftest threading` 八项全过）。Linux/macOS 同源未验。
+- 环境：Linux 与 macOS 桌面各一次。
+- 步骤：`OrielDemo --selftest threading`。
+- 预期：`THREADING-SELFTEST: PASS`——UI 线程上 `IsOnUiThread` 为 `true`、后台线程为 `false`、
+  `InvokeOnUiThread` 的动作确实执行在 UI 线程上、`PostToUiThread` 返回 `true` 且回调落在 UI 线程。
+- 若不符：macOS 看 `_mainManagedThreadId` 是否在 `NSApplication.run` 之前就记下了（构造函数里记的，
+  应当正确）；Linux 看 `Environment.CurrentManagedThreadId` 与 GTK 主循环线程是否同一个。
 
 #### Linux 高 DPI 下的拖动是否跟手（拖动已在库侧，不要折算）
 - 环境：Linux 桌面 + 真实高 DPI 缩放（X11 与 Wayland 各一次；`GDK_SCALE=2` 只在 X11 下生效）。
@@ -102,6 +122,29 @@
 - 步骤：`OrielDemo --selftest shell`（建托盘并设一份含分隔线/勾选/禁用/子菜单的菜单），在托盘区点开。
 - 预期：图标出现、悬停有 tooltip、菜单按设置渲染、点 Quit 退出。
 - 若不符：Linux 上 GNOME Shell 未装扩展、或 Wayland 会话下本就不显示，属平台事实。
+- 状态：**托盘 API 的机器断言已补齐**（2026-10-14）：`--selftest tray` 覆盖多托盘、图标对象、
+  模板标记、菜单、显隐、标题、按 id 移除（Windows 真机 26 项全过）；`--selftest tray-js` 覆盖
+  页面经 `oriel.tray` 的完整命令往返。**图标最终显示效果与悬停事件的真实送达仍是人眼项**。
+
+#### 托盘事件在 Linux / macOS 上的送达
+- 环境：Linux（GTK）与 macOS（AppKit）桌面各一次。
+- 步骤：`OrielDemo --selftest tray` 之后，用操作台/页面订阅 `oriel.tray.onEvent`，把指针移入、
+  在图标上移动、移出、单击、双击，观察事件序列。
+- 预期：**macOS** 能收到 Click / Enter / Move / Leave（`NSTrackingArea`），按键与坐标为 `null`；
+  **Linux** 能收到 Click / DoubleClick 且**带按键与坐标**（`button-press/release-event`），
+  Enter/Move/Leave **收不到**——`GtkStatusIcon` 没有悬停信号，是平台事实（Tauri 2 同样标注 Unsupported）。
+- 若不符：macOS 先确认跟踪区域装上了（`addTrackingArea:` 是否被调用、`NSTrackingArea` 是否返回 nil）；
+  Linux 确认 `button-press-event` 信号真的连上了（`g_signal_connect_data` 的返回值）。
+- 状态：**Windows 侧已真机取证**（V4 回调：`NIN_POPUPOPEN/CLOSE` 给 Enter/Leave、
+  `WM_MOUSEMOVE` 给 Move、`GET_X/Y_LPARAM` 给坐标）。Linux/macOS **未在真机跑过**。
+
+#### 托盘图标在 Windows 上的 PNG 支持
+- 环境：Windows 桌面（WebView2 运行时）。
+- 步骤：`OrielDemo --selftest tray` 已断言 `app.png` 与 `app.ico` **都能解码**（托管解码器）；
+  再给一个托盘传 PNG 图标，看它是否真的显示出来。
+- 预期：PNG 图标正常显示——此前 Windows 走 `LoadImageW`（**只认 ICO/BMP**），PNG 会静默失败；
+  现在统一走 `OrielImageCodec` → `CreateIconIndirect`，格式支持三平台一致。
+- 状态：解码与 HICON 构造已在真机跑通（自检里用 PNG 建托盘未报错），**视觉确认仍是人眼项**。
 
 #### 通知的展示
 - 环境：三平台桌面各一次。

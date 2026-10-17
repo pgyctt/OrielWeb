@@ -11,8 +11,18 @@ public sealed class OrielNotificationOptions
     /// <summary>正文（可省略）。</summary>
     public string? Body { get; set; }
 
-    /// <summary>附加图标文件路径（部分平台忽略）。</summary>
-    public string? IconPath { get; set; }
+    /// <summary>
+    /// 附加图标文件路径（部分平台忽略）。<b>相对路径按可执行文件所在目录
+    /// （<see cref="AppContext.BaseDirectory"/>）解析</b>，不是当前工作目录
+    /// （理由见 <see cref="OrielWindowOptions.Icon"/>）。
+    /// </summary>
+    public string? IconPath
+    {
+        get => _iconPath;
+        set => _iconPath = value is null ? null : OrielPathResolver.Resolve(value);
+    }
+
+    private string? _iconPath;
 
     /// <summary>
     /// 通知标识：作为"这条通知的身份"传给系统（Windows 上是 toast 的 <c>Tag</c>）。

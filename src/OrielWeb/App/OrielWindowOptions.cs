@@ -69,6 +69,9 @@ public sealed class OrielWindowOptions
     public uint? BackgroundColor { get; set; }
 
     private string? _icon;
+    private string? _iconSource;
+    private bool _requireIcon;
+    private bool _iconWarned;
 
     /// <summary>
     /// 窗口图标文件路径。各平台落到最贴近的位置：
@@ -86,13 +89,21 @@ public sealed class OrielWindowOptions
     /// 而它的 exe 图标走 <c>ApplicationIcon</c>，所以 Windows 侧通常不需要设这个值。
     /// </para>
     /// <para>
-    /// 路径请用**绝对路径**：三个平台都按当前工作目录解析相对路径，而 macOS 从 <c>.app</c> 启动时
-    /// cwd 是 <c>/</c>——相对路径在那里必然失效。
+    /// <b>相对路径按可执行文件所在目录（<see cref="AppContext.BaseDirectory"/>）解析</b>，不是当前
+    /// 工作目录：工控机现场常从快捷方式、计划任务、开机自启启动，cwd 往往不是程序目录；macOS 从
+    /// <c>.app</c> 启动时 cwd 更是 <c>/</c>。要按 cwd 解析请自行传 <see cref="Path.GetFullPath(string)"/>
+    /// 的结果（绝对路径原样使用）。
     /// </para>
     /// <para>
-    /// 赋值时**校验文件存在**，不存在直接抛 <see cref="FileNotFoundException"/>。三个平台在加载失败时
-    /// 都是**静默**的（GTK 丢掉 GError、Cocoa 拿到 nil 就跳过、Win32 的 <c>LoadImageW</c> 返回 0），
-    /// 不在这里拦住，表现就是"图标没生效，且没有任何提示"。
+    /// <b>文件不存在时降级，不抛异常</b>：图标是纯观感，缺失只该回落到平台默认图标（Windows 的 exe
+    /// 图标、Linux/macOS 的 <c>app.png</c>），不该让整个程序起不来——此前它在 <c>AddWindow</c> 的配置
+    /// 回调里抛 <see cref="FileNotFoundException"/>，用户看到的是"双击没反应"（下游反馈 2026-10-14 的 P1-2）。
+    /// 降级时会经 <see cref="OrielDiagnostics.Reported"/> 报一条警告，因此仍然可观测。
+    /// 需要"路径写错就启动失败"的严格行为，置 <see cref="RequireIcon"/>。
+    /// </para>
+    /// <para>
+    /// 读回的是**生效值**：文件不存在且未开严格模式时为 <c>null</c>（表示走平台默认图标）；
+    /// 原始请求路径见 <see cref="RequestedIcon"/>。
     /// </para>
     /// </remarks>
     public string? Icon
@@ -100,20 +111,76 @@ public sealed class OrielWindowOptions
         get => _icon;
         set
         {
-            if (value is not null)
+            if (value is null)
             {
-                ArgumentException.ThrowIfNullOrWhiteSpace(value);
-                if (!File.Exists(value))
-                {
-                    throw new FileNotFoundException(
-                        $"图标文件不存在：{value}。相对路径按**当前工作目录**解析，" +
-                        "而 macOS 上从 .app 启动时 cwd 是 /，打包分发请传绝对路径" +
-                        "（例如 Path.Combine(AppContext.BaseDirectory, \"app.png\")）。",
-                        value);
-                }
+                _iconSource = null;
+                _icon = null;
+                return;
             }
 
-            _icon = value;
+            ArgumentException.ThrowIfNullOrWhiteSpace(value);
+            _iconSource = OrielPathResolver.Resolve(value);
+            _iconWarned = false;
+            EvaluateIcon();
+        }
+    }
+
+    /// <summary>
+    /// 原始请求的图标路径（已按可执行文件目录解析），无论文件是否存在；未设置时为 <c>null</c>。
+    /// 用于排障：<see cref="Icon"/> 在降级后是 <c>null</c>，这里仍能看到当初写的是什么。
+    /// </summary>
+    public string? RequestedIcon => _iconSource;
+
+    /// <summary>
+    /// 是否要求图标文件必须存在（默认 <c>false</c>）。置 <c>true</c> 时，图标文件缺失会在配置期
+    /// 抛 <see cref="FileNotFoundException"/>，而不是降级成平台默认图标。
+    /// </summary>
+    /// <remarks>
+    /// 默认关闭：图标缺失属于观感问题，把它升级成"启动失败"会让一个笔误变成"程序打不开"
+    /// （见 <see cref="Icon"/>）。需要尽早暴露打包漏文件时才打开它。
+    /// 可在 <see cref="Icon"/> 之前或之后设置，两种顺序都会重新求值。
+    /// </remarks>
+    public bool RequireIcon
+    {
+        get => _requireIcon;
+        set
+        {
+            _requireIcon = value;
+            EvaluateIcon();
+        }
+    }
+
+    /// <summary>按当前策略求值图标：存在则生效；缺失时严格模式抛错、否则降级为 null 并报一条诊断。</summary>
+    private void EvaluateIcon()
+    {
+        if (_iconSource is null)
+        {
+            _icon = null;
+            return;
+        }
+
+        if (File.Exists(_iconSource))
+        {
+            _icon = _iconSource;
+            return;
+        }
+
+        if (_requireIcon)
+        {
+            throw new FileNotFoundException(
+                $"图标文件不存在：{_iconSource}。相对路径按可执行文件所在目录解析" +
+                $"（{AppContext.BaseDirectory}），请确认打包产物里有该文件，或传绝对路径。",
+                _iconSource);
+        }
+
+        _icon = null;
+        if (!_iconWarned)
+        {
+            _iconWarned = true;
+            OrielDiagnostics.Report(
+                $"[OrielWeb] 窗口图标不存在，已降级为平台默认图标：{_iconSource}" +
+                $"（相对路径按可执行文件所在目录解析：{AppContext.BaseDirectory}）。" +
+                "需要启动即失败请设 OrielWindowOptions.RequireIcon = true。");
         }
     }
 
@@ -219,8 +286,14 @@ public sealed class OrielWindowOptions
     /// <summary>打开 DevTools（只"允许"检查，不自动弹面板）；见 <see cref="Debug"/>。</summary>
     public OrielWindowOptions WithDebug(bool debug = true) { Debug = debug; return this; }
 
-    /// <summary>设置窗口图标；平台差异见 <see cref="Icon"/>。</summary>
+    /// <summary>设置窗口图标；平台差异与"缺失即降级"的语义见 <see cref="Icon"/>。</summary>
     public OrielWindowOptions WithIcon(string path) { Icon = path; return this; }
+
+    /// <summary>
+    /// 要求图标文件必须存在（默认关闭）：缺失时在配置期抛异常，而不是降级为平台默认图标；
+    /// 见 <see cref="RequireIcon"/>。
+    /// </summary>
+    public OrielWindowOptions WithRequireIcon(bool require = true) { RequireIcon = require; return this; }
 
     /// <summary>开启/关闭 console 转发；见 <see cref="ConsoleForwarding"/>。</summary>
     public OrielWindowOptions WithConsoleForwarding(bool enabled = true) { ConsoleForwarding = enabled; return this; }

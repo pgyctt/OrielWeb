@@ -7,6 +7,291 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
+## 0.3.5 - 2026-10-14
+
+下游反馈（一个真实工业上位机的迁移复盘）里"值得在库上做"的六条，按价值排序全部落地。
+其中前三条是**缺陷**（会直接导致现场故障），后三条是**缺口与文档**（让宿主不必各写一套兜底）。
+
+### 修复
+
+- **`Quit()` 语义分裂：只请求退出、不保证退出**。`PostQuitMessage` 只是往消息队列投一条 `WM_QUIT`，
+  而消息循环停下之后，宿主在 `Run()` 返回后跑的清理全部同步落在 UI 线程上，任何一步卡住
+  （等一个失去响应窗口的同步调用、一个不返回的 join）都会让进程驻留——驻留期间可执行文件映像
+  仍被映射，现场表现是**"程序删不掉/装不上"**，Windows 还会判成 AppHangB1（宿主实测最坏 ≈ 7s：
+  `Join(2s) + Wait(2s) + Logger.Dispose(3s)`，而消息循环此时已停，任何需要 UI 线程的清理
+  都不再可能完成）。现在 `Quit()` 在投递退出消息的同时起一个看门狗线程：从"请求退出"算起超过
+  `ExitTimeoutDuration`（默认 10 秒）进程仍在，就强制结束它并以 `ForceExitCode`（默认 `2`）退出。
+  **看门狗覆盖整段退出，包括 `Run()` 返回之后宿主的收尾**——那正是最容易卡住的一段。
+  可用 `UseExitTimeout` / `UseForceExitCode` / `UseExitWatchdog(false)` 调整。
+  自然退出路径（所有窗口关闭、平台落出循环）同样受保护。
+- **`Quit()` 的线程相关性此前是隐式的**。`PostQuitMessage` / `GtkMainQuit` / `NSApplication.terminate:`
+  都是线程相关的：从线程池调用会投给一个**没有消息循环的线程**，主循环永远收不到，表现为
+  "调了 `Quit` 却退不掉"。现在不在 UI 线程调用会立刻抛 `InvalidOperationException` 并说明原因，
+  而不是静默投递（从其它线程退出请用 `InvokeOnUiThread` 编组）。
+- **`WithIcon` 文件缺失直接抛异常，把观感问题升级成启动失败**。图标是纯观感，缺失只该回落到平台
+  默认图标；此前它在 `AddWindow` 的**配置回调**里抛 `FileNotFoundException`——此时还没有窗口、
+  没有 UI，用户看到的就是**"双击没反应"**（现场留下 `startup-error.log`：
+  `FileNotFoundException: 图标文件不存在：icon.ico` at `set_Icon` at `AppHost.ConfigureWindow`）。
+  现在缺失即降级为平台默认图标 + 经 `OrielDiagnostics.Reported` 报一条警告；需要"路径写错就启动
+  失败"的严格行为用 `WithRequireIcon()` / `RequireIcon = true`。空白路径仍立刻抛 `ArgumentException`
+  （那是调用方写错了，不是"文件缺失"）。`Icon` 读回的是**生效值**，原始请求路径见 `RequestedIcon`。
+- **相对路径按当前工作目录解析**（工控机高发）。现场从快捷方式、计划任务、开机自启启动时 cwd
+  常常不是程序目录，macOS 从 `.app` 启动时 cwd 更是 `/`——"开发机上好好的、一到现场就失效"。
+  现在**所有接受文件路径的选项**（窗口图标、`OrielTrayOptions.IconPath` / `OrielTray.SetIcon`、
+  `OrielNotificationOptions.IconPath`）都统一按 `AppContext.BaseDirectory`（可执行文件所在目录）解析；
+  绝对路径原样使用，要按 cwd 解析请自行传 `Path.GetFullPath(...)` 的结果。
+- **`PostToMainThread` 失败时静默丢弃**。调度通道失效（应用正在退出、消息窗口已销毁）时回调
+  不会执行、也没有任何痕迹，自动化验证里表现为"设置了但没生效"的**假通过**。现在
+  `IPlatformBackend.PostToMainThread` / `IWindowBackend.PostToUiThread` 返回 `bool`，失败时返回
+  `false` 并报一条诊断；公开 API 侧 `WebviewWindow.PostToUiThread` 随之返回 `bool`，并新增
+  `OrielApp.TryPostToMainThread`（不抛异常的"尽力投递"，退出途中用）。
+
+### 新增
+
+- **退出生命周期事件**：`OrielApp.Exiting`（消息循环即将/已经结束）、`ExitCompleted`（库侧清理
+  走完、`Run()` 即将返回）、`ExitTimeout`（清理超时、进程即将被强杀）。此前宿主**无从观测**
+  退出走到了哪一步——进程到底卡在哪、清理有没有走完、是不是被兜底强杀，只能靠自建看门狗 +
+  同步日志才看得清。`ExitTimeout` 尤其关键：它让宿主知道"这次是被强杀的"，而不是静默变成
+  AppHangB1（回调在**看门狗线程**上，只该做与 UI 无关的事并尽快返回）。
+- **`OrielApp.IsOnUiThread` / `WebviewWindow.IsOnUiThread`**：公开"当前线程是不是 UI 线程"。
+  此前只有 internal 的 `IPlatformBackend.IsOnUiThread`，宿主想判断"要不要编组"就得自己维护一份
+  主线程 ID。应用未运行时返回 `false`。
+- **`OrielApp.InvokeOnUiThread` / `WebviewWindow.InvokeOnUiThread`**：**同步**编组——已在 UI 线程
+  则直接执行，否则投递并阻塞等待完成，动作抛的异常原样带回调用方。与 `PostToMainThread`
+  （异步、不等待）配对。文档写明"不要在 UI 线程上等一个正在等 UI 线程的东西"。
+- **`OrielApp.ExitTimeoutDuration` / `ForceExitCode`**，以及构建器上的
+  `UseExitTimeout(TimeSpan)` / `UseForceExitCode(int)` / `UseExitWatchdog(bool)`。
+- **`OrielApp.IsExiting`**：退出流程是否已开始。**这是本次实现过程中自己踩出来的一条**——
+  `InvokeOnUiThread` 在退出途中会永久阻塞（消息循环已停，投递的动作永不被处理，而它在
+  `Wait()` 上无超时），现在退出已开始就立刻抛 `InvalidOperationException` 而不是挂住调用方。
+
+### 变更（破坏性 / 行为可见）
+
+- **`IPlatformBackend.PostToMainThread` 与 `IWindowBackend.PostToUiThread` 的返回类型
+  `void` → `bool`**（internal 接口，不影响宿主）。`WebviewWindow.PostToUiThread` 的签名随之
+  由 `void` 变为 `bool`——**纯返回值增强**，`await`-之后-`Post` 那种"当作语句用"的调用方源码
+  无需改动，但把方法组当 `Action<Action>` 用的反射/委托场景会受影响。
+- **`OrielWindowOptions.Icon` 不再因文件缺失抛异常**（改降级 + 诊断）。依赖"缺失即抛"来发现
+  打包漏文件的宿主，请改用 `RequireIcon`。
+- **`Quit()` 在非 UI 线程调用由"静默无效"改为抛 `InvalidOperationException`**。
+- **`OrielTrayOptions.IconPath` / `OrielNotificationOptions.IconPath` 由自动属性改为按
+  `AppContext.BaseDirectory` 解析的受控 setter**——写入相对路径时读回的是解析后的绝对路径。
+
+### 文档
+
+- API.md §1 新增**退出语义**专节（`Quit()` 的三件事、看门狗为什么必须有、三个退出事件、
+  只能从 UI 线程调用）；`OrielApp` / `WebviewWindow` 成员表补齐 `IsOnUiThread` /
+  `TryPostToMainThread` / `InvokeOnUiThread` / 退出事件与配置项。
+- API.md §2 新增**图标与路径**小节：相对路径的解析基准（`AppContext.BaseDirectory`）与
+  "缺失即降级"两条规则，适用全部路径类选项。
+- API.md 线程模型一节补**线程归属的可查询与编组**对照表，并把线程事实写实（Win32 用
+  `GetCurrentThreadId == _uiThreadId`、Linux/macOS 用 `Environment.CurrentManagedThreadId`；
+  命令处理、窗口事件、托盘菜单回调都在 UI 线程上，Windows 托盘回调经专属消息窗口与 WebView2
+  共用同一个 dispatcher/消息循环线程）。
+- API.md §14 补两条取证项：`--selftest exit` / `exit-timeout`（退出语义，必须子进程取证——
+  `Environment.Exit` 会把测试运行器一起带走）与 `--selftest threading`（线程归属与编组）。
+- ROADMAP 增两条待真机项（Linux/macOS 的退出看门狗与线程归属；Windows 已取证），
+  窗口图标条目补上"缺失降级 + 相对路径解析基准"的 Windows 真机取证记录。
+
+### 验证
+
+- 单测 471 → **495**（新增 `IconOptionsTests`、`ExitSemanticsTests`）。
+- demo 新增两个自检模式：`--selftest exit` / `exit-timeout` / `threading`，
+  并在 Windows 真机取证通过——
+  `EXIT-SELFTEST: PASS`（两个事件都到、退出码 0）；`exit-timeout` 在 `Run()` 返回后堵死 UI 线程
+  ⇒ 看门狗 3 秒后强杀、**退出码 2**、`ExitTimeout` 先于强杀触发并指出卡住的阶段；
+  `THREADING-SELFTEST: PASS`（8 项）。
+- 相对路径解析基准的决定性取证：exe 目录放 `probe-icon.ico`、cwd 设为 `E:\`、
+  开 `--require-icon` 严格模式 ⇒ 程序仍正常启动（退出码 0）。旧实现必然在此抛
+  `FileNotFoundException` 而"双击没反应"；同文件缺失 + 严格模式则如期抛异常。
+
+### 托盘 API 对标 Tauri 2（同批第二段）
+
+上游明确要求"对标 Tauri 2 实现，后端与前端的 API 尽量保持一致"，因此托盘从"单托盘 + 路径字符串 +
+无参点击事件"整体升级到 Tauri 2 的能力面。**这是一批破坏性变更**，详见下方"变更"。
+
+#### 新增
+
+- **多托盘，按 id 管理**（对标 Tauri 2 的 `TrayIcon.new` / `getById` / `removeById`）。
+  `OrielApp` 持有托盘注册表：`CreateTray(Action<OrielTrayOptions>?)`（运行期新建）、
+  `GetTray(id)`、`Trays`、`RemoveTray(id)` / `RemoveTray()`；构建期的 `AddTray` **可重复调用**。
+  三平台后端从"单例"改为按 id 登记（Windows 每个实例占一个进程内唯一的 `NOTIFYICONDATA.uID`、
+  Linux 按 `GtkStatusIcon` 指针、macOS 各持一个 `NSStatusItem`）。重复 id 抛异常——
+  否则 `GetTray` 的结果取决于创建顺序，那是静默的意外。
+- **`OrielImage`：托管解码的图像对象**（对标 Tauri 2 的 `tauri::image::Image`）。
+  `FromBytes` / `FromFile` / `TryFromFile` + `Rgba` / `Width` / `Height`。
+  解码器 `OrielImageCodec` 是**纯 BCL 实现**（PNG 走 `ZLibStream`），**不引入任何第三方图像库**——
+  Tauri 靠 Rust `image` crate + `image-png`/`image-ico` 两个 Cargo feature，本库的定位是零额外依赖。
+  支持 PNG 8 位的五种颜色类型与**全部五种行过滤器**、ICO 的内嵌 PNG/32 位 BMP/24 位/索引色；
+  隔行扫描、16 位每通道、APNG、压缩 ICO **明确报错**而不是解出花屏。
+- **图标从"路径"升级为"RGBA 对象"**：`OrielTrayOptions.Icon` / `OrielTray.SetIcon(OrielImage?)`。
+  三平台各自落到原生入口——Windows `CreateDIBSection` + `CreateIconIndirect`、
+  macOS `CGImageCreate` + `NSImage`（自动做预乘 alpha）、Linux `gdk_pixbuf_new_from_data` +
+  `gtk_status_icon_set_from_pixbuf`。**都不引入新的原生依赖**（GDI/CoreGraphics/gdk-pixbuf 都是系统自带）。
+  副作用是**格式支持三平台一致**：Windows 此前走 `LoadImageW`（只认 ICO/BMP），**PNG 会静默失败**，
+  现在也能吃 PNG。
+- **富事件模型 `OrielTrayEvent`**（对标 Tauri 2 的 `TrayIconEvent`）：`TrayId` / `Type`
+  （`Click` / `DoubleClick` / `Enter` / `Move` / `Leave`）/ `Button` / `ButtonState` / `Position` / `Rect`。
+  **平台未提供的字段一律是 `null`**，让页面能区分"平台不支持"与"值是 0"。新增
+  `OrielTray.TrayEvent` 事件（旧的 `Clicked` 保留，两者同一次交互都触发）。
+- **`OrielTrayOptions.Title` / `IconAsTemplate`**（对标 Tauri 2 的 `title` / `iconAsTemplate`）。
+  `IconAsTemplate` **默认 `true`**（单色剪影跟随菜单栏反色），但**彩色品牌图可以显式置 false**——
+  这是修掉的一个真实缺陷：模板标记此前被**无条件**设为 true，调用方无从表达"我这个是彩色图"，
+  结果是颜色全丢、只剩一个按 alpha 抠出来的剪影。
+- **前端 `oriel.tray` 命名空间**（对标 Tauri 2 的 `@tauri-apps/api/tray`）：
+  `new` / `getById` / `getAll` / `removeById` / `onEvent`，句柄上 `setIcon` / `setMenu` /
+  `setTooltip` / `setTitle` / `setVisible` / `setIconAsTemplate` / `close`。方法名与语义**一一对齐**。
+  底层经内建 `tray.*` 命令（与 `win.*` 同属库保留前缀、**始终放行**，应用不必注册任何命令）。
+  托盘事件经出站事件 `tray.event` 推给页面，**与通用 `oriel.on` 分开**（只关心托盘的页面不被
+  窗口状态事件打扰）。
+
+#### 变更（破坏性）
+
+- **`ITrayBackend` 契约重写**：新增 `Id`、`EventReceived`、`SetTitle`、`SetIconAsTemplate`；
+  `SetIcon` 由 `string?` 改为 `OrielImage?`；`CreateTray` 多一个 `id` 参数。
+  （internal 接口，不影响宿主。）
+- **`OrielTrayOptions.IconPath` 语义变更**：赋值**不再读盘**（解码推迟到建托盘时）。
+  理由与 0.3.5 前面那批同源——`AddTray` 是**配置期**回调，在这里抛异常会重演
+  "图标缺失让程序打不开"。解码失败降级为平台默认图标 + 报诊断；要"路径写错就立刻失败"
+  请直接用 `Icon = OrielImage.FromFile(path)`（显式调用，抛异常是预期行为）。
+- **`OrielApp.Tray` / `RemoveTray()` 的语义**：`Tray` 现在是"主托盘"（第一个），
+  多托盘应用请用 `GetTray` / `Trays`；`RemoveTray()` 从"移除那一个"变成"移除**全部**"，
+  按 id 移除用 `RemoveTray(id)`。
+- **内建命令的异常文案改为原样透传**。此前 `win.*` 的失败被净化成"命令 'x' 执行失败。"，
+  排查时看不到真因（例如"应用尚未运行"）。内建命令全部由库自己实现、异常里不会有应用/页面
+  塞进去的内容，因此原样透传；**应用命令仍是"只透传 `OrielIpcException`"**（那条安全口径不变）。
+- **`tray.` 成为库保留前缀**：应用自己的命令不要以它开头，否则会绕过能力配置（与 `win.` 同理）。
+
+#### Windows：托盘回调切换到 V4
+
+`NIM_SETVERSION(NOTIFYICON_VERSION_4)`（MSDN：必须在**每次 `NIM_ADD` 之后**调用）。
+这是拿到 **Enter/Leave** 的唯一途径（`NIN_POPUPOPEN` / `NIN_POPUPCLOSE`），并带来事件坐标
+（`GET_X_LPARAM`/`GET_Y_LPARAM`）；图标 ID 移到 `HIWORD(lParam)`，多托盘照样分得清。
+
+早年"刻意不切 V4"的三条理由现在都不成立，逐条核实过：
+① 旧式"简单可靠"不再优先——事件面完整性更重要；
+② `uTimeoutOrVersion` 联合体的坑——本库的通知**早已不走托盘气球**（改走 WinRT toast，
+见 `Win32ToastNotification`），没有任何调用点会写 `uTimeout`，该字段语义恒定是"版本号"；
+③ 多托盘靠 `HIWORD` 的图标 ID 分辨，V4 同样支持（MSDN 明确图标 ID 限制 16 位）。
+
+切换失败时**不致命**：回调退回旧式形态（点击与菜单照常，只是没有 Enter/Leave 与坐标），并报一条诊断。
+
+#### macOS：悬停事件走 `NSTrackingArea`
+
+状态项按钮上装跟踪区域（`NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved |
+NSTrackingActiveAlways | NSTrackingInVisibleRect`），AppKit 才会派发 `mouseEntered:` /
+`mouseExited:` / `mouseMoved:`。**owner 必须是本托盘自己的 handler**——多托盘下共用一个会让
+事件串到别的托盘上。按键与坐标**如实不给**（`NSStatusItem` 的 action 不带按键；菜单栏窗口坐标系
+的转换成本高于收益），而不是编造一个值。
+
+#### Linux：Click 补上按键与坐标
+
+`GtkStatusIcon` **没有** Enter/Leave/Move 信号（权威信号表只有 `activate` / `button-press-event` /
+`button-release-event` / `popup-menu` / `query-tooltip` / `scroll-event` / `size-changed`）——
+这是平台事实，Tauri 2 的文档同样标注 "Linux: Unsupported"。
+但 `button-press/release-event` 能给出**按键与坐标**（`GdkEventButton` + `gdk_event_get_root_coords`），
+因此 Click/DoubleClick 的 `button` / `buttonState` / `position` 与另外两平台对等。
+`SetTitle` 落到 `gtk_status_icon_set_title`，但**语义与 Tauri 的 Linux title 不同**（GTK 文档：
+它是无障碍标签，不会画在托盘上）——如实标注这条差异。
+
+#### 文档
+
+- API.md §7 托盘章节整体重写：后端成员表、托盘注册表（多托盘）、`OrielTrayEvent` 字段表、
+  **各平台事件粒度对照表**、**前端 `oriel.tray` 与 Tauri 2 的完整对照表**，
+  以及"差别如实标注"（页面侧给路径而非 `JsImage` 多态、没有 `setTempDirPath`）。
+- API.md §2 新增 **`OrielImage` 小节**：构造入口、支持与不支持的图像子集、三平台的原生落点。
+- API.md §11 页面侧 API 补 `oriel.tray` 与托盘事件 payload 形状。
+- API.md §14 补两条取证项（`--selftest tray` / `tray-js`）。
+- ROADMAP 增三条待真机项：Linux/macOS 的事件送达、Windows 的 PNG 图标显示
+  （Windows 侧已取证，其余**未在真机跑过**）。
+
+#### 验证
+
+- 单测 495 → **548**（新增 `ImageCodecTests`（含五种行过滤器的逐字节往返、真实 PNG/ICO 解码）、
+  `TrayEventTests`、`TrayOptionsTests`、`BuiltInTrayCommandTests`）。
+- 桥接测试 81 → **120**（新增 39 项托盘前端用例：`new` 默认值、句柄方法逐条命令、
+  `close` 等价 `removeById`、`getById` 返回 null、事件隔离与处理器异常隔离）。
+- demo 新增两个自检模式并在 **Windows 真机取证通过**：
+  `TRAY-SELFTEST: PASS`（26 项，含 `app.png` 与 `app.ico` **双格式解码**、多托盘互不影响、
+  模板标记如实回读、按 id 移除、重复 id 抛异常）；`TRAY-JS-SELFTEST: PASS`
+  （页面经 `oriel.tray` 走完 `new` → `getById` → `getAll` → 全部 `set*` → `close` → `onEvent` 的完整往返）。
+- 同批的退出/线程自检复跑无回归（6 项真机自检全 PASS）。
+- `app.ico` 此前**没被复制到产物**（csproj 只配了 `app.png`）——自检把它暴露出来后已修，
+  现在 PNG 与 ICO 都随产物分发（托盘/窗口图标需要可读的文件路径）。
+
+#### CI：新增自检全部接入（并因此暴露一个缺陷）
+
+上表新增的 `threading` / `tray` / `tray-js` / `exit` / `exit-timeout` 五项此前**一个都没进 CI**
+（`smoke-linux` 与 `smoke-windows` 的模式列表停在六个旧模式，`verify-macos.sh` 同理）。
+现在三个平台各自接入，并按平台差异给出**有依据的**断言口径：
+
+- **`exit-timeout` 必须同时断言结论行与退出码**。只看结论行会漏掉"看门狗没真的强杀"
+  （进程正常退出了）；只看退出码会漏掉"事件没触发"。
+- **`exit` 的"退出码必须为 0"只在 Linux/Windows 上判**。macOS 的正常退出走 AppKit 的
+  `terminate`，实测会吃掉 `Main` 里设的 `Environment.ExitCode`（`verify-macos.sh` 自己的注释里
+  记录过"nav 自检打印 FAIL 却返回 0"）——在那里断言它会引入一个永远红的假失败，而那不是真实缺陷。
+  `exit-timeout` 的退出码在三平台都判：它由 `Environment.Exit` 直接终止进程，不经过平台 UI 层。
+
+**接进 CI 的过程中暴露了一个真实缺陷**：`--selftest exit-timeout` **从不打印结论行**——
+超时模式的进程紧接着就被 `Environment.Exit(2)` 强杀，而打印结论的代码写在 `Run()` 返回之后，
+**永远执行不到**。早先在 Windows 上只验证了退出码（2），所以没暴露；但 CI 按结论行判定就会永远红。
+现在结论行在 `ExitTimeout` 回调里打印——那是强杀前**最后的执行机会**，也正是这个事件存在的意义
+（让宿主知道"这次是被强杀的"，而不是静默消失）。
+
+复刻验证：在 Linux（WSL，AOT 产物）与 Windows（AOT 产物）上分别按 `ci.yml` 的断言逻辑逐项复跑
+五项新自检，**全部 PASS**（含退出码 2 的强杀断言）。这同时是 `tray` / `tray-js` **首次在 Linux 上跑通**
+（此前只有 Windows 有实证）。
+
+#### CI：大段内联脚本抽成独立文件，且三平台命名与职责对齐
+
+`ci.yml` 里 Linux 的验证（约 190 行 bash，含自检 + 托盘通知 + 运行取证）与 Windows 的
+（约 180 行 PowerShell，含冒烟 + 打包 + 自检）原本**内联在 workflow 里**。这种形态有三个实际问题：
+**没法在本地跑**（只能靠 push 到 CI 试）、**没法单独 review**、diff 时也看不出改的是哪一段逻辑。
+macOS 那条一直是独立脚本（`tools/verify-macos.sh`），现在三平台对齐：
+
+| 脚本 | 语言 | 阶段 |
+|---|---|---|
+| `tools/verify-linux.sh` | bash | `selftest` + `shell` + `smoke` |
+| `tools/verify-windows.ps1` | PowerShell | `smoke` + `pack` + `selftest` |
+| `tools/verify-macos.sh` | bash | 自检 + 运行取证 + 截图（含签名与 `.app` 组装） |
+
+**命名与职责一一对应**：每个平台一个 `verify-<平台>.<扩展名>`，内部按阶段分节，
+CI 里各自只调用一行。三者都支持只跑某一阶段（`--stages` / `-Stages`）与"是否先发布"
+（`--no-publish` / `-Publish`），失败时逐阶段给结论 + 写一条 GitHub 注解。
+workflow 里现在只剩"调用一行脚本"（外加一条 13 行的跨平台 lint，那是通用检查、
+与平台验证无关，留在原处更直观）。
+
+> 中途一度按"每平台多个脚本"拆过（`verify-linux-selftest.sh` / `-shell.sh` /
+> `verify-windows-selftest.ps1` / `-pack.ps1`），随后按"命名与职责要对齐"的要求合并回
+> 每平台一个——拆开的名字与 macOS 那条对不上，而"哪个平台该跑什么"要跨文件去拼。
+
+另有一个**与平台无关**的脚本改名以免歧义：`verify-pack.ps1` → **`verify-package.ps1`**
+（它验证的是 NuGet 包内 build logic 的消费链路，在 `test` job 跑，不属于 `verify-<平台>` 这一类；
+原名里的 "pack" 容易被读成"打包"，与 Windows 的 Velopack 打包阶段混淆）。引用点已同步
+（`ci.yml` / `README.md` / `API.md` / 脚本自身的 usage）。
+
+几个刻意的设计点：
+
+- **Linux 脚本自己处理无头环境**：没有 `DISPLAY`/`WAYLAND_DISPLAY` 且装了 `xvfb-run` 时
+  **重新执行自己**（带重入哨兵防止递归套娃），这样本地与 CI 的调用方式一致。
+- **`shell` 阶段自己起 `dbus-run-session`**：通知服务与 demo 必须在**同一个会话总线**里，
+  否则 demo 的 `notify-send` 找不到那个假服务。这是合并三个脚本时最容易出错的一处。
+- **打包与断言分开**：没有复用 `tools/publish.ps1 -Bundle`——那个面向人工发布
+  （含 `-Zip` / `-NoClean` / 交互式 `Pause`），塞进 CI 特有的断言会让它同时承担两个职责。
+- **三个脚本都经实测**：Windows 的三个阶段、Linux 的三个阶段都在本地实跑通过（退出码 0）；
+  另做**反向验证**确认断言不是假绿灯（未知 `--stages` → 退出码 2、喂坏产物 → 退出码 2、
+  喂多余文件 → 打包断言报错）。
+
+过程中踩到并修掉的两个真实问题（都不是语法层面，只有实跑才暴露）：
+
+1. **PowerShell 函数返回值被污染**：`Invoke-SelftestMode` 里既有 `Write-Output`（打印日志）
+   又有 `return [pscustomobject]`——PowerShell 会把**所有未捕获的输出并入返回值**，
+   于是调用方拿到数组而非对象，症状是"在此对象上找不到属性 'Verdict'"。
+   改用 `Write-Host`（走信息流、不进管道）。
+2. **用"起点关键字 + 终点关键字"做区间替换时终点越界**，一次把整个 `smoke-windows` job 删掉了
+   （241 行）。已从 git 恢复，并改为**精确行号区间 + 逐条锚点校验**的替换脚本
+   （任一锚点不符就中止，宁可报错也不静默删掉一段）。
+
 ## 0.3.4 - 2026-10-12
 
 Windows 组合宿主下"隐藏窗口仍吃点击"的修复批次。**宿主侧针对 0.3.3 的临时兜底（按类名 `Chrome_WidgetWin_1` 隐藏残留顶层窗口、并在 `Show()` 时对称还原）可以整段删除**——本版起 `Hide()` / `Show()` 已覆盖全部承担呈现与命中测试的窗口。

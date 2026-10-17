@@ -42,7 +42,7 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
         // NSApplication 主循环没有 SynchronizationContext：安装后 async 命令 await 的续体
         // 回主线程，与 Windows 语义一致（命令里 await 之后可以直接碰 UI/平台对象）。见 API.md。
         // 必须在 pump helper 建好之后：PostToMainThread 依赖它排空队列。
-        MainThreadSynchronizationContext.Install(PostToMainThread);
+        MainThreadSynchronizationContext.Install(action => PostToMainThread(action));
 
         // 主题：先记初值（否则"启动时已是深色"会漏报一次），再订系统通知。
         // NSDistributedNotificationCenter 的 addObserver:selector:name:object: **不**持有观察者，
@@ -123,7 +123,8 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
         return host;
     }
 
-    public ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app) => new MacOSTrayBackend(app, options);
+    public ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app, string id)
+        => new MacOSTrayBackend(app, options, id);
 
     // ---- 通知 ----
 
@@ -157,16 +158,25 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
 
     public bool IsOnUiThread() => Environment.CurrentManagedThreadId == _mainManagedThreadId;
 
-    public void PostToMainThread(Action action)
+    public bool PostToMainThread(Action action)
     {
         MainThreadQueue.Enqueue(action);
-        // pump 帮助实例常驻，selector 在主线程排空队列
+        // pump 帮助实例常驻，selector 在主线程排空队列。
+        // objc_msgSend 到 nil（pump helper 没建出来）是静默 no-op——队列里的动作永远不会被排空，
+        // 所以这里显式判空并留痕，而不是让"投了但没生效"悄悄发生。
+        if (_pumpHelper == 0)
+        {
+            OrielDiagnostics.Report("[OrielWeb] PostToMainThread 失败：pump helper 不可用，回调已被丢弃。");
+            return false;
+        }
+
         ObjCRuntime.SendVoidSelObjBool(
             _pumpHelper,
             ObjCRuntime.Sel("performSelectorOnMainThread:withObject:waitUntilDone:"),
             ObjCRuntime.Sel("orielPump:"),
             0,
             false);
+        return true;
     }
 
     internal void OnWindowDestroyed()

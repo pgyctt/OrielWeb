@@ -268,8 +268,69 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// await window.EvaluateJs("...");
     /// window.PostToUiThread(() => window.SetTitle("完成"));   // 回到 UI 线程再碰窗口
     /// </code>
+    /// <b>投递失败时不再静默丢弃</b>：返回 <c>false</c> 表示调度通道已失效（应用正在退出、
+    /// 消息窗口已销毁），回调不会执行，同时 <see cref="OrielDiagnostics.Reported"/> 会有一条记录。
+    /// 需要"等它做完"用 <see cref="InvokeOnUiThread"/>。
     /// </remarks>
-    public void PostToUiThread(Action action) => Backend.PostToUiThread(action);
+    /// <returns>是否已成功投递到 UI 线程队列。</returns>
+    public bool PostToUiThread(Action action) => Backend.PostToUiThread(action);
+
+    /// <summary>当前线程是不是 UI 线程；见 <see cref="OrielApp.IsOnUiThread"/>。</summary>
+    public bool IsOnUiThread => Backend.IsOnUiThread();
+
+    /// <summary>
+    /// 在 UI 线程上**同步**执行动作：已在 UI 线程则直接执行，否则投递过去并阻塞等待完成。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="PostToUiThread"/> 的区别是"等不等"，语义与死锁注意事项见
+    /// <see cref="OrielApp.InvokeOnUiThread"/>（同一套实现）——**退出已经开始时会立刻失败**，
+    /// 因为消息循环停下后投递的动作不会被处理，干等就是永久阻塞。
+    /// </remarks>
+    public void InvokeOnUiThread(Action action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+
+        if (Backend.IsOnUiThread())
+        {
+            action();
+            return;
+        }
+
+        if (App.IsExiting)
+        {
+            throw new InvalidOperationException(
+                "应用正在退出：消息循环已停止，InvokeOnUiThread 投递的动作不会被处理。" +
+                "退出途中请只做与 UI 无关的收尾，或用 PostToUiThread 做尽力投递。");
+        }
+
+        using var done = new ManualResetEventSlim(false);
+        Exception? failure = null;
+        if (!Backend.PostToUiThread(() =>
+            {
+                try
+                {
+                    action();
+                }
+                catch (Exception ex)
+                {
+                    failure = ex;
+                }
+                finally
+                {
+                    done.Set();
+                }
+            }))
+        {
+            throw new InvalidOperationException(
+                "InvokeOnUiThread 失败：调度通道已失效（应用正在退出或窗口已销毁）。");
+        }
+
+        done.Wait();
+        if (failure is not null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+    }
 
     /// <summary>向页面推送一个自定义事件（页面侧 <c>window.oriel.on(name, handler)</c> 接收）。</summary>
     /// <param name="name">事件名。</param>

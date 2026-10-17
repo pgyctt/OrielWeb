@@ -86,7 +86,17 @@ internal interface IWindowBackend
     /// 把动作切回 UI 线程执行（已在 UI 线程则直接执行）。
     /// 用于跨 <c>await</c> 之后碰窗口：await 的续体会落到线程池，而 GTK/AppKit 只能在各自的主线程调用。
     /// </summary>
-    void PostToUiThread(Action action);
+    /// <returns>是否已成功投递（详见 <see cref="IPlatformBackend.PostToMainThread"/>）。</returns>
+    bool PostToUiThread(Action action);
+
+    /// <summary>
+    /// 当前线程是不是本窗口所属平台的 UI 线程（GTK/AppKit/Win32 的窗口 API 都只能在它上面调用）。
+    /// </summary>
+    /// <remarks>
+    /// 用于宿主自己的后台线程里判断"要不要编组"，从而不必再自己维护一份主线程 ID
+    /// （下游反馈 2026-10-14 的 P2-6）。语义与 <see cref="IPlatformBackend.IsOnUiThread"/> 一致。
+    /// </remarks>
+    bool IsOnUiThread();
 
     /// <summary>向页面推送自定义事件（页面侧 <c>oriel.on(name, …)</c> 接收）；jsonPayload 必须是合法 JSON 文本。</summary>
     void EmitEvent(string name, string jsonPayload);
@@ -146,8 +156,19 @@ internal interface IPlatformBackend : IDisposable
 
     void RunMessageLoop();
     void Quit();
+
     /// <summary>把动作切回 UI 线程执行（已在 UI 线程则直接执行）。</summary>
-    void PostToMainThread(Action action);
+    /// <returns>
+    /// 是否**已成功投递给 UI 线程**。<c>false</c> 表示调度通道已失效（消息窗口被销毁、
+    /// GTK 的 idle source 建不出来等），动作**不会被执行**——此时实现会经
+    /// <see cref="OrielDiagnostics.Reported"/> 留一条痕迹，不再静默丢弃。
+    /// </returns>
+    /// <remarks>
+    /// 返回 <c>false</c> 不等于抛异常：调用方（尤其退出途中）通常只该记一笔就继续。
+    /// 旧形态是 <c>void</c>，投递失败时既没有返回信号也没有日志，自动化验证里表现为
+    /// "设置了但没生效"的假通过（下游反馈 2026-10-14 的 P2-5）。
+    /// </remarks>
+    bool PostToMainThread(Action action);
 
     /// <summary>
     /// 当前线程是不是本平台的 UI 线程（GTK/AppKit/Win32 的窗口 API 都只能在它上面调用）。
@@ -163,8 +184,13 @@ internal interface IPlatformBackend : IDisposable
     /// </remarks>
     IWindowBackend CreateWindow(WebviewWindow window, OrielWindowOptions options, OrielApp app, EmbeddedAssetStore? assets);
 
-    /// <summary>创建托盘图标（应用级，最多一个）。</summary>
-    ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app);
+    /// <summary>
+    /// 创建托盘图标（一个应用可以有多个，各按 <paramref name="id"/> 区分）。
+    /// </summary>
+    /// <param name="options">创建选项。</param>
+    /// <param name="app">所属应用。</param>
+    /// <param name="id">本托盘的唯一标识（由 <see cref="OrielApp"/> 分配/校验，后端只负责记住它）。</param>
+    ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app, string id);
 
     /// <summary>
     /// 本平台是否支持系统通知。用于让调用方决定"要不要退回到应用内提示"，

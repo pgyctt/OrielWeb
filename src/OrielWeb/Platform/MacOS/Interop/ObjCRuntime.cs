@@ -117,6 +117,22 @@ internal static unsafe partial class ObjCRuntime
     internal static partial void SendVoidNintBool(nint self, nint sel, nint arg, [MarshalAs(UnmanagedType.Bool)] bool flag);
 
     // NSPoint/NSSize（2×double）与 NSRect（4×double）参数——见文件头说明
+    /// <summary>一个对象参数 + 两个 double（NSSize）的调用（如 <c>NSImage initWithCGImage:size:</c>）。</summary>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendIdObjDouble2(nint self, nint sel, nint obj, double a, double b);
+
+    /// <summary>
+    /// 四个 double（NSRect）+ 一个整数 + 两个对象参数的调用
+    /// （如 <c>NSTrackingArea initWithRect:options:owner:userInfo:</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <c>options</c> 是 <c>NSTrackingAreaOptions</c>（NSUInteger）：x64/arm64 上它占一个整数寄存器，
+    /// 必须排在 4 个 double 之后、两个对象之前，与原生签名逐槽对应。
+    /// </remarks>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendIdDouble4NintObjObj(
+        nint self, nint sel, double a, double b, double c, double d, nuint options, nint obj1, nint obj2);
+
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial void SendVoidDouble2(nint self, nint sel, double a, double b);
 
@@ -179,6 +195,9 @@ internal static unsafe partial class ObjCRuntime
         "/System/Library/Frameworks/Foundation.framework/Foundation",
         "/System/Library/Frameworks/AppKit.framework/AppKit",
         "/System/Library/Frameworks/WebKit.framework/WebKit",
+        // CoreGraphics 由 AppKit 间接依赖，但图标路径直接调 CGImageCreate——
+        // 显式加载它，免得依赖"AppKit 恰好把它带进来了"这种巧合。
+        "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
     ];
 
     private static int s_frameworksLoaded;
@@ -226,6 +245,37 @@ internal static unsafe partial class ObjCRuntime
     }
 
     internal static nint Sel(string name) => sel_registerName(name);
+
+    // ---- CoreGraphics（图标：RGBA → CGImage）----
+
+    private const string CoreGraphicsLib = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+
+    /// <summary>把一块内存包成 <c>CGDataProvider</c>（<c>CGImageCreate</c> 的数据源）。</summary>
+    /// <remarks>
+    /// 用 <c>CGDataProviderCreateWithData</c> 而不是 <c>…WithCFData</c>：后者要在托管侧造
+    /// <c>CFData</c>，多一层引用管理。这里把托管数组 pin 住交给它，release 回调里再解开。
+    /// </remarks>
+    [LibraryImport(CoreGraphicsLib, EntryPoint = "CGDataProviderCreateWithData")]
+    internal static partial nint CGDataProviderCreateWithData(nint info, nint data, nuint size, nint releaseData);
+
+    /// <summary>由像素数据造 <c>CGImage</c>。返回的对象归调用方，用完 <c>CGImageRelease</c>。</summary>
+    [LibraryImport(CoreGraphicsLib, EntryPoint = "CGImageCreate")]
+    internal static partial nint CGImageCreate(
+        nuint width, nuint height, nuint bitsPerComponent, nuint bitsPerPixel, nuint bytesPerRow,
+        nint colorSpace, uint bitmapInfo, nint provider, nint decode, [MarshalAs(UnmanagedType.Bool)] bool shouldInterpolate, int intent);
+
+    [LibraryImport(CoreGraphicsLib, EntryPoint = "CGImageRelease")]
+    internal static partial void CGImageRelease(nint image);
+
+    /// <summary>取一个设备无关的 sRGB 色彩空间（RGBA 图标的正确色彩解释）。</summary>
+    [LibraryImport(CoreGraphicsLib, EntryPoint = "CGColorSpaceCreateDeviceRGB")]
+    internal static partial nint CGColorSpaceCreateDeviceRGB();
+
+    [LibraryImport(CoreGraphicsLib, EntryPoint = "CGColorSpaceRelease")]
+    internal static partial void CGColorSpaceRelease(nint colorSpace);
+
+    [LibraryImport(CoreGraphicsLib, EntryPoint = "CGDataProviderRelease")]
+    internal static partial void CGDataProviderRelease(nint provider);
 
     /// <summary>[[NSString stringWithUTF8String:]]（autoreleased，主循环自动排空）。</summary>
     internal static nint MakeNSString(string value)

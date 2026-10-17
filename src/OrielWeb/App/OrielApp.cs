@@ -242,73 +242,632 @@ public sealed class OrielApp : IDisposable
     private static void PushTheme(WebviewWindow window, OrielTheme theme)
         => window.EmitEvent(ThemeEventName, theme == OrielTheme.Dark ? "\"dark\"" : "\"light\"");
 
-    /// <summary>把动作切回 UI 线程执行（命令完成后的回执、跨线程 UI 更新都用它）。</summary>
+    /// <summary>
+    /// 把动作切回 UI 线程执行（命令完成后的回执、跨线程 UI 更新都用它）。
+    /// </summary>
+    /// <remarks>
+    /// <b>投递失败时抛 <see cref="InvalidOperationException"/></b>（应用未运行、或平台调度通道已失效）。
+    /// 若你要的是"失败也不炸"的形态（例如退出途中尽力投一次），用
+    /// <see cref="TryPostToMainThread"/>。
+    /// </remarks>
     public void PostToMainThread(Action action)
     {
+        ArgumentNullException.ThrowIfNull(action);
         var backend = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
         backend.PostToMainThread(action);
     }
 
     /// <summary>
-    /// 请求退出应用：结束消息循环、让 <see cref="Run"/> 返回。
-    /// 它不等于 <c>Environment.Exit</c>——<see cref="Run"/> 返回后该做的清理仍会执行，
-    /// 这既让退出可测（进程真的走完流程），也让"退出前保存状态"有地方放。
+    /// <see cref="PostToMainThread"/> 的不抛异常版本：投递失败返回 <c>false</c>，并报一条诊断。
     /// </summary>
+    /// <remarks>
+    /// 存在的理由：投递失败在旧形态下是**静默丢弃**的——回调不会执行、也没有任何痕迹，
+    /// 自动化验证里表现为"设置了但没生效"的假通过（下游反馈 2026-10-14 的 P2-5）。
+    /// 退出途中、窗口正在销毁时的"尽力投递"应该走这个重载，而不是让异常把退出流程打断。
+    /// </remarks>
+    /// <returns>是否已成功投递到 UI 线程队列。</returns>
+    public bool TryPostToMainThread(Action action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+
+        if (_backend is not { } backend)
+        {
+            OrielDiagnostics.Report("[OrielWeb] TryPostToMainThread 失败：应用尚未运行（未调用 Run()）。");
+            return false;
+        }
+
+        try
+        {
+            backend.PostToMainThread(action);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            OrielDiagnostics.Report($"[OrielWeb] TryPostToMainThread 投递失败，回调已被丢弃：{ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 当前线程是不是 UI 线程（GTK / AppKit / Win32 的窗口 API 都只能在它上面调用）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 应用未运行时返回 <c>false</c>。用于宿主自己的后台线程里判断"要不要编组"，
+    /// 从而不必再自己维护一份主线程 ID（下游反馈 2026-10-14 的 P2-6）。
+    /// </para>
+    /// <para>
+    /// <b>只在 UI 线程调用的库 API</b>（如 <see cref="CreateWindow"/>）会自己检查并抛
+    /// <see cref="InvalidOperationException"/>；这个属性是给宿主**主动**判断用的。
+    /// </para>
+    /// </remarks>
+    public bool IsOnUiThread => _backend?.IsOnUiThread() ?? false;
+
+    /// <summary>
+    /// 在 UI 线程上**同步**执行动作：已在 UI 线程则直接执行，否则投递过去并阻塞等待完成。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 与 <see cref="PostToMainThread"/>（异步投递、不等待）的区别就在"等不等"：
+    /// 需要拿到 UI 线程操作的结果、或需要"做完再往下走"时用它。
+    /// </para>
+    /// <para>
+    /// <b>不要在 UI 线程上等一个正在等 UI 线程的东西</b>：本方法从 UI 线程调用时是直接执行
+    /// （不会自锁），但如果你在 UI 线程上等一个后台线程、而那个后台线程正在这里等 UI 线程，
+    /// 就是经典的双向等待死锁——库检测不到这种情况。
+    /// </para>
+    /// <para>
+    /// <b>退出已经开始时立刻失败</b>：消息循环停下之后投递过来的动作永远不会被处理，
+    /// 在这里干等就是永久阻塞。与其挂住调用方，不如抛一条说得清的
+    /// <see cref="InvalidOperationException"/>（宿主此时应当做与 UI 无关的收尾）。
+    /// 退出途中确实需要"投了就算"时用 <see cref="TryPostToMainThread"/>。
+    /// </para>
+    /// <para>应用未运行时抛 <see cref="InvalidOperationException"/>（与 <see cref="PostToMainThread"/> 一致）。</para>
+    /// </remarks>
+    public void InvokeOnUiThread(Action action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+
+        var backend = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
+        if (backend.IsOnUiThread())
+        {
+            action();
+            return;
+        }
+
+        if (IsExiting)
+        {
+            throw new InvalidOperationException(
+                "应用正在退出：消息循环已停止，InvokeOnUiThread 投递的动作不会被处理。" +
+                "退出途中请只做与 UI 无关的收尾，或用 TryPostToMainThread 做尽力投递。");
+        }
+
+        using var done = new ManualResetEventSlim(false);
+        Exception? failure = null;
+        if (!backend.PostToMainThread(() =>
+            {
+                try
+                {
+                    action();
+                }
+                catch (Exception ex)
+                {
+                    failure = ex;
+                }
+                finally
+                {
+                    done.Set();
+                }
+            }))
+        {
+            throw new InvalidOperationException("InvokeOnUiThread 失败：调度通道已失效（回调已被丢弃）。");
+        }
+
+        done.Wait();
+        if (failure is not null)
+        {
+            // 原样抛出：编组不该改写调用方异常的类型与栈（用 ExceptionDispatchInfo 保住栈）
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+    }
+
+    /// <summary>退出流程是否已经开始（<see cref="Quit"/> 已调用，或消息循环已经结束）。</summary>
+    /// <remarks>
+    /// 退出一旦开始，UI 线程队列就不再被排空——任何"投过去等它执行"的做法都会永久阻塞。
+    /// 库内与宿主都据此避开这条路径。
+    /// </remarks>
+    public bool IsExiting { get { lock (_exitGate) { return _exitRequested; } } }
+
+    /// <summary>
+    /// 请求退出应用：结束消息循环、让 <see cref="Run"/> 返回，并**保证进程最终结束**。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 语义：这是"最终退出"，不是"建议退出"。<see cref="Run"/> 返回后该做的清理仍会照常执行
+    /// （托盘撤销、后端释放等），但库同时起一个看门狗：清理若超过 <see cref="ExitTimeout"/>
+    /// （默认 10 秒）仍未走完，看门狗会强制结束进程并以 <c>2</c> 为退出码
+    /// （可用 <see cref="OrielAppBuilder.UseExitTimeout"/> / <see cref="OrielAppBuilder.UseForceExitCode"/>
+    /// 调整）。
+    /// </para>
+    /// <para>
+    /// <b>为什么必须有这个兜底</b>：<c>PostQuitMessage</c> 只是往消息队列投一条 <c>WM_QUIT</c>，
+    /// 它不保证进程结束。消息循环停下之后，宿主在 <see cref="Run"/> 之后跑的清理全部同步落在
+    /// UI 线程上，任何一步卡住（等一个失去响应窗口的同步调用、一个不返回的 join）都会让进程驻留——
+    /// 驻留期间可执行文件映像仍被映射，现场表现是"程序删不掉/装不上"，Windows 还会判成
+    /// AppHangB1。把兜底做进库里，宿主就不必各写一套看门狗（写错了正好复现这个故障）。
+    /// </para>
+    /// <para>
+    /// <b>只能在 UI 线程调用</b>：<c>PostQuitMessage</c> 是**线程相关**的——在线程池线程上调用，
+    /// <c>WM_QUIT</c> 会投给一个没有消息循环的线程，主循环永远收不到，表现为"调了 Quit 却退不掉"。
+    /// 从其它线程退出请用 <see cref="InvokeOnUiThread"/> 编组过来。
+    /// </para>
+    /// <para>
+    /// 退出途中可以观测：<see cref="Exiting"/>、<see cref="ExitCompleted"/>、<see cref="ExitTimeout"/>。
+    /// </para>
+    /// </remarks>
     public void Quit()
     {
         var backend = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
+
+        if (!backend.IsOnUiThread())
+        {
+            // 线程相关性是硬约束，但不要静默投递——投给一个没有消息循环的线程是无效的。
+            throw new InvalidOperationException(
+                "Quit 必须在 UI 线程调用：PostQuitMessage / GtkMainQuit / NSApplication.terminate 都是" +
+                "线程相关的，从线程池调用会投给一个没有消息循环的线程。请用 InvokeOnUiThread 编组过来。");
+        }
+
+        BeginExit();
         backend.Quit();
     }
 
-    // ---- 托盘与通知（应用级；详见 README 平台矩阵）----
+    // ---- 退出生命周期 ----
 
-    /// <summary>托盘图标；未用 <see cref="OrielAppBuilder.AddTray"/> 启用时为 null。</summary>
-    public OrielTray? Tray { get; private set; }
+    private readonly object _exitGate = new();
+    private DateTime _exitRequestedUtc;
+    private string? _exitStage;
+    private bool _exitRequested;
+    private bool _exitCompleted;
+
+    /// <summary>从"请求退出"到现在的耗时（未请求退出时为零）。</summary>
+    private TimeSpan ExitElapsed => _exitRequestedUtc == default
+        ? TimeSpan.Zero
+        : DateTime.UtcNow - _exitRequestedUtc;
+
+    /// <summary>库观测到的最后一个退出阶段（供超时回调回答"卡在哪一步"）。</summary>
+    internal string? PendingExitStage { get { lock (_exitGate) { return _exitStage; } } }
+
+    /// <summary>退出流程已开始（消息循环即将/已经结束）。</summary>
+    public event Action<OrielExitEventArgs>? Exiting;
 
     /// <summary>
-    /// 移除托盘图标（<c>Shell_NotifyIcon(NIM_DELETE)</c> / <c>gtk_status_icon_set_visible(false)</c> /
-    /// <c>NSStatusBar.removeStatusItem:</c>），应用继续运行。之后可用 <see cref="RestoreTray"/> 重建。
+    /// 退出清理已全部走完、<see cref="Run"/> 即将返回。
     /// </summary>
-    /// <returns>是否确实移除了一个托盘（本来就没有时返回 <c>false</c>）。</returns>
+    /// <remarks>
+    /// 它与 <see cref="Exiting"/> 的区别是**时序**：<see cref="Exiting"/> 在消息循环刚停下时触发
+    /// （宿主的清理通常还在它之后），本事件在库的退出清理（<see cref="Dispose"/>）完成之后触发。
+    /// 两个都会触发，且都**不**代表进程已结束——真正结束由 <see cref="Run"/> 返回后发生。
+    /// </remarks>
+    public event Action<OrielExitEventArgs>? ExitCompleted;
+
+    /// <summary>
+    /// 退出清理超过 <see cref="ExitTimeout"/>、进程即将被看门狗强制结束。
+    /// </summary>
+    /// <remarks>
+    /// 这是"这次是被强杀的"的明确信号——没有它，宿主只能看到一个没有解释的进程消失，
+    /// 或者 Windows 的 AppHangB1（下游反馈 2026-10-14 的 P1-4）。
+    /// 回调在**看门狗线程**上触发，必须尽快返回；详见 <see cref="OrielExitTimeoutEventArgs"/>。
+    /// </remarks>
+    public event Action<OrielExitTimeoutEventArgs>? ExitTimeout;
+
+    /// <summary>
+    /// 退出清理的超时时间（<see cref="OrielAppBuilder.UseExitTimeout"/> 可覆盖）。
+    /// </summary>
+    /// <remarks>
+    /// 名字与 <see cref="ExitTimeout"/> 事件区分开：这是**时长**，那是**超时通知**。
+    /// </remarks>
+    public TimeSpan ExitTimeoutDuration => _builder.ExitTimeoutValue ?? DefaultExitTimeout;
+
+    /// <summary>默认退出超时：10 秒。够现场所有清理走完，又不会让"删不掉程序"的窗口开太久。</summary>
+    internal static readonly TimeSpan DefaultExitTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>被看门狗强制结束时的退出码（<see cref="OrielAppBuilder.UseForceExitCode"/> 可覆盖）。</summary>
+    public int ForceExitCode => _builder.ForceExitCodeValue ?? 2;
+
+    /// <summary>标记退出已开始并起看门狗（幂等：重复调用只生效第一次）。</summary>
+    private void BeginExit()
+    {
+        lock (_exitGate)
+        {
+            if (_exitRequested)
+            {
+                return;
+            }
+
+            _exitRequested = true;
+            _exitRequestedUtc = DateTime.UtcNow;
+            _exitStage = "退出请求已发出";
+        }
+
+        RaiseExit(Exiting, "退出请求已发出");
+
+        if (_builder.ExitWatchdogEnabled)
+        {
+            StartExitWatchdog();
+        }
+    }
+
+    /// <summary>
+    /// 退出看门狗：<see cref="ExitTimeout"/> 内进程还没结束就强制结束它。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>它覆盖的是整段退出，包括 <see cref="Run"/> 返回之后宿主的收尾</b>——所以看门狗**不会**
+    /// 在库侧清理完成时被放行。报告实测的最坏情形（宿主清理 Join 2s + Wait 2s + Dispose 3s ≈ 7s）
+    /// 正发生在那一段：库这时已经不能做任何事（消息循环停了，UI 线程正被宿主的同步调用占着），
+    /// 唯一的出路就是超时强杀。进程正常结束时看门狗线程随进程一起消失，不需要显式收尾。
+    /// </para>
+    /// <para>
+    /// 用后台线程：它自己不会阻止进程退出。
+    /// </para>
+    /// </remarks>
+    private void StartExitWatchdog()
+    {
+        TimeSpan timeout = ExitTimeoutDuration;
+
+        var watchdog = new Thread(() =>
+        {
+            // 睡满整个超时。醒来时本线程仍在执行 ⇒ 进程仍活着 ⇒ 退出确实卡住了。
+            // 不用 Task.Delay/定时器：退出路径上不该再依赖线程池的可用性。
+            try
+            {
+                Thread.Sleep(timeout);
+            }
+            catch (ThreadInterruptedException)
+            {
+                return;
+            }
+
+            HandleExitTimeout(timeout);
+        })
+        {
+            IsBackground = true,
+            Name = "OrielWeb ExitWatchdog",
+        };
+
+        watchdog.Start();
+    }
+
+    /// <summary>超时处置：先给宿主留痕的机会，再强制结束进程。</summary>
+    private void HandleExitTimeout(TimeSpan timeout)
+    {
+        string? pending = PendingExitStage;
+
+        OrielDiagnostics.Report(
+            $"[OrielWeb] 退出清理超过 {timeout.TotalSeconds:F0} 秒仍未完成（卡在「{pending ?? "未知"}」），" +
+            $"强制结束进程（退出码 {ForceExitCode}）。");
+
+        try
+        {
+            ExitTimeout?.Invoke(new OrielExitTimeoutEventArgs(timeout, pending));
+        }
+        catch (Exception ex)
+        {
+            OrielDiagnostics.Report($"[OrielWeb] ExitTimeout 订阅者抛出异常：{ex}");
+        }
+
+        ForceExitNow();
+    }
+
+    /// <summary>
+    /// 强制结束进程。**保留给退出看门狗**——它只该在"正常退出已经不可能"时被调用。
+    /// </summary>
+    /// <remarks>
+    /// 用 <c>Environment.Exit</c> 而不是 <c>Process.Kill</c>：前者在本进程里跑终结器与
+    /// <c>ProcessExit</c> 处理器（能带上最后一点清理），后者直接终止原生进程、什么都不跑。
+    /// 但要注意它**不等待**前台线程，也不保证 flush 所有缓冲——所以它是兜底，不是常规路径。
+    /// </remarks>
+    private void ForceExitNow()
+    {
+        try
+        {
+            Environment.Exit(ForceExitCode);
+        }
+        catch (Exception ex)
+        {
+            // Environment.Exit 理论上不抛；真抛了（权限/运行时异常）也不能让看门狗线程静默死掉
+            OrielDiagnostics.Report($"[OrielWeb] 强制结束进程失败：{ex}");
+        }
+    }
+
+    /// <summary>标记退出清理已完成（幂等）。</summary>
+    /// <remarks>
+    /// 这里**不**取消看门狗：看门狗保护的是"进程最终结束"，而宿主的收尾发生在 <see cref="Run"/>
+    /// 返回之后。进程正常结束时看门狗线程随进程消失，无需显式收尾。
+    /// </remarks>
+    private void CompleteExit(string stage)
+    {
+        lock (_exitGate)
+        {
+            if (_exitCompleted)
+            {
+                return;
+            }
+
+            _exitCompleted = true;
+            _exitStage = stage;
+        }
+
+        RaiseExit(ExitCompleted, stage);
+    }
+
+    /// <summary>把某个退出阶段记进当前阶段（供超时回调定位），不触发事件。</summary>
+    internal void RecordExitStage(string stage)
+    {
+        lock (_exitGate)
+        {
+            if (!_exitRequested)
+            {
+                _exitRequested = true;
+                _exitRequestedUtc = DateTime.UtcNow;
+            }
+
+            _exitStage = stage;
+        }
+    }
+
+    /// <summary>触发一个退出事件，逐个订阅者兜异常（退出路径不该被订阅者的异常打断）。</summary>
+    private void RaiseExit(Action<OrielExitEventArgs>? handler, string stage)
+    {
+        if (handler is null)
+        {
+            return;
+        }
+
+        var args = new OrielExitEventArgs(stage, ExitElapsed);
+        foreach (Action<OrielExitEventArgs> subscriber in handler.GetInvocationList())
+        {
+            try
+            {
+                subscriber(args);
+            }
+            catch (Exception ex)
+            {
+                OrielDiagnostics.Report($"[OrielWeb] 退出事件订阅者抛出异常：{ex}");
+            }
+        }
+    }
+
+
+    // ---- 托盘与通知（应用级；详见 README 平台矩阵）----
+
+    /// <summary>本应用的全部托盘图标（按 id 索引；对标 Tauri 2 的托盘注册表）。</summary>
+    private readonly Dictionary<string, OrielTray> _trays = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// 已创建的托盘图标（只读快照）。
+    /// </summary>
+    /// <remarks>顺序是插入顺序（<see cref="Dictionary{TKey,TValue}"/> 的枚举顺序即此）。</remarks>
+    public IReadOnlyCollection<OrielTray> Trays => _trays.Values;
+
+    /// <summary>
+    /// 主托盘（对标 Tauri 1 时代的单托盘形态）：构建期 <see cref="OrielAppBuilder.AddTray"/>
+    /// 启用的那一个，或第一个创建的托盘。没有任何托盘时为 <c>null</c>。
+    /// </summary>
+    /// <remarks>
+    /// <b>多托盘应用请用 <see cref="GetTray"/> / <see cref="Trays"/> 按 id 取</b>——
+    /// 这个属性只是为了不破坏既有单托盘代码。
+    /// </remarks>
+    public OrielTray? Tray => _trays.Count == 0 ? null : _trays.Values.First();
+
+    /// <summary>按 id 取托盘；不存在时返回 null（对标 Tauri 2 的 <c>TrayIcon.getById</c>）。</summary>
+    public OrielTray? GetTray(string id)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        return _trays.TryGetValue(id, out OrielTray? tray) ? tray : null;
+    }
+
+    /// <summary>
+    /// 运行期新建一个托盘图标（对标 Tauri 2 的 <c>TrayIcon.new</c>）。
+    /// </summary>
+    /// <param name="configure">创建选项（id / 图标 / 提示 / 标题 / 模板标记 / 左键弹菜单）。</param>
+    /// <returns>新托盘的句柄。</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>必须在 UI 线程调用</b>（托盘是原生资源，GTK/AppKit/Win32 都只允许在主线程碰它）。
+    /// </para>
+    /// <para>
+    /// 与构建期的 <see cref="OrielAppBuilder.AddTray"/> 是同一套选项；重复的 id 会抛
+    /// （否则 <see cref="GetTray"/> 的结果就取决于创建顺序，那是静默的意外）。
+    /// </para>
+    /// </remarks>
+    public OrielTray CreateTray(Action<OrielTrayOptions>? configure = null)
+    {
+        var backend = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
+
+        if (!backend.IsOnUiThread())
+        {
+            throw new InvalidOperationException(
+                "CreateTray 必须在 UI 线程调用：托盘是原生资源，只能在主线程创建。");
+        }
+
+        var options = new OrielTrayOptions();
+        configure?.Invoke(options);
+        return AttachTray(backend, options);
+    }
+
+    /// <summary>建托盘并登记进注册表——构建期与运行期走**同一条路**。</summary>
+    private OrielTray AttachTray(IPlatformBackend backend, OrielTrayOptions options)
+    {
+        string id = string.IsNullOrWhiteSpace(options.Id)
+            ? "tray-" + Guid.NewGuid().ToString("N")[..8]
+            : options.Id;
+
+        if (_trays.ContainsKey(id))
+        {
+            throw new InvalidOperationException(
+                $"托盘 id「{id}」已存在。多托盘请给各自不同的 Id（见 OrielTrayOptions.Id）。");
+        }
+
+        var tray = new OrielTray(backend.CreateTray(options, this, id), options);
+
+        // 托盘事件推给**每个**窗口的页面（对标 Tauri 2 的 TrayIconOptions.action）：
+        // 托盘不属于任何窗口，而页面才是订阅方，所以广播。
+        // 事件已经在 UI 线程上（各平台的原生回调就在主线程），直接 EmitEvent 即可。
+        tray.TrayEvent += e => BroadcastTrayEvent(e);
+
+        _trays[id] = tray;
+        return tray;
+    }
+
+    /// <summary>把一次托盘事件推给所有窗口的页面（事件名 <c>tray.event</c>）。</summary>
+    /// <remarks>
+    /// 页面侧 <c>oriel.tray.onEvent(handler)</c> 或 <c>oriel.on('tray.event', handler)</c> 接收。
+    /// payload 的形状与 <see cref="OrielTrayEvent"/> 对齐，未提供的字段写 <c>null</c>——
+    /// 让页面能区分"平台不支持"与"值是 0"。
+    /// </remarks>
+    private void BroadcastTrayEvent(OrielTrayEvent e)
+    {
+        string payload = TrayEventJson(e);
+        foreach (WebviewWindow window in _windows)
+        {
+            window.EmitEvent(TrayEventName, payload);
+        }
+    }
+
+    /// <summary>页面侧接收托盘事件的名称。</summary>
+    internal const string TrayEventName = "tray.event";
+
+    /// <summary>把托盘事件编成 JSON（字段名与 Tauri 的 TrayIconEvent 对齐）。</summary>
+    private static string TrayEventJson(OrielTrayEvent e)
+    {
+        var builder = new System.Text.StringBuilder(128);
+        builder.Append("{\"id\":").Append(JsonText.EncodeString(e.TrayId));
+        builder.Append(",\"type\":").Append(JsonText.EncodeString(TypeName(e.Type)));
+
+        builder.Append(",\"button\":");
+        builder.Append(e.Button is { } b ? JsonText.EncodeString(ButtonName(b)) : "null");
+
+        builder.Append(",\"buttonState\":");
+        builder.Append(e.ButtonState is { } s
+            ? JsonText.EncodeString(s == OrielTrayButtonState.Down ? "Down" : "Up")
+            : "null");
+
+        builder.Append(",\"position\":");
+        builder.Append(e.Position is { } p
+            ? $"{{\"x\":{Number(p.X)},\"y\":{Number(p.Y)}}}"
+            : "null");
+
+        builder.Append(",\"rect\":");
+        builder.Append(e.Rect is { } r
+            ? $"{{\"position\":{{\"x\":{Number(r.Position.X)},\"y\":{Number(r.Position.Y)}}}," +
+              $"\"size\":{{\"width\":{Number(r.Width)},\"height\":{Number(r.Height)}}}}}"
+            : "null");
+
+        return builder.Append('}').ToString();
+    }
+
+    /// <summary>数值 → JSON 数字字面量（必须 InvariantCulture：逗号小数点的区域会写出非法 JSON）。</summary>
+    private static string Number(double value)
+        => double.IsFinite(value)
+            ? value.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)
+            : "0";
+
+    private static string TypeName(OrielTrayEventType type) => type switch
+    {
+        OrielTrayEventType.Click => "Click",
+        OrielTrayEventType.DoubleClick => "DoubleClick",
+        OrielTrayEventType.Enter => "Enter",
+        OrielTrayEventType.Move => "Move",
+        OrielTrayEventType.Leave => "Leave",
+        _ => "Click",
+    };
+
+    private static string ButtonName(OrielTrayMouseButton button) => button switch
+    {
+        OrielTrayMouseButton.Left => "Left",
+        OrielTrayMouseButton.Right => "Right",
+        OrielTrayMouseButton.Middle => "Middle",
+        _ => "Left",
+    };
+
+    /// <summary>
+    /// 移除**全部**托盘图标，应用继续运行（对标 Tauri 2 的 <c>removeById</c> 的批量形态）。
+    /// </summary>
+    /// <returns>是否确实移除了至少一个托盘（本来就没有时返回 <c>false</c>）。</returns>
     /// <remarks>
     /// 真值在于**原生资源真的被撤销**：Windows 上"图标消失但进程还在"与"进程没了图标还留着"
     /// （幽灵图标）是完全不同的两件事，后者只有靠正确调 <c>NIM_DELETE</c> 才不会发生。
     /// </remarks>
-    public bool RemoveTray()
+    public bool RemoveTray() => RemoveTrayCore(_trays.Keys.ToList());
+
+    /// <summary>
+    /// 按 id 移除一个托盘图标（对标 Tauri 2 的 <c>TrayIcon.removeById</c>）。
+    /// </summary>
+    /// <returns>是否确实移除了（id 不存在时返回 <c>false</c>）。</returns>
+    public bool RemoveTray(string id)
     {
-        if (Tray is null)
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        return RemoveTrayCore([id]);
+    }
+
+    private bool RemoveTrayCore(IReadOnlyList<string> ids)
+    {
+        bool removed = false;
+        foreach (string id in ids)
         {
-            return false;
+            if (_trays.Remove(id, out OrielTray? tray))
+            {
+                tray.Dispose();
+                removed = true;
+            }
         }
 
-        Tray.Dispose();
-        Tray = null;
-        return true;
+        return removed;
     }
 
     /// <summary>
-    /// 按构建期 <see cref="OrielAppBuilder.AddTray"/> 的选项重建托盘。
+    /// 按构建期 <see cref="OrielAppBuilder.AddTray"/> 的选项重建托盘（全部）。
     /// </summary>
-    /// <returns>重建后的托盘；未配置过托盘或应用未运行时返回 null。</returns>
+    /// <returns>第一个重建出来的托盘；未配置过托盘、应用未运行、或已有同 id 托盘时返回 null。</returns>
     /// <remarks>
-    /// <b>重建出来的是一个新对象</b>：事件订阅与 <c>SetMenu</c> 都**不会**被带过去，
+    /// <b>重建出来的是新对象</b>：事件订阅与 <c>SetMenu</c> 都**不会**被带过去，
     /// 调用方需要重新挂上（这是不可避免的——事件处理器属于调用方）。
+    /// 已有同 id 托盘时跳过它（幂等），不做替换。
     /// </remarks>
     public OrielTray? RestoreTray()
     {
-        if (Tray is not null)
-        {
-            return Tray; // 幂等：已经有了就返回现成的
-        }
-
-        if (_backend is null || _builder.TrayOptions is not { } options)
+        if (_backend is null)
         {
             return null;
         }
 
-        Tray = new OrielTray(_backend.CreateTray(options, this), options);
-        return Tray;
+        OrielTray? first = null;
+        for (int i = 0; i < _builder.TrayOptionsList.Count; i++)
+        {
+            OrielTrayOptions options = _builder.TrayOptionsList[i];
+
+            // 第一个构建期托盘用固定 id "main"（既有单托盘代码靠它幂等重建）
+            string id = options.Id is { Length: > 0 } explicitId
+                ? explicitId
+                : i == 0 ? TrayOptionsDefaultId : "tray-" + Guid.NewGuid().ToString("N")[..8];
+
+            if (_trays.TryGetValue(id, out OrielTray? existing))
+            {
+                first ??= existing;
+                continue;
+            }
+
+            // options.Id 为空时 AttachTray 会自己分配随机 id，这里要把决定好的 id 传下去
+            options.Id = id;
+            first ??= AttachTray(_backend, options);
+        }
+
+        return first;
     }
+
+    /// <summary>构建期托盘在不显式给 Id 时使用的固定 id（让 <see cref="RestoreTray"/> 能幂等）。</summary>
+    internal const string TrayOptionsDefaultId = "main";
 
     /// <summary>本平台是否支持系统通知（不支持时 <see cref="ShowNotification(OrielNotificationOptions)"/> 是空操作）。</summary>
     public bool NotificationsSupported => _backend?.NotificationsSupported ?? false;
@@ -518,6 +1077,11 @@ public sealed class OrielApp : IDisposable
 
         _backend.RunMessageLoop();
 
+        // 消息循环结束 = 应用正在退出。若退出不是经 Quit 发起的（例如所有窗口自然关闭、
+        // 或平台侧别的路径落出循环），这里补记起点并起看门狗——否则退出事件漏报，
+        // 宿主在 Run() 之后的收尾也失去"卡住就强杀"的保护。
+        BeginExitIfNotStarted();
+
         // 消息循环结束 = 应用正在退出：这里主动释放一次。
         // 托盘图标尤其关键——它是**系统级**资源，只属于本进程却由 explorer 持有：
         // 不调 NIM_DELETE 撤销的话，进程没了图标还留在通知区（"幽灵图标"），
@@ -525,12 +1089,40 @@ public sealed class OrielApp : IDisposable
         // Dispose 幂等，调用方之后再 Dispose 一次也无妨。
         try
         {
+            RecordExitStage("正在释放托盘与后端");
             Dispose();
+            RecordExitStage("库侧清理完成");
         }
         catch (Exception ex)
         {
             // 退出路径不该因为清理失败而崩：报出来，让进程照常结束
             OrielDiagnostics.Report($"[OrielWeb] 退出清理时抛出异常：{ex}");
+        }
+
+        // 库侧清理走完：通知宿主。注意这**不等于进程已结束**——宿主在 Run() 返回后还有自己的
+        // 收尾，那段时间仍受看门狗保护（超时一样会强杀），这正是"Quit 保证退出"的兜底所在。
+        CompleteExit("库侧退出清理完成，Run() 即将返回");
+    }
+
+    /// <summary>退出尚未开始时补一次 <see cref="BeginExit"/>（自然退出路径：所有窗口关闭、平台落出循环）。</summary>
+    private void BeginExitIfNotStarted()
+    {
+        lock (_exitGate)
+        {
+            if (_exitRequested)
+            {
+                // 已经走过 Quit：只更新阶段，不重复触发事件、不重复起看门狗
+                _exitStage = "消息循环已结束";
+                return;
+            }
+        }
+
+        RecordExitStage("消息循环已结束");
+        RaiseExit(Exiting, "消息循环已结束");
+
+        if (_builder.ExitWatchdogEnabled)
+        {
+            StartExitWatchdog();
         }
     }
 
@@ -600,8 +1192,14 @@ public sealed class OrielApp : IDisposable
     {
         _singleInstanceServer?.Dispose();
         _singleInstanceLock?.Dispose();
-        // 托盘先于后端释放：它的原生资源要靠后端所在的消息循环/主线程清理
-        Tray?.Dispose();
+        // 托盘先于后端释放：它的原生资源要靠后端所在的消息循环/主线程清理。
+        // 全部托盘都要撤销——Windows 上漏掉一个就是通知区里一个幽灵图标。
+        foreach (OrielTray tray in _trays.Values)
+        {
+            tray.Dispose();
+        }
+
+        _trays.Clear();
         _backend?.Dispose();
     }
 }

@@ -142,6 +142,13 @@
             return () => { set.delete(handler); };
         },
         _onEvent(name, value) {
+            // 托盘事件走专属的订阅集合（oriel.tray.onEvent），与通用 on() 分开：
+            // 页面若只关心托盘，不该被窗口状态事件（最大化、导航等）打扰。
+            if (name === 'tray.event') {
+                oriel.tray._onEvent(value);
+                return;
+            }
+
             const set = listeners.get(name);
             if (!set) return;
             // 复制一份再遍历：处理器内部退订不会影响本次派发
@@ -369,6 +376,137 @@
 
         throw new Error('oriel.dragRegion: 需要选择器、元素，或不传参数');
     };
+
+    // ------------------------------------------------------------------------
+    // oriel.tray：系统托盘 API（对标 Tauri 2 的 @tauri-apps/api/tray）。
+    //
+    // 与 Tauri 2 的对应关系（方法名与语义一一对齐）：
+    //   TrayIcon.new(options)              → oriel.tray.new(options)      → 返回句柄
+    //   TrayIcon.getById(id)               → oriel.tray.getById(id)
+    //   TrayIcon.removeById(id)            → oriel.tray.removeById(id)
+    //   tray.setIcon(icon)                 → tray.setIcon(iconPath)
+    //   tray.setMenu(menu)                 → tray.setMenu(items)
+    //   tray.setTooltip(s)                 → tray.setTooltip(s)
+    //   tray.setTitle(s)                   → tray.setTitle(s)
+    //   tray.setVisible(b)                 → tray.setVisible(b)
+    //   tray.setIconAsTemplate(b)          → tray.setIconAsTemplate(b)
+    //   tray.close()                       → tray.close()
+    //   options.action                     → oriel.tray.onEvent(handler)
+    //
+    // 差别（如实标注，不假装一致）：
+    //   * 图标用**路径**（PNG/ICO）而不是 JsImage 的多态形态：Tauri 那边靠 Rust image crate
+    //     解码，本库的解码器在宿主侧（OrielImageCodec），页面只需给路径。
+    //   * 没有 setTempDirPath（Linux 落盘是 Tauri 的 AppIndicator 路径带来的约束，
+    //     本库走 GtkStatusIcon 直吃 pixbuf，不需要它）。
+    //   * 句柄方法返回 Promise（与 Tauri 一致），底层是内建 tray.* 命令的 invoke。
+    // ------------------------------------------------------------------------
+
+    const trayIdFrom = (value) => {
+        if (typeof value === 'string' && value) return value;
+        if (value && typeof value.id === 'string' && value.id) return value.id;
+        throw new Error('oriel.tray: 需要一个托盘 id 或句柄');
+    };
+
+    class TrayHandle {
+        constructor(id) {
+            this.id = id;
+        }
+
+        setIcon(iconPath) {
+            return oriel.invoke('tray.setIcon', { id: this.id, iconPath: iconPath ?? null });
+        }
+
+        setIconAsTemplate(asTemplate) {
+            return oriel.invoke('tray.setIconAsTemplate', { id: this.id, asTemplate: asTemplate === true });
+        }
+
+        setMenu(items) {
+            return oriel.invoke('tray.setMenu', { id: this.id, items: Array.isArray(items) ? items : [] });
+        }
+
+        setTooltip(tooltip) {
+            return oriel.invoke('tray.setTooltip', { id: this.id, tooltip: tooltip ?? '' });
+        }
+
+        setTitle(title) {
+            return oriel.invoke('tray.setTitle', { id: this.id, title: title ?? null });
+        }
+
+        setVisible(visible) {
+            return oriel.invoke('tray.setVisible', { id: this.id, visible: visible !== false });
+        }
+
+        close() {
+            return oriel.tray.removeById(this.id);
+        }
+
+        /** 取回宿主侧的当前描述（id / tooltip / title / iconPath / iconAsTemplate / isVisible）。 */
+        getById() {
+            return oriel.tray.getById(this.id);
+        }
+    }
+
+    const trayEventListeners = new Set();
+
+    const tray = {
+        /**
+         * 新建一个托盘图标（对标 Tauri 2 的 TrayIcon.new）。
+         * options: { id?, iconPath?, tooltip?, title?, iconAsTemplate?, menuOnClick? }
+         * 返回 Promise<TrayHandle>。
+         */
+        async new(options) {
+            const opts = options ?? {};
+            const id = await oriel.invoke('tray.new', {
+                id: opts.id ?? null,
+                iconPath: opts.iconPath ?? null,
+                tooltip: opts.tooltip ?? null,
+                title: opts.title ?? null,
+                iconAsTemplate: opts.iconAsTemplate !== false,
+                menuOnClick: opts.menuOnClick === true,
+            });
+            return new TrayHandle(id);
+        },
+
+        /** 按 id 取回句柄（不存在时 resolve 为 null）。 */
+        async getById(id) {
+            const found = await oriel.invoke('tray.getById', { id: trayIdFrom(id) });
+            return found === null || found === undefined ? null : new TrayHandle(found);
+        },
+
+        /** 取回全部托盘句柄。 */
+        async getAll() {
+            const list = await oriel.invoke('tray.getAll', null);
+            return (Array.isArray(list) ? list : []).map((id) => new TrayHandle(id));
+        },
+
+        /** 按 id 移除托盘（对标 Tauri 2 的 TrayIcon.removeById）；返回是否确实移除了。 */
+        removeById(id) {
+            return oriel.invoke('tray.removeById', { id: trayIdFrom(id) });
+        },
+
+        /**
+         * 订阅托盘事件（对标 Tauri 2 的 TrayIconOptions.action）。
+         * handler 收到 { id, type, button, buttonState, position, rect }，
+         * 其中平台未提供的字段为 null（例如 Linux 的 button、macOS 的 position）。
+         * 返回取消订阅函数。
+         */
+        onEvent(handler) {
+            if (typeof handler !== 'function') {
+                throw new Error('oriel.tray.onEvent: 需要一个函数');
+            }
+            trayEventListeners.add(handler);
+            return () => { trayEventListeners.delete(handler); };
+        },
+
+        _onEvent(payload) {
+            for (const handler of Array.from(trayEventListeners)) {
+                try { handler(payload); }
+                catch (err) { console.error('oriel.tray.onEvent 处理器抛出', err); }
+            }
+        },
+    };
+
+    oriel.tray = tray;
 
     // ------------------------------------------------------------------------
 

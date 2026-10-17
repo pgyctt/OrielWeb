@@ -19,7 +19,7 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
 
         // GTK 主循环没有 SynchronizationContext：安装后 async 命令 await 的续体回主线程，
         // 与 Windows 语义一致（命令里 await 之后可以直接碰 UI/平台对象）。见 API.md 线程模型。
-        MainThreadSynchronizationContext.Install(LinuxSignalHandlers.PostToMainThread);
+        MainThreadSynchronizationContext.Install(action => LinuxSignalHandlers.PostToMainThread(action));
 
         // 主题：先记初值（否则"启动时已是深色"会漏报一次），再接上变化信号
         _lastTheme = CurrentTheme;
@@ -162,7 +162,8 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
         GtkNative.GtkMain();
     }
 
-    public ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app) => new GtkTrayBackend(app, options);
+    public ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app, string id)
+        => new GtkTrayBackend(app, options, id);
 
     // ---- 开机自启（freedesktop 的 autostart 目录）----
 
@@ -185,7 +186,7 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
 
     public bool IsOnUiThread() => Environment.CurrentManagedThreadId == _mainManagedThreadId;
 
-    public void PostToMainThread(Action action) => LinuxSignalHandlers.PostToMainThread(action);
+    public bool PostToMainThread(Action action) => LinuxSignalHandlers.PostToMainThread(action);
 
     internal void OnWindowDestroyed()
     {

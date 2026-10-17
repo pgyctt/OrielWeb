@@ -35,7 +35,7 @@
     保留临时目录，便于查看中间产物。
 
 .EXAMPLE
-    pwsh tools/verify-pack.ps1
+    pwsh tools/verify-package.ps1
 #>
 [CmdletBinding()]
 param(
@@ -56,7 +56,7 @@ $sample = Join-Path $repoRoot 'samples/OrielMinimal'
 # 临时工程刻意放在**仓库内**的 obj/ 下（.gitignore 已覆盖），而不是 %TEMP%：
 # 它靠仓库根的 Directory.Build.props 提供 $(Version) 才能拼出正确的包版本号，
 # 放到 %TEMP% 会让那个属性为空、还原直接失败。
-$temp = Join-Path $repoRoot ('obj/verify-pack/' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+$temp = Join-Path $repoRoot ('obj/verify-package/' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 
 $failures = [System.Collections.Generic.List[string]]::new()
 

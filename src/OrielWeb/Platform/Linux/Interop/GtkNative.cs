@@ -74,6 +74,43 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gtk, EntryPoint = "gtk_status_icon_set_from_file", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void GtkStatusIconSetFromFile(nint statusIcon, string filename);
 
+    /// <summary>
+    /// 用一个 <c>GdkPixbuf</c> 设置托盘图标。
+    /// </summary>
+    /// <remarks>
+    /// 对标 Tauri 2 的"图标是 RGBA 对象"：<c>GtkStatusIcon</c> 本来就支持直接吃 pixbuf，
+    /// 于是 Linux 侧不需要落盘文件（Tauri 因为走 AppIndicator/KSNI 协议而必须落盘，
+    /// 见其 <c>tempDirPath</c> 选项——这里走 GTK 自带的状态图标，没有那个约束）。
+    /// </remarks>
+    [LibraryImport(Gtk, EntryPoint = "gtk_status_icon_set_from_pixbuf")]
+    internal static partial void GtkStatusIconSetFromPixbuf(nint statusIcon, nint pixbuf);
+
+    // ---- GdkPixbuf（RGBA → pixbuf）----
+    // libgdk_pixbuf-2.0 是 GTK3 自带的依赖，不引入任何新东西。
+
+    private const string GdkPixbuf = "libgdk_pixbuf-2.0.so.0";
+
+    /// <summary>
+    /// 由裸像素数据造 <c>GdkPixbuf</c>。返回的是**新引用**，调用方负责 <c>g_object_unref</c>。
+    /// </summary>
+    /// <param name="data">像素数据指针；传 0 时 pixbuf 自己分配缓冲（此时 <paramref name="destroyFn"/> 传 0）。</param>
+    /// <param name="colorSpace">色彩空间（<c>GDK_COLORSPACE_RGB</c> = 0）。</param>
+    /// <param name="hasAlpha">是否含 alpha 通道（1 = 含）。</param>
+    /// <param name="bitsPerSample">每通道位数（只支持 8）。</param>
+    /// <param name="width">宽度（像素）。</param>
+    /// <param name="height">高度（像素）。</param>
+    /// <param name="rowstride">每行字节数（RGBA 为 width*4）。</param>
+    /// <param name="destroyFn">缓冲的销毁回调（传 0 表示不需要）。</param>
+    /// <param name="destroyData">销毁回调的参数。</param>
+    [LibraryImport(GdkPixbuf, EntryPoint = "gdk_pixbuf_new_from_data")]
+    internal static partial nint GdkPixbufNewFromData(
+        nint data, int colorSpace, int hasAlpha, int bitsPerSample,
+        int width, int height, int rowstride, nint destroyFn, nint destroyData);
+
+    /// <summary>取 pixbuf 的像素缓冲指针（对自己分配的 pixbuf 而言可写）。</summary>
+    [LibraryImport(GdkPixbuf, EntryPoint = "gdk_pixbuf_get_pixels")]
+    internal static partial nint GdkPixbufGetPixels(nint pixbuf);
+
     [LibraryImport(Gtk, EntryPoint = "gtk_status_icon_set_tooltip_text", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void GtkStatusIconSetTooltipText(nint statusIcon, string text);
 
@@ -83,6 +120,17 @@ internal static unsafe partial class GtkNative
     /// <summary>图标是否真的进了托盘区（0 = 没有宿主：纯 Wayland 会话、或未装扩展的 GNOME）。</summary>
     [LibraryImport(Gtk, EntryPoint = "gtk_status_icon_is_embedded")]
     internal static partial int GtkStatusIconIsEmbedded(nint statusIcon);
+
+    /// <summary>
+    /// 设置图标旁的文字（<c>GtkStatusIcon:title</c>）。
+    /// </summary>
+    /// <remarks>
+    /// GTK 的文档写明它**不是**画在托盘上的标签（那是 AppIndicator/KSNI 的能力）：
+    /// "It may be used by tools like screen readers to render the tray icon"——即无障碍用途。
+    /// 因此 Linux 上 <c>title</c> 与 Tauri 的语义**不等价**，见 <c>GtkTrayBackend.SetTitle</c> 的说明。
+    /// </remarks>
+    [LibraryImport(Gtk, EntryPoint = "gtk_status_icon_set_title", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial void GtkStatusIconSetTitle(nint statusIcon, string title);
 
     // ---- 菜单（GtkMenu）----
 

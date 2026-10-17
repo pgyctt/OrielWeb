@@ -62,7 +62,7 @@ jobs:
         # 不接进来的话，改动 targets 只能等发布后在某个消费方那里以"页面 404 白屏"的形式暴露——
         # 那正是这份 targets 要消灭的静默失败。脚本自带断言与退出码。
         shell: pwsh
-        run: pwsh tools/verify-pack.ps1
+        run: pwsh tools/verify-package.ps1
 
   compile-windows:
     # 与 compile-linux / compile-macos 同属"编译并产出可执行产物"这一组；
@@ -226,97 +226,19 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Smoke run with evidence
-        # 真取证（tools/verify-linux.sh）：AOT 发布产物 → 断言进程存活 + WebKit 子进程 +
-        # X 窗口存在 → 截窗口图与整屏图上传 artifact 供人眼确认。取代了原先"timeout 后
-        # 只看退出码是否为 124"的弱断言——那种断言只能证明进程没崩，证明不了窗口真的创建、
-        # 内嵌资源真的加载、IPC 真的往返。
-        # CI 只有 X11（xvfb 里没有 Wayland），故固定 --backend x11；另外 xvfb 下没有窗口
-        # 管理器，所以最大化/拖动这类依赖 WM 的行为不在覆盖范围内。
+      - name: Verify Linux (self-tests + shell evidence + smoke run)
+        # 三个阶段一次跑完（脚本内部按阶段分节，失败时逐阶段给结论）：
+        #   selftest —— 机器断言（导航/IPC/能力模型/多窗口/来源探针/线程归属/托盘/主题双路径/
+        #               退出语义/单实例双进程）
+        #   shell    —— 托盘与通知取证（真 notify-send → 会话总线 → 假通知服务，断言标题与
+        #               正文逐字符正确；无头环境没有通知守护，见 tools/fake-notification-service.py）
+        #   smoke    —— 运行取证（进程存活 + WebKit 子进程 + X 窗口断言 + 截图 artifact）
+        # CI 只有 X11（xvfb 里没有 Wayland），故固定 --backend x11；xvfb 下没有窗口管理器，
+        # 所以最大化/拖动这类依赖 WM 的行为不在覆盖范围内。
         # xvfb 下仍会出现两条历史噪音——AT-SPI 找不到 org.a11y.Bus、libEGL 报 no DRI3——
         # 它们不影响判定，最终以脚本末尾的机器结论为准。
+        # 脚本内部自己起 dbus-run-session（通知服务与 demo 必须同一个会话总线）。
         run: xvfb-run -a bash tools/verify-linux.sh --backend x11 --out "$RUNNER_TEMP/linux-verify-out"
-
-      - name: Self-tests (navigation / IPC / capability / multiwindow / origin probe)
-        # 机器断言：导航（跳转 / 后退 / 前进 / 刷新 / 失败）、IPC（console 转发、postMessage、
-        # EmitEvent 闭环）、能力模型与多窗口。都不依赖人眼，以日志里的结论行判定。
-        # xvfb 里没有窗口管理器，但这些都不经过 WM，所以在这条路径上有效。
-        run: |
-          demo=samples/OrielDemo/bin/Release/net10.0/linux-x64/publish/OrielDemo
-          for mode in nav ipc capability multiwindow scheme; do
-            log="$RUNNER_TEMP/selftest-$mode.log"
-            xvfb-run -a "$demo" --selftest "$mode" > "$log" 2>&1
-            code=$?
-            verdict="$(grep -E '^(NAV|IPC|CAPABILITY|MULTIWINDOW|SCHEME)-SELFTEST: ' "$log" | tail -1 || true)"
-            echo "----- selftest $mode（退出码 $code）$verdict -----"
-            sed 's/^/  /' "$log"
-            # 判定以日志里的结论行为准（与 macOS 一致）：应用的退出方式各平台不同，
-            # 退出码未必可靠地表达自检结果——macOS 上就出现过"结论 FAIL 但退出码 0"。
-            if [[ "$verdict" != *PASS* ]]; then
-              echo "::error::selftest $mode 未通过（结论行：${verdict:-无}）"
-              exit 1
-            fi
-          done
-
-          # 主题：深浅两条路径都要走到——用 GTK_THEME（GTK 认可的入口）分别跑，并断言两次结论**不同**。
-          # 只跑一次只能证明"读得到主题"，证明不了"深浅判得对"；同一进程内又改不了系统主题，
-          # 所以只能这样造值。
-          pkill -x OrielDemo 2>/dev/null || true
-          theme_light=""
-          theme_dark=""
-          for pair in "light:" "dark:Adwaita:dark"; do
-            label="${pair%%:*}"
-            value="${pair#*:}"
-            log="$RUNNER_TEMP/theme-$label.log"
-            GTK_THEME="$value" xvfb-run -a "$demo" --selftest theme > "$log" 2>&1
-            verdict="$(grep -E '^THEME-SELFTEST: ' "$log" | tail -1 || true)"
-            echo "----- theme=$label（GTK_THEME='$value'）$verdict -----"
-            sed 's/^/  /' "$log"
-            if [[ "$verdict" != *PASS* ]]; then
-              echo "::error::selftest theme 未通过（$label，结论行：${verdict:-无}）"
-              exit 1
-            fi
-            if [ "$label" = "light" ]; then theme_light="$verdict"; else theme_dark="$verdict"; fi
-          done
-          if [ "$theme_light" = "$theme_dark" ]; then
-            echo "::error::深浅两次得到相同结论（$theme_light）——主题判定没有真正区分两条路径"
-            exit 1
-          fi
-
-          # 单实例：这一项没法单进程自证，起两个进程——第二个应立即成功退出并通知首实例，
-          # 第一个应收到激活请求（首实例自己也带 15 秒看门狗，不会挂住）。
-          pkill -x OrielDemo 2>/dev/null || true
-          xvfb-run -a "$demo" --selftest single-instance > "$RUNNER_TEMP/si-primary.log" 2>&1 &
-          si_primary=$!
-          sleep 5
-          si_start=$(date +%s)
-          xvfb-run -a "$demo" --selftest single-instance > "$RUNNER_TEMP/si-secondary.log" 2>&1
-          si_secondary_code=$?
-          si_elapsed=$(( $(date +%s) - si_start ))
-          wait "$si_primary"
-          si_primary_code=$?
-          echo "----- 单实例：第二实例 exit=$si_secondary_code（${si_elapsed}s）首实例 exit=$si_primary_code -----"
-          sed 's/^/  /' "$RUNNER_TEMP/si-primary.log"
-          sed 's/^/  /' "$RUNNER_TEMP/si-secondary.log"
-          [ "$si_secondary_code" -eq 0 ] || { echo "::error::第二个实例退出码非 0（$si_secondary_code）"; exit 1; }
-          [ "$si_elapsed" -lt 10 ] || { echo "::error::第二个实例没有立即退出（${si_elapsed}s）"; exit 1; }
-          grep -q 'SINGLE-INSTANCE-SECONDARY' "$RUNNER_TEMP/si-secondary.log" \
-            || { echo "::error::第二个实例没有通知首实例"; exit 1; }
-          grep -q 'SINGLE-INSTANCE: PASS' "$RUNNER_TEMP/si-primary.log" \
-            || { echo "::error::首实例没有收到激活请求"; exit 1; }
-
-      - name: Shell integration (tray + notification) with evidence
-        # 托盘与通知的取证（tools/verify-linux-shell.sh）：
-        #  · 托盘：建托盘 + 设一份覆盖各形态的菜单（分隔线/勾选/禁用/子菜单/quit role），
-        #    断言进程不崩——图标是否真的出现需要人眼，脚本会把这条边界明确写进结论。
-        #  · 通知：真 notify-send → 会话总线 → 假通知服务（tools/fake-notification-service.py，
-        #    无头环境没有通知守护），断言标题与正文**逐字符正确**。
-        #    这样"通知确实发出去了、内容没在传参路上被改写"是机器可判定的，而不是"没报错"。
-        # 复用上面已发布的产物（--no-publish），与 Self-tests 同一份二进制。
-        # xvfb-run 是必需的：runner 没有显示，GTK 初始化会直接失败（前面的自检步骤同样套了它）。
-        # 脚本内再起 dbus-run-session —— xvfb 与 dbus 各管一头，互不干扰。
-        run: xvfb-run -a bash tools/verify-linux-shell.sh --no-publish --out "$RUNNER_TEMP/linux-shell-out"
-
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -354,132 +276,21 @@ jobs:
       - name: Build demo
         run: dotnet build samples/OrielDemo -c Release -r win-x64
 
-      - name: Smoke run
-        # 进程存活 8 秒 = 窗口创建成功且消息循环在跑（CI runner 无交互桌面，
-        # 不断言窗口可见性，只断言进程未因启动异常立即退出）。
+      - name: Verify Windows (smoke run + Velopack pack + self-tests)
+        # 三个阶段一次跑完（脚本内部按阶段分节，失败时逐阶段给结论）：
+        #   smoke    —— 进程存活 8 秒 = 窗口创建成功且消息循环在跑（runner 无交互桌面，
+        #               不断言窗口可见性，只断言进程未因启动异常立即退出）
+        #   pack     —— Velopack 打包成功、产物齐备、更新包与清单已按约定清除
+        #   selftest —— 机器断言（导航/IPC/主题/能力模型/多窗口/来源探针/线程归属/托盘/
+        #               退出语义的"结论行 + 退出码"双断言/单实例双进程）
+        # 实现与判读标准全在 tools/verify-windows.ps1 里——内联在 workflow 里的脚本
+        # 没法在本地跑、没法单独 review、diff 时也看不出改的是哪一段逻辑。
+        # 自检跑的是**要发布的那份 AOT 产物**（dist/demo），不是 bin 里的 IL 构建：
+        #   Linux 与 macOS 的验证跑的也是 AOT 产物，Windows 用 IL 构建才是异类。
         shell: pwsh
         run: |
-          $exe = "samples/OrielDemo/bin/Release/net10.0/win-x64/OrielDemo.exe"
-          if (-not (Test-Path $exe)) { throw "未找到 demo 可执行文件：$exe" }
-          $p = Start-Process -FilePath $exe -PassThru
-          Start-Sleep -Seconds 8
-          if ($p.HasExited) { throw "demo 启动后立即退出，ExitCode=$($p.ExitCode)" }
-          Write-Output "OK: 进程存活，消息循环运行中"
-          Stop-Process -Id $p.Id -Force
-
-      - name: Pack with Velopack and check the artifacts
-        # 每 push 都跑：这是唯一"生成物会落到用户机器上"的一条路径，而它此前从没跑过。
-        # 只做机器可判定的部分——打包成功、该有的产物都在、更新清单能被解析；
-        # "真装一次"要静默装到 runner 上，那一步放进 ROADMAP 的人眼清单（见 API.md 的打包一节）。
-        shell: pwsh
-        run: |
-          # 钉住主版本：vpk 的产物形态随版本变（原先钉 WiX v5 是同一个理由）
-          dotnet tool install --global vpk --version 1.2.*
-          $env:PATH = "$env:PATH;$env:USERPROFILE\.dotnet\tools"
           dotnet publish samples/OrielDemo -c Release -r win-x64 -p:DebugType=none -o dist/demo
-
-          [xml]$props = Get-Content Directory.Build.props
-          $version = @($props.Project.PropertyGroup.Version)[0].Trim()
-          vpk pack --packId OrielDemo --packVersion $version --packTitle "Oriel Demo" `
-            --packAuthors "OrielWeb Contributors" --packDir dist/demo --outputDir dist/releases `
-            --mainExe OrielDemo.exe --icon samples/OrielDemo/app.ico --msi --skip-updates -x -y
-          if ($LASTEXITCODE -ne 0) { throw "vpk pack 失败（退出码 $LASTEXITCODE）" }
-
-          # 更新包（*.nupkg）与更新清单（releases.*.json / assets.*.json / RELEASES*）都不要：
-          # 本仓库不发更新源，清单还会指向一个已被删掉的包
-          Get-ChildItem dist/releases -File | Where-Object {
-            $_.Extension -in '.nupkg', '.json' -or $_.Name -like 'RELEASES*'
-          } | Remove-Item -Force
-
-          foreach ($name in @("OrielDemo-win-Setup.exe", "OrielDemo-win-Portable.zip", "OrielDemo-win.msi")) {
-            if (-not (Test-Path "dist/releases/$name")) { throw "缺少产物 $name" }
-          }
-          # 清完之后目录里只该剩安装产物——这条断言同时把"更新包与清单已删"变成了可执行形式。
-          # 这里**不能**再去读更新清单：上一步刚把它删掉。第一版就是这么红的
-          # （删清单之后仍断言 releases.win.json 存在），所以留这段注释。
-          $leftover = Get-ChildItem dist/releases -File | Where-Object { $_.Name -notlike 'OrielDemo-win*' }
-          if ($leftover) { throw "release 目录里还有不该有的文件：$($leftover.Name -join ', ')" }
-          Write-Output "OK：只留安装产物（$((Get-ChildItem dist/releases -File).Name -join ', ')）"
-
-      - name: Self-tests (navigation / IPC / theme / capability / multiwindow / origin probe)
-        # 与 Linux 同款断言（见 smoke-linux 的说明）。刻意用 Start-Process 而不是 & 调用，两个原因：
-        #  1) pwsh 的 $LASTEXITCODE 在 & 调用之后仍可能是上一条原生命令的值、甚至未定义（$null），
-        #     而 $null -ne 0 为真——第一次接进来时就是这样被误报成失败的（步骤 1 秒内失败）；
-        #  2) 自检输出必须落到 CI 日志里，失败时才看得到是哪一项断言挂了。GUI 子系统下 & 的
-        #     重定向抓不到原生 stdout（本机实测过），Start-Process 的显式管道才行。
-        shell: pwsh
-        run: |
-          # 跑**要发布的那份 AOT 产物**，不是 bin 里的 IL 构建：
-          #   1) bin/Release/net10.0/win-x64/OrielDemo.exe 在 AOT 发布之后就没这一号文件了
-          #      （发布把该目录重建成 OrielDemo.dll + deps/runtimeconfig），而本步骤排在打包之后；
-          #   2) Linux 与 macOS 的冒烟跑的也是 AOT 产物，Windows 用 IL 构建才是异类——
-          #      自检里的能力模型、内建命令、多窗口都不该只在 JIT 下被验证过。
-          $demo = "dist/demo/OrielDemo.exe"
-          if (-not (Test-Path $demo)) { throw "没找到 AOT 产物：$demo（打包那一步应当已经产出）" }
-          # 主题只跑一次：Windows 上没有像 GTK_THEME 那样可靠的"造值"入口（改注册表会影响 runner
-          # 的其它状态），所以这里只验证"读得到 + 事件通道通"，深/浅判得对由 smoke-linux 的双路径覆盖。
-          # 五个模式**都跑完**再报失败：一次运行就能看出"只有一个模式挂了"还是"全挂了"，
-          # 而结论行会汇总成一条 GitHub 注解（注解用 API 就能读到，见本步骤末尾的说明）。
-          $failures = @()
-          $summary = @()
-          foreach ($mode in @("nav", "ipc", "theme", "capability", "multiwindow", "scheme")) {
-            $out = "$env:RUNNER_TEMP\selftest-$mode.out.txt"
-            $err = "$env:RUNNER_TEMP\selftest-$mode.err.txt"
-            $p = Start-Process -FilePath $demo -ArgumentList @("--selftest", $mode) -Wait -PassThru `
-                 -RedirectStandardOutput $out -RedirectStandardError $err
-            Write-Output "----- selftest $mode（退出码 $($p.ExitCode)）-----"
-            if (Test-Path $out) { Get-Content $out -Encoding UTF8 | Write-Output }
-            if (Test-Path $err) { Get-Content $err -Encoding UTF8 | Write-Output }
-            # 判定以日志里的结论行为准（与 Linux / macOS 一致），退出码只作为附加信息。
-            $verdict = ""
-            if (Test-Path $out) {
-              $last = Select-String -Path $out -Pattern '^(NAV|IPC|THEME|CAPABILITY|MULTIWINDOW|SCHEME)-SELFTEST: ' | Select-Object -Last 1
-              if ($last) { $verdict = $last.Line }
-            }
-            $summary += "[$mode] $(if ($verdict) { $verdict } else { "无结论行（退出码 $($p.ExitCode)）" })"
-            if ($verdict -notmatch 'PASS') {
-              $failures += $mode
-              # 失败模式的日志尾巴也进注解：注解不需要 token 就能读，日志需要
-              $tail = (Get-Content $out -Encoding UTF8 -ErrorAction SilentlyContinue |
-                       Where-Object { $_.Trim() } | Select-Object -Last 2) -join ' / '
-              if ($tail) { $summary += " << $tail" }
-            }
-          }
-
-          # 单实例：起两个进程。第二个应"立即且成功地退出"并通知首实例，第一个应收到激活请求。
-          Stop-Process -Name OrielDemo -Force -ErrorAction SilentlyContinue
-          $primary = Start-Process -FilePath $demo -ArgumentList @("--selftest", "single-instance") -PassThru `
-                     -RedirectStandardOutput "$env:RUNNER_TEMP\si-primary.log" `
-                     -RedirectStandardError "$env:RUNNER_TEMP\si-primary.err"
-          Start-Sleep -Seconds 5
-          $sw = [System.Diagnostics.Stopwatch]::StartNew()
-          $secondary = Start-Process -FilePath $demo -ArgumentList @("--selftest", "single-instance") -Wait -PassThru `
-                       -RedirectStandardOutput "$env:RUNNER_TEMP\si-secondary.log" `
-                       -RedirectStandardError "$env:RUNNER_TEMP\si-secondary.err"
-          $sw.Stop()
-          $primary.WaitForExit(20000) | Out-Null
-          Write-Output "----- 单实例：第二实例 exit=$($secondary.ExitCode)（$([int]$sw.Elapsed.TotalSeconds)s）首实例 exit=$($primary.ExitCode) -----"
-          if (Test-Path "$env:RUNNER_TEMP\si-primary.log") { Get-Content "$env:RUNNER_TEMP\si-primary.log" -Encoding UTF8 | Write-Output }
-          if (Test-Path "$env:RUNNER_TEMP\si-secondary.log") { Get-Content "$env:RUNNER_TEMP\si-secondary.log" -Encoding UTF8 | Write-Output }
-          $siError = ""
-          if ($secondary.ExitCode -ne 0) {
-            $siError = "第二个实例退出码非 0：$($secondary.ExitCode)"
-          } elseif ($sw.Elapsed.TotalSeconds -ge 10) {
-            $siError = "第二个实例没有立即退出（$([int]$sw.Elapsed.TotalSeconds)s）"
-          } else {
-            $primaryLog = Get-Content "$env:RUNNER_TEMP\si-primary.log" -Encoding UTF8 -Raw
-            if ($primaryLog -notmatch 'SINGLE-INSTANCE: PASS') { $siError = "首实例没有收到激活请求" }
-          }
-
-          # 失败原因写成 GitHub 注解：注解用 API 就能读到（/check-runs/<job>/annotations），
-          # 不必登录去翻日志——2026-10-02 排查这次失败时，日志要 token（403）而注解不要，
-          # 这个差别直接决定了问题能不能在本地查下去。所以"失败就留一条注解"是可诊断性的一部分。
-          if ($siError) { Write-Output "::error title=Windows 单实例::$siError" }
-          if ($failures.Count -gt 0) { Write-Output "::error title=Windows 冒烟自检::$($summary -join ' | ')" }
-          if ($failures.Count -gt 0 -or $siError) {
-            throw "自检未通过：模式=$(if ($failures.Count -gt 0) { $failures -join ', ' } else { '全部通过' })，单实例=$siError"
-          }
-
+          pwsh tools/verify-windows.ps1
   smoke-macos:
     runs-on: macos-latest
     # 与 smoke-linux（needs compile-linux）、smoke-windows（needs compile-windows）对齐：

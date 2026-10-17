@@ -191,7 +191,8 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     public nint NativeWindowHandle => _gtkWindow;
 
     public OrielApp App => _app;
-    internal bool IsOnUiThread() => _backend.IsOnUiThread();
+    /// <remarks>本类为 internal，public 成员不增加对外 API 面；它实现 <see cref="IWindowBackend.IsOnUiThread"/>。</remarks>
+    public bool IsOnUiThread() => _backend.IsOnUiThread();
     internal void PostToMainThread(Action action) => _backend.PostToMainThread(action);
 
     event Action? IWindowBackend.Loaded { add => Loaded += value; remove => Loaded -= value; }
@@ -246,7 +247,7 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         }
     }
 
-    public void PostToUiThread(Action action) => _backend.PostToMainThread(action);
+    public bool PostToUiThread(Action action) => _backend.PostToMainThread(action);
 
     public void EmitEvent(string name, string jsonPayload) => PushEventOnUi(name, jsonPayload);
 

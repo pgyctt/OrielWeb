@@ -18,6 +18,16 @@ public sealed class BuiltInWindowCommandTests
     {
         public List<string> Calls { get; } = [];
 
+        /// <summary>
+        /// 所属应用。
+        /// </summary>
+        /// <remarks>
+        /// <c>win.*</c> 用例不碰它，但 <c>tray.*</c> 用例需要（托盘是应用级资源）——
+        /// 那里传入一个真实构建的 <see cref="OrielApp"/>（托盘注册表在它上面）。
+        /// 默认给一个未运行的空应用：任何误用都会立刻抛"应用尚未运行"，而不是静默走错。
+        /// </remarks>
+        public OrielApp App { get; set; } = Oriel.CreateBuilder().Build();
+
         /// <summary>可写是为了让 <c>win.isVisible</c> 用例断言"读到的是当前值"。</summary>
         public bool IsVisible { get; set; } = true;
 

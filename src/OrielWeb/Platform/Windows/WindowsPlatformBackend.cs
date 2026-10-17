@@ -51,7 +51,7 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         // Win32 消息循环本身没有 SynchronizationContext：安装后，await 的续体会被 Post 回
         // UI 线程队列，这是 WebView2 生成绑定异步装配（Task 化）能正确工作的前提。
         // （与 Linux/macOS 共用 MainThreadSynchronizationContext，三平台续体语义一致。）
-        MainThreadSynchronizationContext.Install(PostToMainThread);
+        MainThreadSynchronizationContext.Install(action => PostToMainThread(action));
 
         // 主题：记下初值（否则"启动时已是深色"会漏报一次），并让静态 WndProc 能回调到本实例
         // （消息窗口的 WndProc 必须是静态的，见 MessageWindowProc）。
@@ -191,7 +191,8 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
     /// 创建托盘。这里**不持有**托盘对象：托盘的归属与释放统一由 <see cref="OrielApp"/> 负责
     /// （见 <see cref="OrielApp.Dispose"/>），三个后端在这一点上写法保持一致。
     /// </summary>
-    public ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app) => new Win32TrayBackend(app, options);
+    public ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app, string id)
+        => new Win32TrayBackend(app, options, id);
 
     // ---- 通知 ----
 
@@ -207,14 +208,19 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
 
     public bool IsOnUiThread() => Win32.GetCurrentThreadId() == _uiThreadId;
 
-    public void PostToMainThread(Action action)
+    public bool PostToMainThread(Action action)
     {
         var handle = GCHandle.Alloc(action);
         if (!Win32.PostMessageW(_messageHwnd, Win32Constants.WM_APP_DISPATCH, 0, GCHandle.ToIntPtr(handle)))
         {
             handle.Free();
-            throw new InvalidOperationException("PostToMainThread 失败：调度窗口已失效。");
+            // 调度窗口失效（消息循环已结束、窗口被销毁）：动作不会执行。返回 false 并留痕，
+            // 让"投了但没生效"可被观测，而不是静默丢弃（下游反馈 2026-10-14 的 P2-5）。
+            OrielDiagnostics.Report("[OrielWeb] PostToMainThread 失败：调度窗口已失效，回调已被丢弃。");
+            return false;
         }
+
+        return true;
     }
 
     internal void OnWindowDestroyed()

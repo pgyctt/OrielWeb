@@ -7,19 +7,39 @@ namespace OrielWeb.Platform.Windows;
 /// Windows 托盘后端：<c>Shell_NotifyIconW</c> + 弹出菜单。
 /// </summary>
 /// <remarks>
+/// <para>
 /// 回调窗口是**本类型专属**的不可见窗口（<see cref="Win32MessageWindow"/>）：
 /// 托盘图标不随任何应用窗口存活，而平台的调度窗口与 WebView2 共享消息空间——
 /// 自选的 "WM_APP + n" 会与 WebView2 的私有消息撞车（现象见 <see cref="Win32MessageWindow"/> 的说明），
 /// 所以这里另开一个窗口，不与任何第三方组件共用消息号。
 /// 菜单用 <c>TPM_RETURNCMD</c> 直接取回选中项 id（<see cref="Win32Menu.Popup"/>），不需要命令路由。
+/// </para>
+/// <para>
+/// <b>多托盘</b>（对标 Tauri 2）：每个后端实例占一个进程内唯一的 <c>NOTIFYICONDATA.uID</c>，
+/// 回调消息仍走同一个 <c>WM_APP_TRAY</c>，靠 <c>lParam</c> 低字携带的鼠标消息 + <c>uID</c> 分派。
+/// 因为刻意不调 <c>NIM_SETVERSION</c>（理由见 <see cref="Add"/>），回调形态恒为旧式：
+/// <c>wParam</c> = 图标 ID、<c>lParam</c> 低字 = 鼠标消息——正好能分辨是哪一个托盘。
+/// </para>
 /// </remarks>
 internal sealed unsafe class Win32TrayBackend : ITrayBackend
 {
-    /// <summary>本托盘的图标 ID。</summary>
-    private const uint TrayId = 1;
+    /// <summary>
+    /// 进程内唯一的图标 ID 分配器。
+    /// </summary>
+    /// <remarks>
+    /// 从 1 开始（0 在 <c>NOTIFYICONDATA.uID</c> 里是合法的，但保留给"未设置"这类哨兵用途）。
+    /// 每个后端实例一个专属 ID，于是同一进程里多个托盘的回调能分辨归属。
+    /// </remarks>
+    private static int s_nextTrayId;
+
+    /// <summary>
+    /// 图标 ID → 后端实例。托盘回调只拿到 <c>uID</c>，靠这张表找回实例。
+    /// </summary>
+    private static readonly Dictionary<uint, Win32TrayBackend> s_instances = [];
 
     private readonly OrielApp _app;
     private readonly bool _menuOnClick;
+    private readonly uint _trayId;
 
     /// <summary>
     /// 专属消息窗口：托盘回调必须有一个**不与 WebView2 共享**的消息空间
@@ -35,21 +55,54 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
     private Win32Menu? _menu;
     private bool _disposed;
 
+    public string Id { get; }
+
     public event Action? Clicked;
+    public event Action<OrielTrayEvent>? EventReceived;
     public event Action<string>? MenuItemClicked;
     public event Action<string>? RawEvent;
 
-    internal Win32TrayBackend(OrielApp app, OrielTrayOptions options)
+    internal Win32TrayBackend(OrielApp app, OrielTrayOptions options, string id)
     {
         _app = app;
+        Id = id;
         _menuOnClick = options.MenuOnClick;
         _tooltip = options.Tooltip;
-        _icon = LoadIcon(options.IconPath, out _ownsIcon);
+
+        _trayId = (uint)Interlocked.Increment(ref s_nextTrayId);
+        s_instances[_trayId] = this;
+
+        _icon = ResolveIcon(options, out _ownsIcon);
 
         _window = new Win32MessageWindow();
         _window.MessageReceived += OnWindowMessage;
 
         Add();
+    }
+
+    /// <summary>
+    /// 把选项里的图标解成 HICON。
+    /// </summary>
+    /// <remarks>
+    /// 统一走 <see cref="OrielTrayOptions.ResolveIcon"/>：解码在托管侧完成（PNG/ICO 都吃），
+    /// 因此**Windows 不再受 <c>LoadImageW</c> 只认 ICO/BMP 的限制**——PNG 图标现在也能用。
+    /// 没有可用图标时回落到 exe 图标。
+    /// </remarks>
+    private static nint ResolveIcon(OrielTrayOptions options, out bool owns)
+    {
+        if (options.ResolveIcon() is { } image)
+        {
+            nint fromImage = Win32IconFactory.CreateFromRgba(image);
+            if (fromImage != 0)
+            {
+                owns = true;
+                return fromImage;
+            }
+
+            OrielDiagnostics.Report("[OrielWeb] 托盘图标：由 RGBA 造 HICON 失败，回落到应用图标。");
+        }
+
+        return LoadExecutableIcon(out owns);
     }
 
     /// <summary>专属窗口收到的消息：托盘回调（左键与右键）都走这里。</summary>
@@ -61,45 +114,95 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
         }
     }
 
-    // ---- 原生回调入口（由调度窗口的 WndProc 转发）----
+    // ---- 原生回调入口（由专属窗口的 WndProc 转发）----
 
     /// <summary>
-    /// 托盘回调。两种送法都接：
-    /// <list type="bullet">
-    /// <item><b>V4</b>（<c>NIM_SETVERSION(NOTIFYICON_VERSION_4)</c>）：<paramref name="wParam"/> 是事件类型，
-    /// 左键 <c>NIN_SELECT</c>、右键直接就是 <c>WM_CONTEXTMENU</c>，坐标在 <paramref name="lParam"/>。</item>
-    /// <item><b>旧式</b>：<paramref name="wParam"/> 是图标 ID，<paramref name="lParam"/> 是鼠标消息
-    /// （<c>WM_LBUTTONUP</c> / <c>WM_RBUTTONUP</c>）。</item>
-    /// </list>
+    /// 托盘回调。**V4 形态**：<c>LOWORD(lParam)</c> 是事件类型、<c>HIWORD(lParam)</c> 是图标 ID、
+    /// <c>GET_X/Y_LPARAM(wParam)</c> 是锚点坐标（MSDN：Shell_NotifyIcon 的 Remarks）。
     /// </summary>
     /// <remarks>
-    /// <b>右键也在这里，不在窗口消息里</b>：托盘事件一律经 <c>uCallbackMessage</c> 送达。
-    /// 早先只在窗口过程里等一条发给窗口的 <c>WM_CONTEXTMENU</c>，所以右键永远没人处理。
     /// <para>
-    /// 送法有两种，两条都认，但**不依赖版本设置是否生效**：
-    /// 旧式（默认，参考实现 Ryn 也走这条）<c>wParam</c> 是图标 ID、<c>lParam</c> 的**低字**是鼠标消息；
-    /// V4（调用过 <c>NIM_SETVERSION</c>）则把事件类型放进 <c>wParam</c>。
-    /// 分辨只需看 <c>wParam</c> 是不是本托盘的 ID。
+    /// <b>为什么现在用 V4</b>：它是拿到 Enter/Move/Leave 的唯一途径（<c>NIN_POPUPOPEN</c>/
+    /// <c>NIN_POPUPCLOSE</c> 只在 V4 下送达），而这三者正是对标 Tauri 2 的事件面所必需的。
+    /// 早年不切 V4 的三个理由现在都不成立：
+    /// ① 旧式"简单可靠"不再优先——事件面完整性更重要；
+    /// ② <c>uTimeoutOrVersion</c> 联合体的坑——现在只写 uVersion、不再碰气球超时（见 <see cref="Add"/>）；
+    /// ③ 多托盘靠 <c>HIWORD(lParam)</c> 的图标 ID 分辨，V4 同样支持（MSDN 明确：图标 ID 限制 16 位）。
+    /// </para>
+    /// <para>
+    /// 事件送达的完整清单（MSDN）：鼠标在图标矩形内移动/悬停、键盘选中或激活、气球上的动作，
+    /// 一律经 <c>uCallbackMessage</c> 送达，事件类型在 <c>LOWORD(lParam)</c>。
     /// </para>
     /// </remarks>
     internal void HandleCallback(nuint wParam, nint lParam)
     {
-        uint legacyEvent = (uint)(lParam & 0xFFFF);
-        uint eventType = wParam == TrayId ? legacyEvent : (uint)wParam;
+        uint eventType = (uint)(lParam & 0xFFFF);
+        uint iconId = (uint)((ulong)lParam >> 16) & 0xFFFF;
 
-        // 诊断输出：把原始参数与解析结果一起报出去。"点了没反应"的三种可能
-        //（事件没送达 / 送达了没识别 / 识别了菜单没弹出）靠这一行就能分开。
-        RawEvent?.Invoke(wParam == TrayId
-            ? $"旧式回调：wParam=0x{wParam:X}（图标 ID）lParam=0x{(ulong)lParam:X} → 事件 0x{legacyEvent:X}"
-            : $"V4 回调：wParam=0x{wParam:X}（事件类型）lParam=0x{(ulong)lParam:X}");
+        // V4 下坐标在 wParam 的两半里（GET_X/Y_LPARAM 的等价物）
+        double x = (short)(wParam & 0xFFFF);
+        double y = (short)((wParam >> 16) & 0xFFFF);
+        var position = new OrielTrayPoint(x, y);
 
-        if (eventType is Win32Constants.NIN_SELECT or Win32Constants.WM_LBUTTONUP)
+        RawEvent?.Invoke(
+            $"V4 回调：事件 0x{eventType:X}（图标 ID {iconId}）坐标 ({x},{y})");
+
+        OrielTrayMouseButton? button = eventType switch
+        {
+            Win32Constants.WM_LBUTTONDOWN or Win32Constants.WM_LBUTTONUP or Win32Constants.WM_LBUTTONDBLCLK
+                or Win32Constants.NIN_SELECT or Win32Constants.NIN_KEYSELECT => OrielTrayMouseButton.Left,
+            Win32Constants.WM_RBUTTONDOWN or Win32Constants.WM_RBUTTONUP or Win32Constants.WM_RBUTTONDBLCLK
+                or Win32Constants.WM_CONTEXTMENU => OrielTrayMouseButton.Right,
+            Win32Constants.WM_MBUTTONDOWN or Win32Constants.WM_MBUTTONUP or Win32Constants.WM_MBUTTONDBLCLK
+                => OrielTrayMouseButton.Middle,
+            _ => null,
+        };
+
+        bool isDown = eventType is Win32Constants.WM_LBUTTONDOWN
+            or Win32Constants.WM_RBUTTONDOWN or Win32Constants.WM_MBUTTONDOWN;
+        bool isDouble = eventType is Win32Constants.WM_LBUTTONDBLCLK
+            or Win32Constants.WM_RBUTTONDBLCLK or Win32Constants.WM_MBUTTONDBLCLK;
+
+        switch (eventType)
+        {
+            // Enter / Leave：V4 才有的悬停事件（对标 Tauri 2 的 Enter/Leave）
+            case Win32Constants.NIN_POPUPOPEN:
+                EventReceived?.Invoke(new OrielTrayEvent(
+                    Id, OrielTrayEventType.Enter, position: position));
+                return;
+
+            case Win32Constants.NIN_POPUPCLOSE:
+                EventReceived?.Invoke(new OrielTrayEvent(
+                    Id, OrielTrayEventType.Leave, position: position));
+                return;
+
+            // Move：指针在图标矩形内移动（MSDN 明确 lParam 会是 WM_MOUSEMOVE）
+            case Win32Constants.WM_MOUSEMOVE:
+                EventReceived?.Invoke(new OrielTrayEvent(
+                    Id, OrielTrayEventType.Move, position: position));
+                return;
+        }
+
+        if (button is { } b)
+        {
+            OrielTrayEventType type = isDouble ? OrielTrayEventType.DoubleClick : OrielTrayEventType.Click;
+            EventReceived?.Invoke(new OrielTrayEvent(
+                Id, type, b, isDown ? OrielTrayButtonState.Down : OrielTrayButtonState.Up, position));
+        }
+
+        // 抬起（含 NIN_SELECT/NIN_KEYSELECT 这两个"激活"事件）才算一次点击
+        bool isClick = eventType is Win32Constants.WM_LBUTTONUP
+            or Win32Constants.WM_RBUTTONUP or Win32Constants.WM_MBUTTONUP
+            or Win32Constants.NIN_SELECT or Win32Constants.NIN_KEYSELECT;
+
+        if (isClick && button == OrielTrayMouseButton.Left)
         {
             Clicked?.Invoke();
             if (_menuOnClick)
             {
                 ShowMenu();
             }
+
             return;
         }
 
@@ -109,7 +212,7 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
         }
     }
 
-    /// <summary>弹出托盘菜单（右键事件与旧式窗口消息两个入口都调它）。</summary>
+    /// <summary>弹出托盘菜单（右键事件与左键 MenuOnClick 两个入口都调它）。</summary>
     internal void ShowMenu()
     {
         if (_disposed)
@@ -140,19 +243,56 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
         _ = Win32.Shell_NotifyIconW(Win32Constants.NIM_MODIFY, ref data);
     }
 
-    public void SetIcon(string? iconPath)
+    /// <summary>
+    /// 设置图标旁的文字。
+    /// </summary>
+    /// <remarks>
+    /// <b>Windows 不支持</b>（对标 Tauri 2 的 <c>title</c> 同样标注 Windows: Unsupported）——
+    /// 通知区没有"图标旁文字"这个概念，这里是显式空操作，不报错。
+    /// </remarks>
+    public void SetTitle(string? title)
     {
-        nint icon = LoadIcon(iconPath, out bool owns);
-        if (icon == 0)
+        _ = title;
+    }
+
+    /// <summary>
+    /// 模板图标记。
+    /// </summary>
+    /// <remarks>
+    /// <b>仅 macOS 有意义</b>：Windows 的托盘图标由我们提供的 HICON 决定外观，
+    /// 系统不做反色重绘。显式空操作。
+    /// </remarks>
+    public void SetIconAsTemplate(bool asTemplate)
+    {
+        _ = asTemplate;
+    }
+
+    public void SetIcon(OrielImage? icon)
+    {
+        nint newIcon;
+        bool owns;
+
+        if (icon is null)
+        {
+            // null = 回到平台默认（exe 图标）
+            newIcon = LoadExecutableIcon(out owns);
+        }
+        else
+        {
+            newIcon = Win32IconFactory.CreateFromRgba(icon);
+            owns = newIcon != 0;
+        }
+
+        if (newIcon == 0)
         {
             // 新图标加载失败：保留原图标而不是把托盘变成空白（用户看不出发生了什么）
-            OrielDiagnostics.Report($"[OrielWeb] 托盘图标加载失败：{iconPath}");
+            OrielDiagnostics.Report("[OrielWeb] 托盘图标加载失败，保留原图标。");
             return;
         }
 
         nint previous = _icon;
         bool previousOwned = _ownsIcon;
-        _icon = icon;
+        _icon = newIcon;
         _ownsIcon = owns;
 
         if (_added)
@@ -196,6 +336,8 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
             _ = Win32.Shell_NotifyIconW(Win32Constants.NIM_DELETE, ref data);
             _added = false;
         }
+
+        s_instances.Remove(_trayId);
 
         _menu?.Dispose();
         _menu = null;
@@ -251,11 +393,24 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
 
         _added = true;
 
-        // 刻意**不调** NIM_SETVERSION，就停在旧式回调上（参考实现 Ryn 也是这样）。
-        // 原因有二：一是旧式形态简单可靠（wParam = 图标 ID、lParam 低字 = 鼠标消息）；
-        // 二是 NOTIFYICONDATA.uTimeoutOrVersion 是联合体，调了版本它就被读作"版本号"、
-        // 不调则被读作"气球停留毫秒数"——两边都不小心就会写出自相矛盾的值（见 Win32BalloonIcon 的历史坑）。
-        // 不碰版本设置，这个字段的语义就始终是它字面上的意思。
+        // 切到 **V4 回调**（对标 Tauri 2 的事件面所必需）：
+        // MSDN 明确 NIM_SETVERSION 必须在**每次 NIM_ADD 之后**调用，且不随注销持久化。
+        // V4 带来 Enter/Leave（NIN_POPUPOPEN/NIN_POPUPCLOSE）与事件坐标；
+        // 图标 ID 移到 HIWORD(lParam)，多托盘照样分得清（MSDN：图标 ID 限制 16 位）。
+        //
+        // 联合体那个坑（uTimeoutOrVersion）在这里是安全的：本库的通知**早已不走托盘气球**
+        // （改走 WinRT toast，见 Win32ToastNotification），因此没有任何调用点会去写 uTimeout，
+        // 这个字段的语义恒定是"版本号"。
+        var versionData = CreateData(0);
+        versionData.uVersionOrTimeout = Win32Constants.NOTIFYICON_VERSION_4;
+        if (!Win32.Shell_NotifyIconW(Win32Constants.NIM_SETVERSION, ref versionData))
+        {
+            // 失败不致命：回调退化成旧式形态（无 Enter/Leave/坐标，但点击与菜单照常）。
+            // 记一笔，让"悬停事件收不到"有据可查。
+            OrielDiagnostics.Report(
+                "[OrielWeb] NIM_SETVERSION(NOTIFYICON_VERSION_4) 失败：托盘回调退回旧式形态，" +
+                "悬停事件（Enter/Leave）与事件坐标将不可用。");
+        }
     }
 
     private void SetHidden(bool hidden)
@@ -277,7 +432,7 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
     {
         cbSize = (uint)sizeof(NOTIFYICONDATAW),
         hWnd = _window.Handle,
-        uID = TrayId,
+        uID = _trayId,
         uFlags = flags,
     };
 
@@ -303,28 +458,13 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
         {
             destination[i] = value[i];
         }
+
         destination[length] = '\0';
     }
 
-    /// <summary>指定文件优先；未指定或加载失败时退回 exe 自带图标（与窗口图标同源）。通知载体也用它。</summary>
-    internal static nint LoadIcon(string? path, out bool owns)
+    /// <summary>退回可执行文件自带图标（与窗口图标同源）。</summary>
+    private static nint LoadExecutableIcon(out bool owns)
     {
-        if (!string.IsNullOrEmpty(path))
-        {
-            nint fromFile = Win32.LoadImageW(
-                0,
-                path,
-                Win32Constants.IMAGE_ICON,
-                Win32.GetSystemMetrics(Win32Constants.SM_CXSMICON),
-                Win32.GetSystemMetrics(Win32Constants.SM_CYSMICON),
-                Win32Constants.LR_LOADFROMFILE);
-            if (fromFile != 0)
-            {
-                owns = true;
-                return fromFile;
-            }
-        }
-
         string? exe = Environment.ProcessPath;
         if (!string.IsNullOrEmpty(exe)
             && Win32.ExtractIconExW(exe, 0, out _, out nint small, 1) > 0

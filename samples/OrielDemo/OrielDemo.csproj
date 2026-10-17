@@ -21,6 +21,10 @@
          拼绝对路径引用它（相对路径在 macOS 从 .app 启动时会按 cwd（/）解析）。
          与 app.ico 同源，都由 tools/make-icons.ps1 生成。 -->
     <None Include="app.png" CopyToOutputDirectory="PreserveNewest" />
+    <!-- app.ico 同样随产物分发：Windows 上 <ApplicationIcon> 只作用于 exe 自身，
+         而托盘/窗口图标现在走托管解码（OrielImageCodec），需要一个**可读的文件路径**。
+         ICO 在 Windows 上是原生格式（多尺寸、质量最好），比 PNG 更适合那里。 -->
+    <None Include="app.ico" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

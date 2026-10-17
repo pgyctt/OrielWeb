@@ -36,10 +36,23 @@ internal static unsafe class LinuxSignalHandlers
 
     // ---- 主线程调度 ----
 
-    internal static void PostToMainThread(Action action)
+    internal static bool PostToMainThread(Action action)
     {
         MainThreadQueue.Enqueue(action);
-        GtkNative.GIdleAddFull(200, (delegate* unmanaged<nint, int>)&PumpIdleTrampoline, 0, 0);
+
+        // g_idle_add_full 返回 source id，0 表示没建出来（此时队列里的动作永远不会被排空）。
+        // 注意它能检测的只有"idle source 建不出来"；主循环已经退出的情况下 GTK 仍会返回一个
+        // 有效 id（那个 source 只是永远不会被调度）——那一层无法在这里判定，只能靠调用方
+        // （退出路径）自己不做无意义的投递。
+        uint sourceId = GtkNative.GIdleAddFull(200, (delegate* unmanaged<nint, int>)&PumpIdleTrampoline, 0, 0);
+        if (sourceId == 0)
+        {
+            MainThreadQueue.TryDequeue(out _);
+            OrielDiagnostics.Report("[OrielWeb] PostToMainThread 失败：GTK idle source 创建失败，回调已被丢弃。");
+            return false;
+        }
+
+        return true;
     }
 
     // ---- 信号连接 ----

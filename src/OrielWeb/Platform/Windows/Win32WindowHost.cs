@@ -176,7 +176,7 @@ internal partial class Win32WindowHost : IWindowBackend
     public void GoForward() => _webView?.GoForward();
     public void Reload() => _webView?.Reload();
 
-    public void PostToUiThread(Action action) => _backend.PostToMainThread(action);
+    public bool PostToUiThread(Action action) => _backend.PostToMainThread(action);
 
     public void EmitEvent(string name, string jsonPayload) => PushEventOnUi(name, jsonPayload);
 
@@ -1551,7 +1551,8 @@ internal partial class Win32WindowHost : IWindowBackend
 
     internal WindowsPlatformBackend Backend => _backend;
 
-    internal bool IsOnUiThread() => _backend.IsOnUiThread();
+    /// <remarks>本类为 internal，public 成员不增加对外 API 面；它实现 <see cref="IWindowBackend.IsOnUiThread"/>。</remarks>
+    public bool IsOnUiThread() => _backend.IsOnUiThread();
 
     internal void PostWebMessageOnUi(string json) => PostMessageOnUi(json);
 

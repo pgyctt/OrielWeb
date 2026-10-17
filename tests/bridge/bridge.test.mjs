@@ -653,4 +653,205 @@ for (const bridge of bridges) {
         assert.throws(() => env.window.oriel.on('', () => { }), /name/);
         assert.throws(() => env.window.oriel.on('x', null), /handler/);
     });
+
+    // ---- 托盘 API（对标 Tauri 2 的 @tauri-apps/api/tray） ----
+
+    test(`${label} 托盘：oriel.tray 已安装且方法齐备`, () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const tray = env.window.oriel.tray;
+
+        assert.ok(tray, 'window.oriel.tray 不存在');
+        for (const method of ['new', 'getById', 'getAll', 'removeById', 'onEvent']) {
+            assert.equal(typeof tray[method], 'function', `oriel.tray.${method} 不是函数`);
+        }
+    });
+
+    test(`${label} 托盘：new 发出 tray.new 命令并返回句柄`, async () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const promise = env.window.oriel.tray.new({ id: 'main', iconPath: 'a.png', tooltip: 'tip' });
+
+        assert.deepEqual(env.posted.at(-1), {
+            __oriel: 'invoke',
+            id: 1,
+            name: 'tray.new',
+            args: {
+                id: 'main',
+                iconPath: 'a.png',
+                tooltip: 'tip',
+                title: null,
+                iconAsTemplate: true,   // 默认 true：单色图标跟随菜单栏反色
+                menuOnClick: false,
+            },
+            token: injectedToken,
+        });
+
+        deliverResult(env, 1, true, 'main');
+        const handle = await promise;
+        assert.equal(handle.id, 'main', '句柄应带回宿主分配的 id');
+    });
+
+    test(`${label} 托盘：new 不传选项时各字段取默认值`, async () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const promise = env.window.oriel.tray.new();
+
+        assert.deepEqual(env.posted.at(-1).args, {
+            id: null,
+            iconPath: null,
+            tooltip: null,
+            title: null,
+            iconAsTemplate: true,
+            menuOnClick: false,
+        });
+
+        deliverResult(env, 1, true, 'tray-abc');
+        const handle = await promise;
+        assert.equal(handle.id, 'tray-abc');
+    });
+
+    test(`${label} 托盘：iconAsTemplate:false 原样传给宿主（彩色图标不被反色）`, async () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const promise = env.window.oriel.tray.new({ iconAsTemplate: false });
+
+        assert.equal(env.posted.at(-1).args.iconAsTemplate, false);
+        deliverResult(env, 1, true, 't');
+        await promise;
+    });
+
+    test(`${label} 托盘：句柄方法都发出对应的 tray.* 命令`, async () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const promise = env.window.oriel.tray.new();
+        deliverResult(env, 1, true, 't');
+        const handle = await promise;
+
+        const cases = [
+            [() => handle.setIcon('b.png'), 'tray.setIcon', { id: 't', iconPath: 'b.png' }],
+            [() => handle.setIconAsTemplate(false), 'tray.setIconAsTemplate', { id: 't', asTemplate: false }],
+            [() => handle.setTooltip('hi'), 'tray.setTooltip', { id: 't', tooltip: 'hi' }],
+            [() => handle.setTitle('3'), 'tray.setTitle', { id: 't', title: '3' }],
+            [() => handle.setVisible(false), 'tray.setVisible', { id: 't', visible: false }],
+        ];
+
+        for (const [call, expectedName, expectedArgs] of cases) {
+            env.posted.length = 0;
+            const p = call();
+            const last = env.posted.at(-1);
+            assert.equal(last.name, expectedName, `命令名不是 ${expectedName}`);
+            assert.deepEqual(last.args, expectedArgs, `${expectedName} 的参数不对`);
+            deliverResult(env, last.id, true, null);
+            await p;
+        }
+    });
+
+    test(`${label} 托盘：setMenu 传数组，非数组时归为空菜单`, async () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const promise = env.window.oriel.tray.new();
+        deliverResult(env, 1, true, 't');
+        const handle = await promise;
+
+        env.posted.length = 0;
+        const items = [{ id: 'quit', label: 'Quit' }, { type: 'separator' }];
+        const p1 = handle.setMenu(items);
+        assert.deepEqual(env.posted.at(-1).args, { id: 't', items });
+        deliverResult(env, env.posted.at(-1).id, true, null);
+        await p1;
+
+        env.posted.length = 0;
+        const p2 = handle.setMenu(null);
+        assert.deepEqual(env.posted.at(-1).args, { id: 't', items: [] }, '非数组应归为空菜单而不是 null');
+        deliverResult(env, env.posted.at(-1).id, true, null);
+        await p2;
+    });
+
+    test(`${label} 托盘：close 等价于 removeById`, async () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const promise = env.window.oriel.tray.new();
+        deliverResult(env, 1, true, 't');
+        const handle = await promise;
+
+        env.posted.length = 0;
+        const p = handle.close();
+        const last = env.posted.at(-1);
+        assert.equal(last.name, 'tray.removeById');
+        assert.deepEqual(last.args, { id: 't' });
+        deliverResult(env, last.id, true, true);
+        assert.equal(await p, true);
+    });
+
+    test(`${label} 托盘：getById 返回句柄，宿主返回 null 时得到 null`, async () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+
+        const found = env.window.oriel.tray.getById('main');
+        assert.deepEqual(env.posted.at(-1).args, { id: 'main' });
+        deliverResult(env, env.posted.at(-1).id, true, 'main');
+        const handle = await found;
+        assert.equal(handle.id, 'main');
+
+        env.posted.length = 0;
+        const missing = env.window.oriel.tray.getById('nope');
+        deliverResult(env, env.posted.at(-1).id, true, null);
+        assert.equal(await missing, null, '不存在的托盘应 resolve 为 null 而不是抛');
+    });
+
+    test(`${label} 托盘：句柄也能当 id 传给 getById/removeById`, async () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const promise = env.window.oriel.tray.new();
+        deliverResult(env, 1, true, 't');
+        const handle = await promise;
+
+        env.posted.length = 0;
+        const p = env.window.oriel.tray.removeById(handle);
+        assert.deepEqual(env.posted.at(-1).args, { id: 't' }, '句柄应能被解析成它的 id');
+        deliverResult(env, env.posted.at(-1).id, true, true);
+        await p;
+    });
+
+    test(`${label} 托盘：getAll 把 id 列表映射成句柄数组`, async () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const promise = env.window.oriel.tray.getAll();
+        assert.equal(env.posted.at(-1).name, 'tray.getAll');
+        deliverResult(env, env.posted.at(-1).id, true, ['a', 'b']);
+
+        const handles = await promise;
+        assert.deepEqual(handles.map((h) => h.id), ['a', 'b']);
+    });
+
+    test(`${label} 托盘：tray.event 推给 onEvent 订阅者（平台未提供的字段为 null）`, () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const seen = [];
+        const off = env.window.oriel.tray.onEvent((payload) => seen.push(payload));
+
+        deliverEvent(env, 'tray.event', {
+            id: 'main', type: 'Click', button: 'Left', buttonState: 'Up', position: null, rect: null,
+        });
+        assert.equal(seen.length, 1, '未收到托盘事件');
+        assert.equal(seen[0].type, 'Click');
+        assert.equal(seen[0].button, 'Left');
+        assert.equal(seen[0].position, null, '平台未提供的字段应为 null');
+
+        off();
+        deliverEvent(env, 'tray.event', { id: 'main', type: 'Click' });
+        assert.equal(seen.length, 1, '退订后仍被调用');
+    });
+
+    test(`${label} 托盘：托盘事件不会串到通用 oriel.on('tray.event')`, () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        const viaGeneric = [];
+        env.window.oriel.on('tray.event', (v) => viaGeneric.push(v));
+
+        deliverEvent(env, 'tray.event', { id: 'main', type: 'Click' });
+
+        // 托盘事件走专属订阅集合：通用 on 不该收到它（避免被窗口状态事件打扰的双向保证）
+        assert.equal(viaGeneric.length, 0);
+    });
+
+    test(`${label} 托盘：onEvent 参数校验与单处理器异常隔离`, () => {
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        assert.throws(() => env.window.oriel.tray.onEvent(null), /函数/);
+
+        const seen = [];
+        env.window.oriel.tray.onEvent(() => { throw new Error('boom'); });
+        env.window.oriel.tray.onEvent((p) => seen.push(p.type));
+        deliverEvent(env, 'tray.event', { id: 't', type: 'DoubleClick' });
+        assert.deepEqual(seen, ['DoubleClick'], '一个处理器抛异常后其余处理器被跳过');
+    });
 }

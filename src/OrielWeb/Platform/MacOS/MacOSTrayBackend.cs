@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using OrielWeb.Platform.MacOS.Interop;
 
 namespace OrielWeb.Platform.MacOS;
@@ -15,6 +14,14 @@ namespace OrielWeb.Platform.MacOS;
 /// <para>
 /// 菜单的构建与点击映射都在 <see cref="MacOSMenu"/> 里（与窗口上下文菜单共用）。
 /// </para>
+/// <para>
+/// <b>多托盘</b>：每个实例各持一个 <c>NSStatusItem</c>，菜单栏上并列显示——
+/// macOS 的 <c>NSStatusBar</c> 本来就支持任意多个状态项，无需额外协调。
+/// </para>
+/// <para>
+/// <b>模板图</b>由 <see cref="OrielTrayOptions.IconAsTemplate"/> 控制（此前是无条件 true）。
+/// 彩色品牌图标必须置 false，否则会被系统按 alpha 重绘成单色剪影。
+/// </para>
 /// </remarks>
 internal sealed class MacOSTrayBackend : ITrayBackend
 {
@@ -26,15 +33,21 @@ internal sealed class MacOSTrayBackend : ITrayBackend
     private nint _button;
     private nint _handler;
     private MacOSMenu? _menu;
+    private bool _iconAsTemplate;
     private bool _disposed;
 
+    public string Id { get; }
+
     public event Action? Clicked;
+    public event Action<OrielTrayEvent>? EventReceived;
     public event Action<string>? MenuItemClicked;
     public event Action<string>? RawEvent;
 
-    internal MacOSTrayBackend(OrielApp app, OrielTrayOptions options)
+    internal MacOSTrayBackend(OrielApp app, OrielTrayOptions options, string id)
     {
         _app = app;
+        Id = id;
+        _iconAsTemplate = options.IconAsTemplate;
 
         nint statusBar = ObjCRuntime.SendId(
             ObjCRuntime.GetClassOrThrow("NSStatusBar"), ObjCRuntime.Sel("systemStatusBar"));
@@ -53,8 +66,13 @@ internal sealed class MacOSTrayBackend : ITrayBackend
             ObjCRuntime.SendVoidObj(_button, ObjCRuntime.Sel("setAction:"), ObjCRuntime.Sel("orielStatusItemClicked:"));
         }
 
-        ApplyIcon(options.IconPath);
+        ApplyIcon(options);
         SetTooltip(options.Tooltip);
+        SetTitle(options.Title);
+
+        // 悬停事件（Enter/Move/Leave）：装跟踪区域之后 AppKit 才会派发它们。
+        // owner 传本托盘的 handler —— 多托盘下每个按钮各一个，事件才不会串到别的托盘上。
+        MacOSTrayHandler.InstallTrackingArea(_button, _handler);
     }
 
     // ---- ITrayBackend ----
@@ -67,7 +85,111 @@ internal sealed class MacOSTrayBackend : ITrayBackend
         }
     }
 
-    public void SetIcon(string? iconPath) => ApplyIcon(iconPath);
+    /// <summary>设置图标旁显示的文字（<c>NSStatusItem</c> 的 title，显示在图标右侧）。</summary>
+    public void SetTitle(string? title)
+    {
+        if (_button == 0)
+        {
+            return;
+        }
+
+        // 空标题要写成空串而不是 nil：setTitle:nil 在 AppKit 里会被当"未设置"，行为随版本而变
+        ObjCRuntime.SendVoidObj(
+            _button, ObjCRuntime.Sel("setTitle:"), ObjCRuntime.MakeNSString(title ?? string.Empty));
+
+        // 有文字时给按钮一个固定宽度，否则文字会被图标挤掉
+        ObjCRuntime.SendVoidNint(
+            _statusItem,
+            ObjCRuntime.Sel("setLength:"),
+            string.IsNullOrEmpty(title) ? (nint)VariableStatusItemLength : 0);
+    }
+
+    /// <summary>
+    /// 把当前图标标记为模板图（<c>NSImage.setTemplate:</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 模板图由系统按菜单栏深浅色自动反色。彩色品牌图必须 false——否则颜色全丢，
+    /// 只剩一个按 alpha 抠出来的剪影。
+    /// </remarks>
+    public void SetIconAsTemplate(bool asTemplate)
+    {
+        _iconAsTemplate = asTemplate;
+
+        // 重新套用到当前按钮上的图像（若已有）
+        if (_button != 0)
+        {
+            nint image = ObjCRuntime.SendId(_button, ObjCRuntime.Sel("image"));
+            if (image != 0)
+            {
+                ObjCRuntime.SendVoidBool(image, ObjCRuntime.Sel("setTemplate:"), asTemplate);
+            }
+        }
+    }
+
+    public void SetIcon(OrielImage? icon)
+    {
+        if (icon is null)
+        {
+            ClearIcon();
+            return;
+        }
+
+        ApplyImage(MacOSImageFactory.CreateNSImage(icon));
+    }
+
+    /// <summary>
+    /// 按创建选项套用图标。
+    /// </summary>
+    /// <remarks>
+    /// 统一走 <see cref="OrielTrayOptions.ResolveIcon"/>：读文件与解码在托管侧完成
+    /// （PNG/ICO 都吃），三平台共用同一个解码器与同一条失败路径。
+    /// </remarks>
+    private void ApplyIcon(OrielTrayOptions options)
+    {
+        ApplyImage(options.ResolveIcon() is { } image
+            ? MacOSImageFactory.CreateNSImage(image)
+            : 0);
+    }
+
+    /// <summary>把 NSImage 设到状态项按钮上；传 0 表示回落占位符。</summary>
+    private void ApplyImage(nint image)
+    {
+        if (_button == 0)
+        {
+            if (image != 0)
+            {
+                ObjCRuntime.objc_release(image);
+            }
+
+            return;
+        }
+
+        if (image != 0)
+        {
+            // 模板标记**按选项**设置：默认 true（单色图标跟随菜单栏反色），彩色图显式关掉
+            ObjCRuntime.SendVoidBool(image, ObjCRuntime.Sel("setTemplate:"), _iconAsTemplate);
+
+            ObjCRuntime.SendVoidObj(_button, ObjCRuntime.Sel("setImage:"), image);
+            ObjCRuntime.SendVoidObj(_button, ObjCRuntime.Sel("setTitle:"), ObjCRuntime.MakeNSString(string.Empty));
+            ObjCRuntime.objc_release(image);
+        }
+        else
+        {
+            ClearIcon();
+        }
+    }
+
+    /// <summary>无图标时给一个可见占位：否则状态项是空白的，用户会以为程序没起来。</summary>
+    private void ClearIcon()
+    {
+        if (_button == 0)
+        {
+            return;
+        }
+
+        ObjCRuntime.SendVoidObj(_button, ObjCRuntime.Sel("setImage:"), 0);
+        ObjCRuntime.SendVoidObj(_button, ObjCRuntime.Sel("setTitle:"), ObjCRuntime.MakeNSString("●"));
+    }
 
     public void SetMenu(IReadOnlyList<OrielMenuItem> items)
     {
@@ -132,6 +254,37 @@ internal sealed class MacOSTrayBackend : ITrayBackend
 
     internal void RaiseClicked() => Clicked?.Invoke();
 
+    /// <summary>
+    /// 上报一次点击事件。
+    /// </summary>
+    /// <remarks>
+    /// macOS 的 <c>NSStatusItem</c> 按钮 action **不带按键信息**（AppKit 只告诉你"按钮被按了"），
+    /// 所以这里按左键、状态 Up 上报——这是平台能给的最精确值。
+    /// 需要区分左右键的应用在 macOS 上做不到（对标 Tauri 2：其 macOS 后端同样只报 Click）。
+    /// </remarks>
+    internal void RaiseEventReceived()
+    {
+        EventReceived?.Invoke(new OrielTrayEvent(
+            Id, OrielTrayEventType.Click, OrielTrayMouseButton.Left, OrielTrayButtonState.Up));
+    }
+
+    /// <summary>
+    /// 上报一次悬停事件（Enter/Move/Leave），坐标取自 <c>NSEvent</c> 的屏幕位置。
+    /// </summary>
+    /// <remarks>
+    /// <c>NSEvent.locationInWindow</c> 是**窗口坐标**（原点在左下），而托盘按钮的窗口就是菜单栏，
+    /// 它的坐标系与屏幕不同。这里用 <c>NSEvent</c> 的 <c>locationInWindow</c> 经
+    /// <c>NSEvent.window</c> 转换——但转换要走 <c>convertPointToScreen:</c>，
+    /// 那需要一个视图对象。为避免引入这条链，这里**如实不给坐标**（null）：
+    /// 平台能可靠给的是"事件发生了"，坐标在 macOS 的菜单栏场景下不是必需的
+    /// （页面通常只关心"指针进来了/离开了"）。
+    /// </remarks>
+    internal void RaiseHoverEvent(OrielTrayEventType type, nint eventPtr)
+    {
+        _ = eventPtr; // 坐标见 remarks：菜单栏窗口坐标系的转换成本高于收益
+        EventReceived?.Invoke(new OrielTrayEvent(Id, type));
+    }
+
     /// <summary>上报一条原始事件（事件只能在声明它的类型里触发，故由这里代发）。</summary>
     internal void RaiseRawEvent(string text) => RawEvent?.Invoke(text);
 
@@ -152,48 +305,6 @@ internal sealed class MacOSTrayBackend : ITrayBackend
         if (item.Id is { Length: > 0 } id)
         {
             MenuItemClicked?.Invoke(id);
-        }
-    }
-
-    private void ApplyIcon(string? iconPath)
-    {
-        nint image = 0;
-        if (!string.IsNullOrEmpty(iconPath))
-        {
-            if (!File.Exists(iconPath))
-            {
-                OrielDiagnostics.Report($"[OrielWeb] 托盘图标文件不存在：{iconPath}");
-            }
-            else
-            {
-                image = ObjCRuntime.SendIdObj(
-                    ObjCRuntime.SendId(ObjCRuntime.GetClassOrThrow("NSImage"), ObjCRuntime.Sel("alloc")),
-                    ObjCRuntime.Sel("initWithContentsOfFile:"),
-                    ObjCRuntime.MakeNSString(iconPath));
-
-                if (image != 0)
-                {
-                    // 模板图会自动跟随菜单栏深浅色反色——托盘图标基本都该这样，
-                    // 否则深色菜单栏上是一块看不清的黑图
-                    ObjCRuntime.SendVoidBool(image, ObjCRuntime.Sel("setTemplate:"), true);
-                }
-            }
-        }
-
-        if (_button == 0)
-        {
-            return;
-        }
-
-        if (image != 0)
-        {
-            ObjCRuntime.SendVoidObj(_button, ObjCRuntime.Sel("setImage:"), image);
-            ObjCRuntime.SendVoidObj(_button, ObjCRuntime.Sel("setTitle:"), ObjCRuntime.MakeNSString(string.Empty));
-        }
-        else
-        {
-            // 无图标时给一个可见占位：否则状态项是空白的，用户会以为程序没起来
-            ObjCRuntime.SendVoidObj(_button, ObjCRuntime.Sel("setTitle:"), ObjCRuntime.MakeNSString("●"));
         }
     }
 }

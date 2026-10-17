@@ -235,17 +235,82 @@ public sealed class OrielAppBuilder
         return this;
     }
 
-    internal OrielTrayOptions? TrayOptions { get; private set; }
+    internal List<OrielTrayOptions> TrayOptionsList { get; } = [];
 
     /// <summary>
-    /// 启用系统托盘图标（应用级，最多一个）。运行期经 <see cref="OrielApp.Tray"/> 取得，
-    /// 用它设置菜单、订阅点击。平台差异见 <see cref="OrielTray"/> 的说明。
+    /// 兼容既有单托盘代码：第一个托盘选项（没有则 null）。
     /// </summary>
+    /// <remarks>
+    /// 早先这是唯一的托盘配置槽，现在托盘可以配多个（<see cref="AddTray"/> 可重复调用）。
+    /// 保留这个属性是为了让"只配一个托盘"的既有代码与 <see cref="OrielApp.RestoreTray"/> 不受影响。
+    /// </remarks>
+    internal OrielTrayOptions? TrayOptions => TrayOptionsList.Count > 0 ? TrayOptionsList[0] : null;
+
+    internal TimeSpan? ExitTimeoutValue { get; private set; }
+    internal int? ForceExitCodeValue { get; private set; }
+
+    /// <summary>退出看门狗是否启用（默认启用，见 <see cref="OrielApp.ExitTimeout"/>）。</summary>
+    internal bool ExitWatchdogEnabled { get; private set; } = true;
+
+    /// <summary>
+    /// 覆盖退出清理的超时时间（从"请求退出"算起，默认 10 秒）。
+    /// </summary>
+    /// <remarks>
+    /// 超时后看门狗会**强制结束进程**（见 <see cref="OrielApp.ExitTimeout"/>）。调大它意味着
+    /// "允许清理跑更久"，代价是清理真的卡住时进程驻留更久——驻留期间可执行文件映像仍被占用，
+    /// 现场表现就是"程序删不掉/装不上"（下游反馈 2026-10-14 的 P0-1）。
+    /// </remarks>
+    public OrielAppBuilder UseExitTimeout(TimeSpan timeout)
+    {
+        if (timeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(timeout), timeout, "退出超时必须是正值。");
+        }
+
+        ExitTimeoutValue = timeout;
+        return this;
+    }
+
+    /// <summary>
+    /// 覆盖被看门狗强制结束时的进程退出码（默认 <c>2</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 与正常退出（<c>0</c>）区分开：脚本与现场排障能据此判断"这次不是正常退出的"，
+    /// 而不用去猜为什么进程是没的。
+    /// </remarks>
+    public OrielAppBuilder UseForceExitCode(int exitCode)
+    {
+        ForceExitCodeValue = exitCode;
+        return this;
+    }
+
+    /// <summary>
+    /// 关闭退出看门狗（默认启用）。关闭后 <see cref="OrielApp.Quit"/> 只请求退出，
+    /// 不再保证进程最终结束——清理卡住时进程会一直驻留。
+    /// </summary>
+    /// <remarks>
+    /// 只有"宿主要自己接管退出流程、并且有充分理由相信清理不会卡"时才该关闭它。
+    /// </remarks>
+    public OrielAppBuilder UseExitWatchdog(bool enabled = true)
+    {
+        ExitWatchdogEnabled = enabled;
+        return this;
+    }
+
+    /// <summary>
+    /// 启用系统托盘图标（可多次调用以创建**多个**托盘，各自用 <see cref="OrielTrayOptions.Id"/> 区分）。
+    /// 运行期经 <see cref="OrielApp.Tray"/> / <see cref="OrielApp.GetTray"/> / <see cref="OrielApp.Trays"/> 取得，
+    /// 用它设置菜单、订阅事件。平台差异见 <see cref="OrielTray"/> 的说明。
+    /// </summary>
+    /// <remarks>
+    /// 不显式给 <c>Id</c> 时：第一次调用用固定 id <c>"main"</c>（让 <see cref="OrielApp.RestoreTray"/> 幂等），
+    /// 后续调用各自分配随机 id。多托盘应用应当显式给每个托盘不同的 id。
+    /// </remarks>
     public OrielAppBuilder AddTray(Action<OrielTrayOptions>? configure = null)
     {
         var options = new OrielTrayOptions();
         configure?.Invoke(options);
-        TrayOptions = options;
+        TrayOptionsList.Add(options);
         return this;
     }
 

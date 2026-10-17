@@ -62,11 +62,24 @@ internal static class Win32Constants
     /// <summary>V4 行为：回调 wParam 是事件类型、坐标在 lParam 里，右键走 WM_CONTEXTMENU。</summary>
     public const uint NOTIFYICON_VERSION_4 = 4;
 
-    /// <summary>V4 下左键单击（WM_USER + 0）。</summary>
+    /// <summary>
+    /// V4 回调的鼠标/悬停事件（<c>WM_USER + n</c>，经 <c>LOWORD(lParam)</c> 送达）。
+    /// </summary>
+    /// <remarks>
+    /// <c>NIN_POPUPOPEN</c> / <c>NIN_POPUPCLOSE</c> 就是"指针进入/离开图标"——它们是
+    /// Windows 上唯一能拿到 Enter/Leave 的入口（Vista+ 才有），因此必须用 V4 才拿得到。
+    /// </remarks>
     public const uint NIN_SELECT = 0x0400;
+    public const uint NIN_KEYSELECT = 0x0401;
+    public const uint NIN_BALLOONSHOW = 0x0402;
+    public const uint NIN_BALLOONHIDE = 0x0403;
     public const uint NIN_BALLOONTIMEOUT = 0x0404;
     /// <summary>用户点了气球本体（WM_USER + 5）。</summary>
     public const uint NIN_BALLOONUSERCLICK = 0x0405;
+    /// <summary>指针悬停在图标上（Vista+）：对应 <see cref="OrielTrayEventType.Enter"/>。</summary>
+    public const uint NIN_POPUPOPEN = 0x0406;
+    /// <summary>指针不再悬停（Vista+）：对应 <see cref="OrielTrayEventType.Leave"/>。</summary>
+    public const uint NIN_POPUPCLOSE = 0x0407;
 
     public const uint NIIF_INFO = 0x00000001;
     public const uint NIIF_ERROR = 0x00000003;
@@ -326,6 +339,67 @@ internal struct WNDCLASSEXW
     public nint hIconSm;
 }
 
+/// <summary>
+/// <c>ICONINFO</c>：一个图标由"颜色位图 + 掩码位图"组成。
+/// </summary>
+/// <remarks>
+/// <para>
+/// 32bpp 图标把 alpha 放在颜色位图的第 4 字节里，掩码位图在 Windows XP 之后基本被忽略——
+/// 但 <c>CreateIconIndirect</c> **要求**它非空，所以仍必须建一个全 0 的掩码。
+/// </para>
+/// <para>
+/// <c>fIcon</c> 用 <see cref="int"/> 而不是 <see cref="bool"/>：<c>[LibraryImport]</c> 生成的
+/// 封送代码不支持在 <c>ref</c> 结构体参数里做 <c>bool</c> 转换（SYSLIB1051），
+/// 而 Win32 的 <c>BOOL</c> 本来就是 4 字节整数。
+/// </para>
+/// </remarks>
+[StructLayout(LayoutKind.Sequential)]
+internal struct IconInfo
+{
+    /// <summary>非 0 表示这是图标（<c>TRUE</c>）；0 表示光标。</summary>
+    public int fIcon;
+
+    public uint xHotspot;
+    public uint yHotspot;
+    public nint hbmMask;
+    public nint hbmColor;
+}
+
+/// <summary>
+/// <c>BITMAPINFOHEADER</c>：<c>CreateDIBSection</c> 需要的位图描述。
+/// </summary>
+/// <remarks>
+/// <b>高度必须写成负值</b>：负高度表示"自顶向下"的 DIB，与托管 RGBA 的行序一致。
+/// 写成正值会得到自底向上的位图，于是图标上下颠倒——而且在小图标上未必一眼看得出。
+/// </remarks>
+[StructLayout(LayoutKind.Sequential)]
+internal struct BitmapInfoHeader
+{
+    public uint biSize;
+    public int biWidth;
+    public int biHeight;
+    public ushort biPlanes;
+    public ushort biBitCount;
+    public uint biCompression;
+    public uint biSizeImage;
+    public int biXPelsPerMeter;
+    public int biYPelsPerMeter;
+    public uint biClrUsed;
+    public uint biClrImportant;
+
+    /// <summary>造一个 32bpp 自顶向下的描述。</summary>
+    internal static BitmapInfoHeader Create32BppTopDown(int width, int height) => new()
+    {
+        biSize = (uint)Marshal.SizeOf<BitmapInfoHeader>(),
+        biWidth = width,
+        biHeight = -height, // 负 = 自顶向下
+        biPlanes = 1,
+        biBitCount = 32,
+        biCompression = 0,  // BI_RGB
+        biSizeImage = (uint)(width * height * 4),
+    };
+}
+
 [StructLayout(LayoutKind.Sequential)]
 internal struct CREATESTRUCTW
 {
@@ -554,6 +628,47 @@ internal static unsafe partial class Win32
     [LibraryImport("user32")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool DestroyIcon(nint icon);
+
+    /// <summary>从 ICONINFO（颜色位图 + 掩码位图）造一个 HICON。</summary>
+    /// <remarks>
+    /// 这是把托管 RGBA 变成 Win32 图标的最后一环（对标 Tauri 2 的 <c>Icon::from_rgba</c> →
+    /// <c>tray_icon::Icon</c>）。返回的 HICON 由调用方持有，必须 <see cref="DestroyIcon"/>。
+    /// </remarks>
+    [LibraryImport("user32", EntryPoint = "CreateIconIndirect")]
+    internal static partial nint CreateIconIndirect(ref IconInfo iconInfo);
+
+    /// <summary>取（必要时创建）指定窗口的 DC；用完必须 <see cref="ReleaseDC"/>。</summary>
+    [LibraryImport("user32")]
+    internal static partial nint GetDC(nint hwnd);
+
+    [LibraryImport("user32")]
+    internal static partial int ReleaseDC(nint hwnd, nint hdc);
+
+    // ---- gdi32 ----
+
+    /// <summary>建一个内存 DC（把 DIB 选进去才能画）；用完必须 <see cref="DeleteDC"/>。</summary>
+    [LibraryImport("gdi32")]
+    internal static partial nint CreateCompatibleDC(nint hdc);
+
+    [LibraryImport("gdi32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool DeleteDC(nint hdc);
+
+    /// <summary>建一个 32bpp 自顶向下的 DIB 段，返回位图句柄；像素指针从 out 参数取回。</summary>
+    [LibraryImport("gdi32", EntryPoint = "CreateDIBSection")]
+    internal static partial nint CreateDIBSection(
+        nint hdc, ref BitmapInfoHeader info, uint usage, out nint bits, nint section, uint offset);
+
+    /// <summary>建一个单色位图（用作 ICONINFO 的 AND 掩码）。</summary>
+    [LibraryImport("gdi32", EntryPoint = "CreateBitmap")]
+    internal static partial nint CreateBitmap(int width, int height, uint planes, uint bitCount, nint bits);
+
+    [LibraryImport("gdi32")]
+    internal static partial nint SelectObject(nint hdc, nint obj);
+
+    [LibraryImport("gdi32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool DeleteObject(nint obj);
 
     // ---- shell32 ----
 

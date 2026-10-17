@@ -52,7 +52,7 @@ internal static class Program
     /// <c>--selftest</c> 认得的名字。加一个自检只需在这里加名字 + 在 Main 里加一行判定。
     /// </summary>
     private static readonly string[] SelfTestNames =
-        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme"];
+        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js"];
 
     /// <summary>本次请求的自检名字是否就是 <paramref name="name"/>（忽略大小写与首尾空白）。</summary>
     private static bool IsSelfTest(string? requested, string name)
@@ -69,7 +69,11 @@ internal static class Program
         // 不给时**在 Linux/macOS 上回落到随产物一起分发的 app.png**——那两个平台没有"从 exe 取图标"
         // 这回事（ELF/Mach-O 都不带图标，macOS 的图标在 .app bundle 里），不显式给个文件就是通用图标。
         // Windows 不需要：库会主动从 exe 取（见 README「应用图标」）。
+        // 相对路径按**可执行文件所在目录**解析（不是 cwd），见 OrielWindowOptions.Icon。
         var icon = GetOptionValue(args, "--icon") ?? DefaultIconPath();
+        // --require-icon：把"图标文件必须存在"打开（默认是缺失即降级为平台默认图标）。
+        // 用来验证"打包漏了图标文件"这类问题能在启动时被立刻发现，而不是静默降级。
+        var requireIcon = args.Contains("--require-icon");
         // --selftest <名字>：无人交互的自检（CI 用），跑完打印结论并以退出码表达成败。
         // 可用名字见 SelfTestNames。合并成一个开关是为了让 demo 的入口干净——
         // 以前是六个独立开关（--nav-selftest 之类），能力没少，只是不再往命令行上摆一排。
@@ -108,6 +112,17 @@ internal static class Program
         // scheme：打印页面来源与"来源决定的能力"（isSecureContext / crypto.subtle / localStorage /
         // 相对路径 fetch），并断言其中两条（见 SchemeSelfTest 的分界线）
         var schemeSelfTest = IsSelfTest(selfTest, "scheme");
+        // exit / exit-timeout：退出语义。前者取证"正常退出两个事件都到、退出码 0"，
+        // 后者取证"清理卡住时看门狗强杀、退出码 2"（必须子进程，见 ExitSelfTest 的说明）
+        var exitSelfTest = IsSelfTest(selfTest, "exit") || IsSelfTest(selfTest, "exit-timeout");
+        ExitSelfTest.TimeoutMode = IsSelfTest(selfTest, "exit-timeout");
+        // threading：公开的 IsOnUiThread / InvokeOnUiThread / PostToUiThread 的线程语义
+        // （在真实消息循环里取证，见 ThreadingSelfTest 的说明）
+        var threadingSelfTest = IsSelfTest(selfTest, "threading");
+        // tray / tray-js：托盘 API。前者验后端（多托盘、图标对象、模板标记、菜单、显隐、移除），
+        // 后者验前端（页面经 oriel.tray 调内建 tray.* 命令并回显结论）——见 TraySelfTest 的说明
+        var traySelfTest = IsSelfTest(selfTest, "tray");
+        var trayJsSelfTest = IsSelfTest(selfTest, "tray-js");
         // --manual-check：手动验证操作台（停在那里等人点，不自动退出）。
         // 与 --selftest shell 的分工：那个是给 CI 的无人断言，这个是给人看的——
         // 每项做成按钮，托管侧的回调（托盘菜单项、通知点击、快捷键、拖放）回显到页面。
@@ -118,7 +133,7 @@ internal static class Program
         // 免得两种模式去争同一个托盘。
         bool anySelfTest = navSelfTest || ipcSelfTest || themeSelfTest
             || singleInstanceSelfTest || shellSelfTest || capabilitySelfTest || multiWindowSelfTest
-            || schemeSelfTest;
+            || schemeSelfTest || exitSelfTest || threadingSelfTest || traySelfTest || trayJsSelfTest;
         var manualCheck = !anySelfTest && !args.Contains("--todo");
 
         // 主题自检需要 OrielApp（主题是应用级的），所以这里显式 Build 再 Run；
@@ -143,6 +158,10 @@ internal static class Program
                 }
                 if (icon is not null)
                 {
+                    if (requireIcon)
+                    {
+                        w.WithRequireIcon();
+                    }
                     w.WithIcon(icon);
                 }
                 if (ipcSelfTest)
@@ -196,6 +215,39 @@ internal static class Program
                 {
                     SchemeSelfTest.Attach(win, AssetHost);
                 }
+                if (exitSelfTest)
+                {
+                    // 与 theme 自检同理：onCreated 阶段窗口门面还没有后端（win.App 会抛），
+                    // 推迟到 Loaded——那时后端已就位，且仍在 Run() 之内、退出发生之前。
+                    WebviewWindow created = win;
+                    created.Loaded += () =>
+                    {
+                        ExitSelfTest.Attach(created.App);
+                        ExitSelfTest.OnLoaded(created);
+                    };
+                }
+                if (threadingSelfTest)
+                {
+                    // 同上：需要 app 与已就位的窗口后端
+                    WebviewWindow created = win;
+                    created.Loaded += () => ThreadingSelfTest.Attach(created.App, created);
+                }
+                if (traySelfTest || trayJsSelfTest)
+                {
+                    // 托盘是应用级资源，要在 UI 线程上建；Loaded 时后端已就位
+                    WebviewWindow created = win;
+                    created.Loaded += () =>
+                    {
+                        if (traySelfTest)
+                        {
+                            TraySelfTest.RunBackend(created.App, created);
+                        }
+                        else
+                        {
+                            TraySelfTest.RunFrontend(created.App, created);
+                        }
+                    };
+                }
             });
 
         if (singleInstanceSelfTest)
@@ -212,6 +264,13 @@ internal static class Program
             // 两条探针命令只在自检时注册：平时它们没有用途，列在能力声明里也只是为了让
             // "允许的那条"有个真实的被调用对象（拒绝的那条刻意不在名单里）。
             builder.AddCommands<CapabilityProbeCommands>();
+        }
+
+        if (ExitSelfTest.TimeoutMode)
+        {
+            // 超时自检不该等默认的 10 秒：3 秒足够区分"清理卡住"与"清理很慢"，
+            // 又让脚本的等待窗口短到能当回归测试跑。
+            builder.UseExitTimeout(TimeSpan.FromSeconds(3));
         }
 
         if (shellSelfTest || manualCheck)
@@ -241,6 +300,13 @@ internal static class Program
 
         app.Run();
 
+        // 退出自检的收尾：正常模式在这里判定结论；超时模式在这里**故意堵死 UI 线程**，
+        // 复现"消息循环已停、宿主同步清理卡住"的现场形态（见 ExitSelfTest 的说明）。
+        if (exitSelfTest)
+        {
+            _ = ExitSelfTest.FinishAfterRun();
+        }
+
         // 自检的结论已在运行期打印，这里只把成败映射到进程退出码（CI 的冒烟脚本据此判定）。
         if ((navSelfTest && NavSelfTest.Failed)
             || (ipcSelfTest && IpcSelfTest.Failed)
@@ -249,7 +315,10 @@ internal static class Program
             || (shellSelfTest && ShellSelfTest.Failed)
             || (capabilitySelfTest && CapabilitySelfTest.Failed)
             || (multiWindowSelfTest && MultiWindowSelfTest.Failed)
-            || (schemeSelfTest && SchemeSelfTest.Failed))
+            || (schemeSelfTest && SchemeSelfTest.Failed)
+            || (exitSelfTest && !ExitSelfTest.TimeoutMode && Environment.ExitCode != 0)
+            || (threadingSelfTest && ThreadingSelfTest.Failed)
+            || ((traySelfTest || trayJsSelfTest) && TraySelfTest.Failed))
         {
             Environment.ExitCode = 1;
         }

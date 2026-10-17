@@ -74,22 +74,32 @@ internal static class OrielCapabilityRules
 {
     /// <summary>
     /// 库保留的命令前缀：无边框窗口的标题栏按钮（最小化 / 最大化 / 关闭 / 上下文菜单 / 拖动）
-    /// 走的就是这一组，应用侧的页面代码与库文档都按 <c>win.*</c> 引用它们。
+    /// 走 <c>win.*</c>，托盘操作走 <c>tray.*</c>。应用侧的页面代码与库文档都按这两组引用它们。
     /// </summary>
     /// <remarks>
-    /// <b>这一组始终放行，不受能力配置约束。</b>理由：它们只操作"自己那个窗口"，
+    /// <b>这两组始终放行，不受能力配置约束。</b>理由：它们只操作"本应用自己的窗口与托盘"，
     /// 不触及文件系统、注册表、网络或外部程序，因此不是"能力"——
     /// 而 Release 下未配置即拒绝这条规则若把它们一起拒掉，
     /// 无边框窗口会直接变成"关不掉的窗口"（自绘标题栏的按钮全废，又没有系统标题栏可替代）。
     ///
-    /// 代价是 <c>win.</c> 成了保留前缀：应用自己的命令不要用这个前缀开头，
+    /// 代价是 <c>win.</c> 与 <c>tray.</c> 成了保留前缀：应用自己的命令不要用这两个前缀开头，
     /// 否则会绕过能力配置。库不阻止你这么做（那是应用自己的选择），但文档里写明了。
     /// </remarks>
     internal const string BuiltInCommandPrefix = "win.";
 
+    /// <summary>托盘的库保留前缀（见 <see cref="BuiltInCommandPrefix"/> 的说明）。</summary>
+    internal const string BuiltInTrayCommandPrefix = "tray.";
+
     internal static bool IsBuiltInCommand(string commandName)
-        => !string.IsNullOrEmpty(commandName)
-           && commandName.StartsWith(BuiltInCommandPrefix, StringComparison.Ordinal);
+    {
+        if (string.IsNullOrEmpty(commandName))
+        {
+            return false;
+        }
+
+        return commandName.StartsWith(BuiltInCommandPrefix, StringComparison.Ordinal)
+            || commandName.StartsWith(BuiltInTrayCommandPrefix, StringComparison.Ordinal);
+    }
 
     /// <summary>
     /// 按 allow / deny 两组模式判定一个命令名。

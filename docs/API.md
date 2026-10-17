@@ -52,7 +52,7 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 | `SingleInstance(string id, Action<WebviewWindow?, IReadOnlyList<string>>? onActivate = null)` | 单实例（见 §6，含三态判定与运行期目录）。**判定发生在 `Build()`**：`app.IsSecondaryInstance` 在 `Run()` 之前就能问，第二实例因此可以在打开数据库/连设备**之前**分流，再 `Run()` 让库负责"通知首实例并静默退出"。`onActivate` 的首实例回调会拿到**第二实例的启动参数**（`Oriel.CreateBuilder(args)` 的那份），用于"用命令行让已运行的程序打开某个页面" |
 | `UseCapabilities(Action<OrielCapabilityOptions>? configure = null)` | 声明页面可调用的命令与可信来源（见 §4） |
 | `UseShell(Action<OrielShellOptions>? configure = null)` | Shell 集成的 scheme 白名单（见 §7） |
-| `AddTray(Action<OrielTrayOptions>? configure = null)` | 启用系统托盘（应用级，最多一个；见 §7） |
+| `AddTray(Action<OrielTrayOptions>? configure = null)` | 配置系统托盘（**可重复调用**以创建多个；见 §7） |
 | `UseAutoStartId(string id)` | 覆盖开机自启的标识（默认取可执行文件名；同一标识在多份构建之间会串，必须显式分开） |
 | `UseNotificationAppId(string appId)` | 覆盖系统通知的应用标识（Windows AUMID / Linux `--app-name`；默认取入口程序集名） |
 | `OnWebView2RuntimeMissing(Action<OrielWebView2RuntimeMissingEventArgs> handler)` | 自定义"运行时缺失"的提示与引导（不注册时库弹默认错误框；事件参数里有下载地址） |
@@ -74,7 +74,8 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 | `bool Frameless` | `false` | `WithFrameless(bool = true)`（无边框，见 §2） |
 | `bool Hidden` | `false` | `WithHidden(bool = true)`（窗口不上屏，页面照常加载、IPC 照常往返） |
 | `string? Url` | `null` | `WithUrl(string)`。`null` = 内嵌资源首页（`oriel://<host>/index.html`）；指向内嵌资源时写 `oriel://<host>/…`（`https://<host>/…` 是兼容别名，导航前会归一）。**已知边界**：别名只在**窗口初始 URL** 上归一；页面运行期自己跳到 `https://<host>/…` 不会被改写——那是真网络请求，且来源不可信（桥接不会安装） |
-| `string? Icon` | `null` | `WithIcon(string path)`。`null` 时：Windows 从 exe 取图标，Linux/macOS 回落到随产物分发的 `app.png` |
+| `string? Icon` | `null` | `WithIcon(string path)`。`null` 时：Windows 从 exe 取图标，Linux/macOS 回落到随产物分发的 `app.png`。**相对路径按可执行文件所在目录解析**（不是 cwd）；**文件不存在时降级为平台默认图标 + 报一条诊断，不抛异常**（见下方"图标与路径"） |
+| `bool RequireIcon` | `false` | `WithRequireIcon(bool = true)`。打开后图标文件缺失会在配置期抛 `FileNotFoundException`（而不是降级）——用于"打包漏文件必须立刻发现"的场景 |
 | `bool Debug` | `false` | `WithDebug(bool = true)` |
 | `bool ConsoleForwarding` | `false` | `WithConsoleForwarding(bool = true)`（页面 console → `ConsoleMessage` 事件） |
 | `uint? BackgroundColor` | `null` | `WithBackgroundColor(uint argb)` / `WithBackgroundColor(byte r, byte g, byte b)`。页面渲染出来之前那一帧的**底色**（防白黑闪，工业界面尤其需要）。三平台各落到引擎的等价开关：Windows `DefaultBackgroundColor`、macOS 窗口底色 + `underPageBackgroundColor`（12+）、Linux `webkit_web_view_set_background_color`（已在 WSL 确认符号存在；该 API 自 2.40 起 deprecated 但未移除，行为待真机确认）。只管底色，页面 CSS 一生效就由页面说了算 |
@@ -95,10 +96,19 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 | `event Action<OrielCommandFailedEventArgs>? CommandFailed` | 应用命令抛异常：异常**原样**带出（只给宿主，页面拿到的仍是净化文案）。与 `CommandInvoked` 不重复——那个给耗时/成功率，这个给异常对象 |
 | `bool IsSecondaryInstance` | 本实例是不是"第二个实例"（需先 `SingleInstance(id)`）。**`Build()` 之后即可问**，用于在装配数据库/设备连接之前分流；激活请求此时已发给首实例 |
 | `void Run()` | 建窗并进入消息循环；`IsSecondaryInstance` 为真时只打印契约标记后返回（退出码 0） |
-| `void PostToMainThread(Action action)` | 把动作切回 UI 线程（应用自己的后台线程要用它；IPC 命令里 `await` 之后已在 UI 线程，无需再切，见下方线程模型） |
-| `void Quit()` | 请求退出：结束消息循环、让 `Run()` 返回。**不是 `Environment.Exit`**——`Run()` 返回后该做的清理仍会执行 |
-| `OrielTray? Tray` | 当前托盘（未启用为 `null`） |
-| `bool RemoveTray()` / `OrielTray? RestoreTray()` | 移除 / 重建托盘（返回是否成功 / 新托盘） |
+| `bool IsOnUiThread { get; }` | 当前线程是不是 UI 线程（应用未运行时为 `false`）。宿主自己的后台线程据此判断"要不要编组"，不必再自己维护主线程 ID |
+| `void PostToMainThread(Action action)` | 把动作切回 UI 线程（应用自己的后台线程要用它；IPC 命令里 `await` 之后已在 UI 线程，无需再切，见下方线程模型）。**投递失败抛 `InvalidOperationException`** |
+| `bool TryPostToMainThread(Action action)` | 同上但不抛：投递失败返回 `false` 并报一条诊断（退出途中"尽力投递"用它） |
+| `void InvokeOnUiThread(Action action)` | 在 UI 线程上**同步**执行：已在 UI 线程则直接执行，否则投递并阻塞等待完成。动作抛的异常原样带回调用方。**退出已开始时立刻抛**（消息循环停了，投递的动作不会被处理，干等即永久阻塞） |
+| `bool IsExiting { get; }` | 退出流程是否已开始（`Quit` 已调用，或消息循环已结束）。退出一旦开始，UI 线程队列就不再被排空——**别再做"投过去等它执行"的操作** |
+| `void Quit()` | 请求退出：结束消息循环、让 `Run()` 返回，并**保证进程最终结束**（见下方"退出语义"）。**只能在 UI 线程调用** |
+| `event Action<OrielExitEventArgs>? Exiting` | 退出流程已开始（消息循环即将/已经结束） |
+| `event Action<OrielExitEventArgs>? ExitCompleted` | 库侧退出清理已走完、`Run()` 即将返回。**不**代表进程已结束 |
+| `event Action<OrielExitTimeoutEventArgs>? ExitTimeout` | 清理超过 `ExitTimeoutDuration`、进程即将被看门狗强制结束。回调在**看门狗线程**上，必须尽快返回 |
+| `TimeSpan ExitTimeoutDuration` / `int ForceExitCode` | 退出清理超时（默认 10 秒）/ 被强杀时的退出码（默认 `2`，与正常退出的 `0` 区分） |
+| `OrielTray? Tray` / `IReadOnlyCollection<OrielTray> Trays` | 主托盘（第一个）/ 全部托盘 |
+| `OrielTray? GetTray(string id)` / `OrielTray CreateTray(Action<OrielTrayOptions>?)` | 按 id 取回 / 运行期新建（见 §7 的托盘注册表） |
+| `bool RemoveTray(string id)` / `bool RemoveTray()` / `OrielTray? RestoreTray()` | 按 id 移除 / 移除全部 / 重建构建期托盘 |
 | `bool NotificationsSupported` | 这个环境能不能发系统通知 |
 | `bool ShowNotification(OrielNotificationOptions)`<br>`bool ShowNotification(string title, string? body = null)` | 发通知；返回系统是否接受 |
 | `bool IsAutoStartEnabled` / `bool EnableAutoStart(IReadOnlyList<string>? arguments = null)` / `bool DisableAutoStart()` | 开机自启的查询与开关（`arguments` 是随自启一起传的参数） |
@@ -128,6 +138,38 @@ WebviewWindow second = app.CreateWindow(
 > 同一目录上并存两个环境——所以环境由平台后端持有并复用（一份环境 + 每个窗口一个控制器）。
 > `UseUserDataFolder(path)` 改的就是这个目录。
 
+### 退出语义
+
+`Quit()` 是"最终退出"，不是"建议退出"。它做三件事：
+
+1. 结束消息循环（Windows `PostQuitMessage`、Linux `GtkMainQuit`、macOS `NSApplication.terminate:`），让 `Run()` 返回；
+2. `Run()` 返回前执行库侧清理（撤销托盘图标、释放后端与共享 WebView2 环境）——**清理照常执行，不是 `Environment.Exit` 一走了之**；
+3. 同时起一个看门狗：从"请求退出"算起超过 `ExitTimeoutDuration`（默认 10 秒）进程仍在，就强制结束它，退出码为 `ForceExitCode`（默认 `2`）。
+
+> **为什么必须有第 3 条**：`PostQuitMessage` 只是往消息队列投一条 `WM_QUIT`，它不保证进程结束。
+> 消息循环停下之后，宿主在 `Run()` 返回后跑的清理全部同步落在 UI 线程上，任何一步卡住
+> （等一个失去响应窗口的同步调用、一个不返回的 join）都会让进程驻留——驻留期间可执行文件映像
+> 仍被映射，现场表现是"程序删不掉/装不上"，Windows 还会判成 AppHangB1。
+> 兜底做进库里，宿主就不必各写一套看门狗（写错了正好复现这个故障）。
+
+看门狗**覆盖整段退出，包括 `Run()` 返回之后宿主的收尾**——那正是最容易卡住的一段。
+进程正常结束时看门狗线程随进程消失，不需要显式收尾。
+
+| 配置（`OrielAppBuilder`） | 说明 |
+|---|---|
+| `UseExitTimeout(TimeSpan)` | 覆盖超时（默认 10 秒；必须是正值） |
+| `UseForceExitCode(int)` | 覆盖被强杀时的退出码（默认 `2`） |
+| `UseExitWatchdog(bool = true)` | 关闭看门狗（默认启用）。只有宿主要自己接管退出、且确信清理不会卡时才关 |
+
+退出途中可观测：`Exiting`（消息循环刚停）→ `ExitCompleted`（库侧清理走完、`Run()` 即将返回）
+→ 若超时则 `ExitTimeout`（看门狗线程上触发，随后强杀）。**`ExitCompleted` 不代表进程已结束**——
+宿主在 `Run()` 返回后的收尾仍受看门狗保护。
+
+> `Quit()` **只能在 UI 线程调用**：`PostQuitMessage` / `GtkMainQuit` / `NSApplication.terminate:`
+> 都是线程相关的，从线程池调用会投给一个没有消息循环的线程，主循环永远收不到（表现为"调了
+> `Quit` 却退不掉"）。从其它线程退出请用 `InvokeOnUiThread` 编组过来。库检测到不在 UI 线程会
+> 立刻抛 `InvalidOperationException` 而不是静默投递。
+
 ### `WebviewWindow`
 
 窗口门面。所有方法**必须在 UI 线程调用**（`await` 之后要碰窗口就经 `PostToUiThread`）；每个窗口一套独立的页面会话。
@@ -156,7 +198,9 @@ WebviewWindow second = app.CreateWindow(
 | **IPC** | |
 | `void EmitEvent(string name, string jsonPayload)`<br>`void EmitEvent<T>(string name, T payload, JsonTypeInfo<T> typeInfo)` | 宿主 → 页面（页面侧 `oriel.on(name, handler)`） |
 | `Task<string> EvaluateJs(string script)` | 在页面当前文档上下文执行 JS，回 **JSON 编码**的结果串（WebView2 风格）。**边界**：macOS/Linux 这条路经页面回环完成，桥接没装上时它会等到超时或失败（不可信来源就是这样，见 §4）；页面导航离开原文档或窗口销毁时以异常立即失败，不会永久挂起 |
-| `void PostToUiThread(Action action)` | 已在 UI 线程则直接执行 |
+| `bool PostToUiThread(Action action)` | 把动作切回 UI 线程（已在 UI 线程则直接执行）。返回 `false` = 调度通道已失效、回调不会执行，同时有一条诊断 |
+| `bool IsOnUiThread { get; }` | 当前线程是不是 UI 线程 |
+| `void InvokeOnUiThread(Action action)` | 同步编组：投递并阻塞等待完成；动作抛的异常原样带回调用方 |
 | **窗口命令与菜单** | |
 | `ShowContextMenu(IReadOnlyList<OrielMenuItem> items)` | 弹应用自己的上下文菜单（见 §10） |
 | `OrielContextMenuPolicy ContextMenuPolicy { get; set; }` | 运行期改，**下次右键即生效**（见 §10） |
@@ -193,6 +237,24 @@ WebviewWindow second = app.CreateWindow(
 > 应用自己的后台线程碰窗口仍要走 `OrielApp.PostToMainThread(...)` /
 > `WebviewWindow.PostToUiThread(...)`——**GTK 与 AppKit 只允许在各自的主线程调用窗口 API**。
 > 另：三平台的 `SynchronizationContext.Send` 都实现为 Post（异步），**不可依赖同步完成**。
+>
+> **线程归属的可查询与编组**（下游反馈 2026-10-14 的 P2-6）：
+>
+> | 需要 | 用什么 |
+> |---|---|
+> | 判断"我现在在不在 UI 线程" | `OrielApp.IsOnUiThread` / `WebviewWindow.IsOnUiThread`（应用未运行时为 `false`） |
+> | 异步投递、不等待 | `PostToMainThread` / `PostToUiThread`（返回 `bool`：`false` = 调度通道已失效、回调不会执行，同时有一条诊断。**不再静默丢弃**） |
+> | 投递但失败也不抛 | `OrielApp.TryPostToMainThread`（退出途中的"尽力投递"用它） |
+> | 同步编组、等它做完 | `InvokeOnUiThread`（已在 UI 线程则直接执行；动作抛的异常原样带回调用方。**退出已开始时会立刻抛**——消息循环停了，投递的动作不会被处理） |
+>
+> 调用线程相关的库 API（`CreateWindow`、`Quit`）不在 UI 线程时会立刻抛
+> `InvalidOperationException` 并说明原因，而不是静默投递到一个没有消息循环的线程。
+> 宿主因此**不必再自己维护一份主线程 ID**。
+>
+> **线程事实**（各平台一致）：Win32 用 `GetCurrentThreadId == _uiThreadId`、Linux/macOS 用
+> `Environment.CurrentManagedThreadId == _mainManagedThreadId` 判定。命令处理、窗口事件、
+> 托盘菜单回调都在 UI 线程上（Windows 的托盘回调经专属消息窗口送达，与 WebView2 共用同一个
+> dispatcher/消息循环线程）。
 
 ## 2. 无边框窗口
 
@@ -275,7 +337,51 @@ WebviewWindow second = app.CreateWindow(
 窗口图标：`WithIcon(path)` 三平台各自落到真正有图标槽的位置——Windows `WM_SETICON`、Linux 窗口图标、
 macOS Dock 图标。**Windows 会主动从 exe 取图标**（`<ApplicationIcon>`），另外两个平台**没有等价来源**
 （ELF/Mach-O 不带图标），所以必须显式给文件；GNOME 还不读 `_NET_WM_ICON`，它按 `WM_CLASS` 匹配 `.desktop` 的 `Icon=`。
-`WithIcon` 会校验文件存在——路径写错时立刻报错，而不是安静地显示通用图标。
+
+#### 图标与路径（相对路径的解析基准）
+
+两条规则适用于**所有**接受文件路径的选项（窗口图标 `OrielWindowOptions.Icon`、托盘图标
+`OrielTrayOptions.IconPath` / `OrielTray.SetIcon`、通知图标 `OrielNotificationOptions.IconPath`）：
+
+| 规则 | 说明 |
+|---|---|
+| **相对路径按可执行文件所在目录解析** | 即 `AppContext.BaseDirectory`，**不是**当前工作目录。工控机现场常从快捷方式、计划任务、开机自启启动，cwd 往往不是程序目录；macOS 从 `.app` 启动时 cwd 是 `/`。要按 cwd 解析请自行传 `Path.GetFullPath(...)` 的结果（绝对路径原样使用） |
+| **文件不存在时降级，不抛异常** | 图标是纯观感：缺失回落到平台默认图标（Windows 的 exe 图标、Linux/macOS 的 `app.png`），并经 `OrielDiagnostics.Reported` 报一条警告。**空白路径**仍立刻抛 `ArgumentException`（那是调用方写错了，不是"文件缺失"） |
+
+> 缺失为什么不该抛：它此前在 `AddWindow` 的配置回调里抛 `FileNotFoundException`，此时还没有窗口、
+> 没有 UI，用户看到的就是"双击没反应"——一个纯观感问题被升级成"程序打不开"。
+> 需要"路径写错就启动失败"的严格行为，用 `WithRequireIcon()` / `RequireIcon = true`。
+
+`Icon` 读回的是**生效值**（缺失且未开严格模式时为 `null`）；原始请求路径见 `RequestedIcon`（排障用）。
+
+#### `OrielImage`：托管图像对象（对标 Tauri 2 的 `tauri::image::Image`）
+
+托盘与窗口图标都可以传**已解码的图像对象**而不是路径——这是对标 Tauri 2 的关键一步：
+"图标"从"一个字符串"变成"一张 RGBA 位图"，于是**格式支持不再取决于某个平台的加载器**。
+
+| 成员 | 说明 |
+|---|---|
+| `new OrielImage(ReadOnlyMemory<byte> rgba, int width, int height)` | 由 RGBA 数据构造（行优先、每像素 4 字节；长度必须等于 `width*height*4`） |
+| `Rgba` / `Width` / `Height` | 只读视图与尺寸（**不要改写** `Rgba`：同一实例可能被多处共享） |
+| `static FromBytes(ReadOnlySpan<byte>)` | 由 PNG / ICO **字节**解码（按文件头自动识别） |
+| `static FromFile(string path)` | 由文件解码（相对路径按可执行文件目录解析）。失败抛 `FileNotFoundException` / `OrielImageFormatException` |
+| `static TryFromFile(string, out OrielImage?, out string?)` | 不抛异常的版本：失败返回 `false` 并给出原因 |
+
+解码器是**纯 BCL 实现**（`OrielImageCodec`，用 `ZLibStream` 解 PNG 的 zlib 流），
+**不引入任何第三方图像库**——Tauri 那边靠 Rust `image` crate + 两个 Cargo feature，
+本库的定位是零额外依赖，所以自己实现。
+
+支持的子集（**刻意不做**的也写明，遇到时明确报错而不是解出花屏）：
+
+| 支持 | 不支持（明确报错） |
+|---|---|
+| PNG 8 位：真彩 / 真彩+alpha / 灰度 / 灰度+alpha / 调色板（含 `tRNS`） | 隔行扫描（Adam7）、16 位每通道、iCCP/gAMA 等色彩管理块、动画 APNG |
+| 五种行过滤器（None / Sub / Up / Average / Paeth） | — |
+| ICO：内嵌 PNG、32 位 BMP（含 AND 掩码补 alpha）、24 位、1/4/8 位索引色 | 压缩的 ICO 位图 |
+
+**格式支持三平台一致**：有了它，**Windows 也能吃 PNG 图标**（此前 `LoadImageW` 只认 ICO/BMP，
+PNG 会静默失败），Linux 走 `gtk_status_icon_set_from_pixbuf`（不必落盘），macOS 走
+`CGImageCreate` + `NSImage`（自动做预乘 alpha）。
 
 ## 3. 导航与页面通信
 
@@ -476,17 +582,83 @@ builder.SingleInstance("com.example.myapp", win => { /* 首实例被唤醒 */ })
 | Shell | `app.OpenExternal(url)`、`app.RevealInFileManager(path)`、`app.OpenWithDefaultApp(path)` | **默认拒绝式的 scheme 白名单**（`http`/`https`/`mailto`），可 `UseShell` 扩展；被拒或不支持时返回 `false` |
 | 开机自启 | `app.EnableAutoStart(arguments = null)` / `app.DisableAutoStart()` / `app.IsAutoStartEnabled` | Windows 写 HKCU 的 Run 键、macOS 写 LaunchAgent plist（不调 `launchctl load`，避免立刻又拉起一个）、Linux 写 autostart `.desktop`。标识默认取可执行文件名，`UseAutoStartId` 覆盖（多份构建共用一个标识会互相串） |
 
-托盘（`OrielTrayOptions` / `OrielTray`）：
+托盘（`OrielTrayOptions` / `OrielTray`）——**对标 Tauri 2 的托盘 API**，前端与后端同名同义：
 
 | 成员 | 说明 |
 |---|---|
-| `OrielTrayOptions.IconPath` / `Tooltip` / `MenuOnClick` | 图标路径；悬停文本（默认 `"OrielWeb"`）；左键是否也弹菜单 |
-| `OrielTray.Tooltip` / `IconPath` / `IsVisible` | 运行期读写 |
-| `OrielTray.SetIcon(string? iconPath)` / `Show()` / `Hide()` | 换图标 / 显隐 |
+| `OrielTrayOptions.Id` | 托盘标识（唯一）。多托盘必须各自不同；不显式给时自动分配（构建期第一个固定为 `"main"`） |
+| `OrielTrayOptions.Icon` | **已解码的图标对象**（`OrielImage`）——对标 Tauri 2 的 `icon: Image`。失败策略由调用方掌握 |
+| `OrielTrayOptions.IconPath` | 图标文件路径（PNG / ICO）。**赋值不读盘**，解码推迟到建托盘时（配置期抛异常会重演"图标缺失让程序打不开"） |
+| `OrielTrayOptions.Tooltip` / `Title` | 悬停文本（默认 `"OrielWeb"`）/ 图标旁文字（**Linux 与 macOS 显示、Windows 不支持**） |
+| `OrielTrayOptions.IconAsTemplate` | 是否当模板图（**仅 macOS**，默认 `true`）。**彩色品牌图必须置 false**，否则会被系统反色成单色剪影 |
+| `OrielTrayOptions.MenuOnClick` | 左键是否也弹菜单（默认 false）。**macOS/Linux 上此项无效**（设了菜单就是左键弹） |
+| `OrielTray.Id` | 本托盘的标识 |
+| `OrielTray.Tooltip` / `Title` / `IconAsTemplate` / `IsVisible` | 运行期读写 |
+| `OrielTray.SetIcon(string? iconPath)` | 换图标（文件路径）。**解码失败抛异常**；要"失败就保留原图标"用下面那个重载 |
+| `OrielTray.SetIcon(OrielImage? icon)` | 换图标（已解码对象；对标 Tauri 2 的 `setIcon(Image)`）。传 `null` 回到平台默认 |
 | `OrielTray.SetMenu(IReadOnlyList<OrielMenuItem>)` / `ClearMenu()` | 整份替换菜单 / 清空 |
-| `event Action? Clicked` | 图标被点（**没配菜单时**才有意义；配了 `MenuOnClick` 就直接弹菜单） |
+| `OrielTray.Show()` / `Hide()` / `Dispose()` | 显隐 / **永久移除**（对标 Tauri 2 的 `close()`） |
+| `event Action? Clicked` | 图标被点（历史 API，无参数） |
+| `event Action<OrielTrayEvent>? TrayEvent` | **富事件**（对标 Tauri 2 的 `TrayIconEvent`）：类型 / 按键 / 状态 / 坐标 |
 | `event Action<string>? MenuItemClicked` | 菜单项被点，参数是该项的 `Id` |
 | `event Action<string>? RawEvent` | 平台原样事件（排查用，各平台载荷不同） |
+
+应用级托盘注册表（多托盘，对标 Tauri 2 的 `new` / `getById` / `removeById`）：
+
+| 成员 | 说明 |
+|---|---|
+| `app.CreateTray(Action<OrielTrayOptions>?)` | 运行期新建托盘（对标 `TrayIcon.new`），返回句柄。**必须在 UI 线程调用**；重复 id 抛异常 |
+| `app.GetTray(string id)` | 按 id 取回（对标 `getById`）；不存在返回 `null` |
+| `app.Trays` | 全部托盘的只读快照 |
+| `app.RemoveTray(string id)` / `app.RemoveTray()` | 按 id 移除一个（对标 `removeById`）/ 移除全部 |
+| `app.Tray` | 主托盘（第一个）。**多托盘应用请用 `GetTray` / `Trays`** |
+| `builder.AddTray(...)` | 构建期配置托盘，**可重复调用**以创建多个 |
+
+#### 托盘事件（`OrielTrayEvent`，对标 Tauri 2 的 `TrayIconEvent`）
+
+| 成员 | 说明 |
+|---|---|
+| `TrayId` | 触发事件的托盘 id |
+| `Type` | `Click` / `DoubleClick` / `Enter` / `Move` / `Leave` |
+| `Button` | `Left` / `Right` / `Middle`；平台未提供时 `null` |
+| `ButtonState` | `Down` / `Up`；平台未提供时 `null` |
+| `Position` / `Rect` | 屏幕坐标（物理像素）/ 图标矩形；平台未提供时 `null` |
+
+**各平台能给的粒度不同，未提供的字段一律是 `null`**（让页面能区分"平台不支持"与"值是 0"）：
+
+| 平台 | Click | DoubleClick | Enter/Move/Leave | 按键 / 坐标 |
+|---|---|---|---|---|
+| **Windows** | ✅ | ✅ | ✅（V4 的 `NIN_POPUPOPEN`/`NIN_POPUPCLOSE`） | ✅ 按键、状态、坐标（V4 的 `GET_X/Y_LPARAM`） |
+| **macOS** | ✅ | ✗ | ✅（`NSTrackingArea` 的 `mouseEntered:`/`mouseExited:`/`mouseMoved:`） | 按键 ✗（`NSStatusItem` action 不带）；坐标 ✗ |
+| **Linux** | ✅ | ✅（`GDK_2BUTTON_PRESS`） | **✗**（`GtkStatusIcon` 没有悬停信号——平台事实） | ✅ 按键、状态、坐标（`button-press/release-event`） |
+
+> `Rect` 目前三平台都未提供（Windows 需额外查 `Shell_NotifyIconGetRect`，macOS 的菜单栏坐标系转换成本高）。
+> **Linux 的 Enter/Move/Leave 是平台事实而非漏实现**：`GtkStatusIcon` 的权威信号表只有
+> `activate` / `button-press-event` / `button-release-event` / `popup-menu` / `query-tooltip` /
+> `scroll-event` / `size-changed`。Tauri 2 的文档同样标注 "Linux: Unsupported"。
+
+#### 前端 API（`oriel.tray`，与 Tauri 2 的 `@tauri-apps/api/tray` 一一对应）
+
+| Tauri 2 | OrielWeb（页面侧） |
+|---|---|
+| `TrayIcon.new(options)` | `await oriel.tray.new({ id, iconPath, tooltip, title, iconAsTemplate, menuOnClick })` → 句柄 |
+| `TrayIcon.getById(id)` | `await oriel.tray.getById(id)` → 句柄或 `null` |
+| `TrayIcon.removeById(id)` | `await oriel.tray.removeById(id)` → 是否移除 |
+| — | `await oriel.tray.getAll()` → 句柄数组 |
+| `tray.setIcon(icon)` | `await tray.setIcon(iconPath)` |
+| `tray.setMenu(menu)` | `await tray.setMenu(items)`（`{ id, label, type:'separator'\|'role', role, accelerator, enabled, checked, items }`） |
+| `tray.setTooltip(s)` / `setTitle(s)` | `await tray.setTooltip(s)` / `await tray.setTitle(s)` |
+| `tray.setVisible(b)` | `await tray.setVisible(b)` |
+| `tray.setIconAsTemplate(b)` | `await tray.setIconAsTemplate(b)` |
+| `tray.close()` | `await tray.close()` |
+| `options.action` | `oriel.tray.onEvent(handler)`（返回退订函数） |
+
+**差别（如实标注，不假装一致）**：图标在页面侧给**路径**而不是 `JsImage` 的多态形态（解码在宿主侧的
+`OrielImageCodec` 完成，页面不必传字节）；没有 `setTempDirPath`（那是 Tauri 的 AppIndicator 落盘路径
+带来的约束，本库走 `GtkStatusIcon` 直吃 pixbuf，不需要它）。
+
+> **`tray.` 是库保留前缀**，与 `win.` 一样始终放行、不受能力配置约束（它只操作本应用自己的托盘，
+> 不是"能力"）。应用自己的命令请避开这两个前缀。
 
 > **已知取舍：托盘气泡（`NIF_INFO` / `OrielTray.ShowBalloon`）不做。** interop 字段都在，但库只用 toast：
 > 早先走过托盘气球，实测**根本没显示出来**（能回传点击，但看不见的通知谈不上"能用"，
@@ -610,6 +782,21 @@ window.ContextMenuPolicy = OrielContextMenuPolicy.Editing;  // Editing（默认�
 | `oriel.invoke(name, args)` | → `Promise`；失败时 reject 带原因 |
 | `oriel.postMessage(name, payload)` | 单向通知 |
 | `oriel.on(name, handler)` | 订阅宿主事件，返回退订函数 |
+| `oriel.tray` | **托盘 API**（对标 Tauri 2 的 `@tauri-apps/api/tray`）：`new` / `getById` / `getAll` / `removeById` / `onEvent`，句柄上 `setIcon` / `setMenu` / `setTooltip` / `setTitle` / `setVisible` / `setIconAsTemplate` / `close`——完整对照表见 §7 |
+
+托盘事件的 payload（推给 `oriel.tray.onEvent` 的处理器）：
+
+```js
+// { id, type, button, buttonState, position, rect }
+// type: 'Click' | 'DoubleClick' | 'Enter' | 'Move' | 'Leave'
+// 平台未提供的字段为 null（例如 Linux 的 button、macOS 的 position）
+const off = oriel.tray.onEvent((e) => {
+  if (e.type === 'Click' && e.button === 'Right') openMyMenu();
+});
+```
+
+> 托盘事件**不会**走通用的 `oriel.on('tray.event')`——两者是分开的订阅集合，
+> 只关心托盘的页面不会被窗口状态事件（最大化、导航等）打扰。
 
 `orielready` 事件也保留（兼容用），但它在 `DOMContentLoaded` 才派发——`DOMContentLoaded` 之后才注册的监听器收不到，
 所以文档主推 `await oriel.ready`。
@@ -695,10 +882,43 @@ sudo apt-get install -y fonts-noto-cjk   # 中文界面必需，否则渲染成�
 |---|---|
 | 单测（`tests/OrielWeb.Tests`） | 分发器与回执协议、能力模型、内建窗口命令表、资源 URL 解析与请求路径归一（含穿越拒绝）、资源名约定、文件/Shell/对话框的纯函数、快照回退与数值格式化 |
 | 桥接测试（`tests/bridge/bridge.test.mjs`） | 三平台共用脚本的行为一致性：就绪、事件、往返、回执、超时、不可信来源不安装、每条出站消息带令牌 |
-| 无人自检（`OrielDemo --selftest <名字>`） | `nav` `ipc` `theme` `single-instance` `shell` `capability` `multiwindow` `scheme`——自己驱动页面、打印结论行、以退出码表达成败 |
+| 无人自检（`OrielDemo --selftest <名字>`） | `nav` `ipc` `theme` `single-instance` `shell` `capability` `multiwindow` `scheme` `exit` `exit-timeout` `threading` `tray` `tray-js`——自己驱动页面、打印结论行、以退出码表达成败 |
+| 托盘后端取证（`--selftest tray`） | 26 项：`app.png`/`app.ico` **双格式解码**、多托盘（建两个 + 按 id 取回 + 互不影响）、图标对象与**模板标记**如实回读、运行期换图（对象与路径两条入口）、菜单、显隐、标题、按 id 移除、重复 id 抛异常 |
+| 托盘前端取证（`--selftest tray-js`） | 页面真实调用 `oriel.tray`：`new` → `getById` → `getAll` → 全部 `set*` → `close` → `onEvent`，回显逐条结论。证明**前后端 API 同名同义且命令往返真的通** |
+| 退出语义取证（`--selftest exit` / `exit-timeout`） | 正常退出：`Exiting` 与 `ExitCompleted` 都触发、退出码 `0`。超时强杀：在 `Run()` 返回后堵死 UI 线程（复现现场"清理卡住"），断言看门狗在 `ExitTimeoutDuration` 后强制结束进程、退出码为 `ForceExitCode`（`2`），且 `ExitTimeout` 事件先于强杀触发。**必须子进程取证**：`Environment.Exit` 会把测试运行器一起带走 |
+| 线程归属取证（`--selftest threading`） | 在真实消息循环里断言 `IsOnUiThread` 的真值（UI 线程上 `true`、后台线程上 `false`）、`InvokeOnUiThread` 的动作确实执行在 UI 线程上、`PostToUiThread` 正常路径返回 `true` 且回调落在 UI 线程 |
 | 事实探针（`--selftest scheme`） | 打印页面来源与"来源决定的能力"（`isSecureContext`、`crypto.subtle`、`localStorage`、相对路径 `fetch`）并写成 GitHub 注解。只断言两条设计承诺（来源是 `oriel://<host>`、相对 `fetch` 取得到资源），其余**如实报告**：三平台的自定义 scheme 能力并不对称，那些值是被量出来的而不是推断的。2026-10-03 三平台基线一致：`origin=oriel://app.oriel secure=true subtle=true storage=ok fetch=ok:200:949` |
 | 手动验证操作台（直接运行 demo） | 托盘、通知、对话框、拖放、右键菜单、图标等**只能人眼**判定项，每项都写了预期 |
 | Velopack 打包 | Windows **每 push** 跑（`vpk pack` 成功、安装产物齐备、更新包与清单按约定已删）；Linux/macOS 只在 release 跑（三平台各自的产物形态见 §12） |
+
+**CI 覆盖（`.github/workflows/ci.yml`）**——上表里"机器可判定"的项都进了 CI，三平台各自跑：
+
+| Job | 覆盖 |
+|---|---|
+| `test` | 单测（含图像解码器、托盘事件与选项、内建 `tray.*` 命令）+ 桥接 JS 测试 + `dotnet format` 门禁 + 包内 targets 的消费链路（`tools/verify-package.ps1`） |
+| `smoke-linux` | `tools/verify-linux.sh` 一次跑完三阶段：`selftest` + `shell`（托盘/通知/Shell/自启）+ `smoke`（运行取证与截图） |
+| `smoke-windows` | `tools/verify-windows.ps1` 一次跑完三阶段：`smoke` + `pack`（Velopack）+ `selftest` |
+| `smoke-macos` | `tools/verify-macos.sh`（自检 + 运行取证 + 截图）+ 非本机架构的 AOT 发布 |
+
+**三平台的验证脚本命名与职责一一对应**（`verify-linux.sh` / `verify-windows.ps1` / `verify-macos.sh`），
+每个平台一个脚本、内部按阶段分节，CI 里各自只调用一行；都支持只跑某一阶段
+（`--stages` / `-Stages`）与"是否先发布"（`--no-publish` / `-Publish`）。
+
+自检阶段覆盖的模式（三平台一致）：`nav` `ipc` `capability` `multiwindow` `scheme` `threading`
+`tray` `tray-js` `exit` `exit-timeout` `single-instance`；Linux 与 macOS 另跑 `theme` 的**深浅双路径**
+（Windows 没有像 `GTK_THEME` 那样可靠的"造值"入口，只跑一次读得到即可）。
+
+> **workflow 里只留"调用一行脚本"**：验证逻辑全部落在 `tools/` 下的独立脚本里。
+> 内联在 `ci.yml` 里的大段 shell/PowerShell **没法在本地跑、没法单独 review**，
+> 而 diff 时也看不出改的是哪一段逻辑——这正是 `tools/verify-macos.sh` 一直在做的事，
+> 现在三个平台对齐。唯一的例外是那条"变量后紧跟非 ASCII"的跨平台 lint（13 行），
+> 它是通用检查、与平台验证无关，留在 workflow 里反而更直观。
+
+> **退出码断言的分平台差异**（有据可依，不是偷懒）：`exit-timeout` 的退出码在三平台都判
+> （它由 `Environment.Exit(ForceExitCode)` **直接终止进程**，不经过平台 UI 层，因此可靠）；
+> 而 `exit` 的"必须为 0"**只在 Linux/Windows 上判**——macOS 的正常退出走 AppKit 的 `terminate`，
+> 实测会吃掉 `Main` 里设的 `Environment.ExitCode`（`verify-macos.sh` 的注释里记录过
+> "nav 自检打印 FAIL 却返回 0"）。在 macOS 上断言它会引入一个永远红的假失败，而那不是真实缺陷。
 
 `--selftest ipc` 还会断言注入脚本里的**拖动接管就位**（`oriel.dragRegion` 是函数、标题栏被登记成
 拖动区域）与**内建窗口命令往返**（页面调两次 `win.toggleOnTop`，而 demo 没有注册任何 `win.*`）
@@ -707,7 +927,7 @@ sudo apt-get install -y fonts-noto-cjk   # 中文界面必需，否则渲染成�
 内建命令的表与参数解析由 `tests/OrielWeb.Tests/BuiltInWindowCommandTests.cs` 用假窗口逐条断言
 （含"缺参数时报错而不是当 0"「没有来源窗口时报错」与"内建压过应用同名命令"）。
 
-三平台的具体取证脚本在 `tools/`（`verify-linux.sh`、`verify-linux-shell.sh`、`verify-macos.sh`、`verify-pack.ps1`），
+三平台的验证脚本在 `tools/`（`verify-linux.sh`、`verify-windows.ps1`、`verify-macos.sh`），
 由 CI 调用；哪些项**已经过真机**、哪些还只是编译验证，见 [ROADMAP.md](ROADMAP.md)。
 
 失败时，CI 里的冒烟步骤与打包步骤都会把原因写成 **GitHub 注解**（各自检模式的结论行、`vpk` 自己的

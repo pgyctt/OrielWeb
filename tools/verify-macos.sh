@@ -175,15 +175,20 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-section "机器断言自检：nav / ipc / theme / capability / multiwindow / scheme"
+section "机器断言自检：nav / ipc / theme / capability / multiwindow / scheme / threading / tray / tray-js"
 # 放在观察窗之前：自检自己驱动页面（跳转 / 后退 / 前进 / 刷新 / 失败、console 转发、
 # postMessage、EmitEvent 闭环），跑完自己关窗退出，退出码即结论，与后面的观察窗互不干扰。
 # 这里不用 timeout：macOS 自带的是 BSD 用户态，没有 GNU coreutils 的 timeout。
 # 自检自身有看门狗（nav 90s / ipc 30s），下面的等待循环只是兜底。
+# threading：IsOnUiThread / InvokeOnUiThread / PostToUiThread 的语义（真实消息循环里取证）。
+# tray / tray-js：托盘后端（多托盘、图标解码、模板标记、菜单、显隐、标题、按 id 移除）与
+#   前端（页面经 oriel.tray 调内建 tray.* 命令）——后者证明前后端 API 一致且往返真的通。
+#   注：macOS 的托盘走 NSStatusItem，无需托盘宿主即可创建，所以这两项在 CI 上有效；
+#   Linux 的 GtkStatusIcon 在没有托盘宿主时只是"图标不显示"，断言判的是资源建/撤销与状态回读。
 SELFTEST_FAILED=0
 # 未通过模式的结论行汇总，最后拼进一条 GitHub 注解（注解用 API 就能读，不必登录翻日志）
 SELFTEST_FAIL_DETAIL=""
-for mode in nav ipc theme capability multiwindow scheme; do
+for mode in nav ipc theme capability multiwindow scheme threading tray tray-js; do
     selftest_log="$OUT/selftest-$mode.log"
     # 自检开关已合并：--selftest <名字>；输出结论行格式未变（NAV-SELFTEST: PASS 等）
     "$APP_EXE" --selftest "$mode" >"$selftest_log" 2>&1 &
@@ -201,7 +206,7 @@ for mode in nav ipc theme capability multiwindow scheme; do
         selftest_code=$?
     fi
 
-    selftest_verdict="$(grep -E '^(NAV|IPC|THEME|CAPABILITY|MULTIWINDOW|SCHEME)-SELFTEST: ' "$selftest_log" | tail -1 || true)"
+    selftest_verdict="$(grep -E '^(NAV|IPC|THEME|CAPABILITY|MULTIWINDOW|SCHEME|THREADING|TRAY|TRAY-JS)-SELFTEST: ' "$selftest_log" | tail -1 || true)"
     echo "  [$mode] 退出码=${selftest_code} 结论=${selftest_verdict:-无}"
     # 明细总是回显到 CI 日志：artifact 里有完整文件，但日志能直接看
     sed 's/^/    /' "$selftest_log" || true
@@ -246,6 +251,61 @@ if ! grep -q 'SINGLE-INSTANCE-SECONDARY' "$OUT/si-secondary.log"; then
     SELFTEST_FAIL_DETAIL="${SELFTEST_FAIL_DETAIL:+$SELFTEST_FAIL_DETAIL }[single-instance] 第二个实例没有通知首实例"
     echo "    （第二个实例没有通知首实例）"
 fi
+
+# ---------------------------------------------------------------------------
+section "退出语义：正常退出 / 超时强杀（子进程取证）"
+# 这两项必须**子进程**取证：看门狗超时走 Environment.Exit，会把测试运行器一起带走。
+#
+# 判定口径（刻意与另外两个平台不同，理由是本脚本上面已经记录过的那个坑）：
+#  · 结论行是**主**判据（与其它自检一致）。
+#  · 退出码只在 exit-timeout 上判定：它由 Environment.Exit(ForceExitCode) **直接终止进程**，
+#    不经过 AppKit，因此退出码可靠。
+#  · exit 的退出码**只记录不判定**：正常退出走的是 Run() 返回 → Main 返回 → AppKit 的
+#    terminate（applicationShouldTerminateAfterLastWindowClosed），实测它会吃掉 Main 里设的
+#    Environment.ExitCode（本脚本的注释里记过："nav 自检打印 FAIL 却返回 0"）。
+#    在这里断言"必须为 0"会在 macOS 上引入一个永远红的假失败，而那不是真实缺陷。
+#    想真正验证退出码，应当由宿主在 Main 里显式 Environment.Exit 收尾——那属于应用侧约定。
+exit_timeout_code_expected=2
+for mode in exit exit-timeout; do
+    case "$mode" in
+        exit)         pattern='^EXIT-SELFTEST: ' ;;
+        exit-timeout) pattern='^EXIT-TIMEOUT-SELFTEST: ' ;;
+    esac
+    log="$OUT/selftest-$mode.log"
+
+    "$APP_EXE" --selftest "$mode" >"$log" 2>&1 &
+    selftest_pid=$!
+    waited=0
+    # 超时模式自带 3 秒看门狗 + 启动开销，30 秒上限足够；正常退出更快
+    while kill -0 "$selftest_pid" 2>/dev/null && (( waited < 30 )); do
+        sleep 1
+        waited=$((waited + 1))
+    done
+    if kill -0 "$selftest_pid" 2>/dev/null; then
+        kill -9 "$selftest_pid" 2>/dev/null || true
+        code=124
+    else
+        wait "$selftest_pid"
+        code=$?
+    fi
+
+    verdict="$(grep -E "$pattern" "$log" | tail -1 || true)"
+    echo "  [$mode] 退出码=${code} 结论=${verdict:-无}"
+    sed 's/^/    /' "$log" || true
+
+    if [[ "$verdict" != *PASS* ]]; then
+        SELFTEST_FAILED=1
+        fail_tail="$(grep -v '^[[:space:]]*$' "$log" | tail -n 2 | tr '\n' ' ' | tr -s ' ')"
+        SELFTEST_FAIL_DETAIL="${SELFTEST_FAIL_DETAIL:+$SELFTEST_FAIL_DETAIL }[$mode] ${verdict:-无结论行}（退出码 ${code}）：${fail_tail:0:300}"
+        echo "    （未读到 PASS 结论行，按失败处理）"
+    elif [ "$mode" = "exit-timeout" ] && [ "$code" -ne "$exit_timeout_code_expected" ]; then
+        # 结论行 PASS 但退出码不对 ⇒ 看门狗没有真的强杀（进程自己退出了）。
+        # 这正是"只看结论行会漏掉"的那一类，所以这里必须判。
+        SELFTEST_FAILED=1
+        SELFTEST_FAIL_DETAIL="${SELFTEST_FAIL_DETAIL:+$SELFTEST_FAIL_DETAIL }[$mode] 退出码应为 ${exit_timeout_code_expected}，实际 ${code}——看门狗可能没有真的强杀"
+        echo "    （退出码不符：期望 ${exit_timeout_code_expected}，实际 ${code}）"
+    fi
+done
 
 # ---------------------------------------------------------------------------
 section "运行取证（观察窗 ${OBSERVE_SECONDS}s）"
