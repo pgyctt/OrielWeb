@@ -176,6 +176,30 @@ internal interface IWindowBackend
     /// <summary>启用/禁用窗口的输入（见 <see cref="IsEnabled"/>）。</summary>
     void SetEnabled(bool enabled);
 
+    /// <summary>
+    /// 设置窗口的最大尺寸（逻辑像素）。传 0 表示不限制。
+    /// </summary>
+    /// <remarks>
+    /// <b>与 <c>SetMinSize</c> 是同一套机制的两端</b>，但三平台落点不同：
+    /// Windows 在 <c>WM_GETMINMAXINFO</c> 里同时处理 min 与 max（那边本来就有这个处理）、
+    /// Cocoa 是 <c>setContentMaxSize:</c>、GTK 走 <c>gtk_window_set_geometry_hints</c>
+    /// ——**只声明 max**，不动既有的 <c>set_size_request</c> min 机制。
+    /// </remarks>
+    void SetMaxSize(int width, int height);
+
+    /// <summary>
+    /// 请求用户注意（任务栏闪烁 / Dock 弹跳）。
+    /// </summary>
+    /// <param name="type">
+    /// <see cref="OrielUserAttention.Critical"/> 或 <see cref="OrielUserAttention.Informational"/>；
+    /// <c>null</c> 表示**取消**已发出的请求。
+    /// </param>
+    /// <remarks>
+    /// <b>Linux 上两档退化成同一件事</b>：GTK 只有 <c>gtk_window_set_urgency_hint</c>
+    /// 这个开/关，没有紧急程度的分级。如实记录，而不是在那里假装分档。
+    /// </remarks>
+    void RequestUserAttention(OrielUserAttention? type);
+
     void Show();
     void Hide();
     void Close();
@@ -428,6 +452,22 @@ internal interface IWindowBackend
     /// </remarks>
     MessageResult? ShowMessageDialog(
         string message, string? title, string kind, MessageButtons buttons, string okLabel, string cancelLabel);
+}
+
+/// <summary>请求用户注意的紧急程度（对标 Tauri 的 <c>UserAttentionType</c>）。</summary>
+/// <remarks>
+/// 取值与 Tauri 一致（<c>Critical = 1</c>、<c>Informational = 2</c>），
+/// 这样页面侧的常量对象可以直接对得上。
+/// <b>Linux 上两档没有区别</b>（GTK 只有开/关），见
+/// <see cref="IWindowBackend.RequestUserAttention(OrielUserAttention?)"/>。
+/// </remarks>
+public enum OrielUserAttention
+{
+    /// <summary>持续提示直到用户来看（Windows 一直闪到激活、macOS 弹跳）。</summary>
+    Critical = 1,
+
+    /// <summary>短暂提示一下。</summary>
+    Informational = 2,
 }
 
 /// <summary>消息对话框的按钮集合。</summary>

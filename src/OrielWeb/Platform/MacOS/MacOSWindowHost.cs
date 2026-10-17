@@ -61,6 +61,18 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
 
     private int _minWidth;
     private int _minHeight;
+
+    /// <summary>最大尺寸（逻辑像素，0 = 不限制）。与 <c>_minWidth</c> / <c>_minHeight</c> 配对。</summary>
+    private int _maxWidth;
+    private int _maxHeight;
+
+    /// <summary>已发出的"请求注意"请求 id（<c>cancelUserAttentionRequest:</c> 要用）。</summary>
+    /// <remarks>
+    /// macOS 的 <c>requestUserAttention:</c> 返回一个 id，取消时要把它交回去——
+    /// 这与另两个平台（"取消"是个无参动作）不同，所以要记下来。
+    /// </remarks>
+    private nint _attentionRequestId;
+
     private bool _isFullscreen;
     private bool _isOnTop;
     private string _title;
@@ -321,6 +333,66 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         {
             ObjCRuntime.SendVoidBool(_nsWindow, ObjCRuntime.Sel("setIgnoresMouseEvents:"), !enabled);
         }
+    }
+
+    /// <summary>设置最大尺寸（见 <see cref="IWindowBackend.SetMaxSize"/>）。</summary>
+    /// <remarks>
+    /// <c>setContentMaxSize:</c> 收 <c>NSSize</c>。<b>传 0 表示不限制</b>——
+    /// Cocoa 的约定是用一个很大的值（<c>CGFLOAT_MAX</c>）表示"没有上限"，
+    /// 而不是 0（0 会把窗口卡成 0 宽）。这里用 <c>double.MaxValue</c> 对应它。
+    /// </remarks>
+    public void SetMaxSize(int width, int height)
+    {
+        _maxWidth = width;
+        _maxHeight = height;
+
+        if (_nsWindow == 0)
+        {
+            return;
+        }
+
+        // 0 → "没有上限"。用 double.MaxValue 而不是 0：后者是"最多 0 像素"。
+        ObjCRuntime.SendVoidDouble2(
+            _nsWindow,
+            ObjCRuntime.Sel("setContentMaxSize:"),
+            width > 0 ? width : double.MaxValue,
+            height > 0 ? height : double.MaxValue);
+    }
+
+    /// <summary>请求用户注意（见 <see cref="IWindowBackend.RequestUserAttention"/>）。</summary>
+    /// <remarks>
+    /// <c>requestUserAttention:</c> 的取值是 <c>NSCriticalRequest = 0</c> /
+    /// <c>NSInformationalRequest = 10</c>（**不是** 0/1，容易记错），
+    /// 返回值是一个请求 id，取消时要交给 <c>cancelUserAttentionRequest:</c>。
+    /// </remarks>
+    public void RequestUserAttention(OrielUserAttention? type)
+    {
+        if (_nsWindow == 0)
+        {
+            return;
+        }
+
+        if (type is null)
+        {
+            if (_attentionRequestId != 0)
+            {
+                ObjCRuntime.SendVoidNint(
+                    ObjCRuntime.GetClass("NSApplication"),
+                    ObjCRuntime.Sel("cancelUserAttentionRequest:"),
+                    _attentionRequestId);
+                _attentionRequestId = 0;
+            }
+
+            return;
+        }
+
+        const int NsCriticalRequest = 0;
+        const int NsInformationalRequest = 10;
+
+        int request = type == OrielUserAttention.Critical ? NsCriticalRequest : NsInformationalRequest;
+
+        _attentionRequestId = ObjCRuntime.SendNintNint(
+            _nsWindow, ObjCRuntime.Sel("requestUserAttention:"), request);
     }
 
     /// <summary>

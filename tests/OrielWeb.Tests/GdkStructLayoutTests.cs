@@ -92,4 +92,60 @@ public sealed class GdkStructLayoutTests
     /// 32 位下指针 4 字节对齐，没有 padding。
     /// </remarks>
     private static int PointerPaddingAfterType() => IntPtr.Size == 8 ? 4 : 0;
+
+    // ---- GdkGeometry（M5-6：gtk_window_set_geometry_hints 的最大尺寸约束）----
+    //
+    // 这个结构比 GdkEvent 更危险：它把 int 与 double **混排**，
+    // 而 double 要 8 字节对齐——偏移推错一位，写进去的就是另一个字段。
+    // 而 Linux 在 CI 里只做交叉编译，那种错误要到真机才暴露。
+
+    [Fact]
+    public void GdkGeometrySizeMatchesTheCStruct()
+    {
+        // 9 个 gint + 2 个 gdouble，按 8 字节对齐：
+        // 8*4（前 8 个 int）+ 8 + 8（两个 double）+ 4（win_gravity）+ 4（尾部填充）= 56
+        Assert.Equal(56, Marshal.SizeOf<GtkNative.GdkGeometry>());
+        Assert.Equal(GtkNative.GdkGeometry.GdkGeometrySize, Marshal.SizeOf<GtkNative.GdkGeometry>());
+    }
+
+    [Theory]
+    [InlineData("min_width", 0)]
+    [InlineData("min_height", 4)]
+    [InlineData("max_width", 8)]
+    [InlineData("max_height", 12)]
+    [InlineData("base_width", 16)]
+    [InlineData("base_height", 20)]
+    [InlineData("width_inc", 24)]
+    [InlineData("height_inc", 28)]
+    [InlineData("min_aspect", 32)]
+    [InlineData("max_aspect", 40)]
+    [InlineData("win_gravity", 48)]
+    public void GdkGeometryFieldOffsetsMatchTheCStruct(string fieldName, int expectedOffset)
+    {
+        Assert.NotNull(typeof(GtkNative.GdkGeometry).GetField(
+            fieldName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance));
+
+        Assert.Equal(expectedOffset, (int)Marshal.OffsetOf<GtkNative.GdkGeometry>(fieldName));
+    }
+
+    [Fact]
+    public void WritingMaxSizeLandsInTheRightFields()
+    {
+        // 布局对不对，最终要看"写进去的值出现在正确的偏移上"。
+        // 按 LinuxWindowHost.SetMaxSize 的写法填一遍，再把同一块内存按 int 读回来。
+        var geometry = default(GtkNative.GdkGeometry);
+        geometry.max_width = 800;
+        geometry.max_height = 600;
+
+        int[] words = new int[14];
+        MemoryMarshal.Write(MemoryMarshal.AsBytes(words.AsSpan()), in geometry);
+
+        Assert.Equal(800, words[2]);   // 偏移 8  → 第 3 个 int
+        Assert.Equal(600, words[3]);   // 偏移 12 → 第 4 个 int
+
+        // **只声明 max 时 min 两位必须仍是 0**：SetMaxSize 只带 GDK_HINT_MAX_SIZE，
+        // 若这两处被写成 0 而掩码里又恰好带了 MIN，窗口会被卡成 0 宽。
+        Assert.Equal(0, words[0]);
+        Assert.Equal(0, words[1]);
+    }
 }

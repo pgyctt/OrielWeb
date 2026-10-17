@@ -641,6 +641,43 @@ internal static unsafe partial class Win32
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool EnableWindow(nint hwnd, [MarshalAs(UnmanagedType.Bool)] bool enable);
 
+    // ---- 请求用户注意（任务栏闪烁）----
+
+    /// <summary>停止闪烁。</summary>
+    public const uint FLASHW_STOP = 0;
+
+    /// <summary>闪烁标题栏。</summary>
+    public const uint FLASHW_CAPTION = 0x1;
+
+    /// <summary>闪烁任务栏按钮。</summary>
+    public const uint FLASHW_TRAY = 0x2;
+
+    /// <summary>两者都闪（<c>FLASHW_CAPTION | FLASHW_TRAY</c>）。</summary>
+    public const uint FLASHW_ALL = 0x3;
+
+    /// <summary>一直闪到窗口被激活为止。</summary>
+    public const uint FLASHW_TIMERNOFG = 0xC;
+
+    /// <summary><c>FlashWindowEx</c> 的参数。</summary>
+    /// <remarks>
+    /// <c>cbSize</c> 必须等于本结构的大小，否则调用直接失败——所以构造时用
+    /// <c>Marshal.SizeOf</c> 而不是手写常量。
+    /// </remarks>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct FLASHWINFO
+    {
+        public uint cbSize;
+        public nint hwnd;
+        public uint dwFlags;
+        public uint uCount;
+        public uint dwTimeout;
+    }
+
+    /// <summary>闪烁窗口以引起用户注意。</summary>
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool FlashWindowEx(ref FLASHWINFO pwfi);
+
     /// <summary>
     /// 窗口是否"可见"（自身及所有祖先都带 <c>WS_VISIBLE</c>）。
     /// </summary>

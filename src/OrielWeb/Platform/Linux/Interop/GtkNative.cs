@@ -163,6 +163,90 @@ internal static unsafe partial class GtkNative
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool GtkWidgetGetSensitive(nint widget);
 
+    /// <summary>设置"紧急"提示（任务栏里高亮，请求用户注意）。</summary>
+    /// <remarks>
+    /// GTK **没有**"紧急程度"的分级——只有开/关。所以 Windows 与 macOS 上
+    /// Critical / Informational 的区分在 Linux 上会退化成同一件事（见接口注释）。
+    /// </remarks>
+    [LibraryImport(Gtk, EntryPoint = "gtk_window_set_urgency_hint")]
+    internal static partial void GtkWindowSetUrgencyHint(nint window, [MarshalAs(UnmanagedType.Bool)] bool setting);
+
+    /// <summary>
+    /// <c>GdkGeometry</c>：<c>gtk_window_set_geometry_hints</c> 的几何约束。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 用 <see cref="LayoutKind.Explicit"/> + 显式偏移而不是 Sequential：
+    /// 这个结构里 <c>int</c> 与 <c>double</c> 混排，字段偏移要靠对齐规则推——
+    /// 而本库在 <c>GdkEventConfigure</c> 上已经吃过一次"手算偏移算错"的亏
+    /// （当时 24 vs 20，症状是几何查询给出乱值）。
+    /// 显式写出来，再配一条布局测试钉住，就不需要每次读代码时重新推一遍。
+    /// </para>
+    /// <para>
+    /// 对应 C 定义（共 56 字节：9 个 <c>gint</c> + 2 个 <c>gdouble</c>，按 8 字节对齐）：
+    /// <code>
+    /// struct GdkGeometry {
+    ///   gint min_width, min_height, max_width, max_height;
+    ///   gint base_width, base_height;
+    ///   gint width_inc, height_inc;
+    ///   gdouble min_aspect, max_aspect;
+    ///   GdkGravity win_gravity;
+    /// };
+    /// </code>
+    /// </para>
+    /// </remarks>
+    [StructLayout(LayoutKind.Explicit, Size = GdkGeometrySize)]
+    internal struct GdkGeometry
+    {
+        /// <summary>结构大小（字节）。测试会断言它与 <c>Marshal.SizeOf</c> 一致。</summary>
+        internal const int GdkGeometrySize = 56;
+
+        [FieldOffset(0)]
+        public int min_width;
+
+        [FieldOffset(4)]
+        public int min_height;
+
+        [FieldOffset(8)]
+        public int max_width;
+
+        [FieldOffset(12)]
+        public int max_height;
+
+        [FieldOffset(16)]
+        public int base_width;
+
+        [FieldOffset(20)]
+        public int base_height;
+
+        [FieldOffset(24)]
+        public int width_inc;
+
+        [FieldOffset(28)]
+        public int height_inc;
+
+        // 两个 gdouble 从 8 的倍数偏移开始（32 已是 8 的倍数）
+        [FieldOffset(32)]
+        public double min_aspect;
+
+        [FieldOffset(40)]
+        public double max_aspect;
+
+        [FieldOffset(48)]
+        public int win_gravity;
+
+        // 52..55 是尾部填充（结构按 8 字节对齐）
+    }
+
+    /// <summary>设置几何约束（本库只用来声明最大尺寸，见 <c>LinuxWindowHost.SetMaxSize</c>）。</summary>
+    /// <param name="window">顶层窗口。</param>
+    /// <param name="geometryWidget">几何提示的参照控件；传 0 表示窗口自身。</param>
+    /// <param name="geometry">约束值。</param>
+    /// <param name="geomMask"><c>GdkWindowHints</c> 位掩码，只有置位的字段才生效。</param>
+    [LibraryImport(Gtk, EntryPoint = "gtk_window_set_geometry_hints")]
+    internal static partial void GtkWindowSetGeometryHints(
+        nint window, nint geometryWidget, ref GdkGeometry geometry, int geomMask);
+
     /// <summary>在指针位置弹出菜单；triggerEvent 传 0 表示用当前指针位置（GTK 3.22+）。</summary>
     [LibraryImport(Gtk, EntryPoint = "gtk_menu_popup_at_pointer")]
     internal static partial void GtkMenuPopupAtPointer(nint menu, nint triggerEvent);

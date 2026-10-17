@@ -44,6 +44,11 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
 
     private int _minWidth;
     private int _minHeight;
+
+    /// <summary>最大尺寸（逻辑像素，0 = 不限制）。与 <c>_minWidth</c> / <c>_minHeight</c> 配对。</summary>
+    private int _maxWidth;
+    private int _maxHeight;
+
     private bool _isFullscreen;
     private bool _isOnTop;
     private string _title;
@@ -311,6 +316,56 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         if (WindowAlive)
         {
             GtkNative.GtkWidgetSetSensitive(_gtkWindow, enabled ? 1 : 0);
+        }
+    }
+
+    /// <summary>设置最大尺寸（见 <see cref="IWindowBackend.SetMaxSize"/>）。</summary>
+    /// <remarks>
+    /// <para>
+    /// 走 <c>gtk_window_set_geometry_hints</c>，而且**只声明 <c>GDK_HINT_MAX_SIZE</c>**：
+    /// 这样既加上限，又不动 <c>SetMinSize</c> 已有的 <c>set_size_request</c> 机制
+    /// （两条路同时生效，各管一端，不会互相覆盖）。
+    /// </para>
+    /// <para>
+    /// 传 0 表示取消上限——此时掩码里不带 <c>GDK_HINT_MAX_SIZE</c>，
+    /// 而不是"声明一个 0 的上限"（后者会把窗口卡成 0 宽）。
+    /// </para>
+    /// </remarks>
+    public void SetMaxSize(int width, int height)
+    {
+        _maxWidth = width;
+        _maxHeight = height;
+
+        if (!WindowAlive)
+        {
+            return;
+        }
+
+        const int GdkHintMaxSize = 1 << 2;
+
+        var geometry = default(GtkNative.GdkGeometry);
+        int hints = 0;
+
+        if (width > 0 || height > 0)
+        {
+            geometry.max_width = Math.Max(width, 0);
+            geometry.max_height = Math.Max(height, 0);
+            hints = GdkHintMaxSize;
+        }
+
+        GtkNative.GtkWindowSetGeometryHints(_gtkWindow, 0, ref geometry, hints);
+    }
+
+    /// <summary>请求用户注意（见 <see cref="IWindowBackend.RequestUserAttention"/>）。</summary>
+    /// <remarks>
+    /// <b>两档在这里没有区别</b>：GTK 只有 <c>gtk_window_set_urgency_hint</c> 这个开/关，
+    /// 没有紧急程度的分级。传 null 表示取消（置为 false）。
+    /// </remarks>
+    public void RequestUserAttention(OrielUserAttention? type)
+    {
+        if (WindowAlive)
+        {
+            GtkNative.GtkWindowSetUrgencyHint(_gtkWindow, type is not null);
         }
     }
 

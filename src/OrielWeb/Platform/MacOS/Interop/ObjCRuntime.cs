@@ -135,6 +135,17 @@ internal static unsafe partial class ObjCRuntime
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial void SendVoidNintBool(nint self, nint sel, nint arg, [MarshalAs(UnmanagedType.Bool)] bool flag);
 
+    /// <summary>
+    /// 调一个"收 <c>NSInteger</c>、返回 <c>NSInteger</c>"的 selector。
+    /// </summary>
+    /// <remarks>
+    /// 与 <c>SendIdNint</c> 的区别在**返回值类型**：那个返回对象指针，这个返回整数值。
+    /// 两者在 x86_64 上都走同一套整数寄存器，但类型必须选对——
+    /// 不能"反正都是 8 字节"地混用，否则换个架构（ARM64 的浮点/整数返回约定不同）就出事。
+    /// </remarks>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendNintNint(nint self, nint sel, nint arg);
+
     // NSPoint/NSSize（2×double）与 NSRect（4×double）参数——见文件头说明
     /// <summary>一个对象参数 + 两个 double（NSSize）的调用（如 <c>NSImage initWithCGImage:size:</c>）。</summary>
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]

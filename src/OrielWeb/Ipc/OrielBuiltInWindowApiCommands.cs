@@ -99,6 +99,48 @@ internal static class OrielBuiltInWindowApiCommands
                 };
                 return true;
 
+            // ---- 尺寸约束（M5-6）----
+            //
+            // 只给 setMaxSize；min 早就有 window.setMinSize 了。页面侧的
+            // setSizeConstraints 会按需分派到这两条——那样宿主表面不增加"组合命令"，
+            // 而组合语义只在页面上存在。
+            case "window.setMaxSize":
+                handler = static (sender, args) =>
+                {
+                    JsonElement value = OrielJson.RequireArgElement(args, "value");
+                    Resolve(sender, args).SetMaxSize(ReadOptionalInt(value, "width"), ReadOptionalInt(value, "height"));
+                    return null;
+                };
+                return true;
+
+            // ---- 请求用户注意（M5-6）----
+            //
+            // type 为 null / 缺省 → 取消已发出的请求（与 Tauri 一致）。
+            case "window.requestUserAttention":
+                handler = static (sender, args) =>
+                {
+                    string? type = OrielJson.TryGetArgElement(args, "type", out JsonElement typeElement)
+                        && typeElement.ValueKind == JsonValueKind.String
+                            ? typeElement.GetString()
+                            : null;
+
+                    Resolve(sender, args).RequestUserAttention(type switch
+                    {
+                        "critical" => OrielUserAttention.Critical,
+                        "informational" => OrielUserAttention.Informational,
+                        null => null,
+                        _ => throw new OrielIpcException(
+                            $"window.requestUserAttention: 未知的 type「{type}」" +
+                            "（只认 critical / informational；不传表示取消）。")
+                        {
+                            Code = OrielIpcErrorCodes.InvalidArgument,
+                        },
+                    });
+
+                    return null;
+                };
+                return true;
+
             case "window.theme":
                 // 对标 Tauri 的 Window.theme()：返回 'light' / 'dark' / null。
                 //
@@ -549,4 +591,36 @@ internal static class OrielBuiltInWindowApiCommands
            && element.ValueKind == JsonValueKind.Number
             ? element.GetDouble()
             : throw new OrielIpcException($"命令 '{commandName}' 缺少数字参数 '{property}'。");
+
+    /// <summary>
+    /// 读一个可选的整数属性；缺省或 <c>null</c> 都当 0。
+    /// </summary>
+    /// <remarks>
+    /// 0 在本库的尺寸约束里表示**不限制**（与 Tauri 的 <c>null</c> 语义对应），
+    /// 所以"没给"与"给了 0"可以合并成同一件事——页面侧传 <c>null</c> 也落到这里。
+    /// 给了非数字会**明确报错**而不是当 0，那会让调用方以为限制生效了。
+    /// </remarks>
+    private static int ReadOptionalInt(JsonElement value, string property)
+    {
+        if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty(property, out JsonElement element))
+        {
+            return 0;
+        }
+
+        if (element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return 0;
+        }
+
+        if (element.ValueKind != JsonValueKind.Number)
+        {
+            throw new OrielIpcException(
+                $"window.setMaxSize 的 '{property}' 必须是数字或 null（实际是 {element.ValueKind}）。")
+            {
+                Code = OrielIpcErrorCodes.InvalidArgument,
+            };
+        }
+
+        return element.GetInt32();
+    }
 }

@@ -74,7 +74,6 @@ const GAPS = {
     },
     window: {
         CloseRequestedEvent: 'close-requested 事件的类型；本库在 event 模块用 onCloseRequested 表达',
-        UserAttentionType: '请求用户注意（任务栏闪烁 / Dock 弹跳）；本库还没有',
         availableMonitors: '多显示器枚举；本库还没有显示器模型',
         cursorPosition: '全局光标位置；本库还没有',
         currentMonitor: '同上',
@@ -284,13 +283,6 @@ const METHOD_DIVERGENCES = {
  */
 const METHOD_GAP_GROUPS = [
     {
-        reason: '窗口尺寸约束（`setMaxSize` / `setSizeConstraints`）。Windows 要加 `ptMaxTrackSize`、' +
-            'macOS 用 `setContentMaxSize:`——这两处都干净；**Linux 上 GTK 没有 max size 的简单入口**，' +
-            '得改用 `gtk_window_set_geometry_hints`（那会**替换**现有的 `set_size_request` min 机制），' +
-            '属于"没在真机验证过就不动已验证代码"的一类。',
-        methods: ['window.Window#setMaxSize', 'window.Window#setSizeConstraints'],
-    },
-    {
         reason: '窗口外观的开关（装饰 / 阴影 / 背景色 / 图标 / 三个按钮的可用性 / 可聚焦 / 置底）。' +
             '除了 `setDecorations`，其余都是"切一个样式位或属性"，形态相近，适合作为一批做。' +
             '`setDecorations` 单独麻烦：Windows 上 `ComputeStyle` 是**创建期的静态决定**，' +
@@ -348,12 +340,6 @@ const METHOD_GAP_GROUPS = [
             'window.Window#onScaleChanged', 'window.Window#onThemeChanged',
             'window.Window#onDragDropEvent',
         ],
-    },
-    {
-        reason: '请求用户注意（任务栏闪烁 / Dock 弹跳）。三个平台都有干净的入口' +
-            '（`FlashWindowEx` / urgency hint / `requestUserAttention:`），是剩下这些里最便宜的一个——' +
-            '没做只是因为本批的预算用在了别处，不是它难。',
-        methods: ['window.Window#requestUserAttention'],
     },
 ];
 

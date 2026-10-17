@@ -290,7 +290,47 @@ internal static class WindowSelfTest
                 SelfTestJson.Object(("label", SelfTestJson.String(ProbeLabel)), ("value", "true")));
             Check(probe.IsEnabled, "重新启用之后宿主侧 IsEnabled 应当回到 true");
 
-            // ---- 8. 定向销毁：关掉的是目标窗口而不是发起者 ----
+            // ---- 8. 尺寸约束 / 请求注意（M5-6）----
+            //
+            // **这两条没有可回读的状态**（宿主不暴露"当前上限"、"是否在闪烁"），
+            // 所以这里只能验"命令能跑通、参数被正确解析"——比空实现强，
+            // 但**不等于**已在真机验证过约束真的生效。这一点如实写在下面。
+            await AskMainAsync(
+                "window.setMaxSize",
+                SelfTestJson.Object(("label", SelfTestJson.String(ProbeLabel)), ("value", SelfTestJson.Object(("width", "800"), ("height", "600")))));
+
+            // 上限设完窗口仍能正常读几何——至少证明没把窗口搞坏
+            Check((await AskWithLabelAsync("window.outerSize", ProbeLabel)).GetProperty("width").GetDouble() > 0,
+                "设了最大尺寸之后 outerSize 仍应给得出正数");
+
+            // 0 表示不限制（取消上限）
+            await AskMainAsync(
+                "window.setMaxSize",
+                SelfTestJson.Object(("label", SelfTestJson.String(ProbeLabel)), ("value", SelfTestJson.Object(("width", "0"), ("height", "0")))));
+
+            // requestUserAttention：不传 type = 取消。先发再取消，两条都应通过参数校验。
+            await AskMainAsync(
+                "window.requestUserAttention",
+                SelfTestJson.Object(("label", SelfTestJson.String(ProbeLabel)), ("type", SelfTestJson.String("informational"))));
+            await AskMainAsync("window.requestUserAttention", SelfTestJson.Object(("label", SelfTestJson.String(ProbeLabel))));
+
+            // 未知 type 必须**被拒**（而不是当成取消静默通过）——
+            // 这条是可验证的，也是这几条里唯一有判断价值的一条
+            bool rejected = false;
+            try
+            {
+                await AskMainAsync(
+                    "window.requestUserAttention",
+                    SelfTestJson.Object(("label", SelfTestJson.String(ProbeLabel)), ("type", SelfTestJson.String("bogus"))));
+            }
+            catch (InvalidOperationException)
+            {
+                rejected = true;
+            }
+
+            Check(rejected, "未知的 requestUserAttention type 应当被拒（不能当成取消静默通过）");
+
+            // ---- 9. 定向销毁：关掉的是目标窗口而不是发起者 ----
             await AskWithLabelAsync("window.destroy", ProbeLabel);
             await WaitForAsync(() => !app.Windows.Contains(probe), 5000);
 

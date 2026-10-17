@@ -89,6 +89,11 @@ internal partial class Win32WindowHost : IWindowBackend
 
     private int _minWidth;
     private int _minHeight;
+
+    /// <summary>最大尺寸（逻辑像素，0 = 不限制）。与 <c>_minWidth</c> / <c>_minHeight</c> 配对。</summary>
+    private int _maxWidth;
+    private int _maxHeight;
+
     private bool _isFullscreen;
     private bool _isOnTop;
 
@@ -857,6 +862,24 @@ internal partial class Win32WindowHost : IWindowBackend
                     info->ptMinTrackSize.Y = _options.Frameless
                         ? minHeight
                         : ClientToWindowSize(1, minHeight, ComputeStyle(_options), dpi).Height;
+                }
+
+                // 最大尺寸：与 min 同一处处理，同样是**整窗**尺寸，所以 framed 窗口要先
+                // 把"客户区上限"换算成整窗——否则上限会变成"客户区最多到 上限 - 边框"。
+                if (_maxWidth > 0)
+                {
+                    int maxWidth = LogicalPixels.ToPhysical(_maxWidth, dpi);
+                    info->ptMaxTrackSize.X = _options.Frameless
+                        ? maxWidth
+                        : ClientToWindowSize(maxWidth, 1, ComputeStyle(_options), dpi).Width;
+                }
+
+                if (_maxHeight > 0)
+                {
+                    int maxHeight = LogicalPixels.ToPhysical(_maxHeight, dpi);
+                    info->ptMaxTrackSize.Y = _options.Frameless
+                        ? maxHeight
+                        : ClientToWindowSize(1, maxHeight, ComputeStyle(_options), dpi).Height;
                 }
 
                 return 0;
@@ -1971,6 +1994,55 @@ internal partial class Win32WindowHost : IWindowBackend
             // 返回值是"调用之前是否启用"，不是操作是否成功——显式丢弃免得被当成结果
             _ = Win32.EnableWindow(_hwnd, enabled);
         }
+    }
+
+    /// <summary>设置最大尺寸（见 <see cref="IWindowBackend.SetMaxSize"/>）。</summary>
+    /// <remarks>
+    /// 只存字段：真正的约束在 <c>WM_GETMINMAXINFO</c> 里施加（那边本来就在处理 min）。
+    /// </remarks>
+    public void SetMaxSize(int width, int height)
+    {
+        _maxWidth = width;
+        _maxHeight = height;
+    }
+
+    /// <summary>请求用户注意（见 <see cref="IWindowBackend.RequestUserAttention"/>）。</summary>
+    /// <remarks>
+    /// 用 <c>FlashWindowEx</c> 闪任务栏按钮：
+    /// <c>Critical</c> 用 <c>FLASHW_TIMERNOFG</c>（一直闪到窗口被激活），
+    /// <c>Informational</c> 只闪三下；取消走 <c>FLASHW_STOP</c>。
+    /// </remarks>
+    public void RequestUserAttention(OrielUserAttention? type)
+    {
+        if (_hwnd == 0)
+        {
+            return;
+        }
+
+        var info = new Win32.FLASHWINFO
+        {
+            cbSize = (uint)Marshal.SizeOf<Win32.FLASHWINFO>(),
+            hwnd = _hwnd,
+        };
+
+        switch (type)
+        {
+            case OrielUserAttention.Critical:
+                info.dwFlags = Win32.FLASHW_ALL | Win32.FLASHW_TIMERNOFG;
+                info.uCount = 0;   // TIMERNOFG 时 uCount 被忽略
+                break;
+
+            case OrielUserAttention.Informational:
+                info.dwFlags = Win32.FLASHW_ALL;
+                info.uCount = 3;
+                break;
+
+            default:
+                info.dwFlags = Win32.FLASHW_STOP;
+                break;
+        }
+
+        _ = Win32.FlashWindowEx(ref info);
     }
 
     /// <summary>

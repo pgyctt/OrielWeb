@@ -140,7 +140,25 @@ async function scaleFactorOf(label) {
  * 原因是窗口可能被别的路径关掉——缓存状态会与真实情况脱节，
  * 而脱节的表现是"对一个已关闭的窗口调用方法却没有报错"。
  */
+
+/**
+ * 请求用户注意时的紧急程度（对标 Tauri 的 `UserAttentionType`）。
+ *
+ * @remarks
+ * **取值与 Tauri 完全一致**（`Critical = 1`、`Informational = 2`），
+ * 而且带上反向映射（`UserAttentionType[1] === 'Critical'`）——
+ * 迁移代码里可能出现任一方向，两种写法都要能对得上。
+ */
+export const UserAttentionType = Object.freeze({
+    1: 'Critical',
+    2: 'Informational',
+    Critical: 1,
+    Informational: 2,
+});
+
 export class Window {
+
+
     /**
      * @param {string} label
      */
@@ -355,6 +373,83 @@ export class Window {
         }
 
         return invoke('window.setEnabled', { label: this.label, value: enabled });
+    }
+
+    // ---- 尺寸约束（M5-6）----
+
+    /**
+     * 设置窗口的最大尺寸。
+     *
+     * @param {import('./dpi.js').SizeObject | {width: number, height: number} | [number, number] | null} size
+     *   与 `setSize` 收同样的形状；传 `null` 表示**取消**上限。
+     * @returns {Promise<void>}
+     * @remarks 需要 `Allow("window.setMaxSize")`。
+     */
+    setMaxSize(size) {
+        if (size === null || size === undefined) {
+            return invoke('window.setMaxSize', { label: this.label, value: { width: 0, height: 0 } });
+        }
+
+        const normalized = normalizeSize(size);
+
+        return invoke('window.setMaxSize', {
+            label: this.label,
+            value: { width: normalized.width, height: normalized.height },
+        });
+    }
+
+    /**
+     * 一次设置尺寸约束的上下限（对标 Tauri 的 `Window.setSizeConstraints()`）。
+     *
+     * @param {{minWidth?: number|null, minHeight?: number|null, maxWidth?: number|null, maxHeight?: number|null}} constraints
+     *   省略或给 `null` 的项**保持不动**（不会把它清成 0）。
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setMinSize")` 与/或 `Allow("window.setMaxSize")`——
+     * 这条在页面上**分派**到那两条命令，宿主没有"组合命令"。
+     * 只给了一侧时只会发一条命令，所以不会出现"另一条失败导致半套约束"。
+     */
+    async setSizeConstraints(constraints = {}) {
+        const min = [constraints.minWidth, constraints.minHeight];
+        const max = [constraints.maxWidth, constraints.maxHeight];
+
+        // 两侧都给才发对应命令：省略的项表示"这一次不动它"
+        if (min.some((value) => value !== null && value !== undefined)) {
+            await invoke('window.setMinSize', {
+                label: this.label,
+                width: min[0] ?? 0,
+                height: min[1] ?? 0,
+            });
+        }
+
+        if (max.some((value) => value !== null && value !== undefined)) {
+            await invoke('window.setMaxSize', {
+                label: this.label,
+                value: { width: max[0] ?? 0, height: max[1] ?? 0 },
+            });
+        }
+    }
+
+    // ---- 请求用户注意（M5-6）----
+
+    /**
+     * 请求用户注意（任务栏闪烁 / Dock 弹跳）。
+     *
+     * @param {number | null} [requestType] `UserAttentionType.Critical` /
+     *   `UserAttentionType.Informational`；**不传或给 `null` 表示取消**已发出的请求。
+     * @returns {Promise<void>}
+     * @remarks **macOS 上两档的区别最明显**（Critical 会一直弹跳到用户来看）；
+     * **Linux 上两档没有区别**（GTK 只有开/关）。
+     */
+    requestUserAttention(requestType = null) {
+        return invoke('window.requestUserAttention', {
+            label: this.label,
+            type: requestType === UserAttentionType.Critical
+                ? 'critical'
+                : requestType === UserAttentionType.Informational
+                    ? 'informational'
+                    : null,
+        });
     }
 
     // ---- 事件（对标 Tauri 的 Window.listen / once / emit / emitTo）----

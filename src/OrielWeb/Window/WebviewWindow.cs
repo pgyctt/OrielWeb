@@ -404,6 +404,22 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// <summary>启用/禁用窗口的输入（对标 Tauri 的 `Window.setEnabled()`）。</summary>
     public void SetEnabled(bool enabled) => Backend.SetEnabled(enabled);
 
+    /// <summary>
+    /// 设置窗口最大尺寸（逻辑像素，对标 Tauri 的 `Window.setMaxSize()`）。传 0 表示不限制。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="SetMinSize"/> 是同一套机制的两端：Windows 在 <c>WM_GETMINMAXINFO</c>
+    /// 里同时处理、Cocoa 是 <c>setContentMaxSize:</c>、GTK 走几何提示（只声明 max）。
+    /// </remarks>
+    public void SetMaxSize(int width, int height) => Backend.SetMaxSize(width, height);
+
+    /// <summary>
+    /// 请求用户注意（对标 Tauri 的 `Window.requestUserAttention()`）。
+    /// </summary>
+    /// <param name="type"><c>null</c> 表示取消已发出的请求。</param>
+    /// <remarks>Linux 上 Critical 与 Informational 没有区别（GTK 只有开/关）。</remarks>
+    public void RequestUserAttention(OrielUserAttention? type) => Backend.RequestUserAttention(type);
+
     public void Focus() => Backend.Focus();
     public void Maximize() => Backend.Maximize();
     public void Minimize() => Backend.Minimize();
