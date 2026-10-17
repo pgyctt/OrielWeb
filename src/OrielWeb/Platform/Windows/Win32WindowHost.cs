@@ -2268,6 +2268,43 @@ internal partial class Win32WindowHost : IWindowBackend
         _minHeight = height;
     }
 
+    /// <summary>设置是否可最大化（改 <c>WS_MAXIMIZEBOX</c>，见 <see cref="IWindowBackend.SetMaximizable"/>）。</summary>
+    public void SetMaximizable(bool enabled) => ApplyFrameStyleBit(Win32Constants.WS_MAXIMIZEBOX, enabled);
+
+    /// <summary>设置是否可最小化（改 <c>WS_MINIMIZEBOX</c>，见 <see cref="IWindowBackend.SetMinimizable"/>）。</summary>
+    public void SetMinimizable(bool enabled) => ApplyFrameStyleBit(Win32Constants.WS_MINIMIZEBOX, enabled);
+
+    /// <summary>
+    /// 切一个"边框类"样式位并让窗口重算非客户区。
+    /// </summary>
+    /// <remarks>
+    /// 抽出这个方法是因为 <c>setResizable</c> / <c>setMaximizable</c> / <c>setMinimizable</c>
+    /// 改的是同一类位：只写 <c>GWL_STYLE</c> 不够，必须再发一次
+    /// <c>SWP_FRAMECHANGED</c>，否则系统仍按旧样式画标题栏上的按钮——
+    /// 表现为"属性已经改了，但按钮还在"。
+    /// <para>
+    /// 只清 <c>WS_MAXIMIZEBOX</c>/<c>WS_MINIMIZEBOX</c> 是**安全**的：Win32 会据此自动灰掉
+    /// 系统菜单里的对应项，不需要我们再动菜单。这与"可关闭"不同——那边没有对应的样式位
+    /// （见 <see cref="IsClosable"/> 的说明），所以本方法**不**用于 closable。
+    /// </para>
+    /// </remarks>
+    /// <param name="bit">要切的样式位（单个位）。</param>
+    /// <param name="enabled">置位还是清位。</param>
+    private void ApplyFrameStyleBit(uint bit, bool enabled)
+    {
+        if (_hwnd == 0)
+        {
+            return;
+        }
+
+        nint style = Win32.GetWindowLongPtrW(_hwnd, Win32Constants.GWL_STYLE);
+        style = enabled ? style | (nint)bit : style & ~(nint)bit;
+        Win32.SetWindowLongPtrW(_hwnd, Win32Constants.GWL_STYLE, style);
+        Win32.SetWindowPos(_hwnd, 0, 0, 0, 0, 0,
+            Win32Constants.SWP_NOMOVE | Win32Constants.SWP_NOSIZE | Win32Constants.SWP_NOZORDER |
+            Win32Constants.SWP_NOOWNERZORDER | Win32Constants.SWP_FRAMECHANGED);
+    }
+
     public void MoveTo(int x, int y)
     {
         // x/y 是屏幕逻辑坐标（API.md 的契约，三平台一致），按当前窗口 DPI 折算成物理像素——

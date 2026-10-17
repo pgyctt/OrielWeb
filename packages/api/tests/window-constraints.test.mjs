@@ -91,6 +91,33 @@ test('setMaxSize 收与 setSize 同样的形状，null 表示取消上限', asyn
     clearMocks();
 });
 
+test('setMaximizable / setMinimizable 走布尔校验与同一形状', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', {
+        'window.setMaximizable': null,
+        'window.setMinimizable': null,
+    });
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    await win.setMaximizable(false);
+    await win.setMinimizable(true);
+
+    assert.deepEqual(calls[0], ['window.setMaximizable', { label: 'main', value: false }]);
+    assert.deepEqual(calls[1], ['window.setMinimizable', { label: 'main', value: true }]);
+
+    // 非布尔必须当场抛，而不是把 truthy 值透传给宿主——
+    // 宿主侧 GetRequiredArg<bool> 会拒，但错误信息里就没有"参数名"这个上下文了
+    assert.throws(() => win.setMaximizable('false'), TypeError);
+    assert.throws(() => win.setMinimizable(0), TypeError);
+
+    // 抛了就不该发命令（上面两次断言之后计数不该变）
+    assert.equal(calls.length, 2);
+
+    clearMocks();
+});
+
 test('setSizeConstraints 只发给了值的那一侧', async () => {
     clearMocks();
     const { calls, transport } = makeTransport('main', {

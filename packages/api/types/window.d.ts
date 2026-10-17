@@ -181,6 +181,29 @@ export class Window {
      */
     setEnabled(enabled: boolean): Promise<void>;
     /**
+     * 设置窗口是否可最大化。
+     *
+     * @param {boolean} enabled
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setMaximizable")`。
+     *
+     * **平台差异（两处都会咬人）**：
+     * - macOS 上这就是改 `NSWindowStyleMaskResizable`——AppKit 没有独立的最大化位，
+     *   所以调它会**连带**影响拖拽缩放，且与 `setResizable` 互相覆盖（后调的赢）；
+     * - Linux 上是**空操作**（GTK 无对应入口），`isMaximizable()` 也不会因此改变
+     *   ——它继续回落 `isResizable()`，不会撒谎说"已禁止"。
+     */
+    setMaximizable(enabled: boolean): Promise<void>;
+    /**
+     * 设置窗口是否可最小化。
+     *
+     * @param {boolean} enabled
+     * @returns {Promise<void>}
+     * @remarks 需要 `Allow("window.setMinimizable")`。Linux 上是空操作，理由同 `setMaximizable`。
+     */
+    setMinimizable(enabled: boolean): Promise<void>;
+    /**
      * 设置窗口的最大尺寸。
      *
      * @param {import('./dpi.js').SizeObject | {width: number, height: number} | [number, number] | null} size

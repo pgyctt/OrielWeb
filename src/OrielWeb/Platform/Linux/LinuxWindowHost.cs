@@ -1393,6 +1393,30 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         GtkNative.GtkWindowSetResizable(_gtkWindow, enabled);
     }
 
+    /// <summary>
+    /// 设置是否可最大化——<b>空操作</b>（见 <see cref="IWindowBackend.SetMaximizable"/>）。
+    /// </summary>
+    /// <remarks>
+    /// GTK3 没有控制最大化按钮的 API。窗口管理器允许哪些动作是由它自己依据
+    /// <c>_NET_WM_ALLOWED_ACTIONS</c> 算出来的，客户端改不了（Tauri/tao 在 Linux 上
+    /// 同样是空操作）。这里**刻意不记状态**：一旦记了，<see cref="IsMaximizable"/>
+    /// 就会给出一个"用户看到的按钮其实还在"的假值。要真的禁止最大化，
+    /// 现有手段是 <see cref="SetResizable"/>(false)——GTK 上两者本来就是同一件事。
+    /// </remarks>
+    public void SetMaximizable(bool enabled)
+    {
+        _ = enabled;
+    }
+
+    /// <summary>
+    /// 设置是否可最小化——<b>空操作</b>（见 <see cref="IWindowBackend.SetMinimizable"/>）。
+    /// </summary>
+    /// <remarks>理由同 <see cref="SetMaximizable"/>：GTK 没有对应入口，且不记状态以免读取撒谎。</remarks>
+    public void SetMinimizable(bool enabled)
+    {
+        _ = enabled;
+    }
+
     public void SetMinSize(int width, int height)
     {
         _minWidth = width;

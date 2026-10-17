@@ -337,7 +337,7 @@ F1 ─→ F2（scope 系统是 convertFileSrc 的前置）
 | **M5-3** Window 事件转发 | ✅ 完成 | `Window.listen` / `once` / `emit` / `emitTo`（纯委托到 `event` 模块）+ `unminimize`（映射到 `window.restore`，三平台同一个原生动作） |
 | **M5-4** `isEnabled` / `setEnabled` | ✅ 完成（Windows 已验证） | 三平台：`IsWindowEnabled`/`EnableWindow`、`gtk_widget_get_sensitive`/`set_sensitive`、Cocoa `ignoresMouseEvents`。**macOS 只挡鼠标不挡键盘**，如实记录。`isEnabled` 进白名单、`setEnabled` 不进 |
 | **M5-5** 剩余 36 项的**归类** | ✅ 完成（归类，不是实现） | H 的清单现在**每一项都有归属**：已实现 / 有意不做（2 项移动端专有）/ 待做（36 项，按批次优先级分 9 组、每组写明为什么还没做）。见 `packages/api/tests/tauri-alignment.test.mjs` 的 `METHOD_GAP_GROUPS` |
-| **M5-6** 待做清单的实现 | ⬜ 未开始 | 建议顺序：请求注意（1，最便宜）→ 尺寸约束（2）→ 外观开关（9）→ 其余按需 |
+| **M5-6** 待做清单的实现 | 🔄 进行中（5/36） | **已完成**：`requestUserAttention` + `UserAttentionType`（三平台原生入口，`setSizeConstraints` 组合语义只在页面侧）；`setMaxSize`（Windows `ptMaxTrackSize` / macOS `setContentMaxSize:` / **Linux 走 geometry hints——那会整体替换 `set_size_request`，所以 min/max 合并成一次调用**，另加 `GdkGeometry` 结构布局测试钉住）；`setSizeConstraints`；`setMaximizable` / `setMinimizable`（Windows 样式位 + `SWP_FRAMECHANGED`、macOS styleMask 位、**Linux 空操作**）。<br>**下一批**：`setClosable`（三平台语义不一致，Windows 落点是灰化系统菜单项而只读查询读 `WS_SYSMENU`，须单独一轮）、外观开关其余（`setShadow`/`setBackgroundColor`/`setIcon`/`setFocusable`/`setAlwaysOnBottom`）、`setDecorations`（Windows `ComputeStyle` 是创建期静态决定，须单独一轮） |
 
 ### M3 的状态（2026-10-17）
 

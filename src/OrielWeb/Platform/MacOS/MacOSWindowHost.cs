@@ -1187,6 +1187,33 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         ObjCRuntime.SendVoidDouble2(_nsWindow, ObjCRuntime.Sel("setContentMinSize:"), width, height);
     }
 
+    /// <summary>
+    /// 设置是否可最大化（见 <see cref="IWindowBackend.SetMaximizable"/>）。
+    /// </summary>
+    /// <remarks>
+    /// <b>在 macOS 上这就是改 <c>NSWindowStyleMaskResizable</c></b>，与
+    /// <see cref="SetResizable"/> 是同一个操作——AppKit 根本没有独立的最大化位，
+    /// 缩放按钮可用与否完全由 resizable 位决定（<see cref="IsMaximizable"/>
+    /// 读的也是这一位，所以"写进去能读回来"成立）。
+    /// <para>
+    /// 副作用要说清楚：调 <c>setMaximizable(false)</c> 会**同时**让窗口不可拖拽缩放。
+    /// 这是 AppKit 的模型，不是本库的取舍——Tauri 在 macOS 上也是同一落点。
+    /// 迁移代码若同时调过 <c>setResizable</c> 和 <c>setMaximizable</c>，
+    /// 在 macOS 上后调的那个赢。
+    /// </para>
+    /// </remarks>
+    public void SetMaximizable(bool enabled) => SetResizable(enabled);
+
+    /// <summary>设置是否可最小化（切 <c>NSWindowStyleMaskMiniaturizable</c>，见 <see cref="IWindowBackend.SetMinimizable"/>）。</summary>
+    public void SetMinimizable(bool enabled)
+    {
+        var style = ObjCRuntime.SendId(_nsWindow, ObjCRuntime.Sel("styleMask"));
+        var newStyle = enabled
+            ? (nint)((nuint)style | StyleMiniaturizable)
+            : (nint)((nuint)style & ~StyleMiniaturizable);
+        ObjCRuntime.SendVoidNint(_nsWindow, ObjCRuntime.Sel("setStyleMask:"), newStyle);
+    }
+
     public void MoveTo(int x, int y)
     {
         // API.md 的契约：屏幕坐标（应用像素、**左上角**原点）。cocoa 是左下角原点且 y 向上，

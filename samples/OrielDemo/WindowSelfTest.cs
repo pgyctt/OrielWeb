@@ -330,7 +330,39 @@ internal static class WindowSelfTest
 
             Check(rejected, "未知的 requestUserAttention type 应当被拒（不能当成取消静默通过）");
 
-            // ---- 9. 定向销毁：关掉的是目标窗口而不是发起者 ----
+            // ---- 9. 标题栏按钮的可用性：写进去、读回来（M5-6 第三组）----
+            //
+            // 这一组**有真断言**（不像上面尺寸约束那样只能验"跑得通"）：
+            // IsMaximizable/IsMinimizable 在 Windows 上读的就是刚改的那个样式位，
+            // 所以"改了属性、页面读回来、宿主侧读回来"三者必须一致。
+            Check(probe.IsMaximizable && probe.IsMinimizable, "前提前提：探针窗口初始应可最大化也可最小化");
+
+            await AskMainAsync(
+                "window.setMaximizable",
+                SelfTestJson.Object(("label", SelfTestJson.String(ProbeLabel)), ("value", "false")));
+            Check(!probe.IsMaximizable, "禁止最大化之后宿主侧 IsMaximizable 应当是 false");
+            Check((await AskWithLabelAsync("window.isMaximizable", ProbeLabel)).GetBoolean() == false,
+                "window.isMaximizable 应当跟上（false）");
+            Check(probe.IsMinimizable, "改 maximizable 不该顺带动到 minimizable（两者是独立的样式位）");
+
+            await AskMainAsync(
+                "window.setMinimizable",
+                SelfTestJson.Object(("label", SelfTestJson.String(ProbeLabel)), ("value", "false")));
+            Check(!probe.IsMinimizable, "禁止最小化之后宿主侧 IsMinimizable 应当是 false");
+            Check((await AskWithLabelAsync("window.isMinimizable", ProbeLabel)).GetBoolean() == false,
+                "window.isMinimizable 应当跟上（false）");
+
+            // 恢复：确认是"可切"而不是"只能关掉"
+            await AskMainAsync(
+                "window.setMaximizable",
+                SelfTestJson.Object(("label", SelfTestJson.String(ProbeLabel)), ("value", "true")));
+            await AskMainAsync(
+                "window.setMinimizable",
+                SelfTestJson.Object(("label", SelfTestJson.String(ProbeLabel)), ("value", "true")));
+            Check(probe.IsMaximizable && probe.IsMinimizable,
+                "重新允许之后宿主侧两个读取都应当回到 true");
+
+            // ---- 10. 定向销毁：关掉的是目标窗口而不是发起者 ----
             await AskWithLabelAsync("window.destroy", ProbeLabel);
             await WaitForAsync(() => !app.Windows.Contains(probe), 5000);
 

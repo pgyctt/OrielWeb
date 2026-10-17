@@ -420,6 +420,17 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// <remarks>Linux 上 Critical 与 Informational 没有区别（GTK 只有开/关）。</remarks>
     public void RequestUserAttention(OrielUserAttention? type) => Backend.RequestUserAttention(type);
 
+    /// <summary>设置是否可最大化（对标 Tauri 的 `Window.setMaximizable()`）。</summary>
+    /// <remarks>
+    /// <b>macOS 上与 <see cref="SetResizable"/> 是同一个操作</b>（AppKit 只有
+    /// resizable 位，没有独立的最大化位），<b>Linux 上是空操作</b>（GTK 无对应入口）。
+    /// </remarks>
+    public void SetMaximizable(bool enabled) => Backend.SetMaximizable(enabled);
+
+    /// <summary>设置是否可最小化（对标 Tauri 的 `Window.setMinimizable()`）。</summary>
+    /// <remarks>Linux 上是空操作，理由见 <see cref="SetMaximizable"/>。</remarks>
+    public void SetMinimizable(bool enabled) => Backend.SetMinimizable(enabled);
+
     public void Focus() => Backend.Focus();
     public void Maximize() => Backend.Maximize();
     public void Minimize() => Backend.Minimize();

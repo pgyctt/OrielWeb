@@ -200,6 +200,21 @@ internal interface IWindowBackend
     /// </remarks>
     void RequestUserAttention(OrielUserAttention? type);
 
+    /// <summary>设置是否可最大化（见 <see cref="IsMaximizable"/>）。</summary>
+    /// <remarks>
+    /// <b>Linux 上是空操作</b>：GTK 没有控制最大化按钮的入口，允许的动作由窗口管理器
+    /// 自己按 <c>_NET_WM_ALLOWED_ACTIONS</c> 决定，应用改不了（Tauri 在那边同样是空操作）。
+    /// 状态也不会被记住——<see cref="IsMaximizable"/> 在 Linux 上继续回落
+    /// <see cref="IsResizable"/>，不会因为调过这个方法就撒谎说"已禁止最大化"。
+    /// </remarks>
+    void SetMaximizable(bool enabled);
+
+    /// <summary>设置是否可最小化（见 <see cref="IsMinimizable"/>）。</summary>
+    /// <remarks>
+    /// <b>Linux 上同样是空操作</b>，理由见 <see cref="SetMaximizable"/>。
+    /// </remarks>
+    void SetMinimizable(bool enabled);
+
     void Show();
     void Hide();
     void Close();

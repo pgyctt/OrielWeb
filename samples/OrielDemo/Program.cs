@@ -228,6 +228,10 @@ internal static class Program
                         // 两者都不是标题栏要做的事（标题栏不改窗口上限、也不闪任务栏）。
                         "window.setMaxSize",
                         "window.requestUserAttention",
+                        // 标题栏按钮的可用性（M5-6 第三组）。同样**不进白名单**——
+                        // 标题栏不需要改"能不能最大化"，那是应用自己的事。
+                        "window.setMaximizable",
+                        "window.setMinimizable",
                         // 几何查询（E2）：**刻意不放进标题栏白名单**——自绘标题栏不需要它们，
                         // 而它们能按 label 读到**别的**窗口的几何。所以要用必须显式声明。
                         "window.innerSize",
