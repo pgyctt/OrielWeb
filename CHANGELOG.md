@@ -7,6 +7,40 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
+## 0.3.8 - 2026-10-19
+
+修 0.3.7 仍带着的两个崩溃/错值缺陷，并把"CI 不绿也能发版"这条流程漏洞补上。
+
+### 修复
+
+- **macOS 托盘状态项未 retain，跨 IPC 后是野指针（SIGSEGV）**：`NSStatusBar.statusItemWithLength:`
+  不符合 alloc/new/copy 命名，返回的是 **autoreleased** 对象；原实现直接存进字段跨 IPC 持有。
+  `--selftest tray`（同一调用栈内创建并使用）一直绿，而页面调 `tray.new` 之后 WebKit 会排空
+  autorelease pool，`_statusItem` 与它的 button 即被释放——随后 `tray.setTooltip` 给野指针发消息，
+  进程直接 SIGSEGV（退出码 139）。构造里 `objc_retain`、`Dispose` 里 `objc_release` 配对。
+  **影响面**：macOS 上任何"页面侧创建托盘后再调用其方法"的应用。0.3.6 起即存在。
+  **为什么能找到**：`tray-js` 自检改成每步即时回传进度，崩溃前最后一条是
+  `即将调用 tray.setTooltip`——原来 report 在脚本末尾一次性回传，崩了只剩"开始"。
+- **`window.setTitle` 会被页面标题覆盖（Linux）**：页面 `<title>` 的同步
+  （`RaiseTitleChanged`）在窗口加载完成时触发，WebKitGTK 的 `notify::title` 发得较晚，
+  正好抢在 `window.setTitle` 之后把标题改回页面标题。Windows/macOS 的时序恰好相反，
+  所以只有 Linux 的 `--selftest window` 红。三平台统一加"显式 API 设置优先于自动跟随"，
+  语义不再由平台的加载速度决定。
+
+### 工程
+
+- **发布闸校验 CI 结论**：`release.yml` 的 publish 在 `Test` 之前轮询同 commit 的 `ci.yml`
+  结论（最多 20 分钟），非 `success` 拒绝发布；等不到同样拒绝（"没验过"不等于"验过"）。
+  0.3.6 就是在 `smoke-macos` 已红的情况下推到 nuget.org 的，这条从这里堵住。
+- **`npm ci` 失败不再被吞**：它和 `npm test` 原先写在同一条 `run` 的多行里，Windows runner
+  的默认 shell 不会因前一条原生命令失败而中断，于是"`npm ci` 503 失败 + `npm test` 通过"
+  整步报绿，真正的失败被推迟到下一步。
+- **lockfile 的 `resolved` 改回 `registry.npmjs.org`**：原先被本地镜像写成
+  `registry.npmmirror.com`，美国 runner 从镜像拉包 503。npm 的 `replace-registry-host`
+  会把本地配置的镜像改写上去，国内开发者的 `npm ci` 仍走镜像。
+- **`npx --no-install tsc`**：本地没有 typescript 时明确报错，而不是去 registry 装同名的
+  无关包 `tsc@2.0.4`（它只会打印 "This is not the tsc command you are looking for"）。
+
 ## 0.3.7 - 2026-10-18
 
 修 0.3.6 的两个 macOS 缺陷，其中 `requestUserAttention` 是**一调用就崩**的回归，
