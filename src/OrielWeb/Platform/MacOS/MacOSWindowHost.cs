@@ -79,6 +79,15 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     private bool _isFullscreen;
     private bool _isOnTop;
     private string _title;
+
+    /// <summary>
+    /// 是否由 API（<see cref="SetTitle"/>）显式设过标题。
+    /// </summary>
+    /// <remarks>
+    /// 置位后不再让页面 <c>&lt;title&gt;</c> 覆盖窗口标题——显式设置优先于自动跟随。
+    /// 三平台同一语义（否则"页面标题何时能覆盖"会变成平台相关的隐式规则）。
+    /// </remarks>
+    private bool _titleSetExplicitly;
     private int _evalSeq;
 
     // 上一次已上报（托管事件 + 页面）的最大化状态。NSWindow 的 zoom 是同步生效的，
@@ -1254,6 +1263,8 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
 
     public void SetTitle(string title)
     {
+        // 显式设置之后，页面标题不再覆盖它（见 _titleSetExplicitly）
+        _titleSetExplicitly = true;
         _title = title;
         ObjCRuntime.SendVoidObj(_nsWindow, ObjCRuntime.Sel("setTitle:"), ObjCRuntime.MakeNSString(title));
     }
@@ -1761,6 +1772,12 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
 
     internal void RaiseTitleChanged(string title)
     {
+        // 显式设过标题就不再跟随页面标题（理由见 _titleSetExplicitly 的说明）
+        if (_titleSetExplicitly)
+        {
+            return;
+        }
+
         _title = title;
         TitleChanged?.Invoke(title);
     }

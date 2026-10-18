@@ -55,6 +55,17 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     private bool _isFullscreen;
     private bool _isOnTop;
     private string _title;
+
+    /// <summary>
+    /// 是否由 API（<see cref="SetTitle"/>）显式设过标题。
+    /// </summary>
+    /// <remarks>
+    /// 置位后不再让页面 <c>&lt;title&gt;</c> 覆盖窗口标题。这不是洁癖：WebKitGTK 在窗口
+    /// 加载完成后才发 <c>notify::title</c>，它可能**晚于** <c>window.setTitle</c>——
+    /// 不挡住的话，刚设的标题会被页面标题覆盖回去（<c>--selftest window</c> 在 Linux 上
+    /// 正是这样红的：设完读回还是原值）。
+    /// </remarks>
+    private bool _titleSetExplicitly;
     private int _evalSeq;
 
     // 上一次已上报（托管事件 + 页面）的最大化状态。GTK 的最大化经窗口管理器异步生效：
@@ -888,6 +899,12 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
 
     internal void RaiseTitleChanged(string title)
     {
+        // 显式设过标题就不再跟随页面标题（理由见 _titleSetExplicitly 的说明）
+        if (_titleSetExplicitly)
+        {
+            return;
+        }
+
         _title = title;
         TitleChanged?.Invoke(title);
         GtkNative.GtkWindowSetTitle(_gtkWindow, title);
@@ -1430,6 +1447,8 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
 
     public void SetTitle(string title)
     {
+        // 显式设置之后，页面标题不再覆盖它（见 _titleSetExplicitly）
+        _titleSetExplicitly = true;
         _title = title;
         if (!WindowAlive) { return; }
         GtkNative.GtkWindowSetTitle(_gtkWindow, title);

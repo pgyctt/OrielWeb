@@ -116,6 +116,15 @@ internal partial class Win32WindowHost : IWindowBackend
     private nint _savedStyle;
     private string _title;
 
+    /// <summary>
+    /// 是否由 API（<see cref="SetTitle"/>）显式设过标题。
+    /// </summary>
+    /// <remarks>
+    /// 置位后不再让页面 <c>&lt;title&gt;</c> 覆盖窗口标题——显式设置优先于自动跟随。
+    /// 三平台同一语义（否则"页面标题何时能覆盖"会变成平台相关的隐式规则）。
+    /// </remarks>
+    private bool _titleSetExplicitly;
+
     private event Action? Loaded;
     private event Action<OrielCloseRequestEventArgs>? Closing;
     private event Action? Closed;
@@ -1429,6 +1438,12 @@ internal partial class Win32WindowHost : IWindowBackend
 
     internal void RaiseTitleChanged(string title)
     {
+        // 显式设过标题就不再跟随页面标题（理由见 _titleSetExplicitly 的说明）
+        if (_titleSetExplicitly)
+        {
+            return;
+        }
+
         _title = title;
         Win32.SetWindowTextW(_hwnd, title); // 文档标题 → 窗口标题同步
         TitleChanged?.Invoke(title);
@@ -2413,6 +2428,8 @@ internal partial class Win32WindowHost : IWindowBackend
 
     public void SetTitle(string title)
     {
+        // 显式设置之后，页面标题不再覆盖它（见 _titleSetExplicitly）
+        _titleSetExplicitly = true;
         _title = title;
         Win32.SetWindowTextW(_hwnd, title);
     }
