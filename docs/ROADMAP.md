@@ -78,7 +78,30 @@
 - 若不符：先确认产物是**新构建的**（`dist/<rid>/app.png` 在不在）；GNOME 上 `StartupWMClass` 是否与 `WM_CLASS` 逐字符相同。
 - 状态：**图标文件缺失的降级路径与相对路径解析基准已在 Windows 真机取证**（2026-10-14：`--icon probe-icon.ico --require-icon` 从 cwd `E:\` 启动仍成功 ⇒ 按 exe 目录解析；缺失 + 不开严格模式 ⇒ 降级且退出码 0；缺失 + 严格模式 ⇒ 如期抛 `FileNotFoundException`）。**图标最终显示效果仍是人眼项**。
 
+#### 缩放变化事件（macOS 优先，2026-10-18 新增）
+- 环境：macOS 桌面（有两块缩放不同的显示器最好）。
+- 步骤：页面 `getCurrentWindow().onScaleChanged(e => console.log(e.payload))`，然后
+  (a) 把窗口从内置屏拖到外接屏（或反之）；(b) **只**在"系统设置 → 显示器"里改缩放，窗口不动。
+- 预期：两种情况都收到 `{ scaleFactor, size }`，`size` 是**物理像素**客户区。
+- 若不符：`windowDidResize:` / `windowDidMove:` 覆盖的是 (a)，
+  `windowDidChangeBackingProperties:` 覆盖的是 (b)——两者都是 `NSWindowDelegate` 的方法，
+  所以先确认 delegate 真的挂上了（`_nsWindowDelegate`），再看选择器名有没有拼错。
+  **选择器名写错不会报错，只会静默不被调用**，这是本项最难查的一点。
+- 状态：Windows 侧已真机取证（`--selftest window` 覆盖 forwarding 开关，但**缩放变化本身造不出来**——
+  要跨屏拖动或改系统缩放）；macOS/Linux **未在真机跑过**（2026-10-18）。
+
+#### 窗口图标与底色的最终显示（三平台，2026-10-18 补充）
+- 环境：三平台桌面各一次。
+- 步骤：页面调用 `setIcon('/path/app.png')` 与 `setIcon(bytes)`（字节形式同一张图），
+  以及 `setBackgroundColor('#2f2f2f')`。
+- 预期：图标真的变了（任务栏/Dock）；透明页面上能看到底色。
+- 说明：这三条的**命令层与解码**都有自动化覆盖（`--selftest window` 55 项，含非法 base64 被拒、
+  坏字节不抛），但**"看起来对不对"只能人眼判定**：
+  - 宿主没有"读回当前图标/底色"的接口（加一个就是偷偷发明 API，会被对齐测试的 `EXTRAS` 拦住）；
+  - macOS 的 `setIcon` 影响的是**整个应用**的 Dock 图标，不是单个窗口。
+
 #### macOS 隐藏启动
+
 - 环境：macOS 桌面。
 - 步骤：`OrielDemo --hidden`，用 `CGWindowList` 断言窗口不在 on-screen 列表里。
 - 预期：窗口不上屏，但页面照常加载、IPC 照常往返（Linux 侧已在 WSL 验证过同样的语义）。
