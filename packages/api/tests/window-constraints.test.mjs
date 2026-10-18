@@ -135,6 +135,34 @@ test('setClosable 同样只收布尔，且与另外两个走同一条路径', as
     clearMocks();
 });
 
+test('setIcon 只收路径字符串，其他 JsImage 形式当场抛并说明原因', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', { 'window.setIcon': null });
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    await win.setIcon('/icons/app.png');
+    assert.deepEqual(calls[0], ['window.setIcon', { label: 'main', path: '/icons/app.png' }]);
+
+    // Tauri 的 JsImage 还包含字节形式与 Image handle。本库都不支持——
+    // 关键是**当场抛**并且错误信息说清"为什么"，而不是发一条注定失败的 IPC
+    // （后者在页面上表现为一个没有上下文的 reject）。
+    for (const unsupported of [new Uint8Array([1, 2]), new ArrayBuffer(4), [1, 2, 3], { handle: 1 }]) {
+        assert.throws(
+            () => win.setIcon(unsupported),
+            (error) => error instanceof TypeError && /路径/.test(error.message),
+            `这些输入应当被拒：${String(unsupported)}`);
+    }
+
+    assert.throws(() => win.setIcon(''), TypeError);
+
+    // 抛了就不该发命令
+    assert.equal(calls.length, 1);
+
+    clearMocks();
+});
+
 test('setSizeConstraints 只发给了值的那一侧', async () => {
     clearMocks();
     const { calls, transport } = makeTransport('main', {

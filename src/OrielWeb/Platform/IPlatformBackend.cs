@@ -232,6 +232,28 @@ internal interface IWindowBackend
     /// </remarks>
     void SetClosable(bool enabled);
 
+    /// <summary>
+    /// 设置窗口图标。<paramref name="path"/> 是图像文件路径（PNG / ICO）。
+    /// </summary>
+    /// <remarks>
+    /// <b>三平台的"窗口图标"落点不完全相同，这条如实写出来</b>：
+    /// <list type="bullet">
+    ///   <item>Windows：<c>WM_SETICON</c>（大小两个尺寸），作用在**本窗口**上。
+    ///     注意 <c>LoadImageW</c> 只认 ICO/BMP，PNG 需要先解码（本库走
+    ///     <see cref="OrielImage"/> 那条路，见实现）。</item>
+    ///   <item>Linux：<c>gtk_window_set_icon_from_file</c>，X11 下写入
+    ///     <c>_NET_WM_ICON</c>；<b>Wayland 下由合成器决定，通常直接忽略</b>。</item>
+    ///   <item>macOS：<b>没有窗口级图标</b>，能设的只有应用（Dock）图标
+    ///     （<c>setApplicationIconImage:</c>）——所以这个调用在 macOS 上会影响
+    ///     **整个应用**，而不只是这一个窗口。这是平台事实，不是实现取舍。</item>
+    /// </list>
+    /// <para>
+    /// 这个差异与 <c>setMaximizable</c> 那类不同：三平台上"设置图标"这件事**都存在**
+    /// 且都生效，只是 macOS 的作用域更大。所以本库提供它，并把作用域差异写明。
+    /// </para>
+    /// </remarks>
+    void SetIcon(string path);
+
     void Show();
     void Hide();
     void Close();

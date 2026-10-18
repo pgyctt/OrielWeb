@@ -292,6 +292,43 @@ internal static class WindowSelfTest
                     "window.setClosable",
                     SelfTestJson.Object(("label", SelfTestJson.String(DecoratedProbeLabel)), ("value", "true")));
                 Check(decorated.IsClosable, "重新允许之后 IsClosable 应当回到 true（灰化可逆）");
+
+                // ---- 图标（M5-6）----
+                //
+                // **这一组的断言强度有限，如实说明**：宿主没有"读回当前图标"的接口
+                // （Windows 的 WM_GETICON 要直接 P/Invoke，而本文件不该做平台调用），
+                // 所以这里只能验"命令能跑通、参数解析对、坏路径不炸"。
+                // 它**不能**证明图标真的换了——那要在真机上目视。
+                string iconPath = Path.Combine(AppContext.BaseDirectory, "app.png");
+                Check(File.Exists(iconPath), $"前提：图标文件应当随输出目录发布（{iconPath}）");
+
+                // 设成 app.png：它本来就是本应用的图标，所以"设上去"等于不变，
+                // 自检不会把窗口图标搞成别的样子（macOS 上这条会影响整个应用的 Dock 图标）。
+                await AskMainAsync(
+                    "window.setIcon",
+                    SelfTestJson.Object(
+                        ("label", SelfTestJson.String(ProbeLabel)),
+                        ("path", SelfTestJson.String(iconPath))));
+
+                // .ico 走的是另一条分支（LoadImageW），也要能过
+                string icoPath = Path.Combine(AppContext.BaseDirectory, "app.ico");
+                if (File.Exists(icoPath))
+                {
+                    await AskMainAsync(
+                        "window.setIcon",
+                        SelfTestJson.Object(
+                            ("label", SelfTestJson.String(ProbeLabel)),
+                            ("path", SelfTestJson.String(icoPath))));
+                }
+
+                // 不存在的路径**不该抛**：与创建期图标"设不上就不设"的语义一致。
+                // 这条挡住了"把路径存在性检查写成抛异常"的实现——那会让页面在
+                // 换图标失败时收到一个没有上下文的 reject。
+                await AskMainAsync(
+                    "window.setIcon",
+                    SelfTestJson.Object(
+                        ("label", SelfTestJson.String(ProbeLabel)),
+                        ("path", SelfTestJson.String(Path.Combine(AppContext.BaseDirectory, "no-such-icon.png")))));
             }
             finally
             {

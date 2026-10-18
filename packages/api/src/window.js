@@ -438,6 +438,37 @@ export class Window {
         return invoke('window.setClosable', { label: this.label, value: enabled });
     }
 
+    /**
+     * 设置窗口图标。
+     *
+     * @param {string} icon 图像文件路径（PNG / ICO）。
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setIcon")`。
+     *
+     * **只支持路径**：Tauri 的 `setIcon` 还收 `Uint8Array` / `ArrayBuffer` / `number[]`
+     * （ICO/PNG 原始字节）以及 `Image` 对象（资源表 handle）。前三种本库暂未支持，
+     * 第四种要先实现 `@orielweb/api/image`；传这几种会**当场抛 TypeError 并说明原因**，
+     * 而不是发一条注定失败的 IPC。
+     *
+     * **平台差异（两处）**：
+     * - macOS 上没有窗口级图标，这里设的是**应用（Dock）图标**，会影响整个应用；
+     * - Linux 的 Wayland 下窗口图标由合成器决定，通常忽略本调用。
+     */
+    setIcon(icon) {
+        if (typeof icon !== 'string') {
+            throw new TypeError(
+                'setIcon: 目前只支持图像文件路径（string）。字节数组与 Image 对象的形式还未支持' +
+                '——见本方法的文档。');
+        }
+
+        if (icon === '') {
+            throw new TypeError('setIcon: 路径不能是空字符串');
+        }
+
+        return invoke('window.setIcon', { label: this.label, path: icon });
+    }
+
     // ---- 尺寸约束（M5-6）----
 
     /**

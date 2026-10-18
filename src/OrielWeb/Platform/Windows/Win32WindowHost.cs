@@ -585,9 +585,23 @@ internal partial class Win32WindowHost : IWindowBackend
     /// 走 <c>WM_SETICON</c> 而不是改窗口类：窗口类是进程级共享的，而图标是每窗口的选项。
     /// 加载到的 HICON 不释放——WM_SETICON 不接管所有权，但窗口销毁时要逐个跟踪释放，
     /// 而句柄数量与窗口数同阶（实际应用通常 1～2 个窗口），这里选择明确不释放而不是引入一套句柄生命周期管理。
+    /// <para>
+    /// <b>PNG 走另一条路</b>：<c>LoadImageW</c> 只认 ICO/BMP，喂 PNG 会返回 0（静默不生效）。
+    /// 所以这里先看扩展名，是 PNG 就先解码成 RGBA 再 <c>CreateIconIndirect</c>——
+    /// 这与创建期图标用的是同一套（<see cref="OrielImage"/>）。
+    /// </para>
     /// </remarks>
     private static void ApplyExplicitIcon(nint hwnd, string path)
     {
+        // PNG：LoadImageW 不认，先解码再手工造 HICON。
+        // 判扩展名而不是试着解码：路径可能是不存在的文件，解码失败与"格式不支持"
+        // 要给出不同的行为（前者静默走默认图标，后者才需要报错）。
+        if (path.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+        {
+            ApplyPngIcon(hwnd, path);
+            return;
+        }
+
         nint large = Win32.LoadImageW(
             0, path, Win32Constants.IMAGE_ICON,
             Win32.GetSystemMetrics(Win32Constants.SM_CXICON),
@@ -606,6 +620,25 @@ internal partial class Win32WindowHost : IWindowBackend
         if (small != 0)
         {
             _ = Win32.SendMessageW(hwnd, Win32Constants.WM_SETICON, Win32Constants.ICON_SMALL, small);
+        }
+    }
+
+    /// <summary>把 PNG 文件解码成 RGBA 再造成 HICON 设上去（见 <see cref="ApplyExplicitIcon"/>）。</summary>
+    private static void ApplyPngIcon(nint hwnd, string path)
+    {
+        if (!OrielImage.TryFromFile(path, out OrielImage? image, out _) || image is null)
+        {
+            // 路径不存在或不是可识别的 PNG/ICO：保持现有图标，不抛——
+            // 与 LoadImageW 返回 0 时的行为一致（创建期图标也是这个语义）。
+            return;
+        }
+
+        // 复用托盘那套（Win32IconFactory）：它已经处理好了自顶向下 DIB、掩码位初始化
+        // 与全部中间句柄的释放，没有理由再写第二份。
+        nint icon = Win32IconFactory.CreateFromRgba(image);
+        if (icon != 0)
+        {
+            _ = Win32.SendMessageW(hwnd, Win32Constants.WM_SETICON, Win32Constants.ICON_BIG, icon);
         }
     }
 
@@ -2338,6 +2371,22 @@ internal partial class Win32WindowHost : IWindowBackend
 
         // 系统菜单项的状态改了必须重画，否则菜单栏看着没变。
         Win32.DrawMenuBar(_hwnd);
+    }
+
+    /// <summary>设置窗口图标（见 <see cref="IWindowBackend.SetIcon"/>）。</summary>
+    /// <remarks>
+    /// 与创建期的 <see cref="ApplyExplicitIcon"/> 走完全同一条路——这正是把它抽成
+    /// 静态方法的原因：运行期换图标与启动时设图标在 Win32 上是同一件事（都是
+    /// <c>WM_SETICON</c>），没有理由写两份。
+    /// </remarks>
+    public void SetIcon(string path)
+    {
+        if (_hwnd == 0 || string.IsNullOrEmpty(path))
+        {
+            return;
+        }
+
+        ApplyExplicitIcon(_hwnd, path);
     }
 
     /// <summary>

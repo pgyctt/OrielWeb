@@ -439,6 +439,15 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// </remarks>
     public void SetClosable(bool enabled) => Backend.SetClosable(enabled);
 
+    /// <summary>设置窗口图标（对标 Tauri 的 `Window.setIcon()`）。</summary>
+    /// <param name="path">图像文件路径（PNG / ICO）。</param>
+    /// <remarks>
+    /// **macOS 上没有窗口级图标**——那里设的是应用（Dock）图标，会影响整个应用。
+    /// Linux 上 Wayland 通常忽略窗口图标（由合成器决定）。见
+    /// <see cref="IWindowBackend.SetIcon"/>。
+    /// </remarks>
+    public void SetIcon(string path) => Backend.SetIcon(path);
+
     public void Focus() => Backend.Focus();
     public void Maximize() => Backend.Maximize();
     public void Minimize() => Backend.Minimize();

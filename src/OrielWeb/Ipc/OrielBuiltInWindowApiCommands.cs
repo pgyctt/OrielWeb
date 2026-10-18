@@ -127,6 +127,16 @@ internal static class OrielBuiltInWindowApiCommands
                 };
                 return true;
 
+            // 图标：收路径字符串。Tauri 的 setIcon 还收字节数组与 Image handle，
+            // 这两种本库暂不支持（见 docs 的记录），所以这里只解析 path 一种参数。
+            case "window.setIcon":
+                handler = static (sender, args) =>
+                {
+                    Resolve(sender, args).SetIcon(OrielJson.GetRequiredArg<string>(args, "path", null));
+                    return null;
+                };
+                return true;
+
             // ---- 尺寸约束（M5-6）----
             //
             // 只给 setMaxSize；min 早就有 window.setMinSize 了。页面侧的

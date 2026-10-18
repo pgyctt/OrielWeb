@@ -301,14 +301,14 @@ const METHOD_GAP_GROUPS = [
         reason: '【A·跨平台不一致】**各自缺一半**：`setShadow` 在 Linux 上没有对应概念（GTK 无阴影 API）；' +
             '`setAlwaysOnBottom` 同样只有 Windows/macOS 有；`setFocusable` 在 macOS 上没有公开入口' +
             '（只有私有的 `_setPreventsActivation`，用它等于把自己绑到未公开 API 上）；' +
-            '`setIcon` 三平台落点**性质不同**——Windows/Linux 是窗口级，macOS 是应用级。' +
-            '`setBackgroundColor` 语义倒是一致，但三平台 webview 都铺满客户区，' +
-            '**没有任何读取路径能闭环验证**（写进去读不回来，等于没法证明它生效）。' +
+            '`setBackgroundColor` 语义倒是一致（Tauri 文档写明它是"webview 加载中、或透明页面背后'
+            + '看到"的那个颜色），但三平台 webview 都铺满客户区，**没有读取路径能闭环验证**'
+            + '（写进去读不回来，等于没法证明它生效）。' +
             '`setDecorations`：Windows 上 `ComputeStyle` 是**创建期的静态决定**，' +
             '运行期切换要改整套样式并让 `WM_NCCALCSIZE` 的分支跟着变，而那条路我无法目视验证。',
         methods: [
             'window.Window#setDecorations', 'window.Window#setShadow',
-            'window.Window#setBackgroundColor', 'window.Window#setIcon',
+            'window.Window#setBackgroundColor',
             'window.Window#setFocusable',
             'window.Window#setAlwaysOnBottom',
         ],

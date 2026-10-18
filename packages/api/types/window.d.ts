@@ -221,6 +221,24 @@ export class Window {
      */
     setClosable(enabled: boolean): Promise<void>;
     /**
+     * 设置窗口图标。
+     *
+     * @param {string} icon 图像文件路径（PNG / ICO）。
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setIcon")`。
+     *
+     * **只支持路径**：Tauri 的 `setIcon` 还收 `Uint8Array` / `ArrayBuffer` / `number[]`
+     * （ICO/PNG 原始字节）以及 `Image` 对象（资源表 handle）。前三种本库暂未支持，
+     * 第四种要先实现 `@orielweb/api/image`；传这几种会**当场抛 TypeError 并说明原因**，
+     * 而不是发一条注定失败的 IPC。
+     *
+     * **平台差异（两处）**：
+     * - macOS 上没有窗口级图标，这里设的是**应用（Dock）图标**，会影响整个应用；
+     * - Linux 的 Wayland 下窗口图标由合成器决定，通常忽略本调用。
+     */
+    setIcon(icon: string): Promise<void>;
+    /**
      * 设置窗口的最大尺寸。
      *
      * @param {import('./dpi.js').SizeObject | {width: number, height: number} | [number, number] | null} size

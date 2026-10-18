@@ -1418,6 +1418,27 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     }
 
     /// <summary>
+    /// 设置窗口图标（见 <see cref="IWindowBackend.SetIcon"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 复用创建期那条路（<c>gtk_window_set_icon_from_file</c>）——它在运行期同样有效，
+    /// GTK 会重写 <c>_NET_WM_ICON</c>。
+    /// <para>
+    /// <b>Wayland 下通常无效</b>：那边窗口图标由合成器决定（多数合成器直接用 .desktop
+    /// 文件的图标），应用改不了。这与创建期图标是同一个限制，不是这里新引入的。
+    /// </para>
+    /// </remarks>
+    public void SetIcon(string path)
+    {
+        if (!WindowAlive || string.IsNullOrEmpty(path))
+        {
+            return;
+        }
+
+        _ = GtkNative.GtkWindowSetIconFromFile(_gtkWindow, path, 0);
+    }
+
+    /// <summary>
     /// 设置是否可关闭——<b>空操作</b>（见 <see cref="IWindowBackend.SetClosable"/>）。
     /// </summary>
     /// <remarks>

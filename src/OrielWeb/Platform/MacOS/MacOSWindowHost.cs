@@ -691,21 +691,35 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         }
 
         // 图标：macOS 没有窗口级图标，能设的只有应用（Dock）图标——平台事实，不是偷懒。
-        // initWithContentsOfFile: 要的是 NSString*（不是 char*）：必须用 MakeNSString 造对象，
-        // 直接传 C# 字符串会被 marshal 成 char*，ObjC 侧一问类型就 trap（见 ObjCRuntime 的注释）。
+        // 运行期换图标走 SetIcon，两边共用 ApplyIconToApplication。
         if (!string.IsNullOrEmpty(_options.Icon))
         {
-            nint image = ObjCRuntime.SendIdObj(
-                ObjCRuntime.SendId(ObjCRuntime.GetClass("NSImage"), ObjCRuntime.Sel("alloc")),
-                ObjCRuntime.Sel("initWithContentsOfFile:"),
-                ObjCRuntime.MakeNSString(_options.Icon));
-            if (image != 0)
-            {
-                ObjCRuntime.SendVoidObj(SharedApplication(), ObjCRuntime.Sel("setApplicationIconImage:"), image);
-            }
+            ApplyIconToApplication(_options.Icon);
         }
 
         Navigate();
+    }
+
+    /// <summary>把图标文件设成**应用（Dock）图标**（见 <see cref="IWindowBackend.SetIcon"/>）。</summary>
+    /// <remarks>
+    /// <c>initWithContentsOfFile:</c> 要的是 <c>NSString*</c>（不是 <c>char*</c>）：必须用
+    /// <c>MakeNSString</c> 造对象，直接传 C# 字符串会被 marshal 成 <c>char*</c>，
+    /// ObjC 侧一问类型就 trap（见 ObjCRuntime 的注释）。
+    /// <para>
+    /// 路径不存在时 <c>initWithContentsOfFile:</c> 返回 nil → 这里静默保持原图标，
+    /// 与创建期行为一致（那边也是"设不上就不设"）。
+    /// </para>
+    /// </remarks>
+    private static void ApplyIconToApplication(string path)
+    {
+        nint image = ObjCRuntime.SendIdObj(
+            ObjCRuntime.SendId(ObjCRuntime.GetClass("NSImage"), ObjCRuntime.Sel("alloc")),
+            ObjCRuntime.Sel("initWithContentsOfFile:"),
+            ObjCRuntime.MakeNSString(path));
+        if (image != 0)
+        {
+            ObjCRuntime.SendVoidObj(SharedApplication(), ObjCRuntime.Sel("setApplicationIconImage:"), image);
+        }
     }
 
     private static nint SharedApplication()
@@ -1212,6 +1226,27 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
             ? (nint)((nuint)style | StyleMiniaturizable)
             : (nint)((nuint)style & ~StyleMiniaturizable);
         ObjCRuntime.SendVoidNint(_nsWindow, ObjCRuntime.Sel("setStyleMask:"), newStyle);
+    }
+
+    /// <summary>
+    /// 设置窗口图标（见 <see cref="IWindowBackend.SetIcon"/>）。
+    /// </summary>
+    /// <remarks>
+    /// <b>macOS 上没有窗口级图标</b>，能设的只有应用（Dock）图标——所以这个调用会影响
+    /// 整个应用而不只是本窗口。这是平台事实（AppKit 的模型），本库照实实现并写明，
+    /// 而不是假装它只作用于本窗口。
+    /// <para>
+    /// 与创建期图标共用 <see cref="ApplyIconToApplication"/>：AppKit 那边也是同一个 API。
+    /// </para>
+    /// </remarks>
+    public void SetIcon(string path)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return;
+        }
+
+        ApplyIconToApplication(path);
     }
 
     /// <summary>
