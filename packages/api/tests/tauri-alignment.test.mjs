@@ -353,11 +353,12 @@ const METHOD_GAP_GROUPS = [
         methods: ['window.Window#setTheme'],
     },
     {
-        reason: '【B·跨平台一致·待做】`onScaleChanged` 已经做完了：三平台各自检测并把'
-            + '`scale.changed` 推给页面（Windows `WM_DPICHANGED`、Linux GDK 的 `notify::scale-factor`、'
-            + 'macOS 顺带在 `windowDidResize:`/`windowDidMove:` 里查——后者**有一个已知漏报**：'
-            + '只改系统缩放而窗口不动时两条回调都不发，详见 MacOSWindowHost.ReportScaleFactorIfChanged 的说明）。'
-            + '本组现在是空的：方针下可做的项已经全部实现，剩下的都在 A 组（方针排除）。',
+        reason: '【B·跨平台一致·待做】本组是空的：方针下可做的项已经全部实现，'
+            + '剩下的都在 A 组（方针排除）。'
+            + '（`onScaleChanged` 已完成——三平台各自检测 `scale.changed`：Windows `WM_DPICHANGED`、'
+            + 'Linux GDK 的 `notify::scale-factor`、macOS 用三个 `NSWindowDelegate` 回调：'
+            + '`windowDidResize:` / `windowDidMove:` 覆盖跨屏拖动，'
+            + '`windowDidChangeBackingProperties:` 覆盖"只改系统缩放而窗口不动"。）',
         methods: [],
     },
 ];

@@ -1497,14 +1497,13 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     /// 缩放比变了就上报（见 <see cref="IWindowBackend.ScaleFactorChanged"/>）。
     /// </summary>
     /// <remarks>
-    /// <b>触发点是 <c>windowDidResize:</c> / <c>windowDidMove:</c>（经 ReportGeometry / ReportPosition），
-    /// 而不是一条专门的通知。</b>窗口被拖到不同缩放的显示器上时这两条至少有一条会发，
-    /// 所以"跨屏移动"这个主要场景被覆盖了，而且不用再引入一个通知观察者。
+    /// <b>触发点有三个</b>：<c>windowDidResize:</c>（经 <see cref="ReportGeometry"/>）、
+    /// <c>windowDidMove:</c>（经 <see cref="ReportPosition()"/>），以及
+    /// <c>windowDidChangeBackingProperties:</c>（直接调本方法）。
     /// <para>
-    /// <b>已知的漏报场景</b>：在"系统设置 → 显示器"里只改缩放、窗口完全不动时，这两条回调都不发，
-    /// 页面就收不到 <c>scale.changed</c>。要覆盖它得观察
-    /// <c>NSWindowDidChangeBackingPropertiesNotification</c>；这里如实记下这个缺口，
-    /// 而不是假装它是完整的。
+    /// 前两个覆盖"窗口被拖到不同缩放的显示器"；第三个覆盖"只改系统缩放、窗口不动"
+    /// ——那时前两条都不发。三个都是 <c>NSWindowDelegate</c> 的方法，
+    /// 所以不需要额外的通知观察者（早先记的"已知漏报"就是这么补掉的）。
     /// </para>
     /// <para>
     /// payload 里的 <c>size</c> 是**物理像素**客户区（与 Tauri 的 <c>PhysicalSize</c> 对齐）。

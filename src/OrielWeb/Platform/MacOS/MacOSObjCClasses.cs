@@ -138,6 +138,12 @@ internal static unsafe class MacOSObjCClasses
         // （Linux 由 window-state-event 回灌；Windows 全屏只经 API 发起，无此问题）。
         AddMethod(cls, "windowDidEnterFullScreen:", &WindowDidEnterFullScreen, "v@:@");
         AddMethod(cls, "windowDidExitFullScreen:", &WindowDidExitFullScreen, "v@:@");
+        // 缩放变化（对标 Tauri 2 的 onScaleChanged）。
+        //
+        // **它是 NSWindowDelegate 的方法，不需要额外的通知观察者**——这条正是为了补上
+        // "只改系统缩放、窗口不动"那个漏报场景：windowDidResize:/windowDidMove: 那时都不发，
+        // 而 windowDidChangeBackingProperties: 在**窗口换屏**与**屏幕自身缩放变化**时都会发。
+        AddMethod(cls, "windowDidChangeBackingProperties:", &WindowDidChangeBackingProperties, "v@:@");
         ObjCRuntime.objc_registerClassPair(cls);
         return cls;
     }
@@ -214,6 +220,25 @@ internal static unsafe class MacOSObjCClasses
         catch (Exception ex)
         {
             OrielDiagnostics.Report($"[OrielWeb] windowDidMove: 抛出异常：{ex}");
+        }
+        return 0;
+    }
+
+    [UnmanagedCallersOnly]
+    private static nint WindowDidChangeBackingProperties(nint self, nint sel, nint notification)
+    {
+        try
+        {
+            if (WindowDelegateStates.TryGetValue(self, out var host))
+            {
+                // 只查缩放比：这条通知不表示几何变了（位置/尺寸各有自己的回调），
+                // 而 ReportScaleFactorIfChanged 内部会比对，没变就不上报。
+                host.ReportScaleFactorIfChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            OrielDiagnostics.Report($"[OrielWeb] windowDidChangeBackingProperties: 抛出异常：{ex}");
         }
         return 0;
     }
