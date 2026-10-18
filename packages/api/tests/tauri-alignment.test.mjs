@@ -286,13 +286,10 @@ const METHOD_GAP_GROUPS = [
         reason: '窗口外观的开关（装饰 / 阴影 / 背景色 / 图标 / 可聚焦 / 置底）。' +
             '除了 `setDecorations`，其余都是"切一个样式位或属性"，形态相近，适合作为一批做。' +
             '`setDecorations` 单独麻烦：Windows 上 `ComputeStyle` 是**创建期的静态决定**，' +
-            '运行期切换要改整套样式并让 `WM_NCCALCSIZE` 的分支跟着变，而那条路我无法目视验证。' +
-            '`setClosable` 也在这一组：三平台语义不一致（Windows 的落点是灰化系统菜单项，' +
-            '而只读查询读的是 `WS_SYSMENU`），换落点要动已验证的读取代码，得单独一轮。',
+            '运行期切换要改整套样式并让 `WM_NCCALCSIZE` 的分支跟着变，而那条路我无法目视验证。',
         methods: [
             'window.Window#setDecorations', 'window.Window#setShadow',
             'window.Window#setBackgroundColor', 'window.Window#setIcon',
-            'window.Window#setClosable',
             'window.Window#setFocusable',
             'window.Window#setAlwaysOnBottom',
         ],

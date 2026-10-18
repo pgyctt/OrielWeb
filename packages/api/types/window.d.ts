@@ -204,6 +204,23 @@ export class Window {
      */
     setMinimizable(enabled: boolean): Promise<void>;
     /**
+     * 设置窗口是否可关闭。
+     *
+     * @param {boolean} enabled
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setClosable")`。
+     *
+     * **三平台落点不同，而且不是同一件事**：
+     * - Windows：灰化系统菜单里的"关闭"项（关闭按钮在 Win32 里属于系统菜单）；
+     * - macOS：切 `NSWindowStyleMaskClosable`，红色按钮随之消失/出现；
+     * - Linux：**空操作**，`isClosable()` 恒为 `true`。
+     *
+     * 也就是说这条命令在 Linux 上**不会**让窗口关不掉——真要"关不掉"，用
+     * `onCloseRequested` 拦下并 `preventDefault()`：那是应用层策略，还能按条件拒绝。
+     */
+    setClosable(enabled: boolean): Promise<void>;
+    /**
      * 设置窗口的最大尺寸。
      *
      * @param {import('./dpi.js').SizeObject | {width: number, height: number} | [number, number] | null} size

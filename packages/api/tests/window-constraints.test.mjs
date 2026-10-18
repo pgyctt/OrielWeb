@@ -118,6 +118,23 @@ test('setMaximizable / setMinimizable 走布尔校验与同一形状', async () 
     clearMocks();
 });
 
+test('setClosable 同样只收布尔，且与另外两个走同一条路径', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', { 'window.setClosable': null });
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    await win.setClosable(false);
+    assert.deepEqual(calls[0], ['window.setClosable', { label: 'main', value: false }]);
+
+    assert.throws(() => win.setClosable(undefined), TypeError);
+    assert.throws(() => win.setClosable(1), TypeError);
+    assert.equal(calls.length, 1);
+
+    clearMocks();
+});
+
 test('setSizeConstraints 只发给了值的那一侧', async () => {
     clearMocks();
     const { calls, transport } = makeTransport('main', {

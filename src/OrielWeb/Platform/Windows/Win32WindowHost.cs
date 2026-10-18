@@ -1980,8 +1980,47 @@ internal partial class Win32WindowHost : IWindowBackend
     /// <summary>是否可最小化（原生读，见 <see cref="IWindowBackend.IsMinimizable"/>）。</summary>
     public bool IsMinimizable => (CurrentStyle() & Win32Constants.WS_MINIMIZEBOX) != 0;
 
-    /// <summary>是否可关闭（原生读，见 <see cref="IWindowBackend.IsClosable"/>）。</summary>
-    public bool IsClosable => (CurrentStyle() & Win32Constants.WS_SYSMENU) != 0;
+    /// <summary>
+    /// 是否可关闭（原生读，见 <see cref="IWindowBackend.IsClosable"/>）。
+    /// </summary>
+    /// <remarks>
+    /// <b>"存在且可用"两件事都要满足</b>：窗口带 <c>WS_SYSMENU</c>（关闭按钮**存在**）
+    /// 且系统菜单里的 <c>SC_CLOSE</c> 未被灰化（**可用**）。
+    /// <para>
+    /// 旧版只读 <c>WS_SYSMENU</c>——那答的是"有没有系统菜单"，而
+    /// <see cref="SetClosable"/> 的落点是灰化菜单项，两者对不上会让
+    /// "写进去读不回来"。补上后不变量成立：调过 <c>SetClosable(false)</c> 的窗口
+    /// 这里必然读到 <c>false</c>（前提是它本来有系统菜单）。
+    /// </para>
+    /// <para>
+    /// 无系统菜单的窗口（无边框）没有关闭按钮，所以是 <c>false</c>；
+    /// <c>GetMenuState</c> 对不存在的项返回 <c>0xFFFFFFFF</c>，一并按"不可关"处理。
+    /// </para>
+    /// </remarks>
+    public bool IsClosable
+    {
+        get
+        {
+            if ((CurrentStyle() & Win32Constants.WS_SYSMENU) == 0)
+            {
+                return false;
+            }
+
+            nint menu = Win32.GetSystemMenu(_hwnd, false);
+            if (menu == 0)
+            {
+                return false;
+            }
+
+            uint state = Win32.GetMenuState(menu, Win32Constants.SC_CLOSE, Win32Constants.MF_BYCOMMAND);
+            if (state == uint.MaxValue)
+            {
+                return false;
+            }
+
+            return (state & (Win32Constants.MF_GRAYED | Win32Constants.MF_DISABLED)) == 0;
+        }
+    }
 
     /// <summary>是否接收输入（见 <see cref="IWindowBackend.IsEnabled"/>）。</summary>
     public bool IsEnabled => _hwnd != 0 && Win32.IsWindowEnabled(_hwnd);
@@ -2273,6 +2312,33 @@ internal partial class Win32WindowHost : IWindowBackend
 
     /// <summary>设置是否可最小化（改 <c>WS_MINIMIZEBOX</c>，见 <see cref="IWindowBackend.SetMinimizable"/>）。</summary>
     public void SetMinimizable(bool enabled) => ApplyFrameStyleBit(Win32Constants.WS_MINIMIZEBOX, enabled);
+
+    /// <summary>
+    /// 设置是否可关闭（见 <see cref="IWindowBackend.SetClosable"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 落点是**灰化系统菜单里的"关闭"项**（<c>SC_CLOSE</c>），而不是清 <c>WS_SYSMENU</c>。
+    /// 后者会把标题栏上三个按钮和整个系统菜单一起干掉，那是"删掉按钮"而不是"关闭按钮不可用"。
+    /// <para>
+    /// 窗口没有系统菜单时（无边框窗口）**什么都不做**——那种窗口本来就没有关闭按钮可灰。
+    /// </para>
+    /// </remarks>
+    public void SetClosable(bool enabled)
+    {
+        nint menu = Win32.GetSystemMenu(_hwnd, false);
+        if (menu == 0)
+        {
+            return;
+        }
+
+        Win32.EnableMenuItem(
+            menu,
+            Win32Constants.SC_CLOSE,
+            Win32Constants.MF_BYCOMMAND | (enabled ? Win32Constants.MF_ENABLED : Win32Constants.MF_GRAYED));
+
+        // 系统菜单项的状态改了必须重画，否则菜单栏看着没变。
+        Win32.DrawMenuBar(_hwnd);
+    }
 
     /// <summary>
     /// 切一个"边框类"样式位并让窗口重算非客户区。

@@ -111,6 +111,23 @@ internal static class Win32Constants
     /// <summary>返回选中项 id 而不是发 WM_COMMAND；0 表示用户没选任何项。</summary>
     public const uint TPM_RETURNCMD = 0x0100;
 
+    // ---- 系统菜单项（"可关闭"落点用）----
+
+    /// <summary>系统菜单里的"关闭"项 id。</summary>
+    public const uint SC_CLOSE = 0xF060;
+
+    /// <summary>系统菜单里的"最小化"项 id。</summary>
+    public const uint SC_MINIMIZE = 0xF020;
+
+    /// <summary>按命令 id 定位菜单项（<c>EnableMenuItem</c>/<c>GetMenuState</c> 的 uFlags）。</summary>
+    public const uint MF_BYCOMMAND = 0x00000000;
+
+    /// <summary>菜单项可用（值为 0，与 <see cref="MF_BYCOMMAND"/> 一样是"清零"含义，故不能按位或区分）。</summary>
+    public const uint MF_ENABLED = 0x00000000;
+
+    /// <summary>菜单项禁用（灰化并不可选）。</summary>
+    public const uint MF_DISABLED = 0x00000002;
+
     /// <summary>WM_NCLBUTTONDOWN 的命中值：令窗口进入标题栏拖动的模态循环（见 BeginDrag）。</summary>
     public static readonly nint HTCAPTION = 2;
 
@@ -885,6 +902,39 @@ internal static unsafe partial class Win32
     /// <summary>弹出并跟踪菜单；带 TPM_RETURNCMD 时返回选中项 id（0 = 未选择）。</summary>
     [LibraryImport("user32", EntryPoint = "TrackPopupMenuEx")]
     internal static partial uint TrackPopupMenuEx(nint menu, uint flags, int x, int y, nint hwnd, nint tpmParams);
+
+    /// <summary>
+    /// 取窗口的系统菜单句柄。
+    /// </summary>
+    /// <param name="hwnd">目标窗口。</param>
+    /// <param name="revert">
+    /// 传 <c>false</c>——取**当前**系统菜单。传 <c>true</c> 会把系统菜单重置回默认项
+    /// （那会顺手清掉我们做过的灰化），所以本库只用 <c>false</c>。
+    /// </param>
+    /// <returns>系统菜单句柄；窗口没有系统菜单（未带 <c>WS_SYSMENU</c>，如无边框窗口）时为 0。</returns>
+    [LibraryImport("user32")]
+    internal static partial nint GetSystemMenu(nint hwnd, [MarshalAs(UnmanagedType.Bool)] bool revert);
+
+    /// <summary>
+    /// 启用/灰化菜单项，返回**之前**的状态（-1 表示失败）。
+    /// </summary>
+    /// <remarks>
+    /// 对系统菜单项，改完必须调 <see cref="DrawMenuBar"/>，否则菜单栏不会重画
+    /// ——表现为"状态改了但看着没变"。
+    /// </remarks>
+    [LibraryImport("user32", EntryPoint = "EnableMenuItem")]
+    internal static partial int EnableMenuItem(nint menu, uint itemId, uint enable);
+
+    /// <summary>
+    /// 读菜单项状态，返回 <c>MF_*</c> 标志位组合；<c>0xFFFFFFFF</c>（-1）表示该项不存在。
+    /// </summary>
+    [LibraryImport("user32", EntryPoint = "GetMenuState")]
+    internal static partial uint GetMenuState(nint menu, uint itemId, uint flags);
+
+    /// <summary>让窗口重画菜单栏（改完系统菜单项状态后必须调）。</summary>
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool DrawMenuBar(nint hwnd);
 
     [LibraryImport("user32")]
     [return: MarshalAs(UnmanagedType.Bool)]

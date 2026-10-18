@@ -431,6 +431,14 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// <remarks>Linux 上是空操作，理由见 <see cref="SetMaximizable"/>。</remarks>
     public void SetMinimizable(bool enabled) => Backend.SetMinimizable(enabled);
 
+    /// <summary>设置是否可关闭（对标 Tauri 的 `Window.setClosable()`）。</summary>
+    /// <remarks>
+    /// <b>三平台落点不同</b>：Windows 灰化系统菜单的"关闭"项、macOS 切
+    /// <c>NSWindowStyleMaskClosable</c>、<b>Linux 空操作</b>（要"关不掉"得拦
+    /// close-requested 事件）。见 <see cref="IWindowBackend.SetClosable"/>。
+    /// </remarks>
+    public void SetClosable(bool enabled) => Backend.SetClosable(enabled);
+
     public void Focus() => Backend.Focus();
     public void Maximize() => Backend.Maximize();
     public void Minimize() => Backend.Minimize();

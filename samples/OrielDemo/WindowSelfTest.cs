@@ -261,6 +261,37 @@ internal static class WindowSelfTest
                 // 这才说明查询真的读了每个窗口自己的状态
                 Check(!(await AskWithLabelAsync("window.isDecorated", ProbeLabel)).GetBoolean(),
                     "同一时刻无边框窗口仍应当是 false（对照）");
+
+                // ---- 可关闭：Windows 的落点是灰化系统菜单项 ----
+                //
+                // 放在这里（而不是后面统一做）是因为**只有带装饰的窗口才有系统菜单**，
+                // 而这个窗口在 finally 里就被 Destroy 了。
+                //
+                // 这条是本组唯一**改动了已有读取语义**的：IsClosable 从"有 WS_SYSMENU"
+                // 变成"存在且未灰化"，所以闭环必须验——写进去 → 宿主侧读回 → 页面读回。
+                Check(decorated!.IsClosable, "带装饰的窗口初始应当可关闭（有系统菜单且未灰化）");
+
+                await AskMainAsync(
+                    "window.setClosable",
+                    SelfTestJson.Object(("label", SelfTestJson.String(DecoratedProbeLabel)), ("value", "false")));
+                Check(!decorated.IsClosable,
+                    "禁掉可关闭之后宿主侧 IsClosable 应当是 false（菜单项已灰化）");
+                Check(!(await AskWithLabelAsync("window.isClosable", DecoratedProbeLabel)).GetBoolean(),
+                    "window.isClosable 应当跟上（false）——这条正是语义修正后要钉住的");
+
+                // 不变量：灰化是**按窗口**做的。两个窗口各有自己的系统菜单，
+                // 改带装饰的那个不该波及无边框探针。
+                //
+                // （顺带记录一个实测事实：无边框探针**也有系统菜单**——本库的 frameless
+                // 是靠 WM_NCCALCSIZE 隐藏边框实现的，没有摘掉 WS_SYSMENU，
+                // 所以它的 IsClosable 是 true。我原先假设"无边框 ⇒ 无系统菜单"，
+                // 那条断言当场就失败了。）
+                Check(probe.IsClosable, "灰化是按窗口做的：改带装饰的窗口不该影响无边框探针");
+
+                await AskMainAsync(
+                    "window.setClosable",
+                    SelfTestJson.Object(("label", SelfTestJson.String(DecoratedProbeLabel)), ("value", "true")));
+                Check(decorated.IsClosable, "重新允许之后 IsClosable 应当回到 true（灰化可逆）");
             }
             finally
             {

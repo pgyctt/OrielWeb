@@ -1417,6 +1417,24 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         _ = enabled;
     }
 
+    /// <summary>
+    /// 设置是否可关闭——<b>空操作</b>（见 <see cref="IWindowBackend.SetClosable"/>）。
+    /// </summary>
+    /// <remarks>
+    /// GTK 没有"可关闭"这个属性：窗口总能收到 delete-event，本库的关闭接管
+    /// （页面可以不同意关）是在那之上做的**拦截**，而"拦截"和"禁掉关闭按钮"不是一回事
+    /// （Tauri/tao 在 Linux 上同样没实现这一属性）。
+    /// <see cref="IsClosable"/> 在这里恒为 <c>true</c>，不会因为调过本方法而变。
+    /// <para>
+    /// 真要"关不掉"，现有手段是拦 <c>close-requested</c> 事件——那是应用层策略，
+    /// 而且能做到"按条件拒绝"，比一个静态属性更有用。
+    /// </para>
+    /// </remarks>
+    public void SetClosable(bool enabled)
+    {
+        _ = enabled;
+    }
+
     public void SetMinSize(int width, int height)
     {
         _minWidth = width;

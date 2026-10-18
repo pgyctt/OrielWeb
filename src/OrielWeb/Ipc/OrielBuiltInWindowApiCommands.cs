@@ -101,9 +101,16 @@ internal static class OrielBuiltInWindowApiCommands
 
             // ---- 三个标题栏按钮的可用性（M5-6 第三组）----
             //
-            // 只有 maximizable / minimizable 两条：closable 没做（见 docs 的说明——
-            // Windows 上"关闭按钮可用"的落点是灰化系统菜单项，而现有只读查询读的是
-            // WS_SYSMENU，换落点要动已验证的读取代码，留单独一轮）。
+            // closable 的落点与其他两个不同：Windows 上要灰化系统菜单项（见
+            // Win32WindowHost.SetClosable），macOS 切 styleMask 位，Linux 是空操作。
+            case "window.setClosable":
+                handler = static (sender, args) =>
+                {
+                    Resolve(sender, args).SetClosable(OrielJson.GetRequiredArg<bool>(args, "value", null));
+                    return null;
+                };
+                return true;
+
             case "window.setMaximizable":
                 handler = static (sender, args) =>
                 {

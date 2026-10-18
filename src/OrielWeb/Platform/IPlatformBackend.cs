@@ -155,10 +155,11 @@ internal interface IWindowBackend
     /// 当前是否可关闭。
     /// </summary>
     /// <remarks>
-    /// Windows 读 <c>WS_SYSMENU</c>（关闭按钮属于系统菜单）、macOS 读
-    /// <c>NSWindowStyleMaskClosable</c>；<b>Linux 恒为 <c>true</c></b>——
-    /// GTK 没有"可关闭"这个概念，窗口总能收到 delete-event（本库的关闭接管是在那之上做的
-    /// 拦截）。给一个恒真的值比给一个猜测的值诚实。
+    /// Windows 读**两件事**：窗口带 <c>WS_SYSMENU</c>（关闭按钮存在）且系统菜单里的
+    /// <c>SC_CLOSE</c> 未被灰化（可用）——由 <see cref="SetClosable"/> 的落点决定，
+    /// 少了后半句"写进去就读不回来"。macOS 读 <c>NSWindowStyleMaskClosable</c>；
+    /// <b>Linux 恒为 <c>true</c></b>——GTK 没有"可关闭"这个概念，窗口总能收到
+    /// delete-event（本库的关闭接管是在那之上做的拦截）。给一个恒真的值比给一个猜测的值诚实。
     /// </remarks>
     bool IsClosable { get; }
 
@@ -214,6 +215,22 @@ internal interface IWindowBackend
     /// <b>Linux 上同样是空操作</b>，理由见 <see cref="SetMaximizable"/>。
     /// </remarks>
     void SetMinimizable(bool enabled);
+
+    /// <summary>
+    /// 设置是否可关闭（见 <see cref="IsClosable"/>）。
+    /// </summary>
+    /// <remarks>
+    /// <b>三平台落点不同，而且不是同一件事</b>：
+    /// <list type="bullet">
+    ///   <item>Windows：<b>灰化系统菜单里的"关闭"项</b>（<c>SC_CLOSE</c>）。关闭按钮在
+    ///     Win32 里属于系统菜单，没有独立样式位；用清 <c>WS_SYSMENU</c> 代替会把
+    ///     三个按钮和整个系统菜单一起干掉，那是"删按钮"而不是"按钮不可用"。</item>
+    ///   <item>macOS：切 <c>NSWindowStyleMaskClosable</c>，红色按钮随之消失/出现。</item>
+    ///   <item>Linux：<b>空操作</b>——GTK 没有这一属性，窗口总能收到 delete-event。
+    ///     要"关不掉"得拦 <c>close-requested</c> 事件。</item>
+    /// </list>
+    /// </remarks>
+    void SetClosable(bool enabled);
 
     void Show();
     void Hide();

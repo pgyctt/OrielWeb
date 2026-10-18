@@ -1214,6 +1214,26 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         ObjCRuntime.SendVoidNint(_nsWindow, ObjCRuntime.Sel("setStyleMask:"), newStyle);
     }
 
+    /// <summary>
+    /// 设置是否可关闭（切 <c>NSWindowStyleMaskClosable</c>，见 <see cref="IWindowBackend.SetClosable"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 与 Windows 的落点（灰化系统菜单项）不同，这里就是<b>直接切样式位</b>——
+    /// 红色关闭按钮会随位消失/出现。之所以两边落点不同，是因为 AppKit 确实有这个位
+    /// 而 Win32 没有（Win32 上"按钮"属于系统菜单，见 <see cref="IsClosable"/> 的说明）。
+    /// <para>
+    /// 不变量"写进去能读回来"成立：<see cref="IsClosable"/> 读的就是这一位。
+    /// </para>
+    /// </remarks>
+    public void SetClosable(bool enabled)
+    {
+        var style = ObjCRuntime.SendId(_nsWindow, ObjCRuntime.Sel("styleMask"));
+        var newStyle = enabled
+            ? (nint)((nuint)style | StyleClosable)
+            : (nint)((nuint)style & ~StyleClosable);
+        ObjCRuntime.SendVoidNint(_nsWindow, ObjCRuntime.Sel("setStyleMask:"), newStyle);
+    }
+
     public void MoveTo(int x, int y)
     {
         // API.md 的契约：屏幕坐标（应用像素、**左上角**原点）。cocoa 是左下角原点且 y 向上，
