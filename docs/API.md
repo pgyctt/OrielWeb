@@ -92,7 +92,7 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 |---|---|
 | `IReadOnlyList<WebviewWindow> Windows` | 当前存活窗口；关闭的窗口会自动摘除 |
 | `WebviewWindow? GetWindow(string label)` | **按 label 取窗口**（对标 Tauri 2 的 `Window.getByLabel`）。不存在或已关闭时返回 `null`（不抛）。已关闭的窗口不会被返回——返回一个死窗口会让调用方拿到一个所有方法都抛异常的对象 |
-| `WebviewWindow? GetFocusedWindow()` | 有焦点的窗口。**目前恒返回 `null`**：三平台都还没有"窗口是否聚焦"的查询能力（P0-3 的 focus 事件只上报变化，不记录状态）。保留签名是为了让迁移代码能原样编译，但**它现在给不出答案** |
+| `WebviewWindow? GetFocusedWindow()` | 有焦点的窗口（对标 Tauri 2 的 `Window.getFocusedWindow`）。**遍历存活窗口、取第一个 `IsFocused` 为真的**——三平台都能回答"这个窗口有焦点吗"，而"哪个窗口有焦点"不需要单独的平台能力（Tauri 的 JS 侧也是这么做的）。返回 `null` 的两种情形：① 应用没有窗口；② 有窗口但都不在前台（用户切到了别的程序）。最小化的窗口不会被判为有焦点 |
 | `WebviewWindow CreateWindow(Action<OrielWindowOptions>? configure = null, Action<WebviewWindow>? onCreated = null)` | 运行时新建窗口（见 §1 的多窗口说明）。**只能在 `Run()` 之后调**，否则抛 `InvalidOperationException` |
 | `OrielTheme Theme` | `Light` / `Dark`；后端未就绪时返回 `Light` |
 | `event Action<OrielTheme>? ThemeChanged` | 系统主题变化（见 §6） |
@@ -198,9 +198,28 @@ WebviewWindow? again = app.GetWindow("settings");   // 按 label 取回（不存
 | `bool IsMaximized { get; }` / `bool ToggleMaximize()` | 切换后是否最大化（页面据此换图标） |
 | `bool IsVisible { get; }` | 窗口当前是否"显示中"（`Hide()` 后为 `false`；**最小化仍算显示中**）。用来确认"真被藏住了"——Windows 组合宿主下渲染窗口曾是独立的顶层窗口，只靠窗口句柄判断不出残余（见 §9 的 `win.isVisible`） |
 | `bool ToggleFullscreen()` / `bool ToggleOnTop()` | 切换后的状态 |
+| **只读状态查询**（对标 Tauri 2 的 `isMinimized()` / `isFocused()` / `isFullscreen()` / `isAlwaysOnTop()` / `isDecorated()` / `isResizable()` / `isMaximizable()` / `isMinimizable()` / `isClosable()` / `isEnabled()` / `theme()`） | |
+| `bool IsMinimized { get; }` | **与 `IsVisible` 是两件事**：最小化的窗口仍然"可见"，它只是被收进了任务栏。混为一谈的后果是"最小化之后页面以为窗口被藏了" |
+| `bool IsFocused { get; }` | 按**窗口**判而不是按应用判（多窗口应用里只有一个是 key window）。三平台各有一个"看起来对但语义错误"的近邻，实现刻意避开了：Windows 用 `GetForegroundWindow` 而非 `GetFocus`（后者只对调用线程的窗口队列有意义）、Linux 用 `gtk_window_is_active` 而非 `has_toplevel_focus`、macOS 用 `isKeyWindow` 而非 `isMainWindow` |
+| `bool IsFullscreen { get; }` / `bool IsAlwaysOnTop { get; }` | 取**库记住的状态**，不去比对窗口与显示器矩形——后者在用户手动把窗口拖成刚好铺满屏幕时会给出与库不一致的答案 |
+| `bool IsDecorated { get; }` | 取创建时的 `Frameless` 选项（窗口生命期内不变）。Windows 上"无边框"是 `WM_NCCALCSIZE` 的处理，读样式位读不出那个意图 |
+| `bool IsResizable { get; }` / `bool IsMaximizable { get; }` / `bool IsMinimizable { get; }` / `bool IsClosable { get; }` | **读原生**（改的就是原生样式，读回来才反映"系统实际接受的是什么"，所以写进去读得回来）。三处跨平台语义差异如实登记：`IsMaximizable` / `IsMinimizable` 在 **Linux 恒等于 `IsResizable`**、macOS 上 `IsMaximizable` 也是 resizable 位；`IsClosable` 在 **Linux 恒为 `true`**（GTK 没有这个概念，窗口总能收到 `delete-event`）。给恒真/回落值比给一个猜测值诚实 |
+| `bool IsEnabled { get; }` | 窗口是否接收输入。**macOS 上只挡鼠标、不挡键盘**（Cocoa 没有"禁用窗口"这个概念，用 `ignoresMouseEvents` 近似） |
+
+> **页面侧还有 `theme()`**（`getCurrentWindow().theme()` → `'light'` / `'dark'`），它读的是
+> `OrielApp.Theme`，**没有**对应的 `WebviewWindow` 属性：本库只有"跟随系统"这一种来源，
+> 所以永远给得出值（Tauri 的 `theme()` 可能返回 `null` 表示"无法确定"）。
+| **外观与能力开关**（写操作，**均不在标题栏白名单里**，需显式 `Allow`） | |
+| `SetEnabled(bool enabled)` | 启用/禁用窗口输入。禁用窗口不是标题栏要做的事，而它让页面能把窗口变成"点不动"的状态——那是能力而非外观 |
+| `SetMaximizable(bool enabled)` / `SetMinimizable(bool enabled)` | **Linux 上为空操作**（GTK 无对应入口），且**刻意不记状态**——记了 `IsMaximizable` 就会给出"用户看到的按钮其实还在"的假值。macOS 上 `SetMaximizable` **与 `SetResizable` 是同一个操作**（AppKit 没有独立的最大化位），副作用是会连带影响拖拽缩放，两者互相覆盖时后调的赢 |
+| `SetClosable(bool enabled)` | **Linux 上为空操作**（要"关不掉"得拦 `close-requested`，那是应用层策略）。Windows 的落点是**灰化系统菜单里的 `SC_CLOSE`**，不是清 `WS_SYSMENU`——后者会把三个按钮和整个系统菜单一起干掉，那是"删按钮"而不是"按钮不可用"。macOS 切 `NSWindowStyleMaskClosable` |
+| `SetMaxSize(int width, int height)` | 最大尺寸（逻辑像素的**客户区**，传 0 表示不限制）。Windows 走 `WM_GETMINMAXINFO` 的 `ptMaxTrackSize`（framed 窗口做客户区→整窗换算）、macOS 用 `setContentMaxSize:`（0 映射成 `double.MaxValue`，因为 Cocoa 的"无上限"不是 0）、**Linux 只声明 `GDK_HINT_MAX_SIZE`，不替换既有的 `set_size_request` min 机制**——两条路各管一端 |
+| `RequestUserAttention(OrielUserAttention? type)` | 请求用户注意（任务栏闪烁 / Dock 弹跳）。`Critical` / `Informational` / `null`（取消）。**macOS 上两档区别最明显**（Critical 会一直弹跳到用户来看）；**Linux 上两档没有区别**（GTK 只有 `gtk_window_set_urgency_hint` 这个开/关，没有分级） |
+| `SetIcon(string path)`<br>`SetIconFromBytes(byte[] bytes)`<br>`SetIconFromRgba(byte[] rgba, int width, int height)` | 运行期换窗口图标。三平台复用**创建期图标**的代码路径（Windows `WM_SETICON`、Linux `gtk_window_set_icon`、macOS `setApplicationIconImage:`）。**Windows 上大/小两个槽位都会设**（`ICON_BIG` 给任务栏与 Alt-Tab 大视图，`ICON_SMALL` 给标题栏与 Alt-Tab 小视图——只设大图标的表现是"图标换了但标题栏那个还是旧的"）。**macOS 上没有窗口级图标**：这里设的是**应用（Dock）图标**，会影响整个应用；Linux 的 Wayland 下窗口图标由合成器决定，通常忽略本调用。解码失败**静默保持原图标**并记一条诊断（与 `LoadImageW` 返回 0 同语义），非法 base64 / RGBA 长度不符则**当场报错**（那是调用方能自己修的问题） |
+| `SetBackgroundColor(uint argb)` | 运行期窗口底色（`0xAARRGGBB`）。这是"页面透明、或内核还没加载完时露出来"的颜色，三平台都落到 **webview 自己的底色**（Windows `ICoreWebView2Controller2.DefaultBackgroundColor`、macOS `NSWindow.backgroundColor` + `WKWebView.underPageBackgroundColor`、Linux `webkit_web_view_set_background_color`）。运行期值优先，没设过时回落创建期的 `OrielWindowOptions.BackgroundColor` |
 | **几何与外观** | |
 | `SetTitle(string title)` / `SetResizable(bool enabled)` | — |
-| `SetMinSize(int width, int height)` | — |
+| `SetMinSize(int width, int height)` | 客户区最小尺寸（逻辑像素，传 0 表示不限制） |
 | `MoveTo(int x, int y)` / `Resize(int width, int height)` / `Center()` | 坐标是**屏幕**坐标、**左上角**原点（**逻辑像素**：HiDPI 下由库按窗口 DPI 折算，调用方不要预折算，见 §2）——`MoveTo` 的原点语义三平台一致。`Resize` 的宽高是**客户区**（对标 Tauri 的 `setSize`）：Windows 会把客户区换算成整窗，frameless 窗口不换算（客户区已等于整窗） |
 | `OrielSize InnerSize { get; }` / `OrielSize OuterSize { get; }` | **客户区** / **整窗**尺寸，都是逻辑像素。`Resize(InnerSize)` 是不动点（同一单位）。**与 Tauri 的差别**：Tauri 的 `innerSize()` 返回 `PhysicalSize`，本库返回逻辑像素——库对页面只暴露逻辑像素，混入物理会让"这个值是哪种单位"变成每个调用点都要想一遍的问题。**Linux/Wayland 下 `OuterSize` 可能与 `InnerSize` 相等**（合成器不给装饰尺寸） |
 | `OrielPosition InnerPosition { get; }` / `OrielPosition OuterPosition { get; }` | **客户区** / **整窗**左上角的屏幕逻辑坐标。**Linux 上 `InnerPosition` 恒等于 `OuterPosition`**：GTK 不暴露"客户区相对窗口原点的偏移"（装饰由 WM 画，客户端看不到尺寸）。比编一个偏移值诚实 |
@@ -875,7 +894,7 @@ window.ContextMenuPolicy = OrielContextMenuPolicy.Editing;  // Editing（默认�
 
 ### 11.2 `@orielweb/api`（推荐）
 
-模块名与 `@tauri-apps/api` 一一对应，迁移 = 换 import 前缀。当前已提供 `core` / `event` / `window` / `dpi` / `mocks`。
+模块名与 `@tauri-apps/api` 一一对应，迁移 = 换 import 前缀。当前已提供 `core` / `event` / `window` / `dpi` / `mocks` / `path` / `app` / `fs` / `opener` / `notification` / `autostart` / `clipboard` / `dialog` / `image`（14 个）。
 
 ```js
 import { getCurrentWindow } from '@orielweb/api/window';
@@ -898,7 +917,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 |---|---|
 | `core` | `invoke` / `isTauri` / `convertFileSrc`（同步；宿主侧查 `asset.read` 的 scope） |
 | `event` | `listen` / `once` / `emit` / `emitTo` / `TauriEvent` |
-| `window` | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow`（恒 `null`，见下）+ `Window` 类 |
+| `window` | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow` + `Window` 类（含静态方法 `Window.getFocusedWindow()`；M5 的状态查询与外观开关：`isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop` / `isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `isEnabled` / `theme`；`setEnabled` / `setMaximizable` / `setMinimizable` / `setClosable` / `setMaxSize` / `setSizeConstraints` / `requestUserAttention` / `setIcon` / `setBackgroundColor`；`onThemeChanged` / `onScaleChanged`） |
 | `path` | `sep` / `delimiter`（**同步**）+ `join` / `normalize` / `dirname` / `extname` / `basename` / `isAbsolute` / `resolve` |
 | `app` | `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`（全是只读元信息，**无需能力声明**） |
 | `fs` | `readTextFile` / `writeTextFile` / `readFile` / `writeFile` / `exists` / `size` / `readDir` / `stat` / `lstat` / `mkdir` / `remove` / `rename` / `copyFile` / `truncate`（**两道关都必过**，见下） |
@@ -907,7 +926,8 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 | `autostart` | `isEnabled` / `enable` / `disable` |
 | `clipboard` | `readText` / `writeText` / `clear`（纯文本） |
 | `dialog` | `open` / `save` / `message` / `ask` / `confirm` |
-| `dpi` | `LogicalSize` / `PhysicalSize` / `LogicalPosition` / `PhysicalPosition` + 归一与换算 |
+| `dpi` | `LogicalSize` / `PhysicalSize` / `LogicalPosition` / `PhysicalPosition` + 归一与换算（`toPhysical` / `toLogical`） |
+| `image` | `Image`（`fromPath` / `fromBytes` / `new`）+ `transformImage`。**与 Tauri 的本质分歧**：Tauri 的 `Image` 是资源表 handle（持 `rid`、有 `close()`），本库没有资源表——它是**页面侧字节容器**，因此**没有 `close()`**（迁移代码里的 `await image.close()` 会抛 `TypeError`，宁可当场炸也不要带着错误的心智模型继续写）。`rgba()` / `size()` 是本地值，但签名仍是 `Promise`（`await` 照样能跑）。尺寸解析（PNG 的 IHDR、ICO 的 `ICONDIRENTRY`，其中宽高字段的 **0 表示 256**）在页面侧完成；解码**像素**才请宿主（`window.decodeImage`），结果缓存 |
 | `mocks` | `mockIPC` / `mockWindows` / `mockEmit` / `mockConvertFileSrc` / `clearMocks` |
 
 ### `path` 模块

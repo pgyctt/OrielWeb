@@ -347,14 +347,35 @@ test('getByLabel：label 必须是非空字符串', async () => {
     clearMocks();
 });
 
-test('getFocusedWindow：目前恒返回 null（如实标注，不假装有答案）', async () => {
+test('getFocusedWindow：宿主给 label 时返回 Window，没有焦点窗口时返回 null', async () => {
     clearMocks();
-    const { calls, transport } = makeTransport('main', { 'window.getAll': ['main'] });
-    setTransportOverride(transport);
 
-    assert.equal(await getFocusedWindow(), null);
-    // 它不该先问宿主再返回 null——那会让调用方以为"宿主说没有"
-    assert.deepEqual(calls, []);
+    // 有焦点窗口：宿主给 label，页面据此构句柄
+    {
+        const { calls, transport } = makeTransport('main', { 'window.getFocused': 'settings' });
+        setTransportOverride(transport);
+
+        const focused = await getFocusedWindow();
+        assert.ok(focused instanceof Window, '应当返回 Window 句柄而不是裸 label');
+        assert.equal(focused.label, 'settings');
+        assert.deepEqual(calls[0], ['window.getFocused', undefined]);
+    }
+
+    // 没有焦点窗口（用户切到别的程序）：宿主给 null
+    {
+        const { transport } = makeTransport('main', { 'window.getFocused': null });
+        setTransportOverride(transport);
+
+        assert.equal(await getFocusedWindow(), null);
+    }
+
+    // 宿主给了空串或非字符串：同样按"没有"处理，而不是构出一个 label 为空的句柄
+    {
+        const { transport } = makeTransport('main', { 'window.getFocused': '' });
+        setTransportOverride(transport);
+
+        assert.equal(await getFocusedWindow(), null);
+    }
 
     clearMocks();
 });

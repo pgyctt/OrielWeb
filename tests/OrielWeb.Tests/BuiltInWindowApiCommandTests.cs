@@ -82,6 +82,7 @@ public sealed class BuiltInWindowApiCommandTests
     [InlineData("window.setFullscreen")]
     [InlineData("window.setOnTop")]
     [InlineData("window.getAll")]
+    [InlineData("window.getFocused")]
     [InlineData("window.setCloseIntercept")]
     [InlineData("window.setEventForwarding")]
     public void OtherWindowCommands_AreNotAlwaysAllowed(string command)

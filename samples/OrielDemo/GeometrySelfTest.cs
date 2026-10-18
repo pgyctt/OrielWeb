@@ -46,6 +46,18 @@ internal static class GeometrySelfTest
     /// </remarks>
     private const int Tolerance = 2;
 
+    /// <summary>
+    /// 当前环境是否有窗口管理器（决定"位置"那几条断言适不适用）。
+    /// </summary>
+    /// <remarks>
+    /// 判据由验证脚本设置（<c>ORIEL_HAS_WM=1</c>，它在 X11 下查 <c>_NET_SUPPORTING_WM_CHECK</c>）；
+    /// 未设置时只有非 Linux 才认为有 WM。没有 WM 时 <c>gtk_window_move</c> 是空操作，
+    /// 位置断言验的是环境而不是库。
+    /// </remarks>
+    private static readonly bool HasWindowManager =
+        !OperatingSystem.IsLinux()
+        || Environment.GetEnvironmentVariable("ORIEL_HAS_WM") == "1";
+
     private static int _failures;
 
     /// <summary>本项是否失败——demo 的 Main 据此设置退出码。</summary>
@@ -265,9 +277,22 @@ internal static class GeometrySelfTest
         // ---- OuterPosition 应当等于刚 MoveTo 进去的值 ----
         // 容差放宽到 40：窗口管理器会吸附/约束（Wayland 下甚至不给位置）。
         // 位置那部分的严格断言在 --selftest windowevents 里已有一份，这里只防"读到别的窗口"。
-        Check(
-            Math.Abs(outerPos.X - ProbeX) <= 40 && Math.Abs(outerPos.Y - ProbeY) <= 40,
-            $"({mode}) OuterPosition 应接近刚 MoveTo 的 ({ProbeX},{ProbeY})（实际 {outerPos.X:0.#},{outerPos.Y:0.#}）");
+        //
+        // **无窗口管理器时跳过**（CI 的 xvfb）：`gtk_window_move` 是空操作，
+        // 位置会停在合成器/默认给的地方（实测 26,23 或 0,0）。那验的是环境，
+        // 而这条自检真正要吃的是**尺寸语义**，那部分照常断言。
+        if (HasWindowManager)
+        {
+            Check(
+                Math.Abs(outerPos.X - ProbeX) <= 40 && Math.Abs(outerPos.Y - ProbeY) <= 40,
+                $"({mode}) OuterPosition 应接近刚 MoveTo 的 ({ProbeX},{ProbeY})（实际 {outerPos.X:0.#},{outerPos.Y:0.#}）");
+        }
+        else
+        {
+            Console.WriteLine(
+                $"[geometry-selftest] SKIP: ({mode}) OuterPosition 应接近刚 MoveTo 的 ({ProbeX},{ProbeY})" +
+                "（当前环境没有窗口管理器，窗口位置不由本进程决定）");
+        }
 
         // ---- InnerPosition 在整窗之内 ----
         Check(

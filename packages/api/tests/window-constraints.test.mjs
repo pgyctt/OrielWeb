@@ -70,6 +70,27 @@ test('requestUserAttention 把常量翻成宿主的字符串，不传表示取�
     clearMocks();
 });
 
+test('requestUserAttention 对未知值当场抛，不静默当成取消', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', { 'window.requestUserAttention': null });
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    // 3 既不是 Critical(1) 也不是 Informational(2)。
+    // 静默当成 null 的后果是"我请求了注意"变成"我取消了注意"——两个相反的意图，
+    // 而现场什么都不发生（本来就不该有可见反馈），排查方向会完全错。
+    assert.throws(
+        () => win.requestUserAttention(3),
+        /未知的 requestType/,
+        '未知值必须当场抛，而不是变成取消');
+
+    // 抛错时**不该发命令**：发了就是把错误意图执行了一遍
+    assert.equal(calls.length, 0);
+
+    clearMocks();
+});
+
 test('setMaxSize 收与 setSize 同样的形状，null 表示取消上限', async () => {
     clearMocks();
     const { calls, transport } = makeTransport('main', { 'window.setMaxSize': null });
@@ -286,7 +307,7 @@ test('setIcon：越界的字节必须当场抛（Uint8Array 会静默截断）',
     clearMocks();
 });
 
-test('setSizeConstraints 只发给了值的那一侧', async () => {
+test('setSizeConstraints 是整体替换：省略的项按"取消约束"下发（0）', async () => {
     clearMocks();
     const { calls, transport } = makeTransport('main', {
         'window.setMinSize': null,
@@ -296,19 +317,40 @@ test('setSizeConstraints 只发给了值的那一侧', async () => {
 
     const win = new Window('main');
 
-    // 只给上限：不该顺带把最小尺寸设成 0（那会把窗口卡成 0 宽）
+    // 只给上限：下限侧仍要发一条 0x0（= 取消下限约束），因为这次调用的语义是
+    // "我现在的约束是这些"而不是"我只改这些"。
+    // 这与 Tauri 一致，也是唯一能在"轻量句柄不缓存状态"的前提下自洽的做法——
+    // 详见 window.js 里 setSizeConstraints 的 remarks。
     await win.setSizeConstraints({ maxWidth: 800, maxHeight: 600 });
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0][0], 'window.setMaxSize');
+    assert.deepEqual(calls.map((call) => call[0]), ['window.setMinSize', 'window.setMaxSize']);
+    assert.equal(calls[0][1].width, 0);
+    assert.equal(calls[0][1].height, 0);
+    assert.equal(calls[1][1].value.width, 800);
+    assert.equal(calls[1][1].value.height, 600);
 
-    // 两侧都给：两条命令，顺序是先 min 后 max
-    await win.setSizeConstraints({ minWidth: 200, minHeight: 150, maxWidth: 800, maxHeight: 600 });
-    assert.deepEqual(calls.slice(1).map((call) => call[0]), ['window.setMinSize', 'window.setMaxSize']);
+    calls.length = 0;
 
-    // 什么都不给：一条命令都不发（不是"发一条把两边清零"）
-    const before = calls.length;
+    // 只给一侧中的一个分量：另一个分量同样按 0 下发。
+    // 这条正是旧实现与文档矛盾的地方（旧文档承诺"保持不动"，而实现清成 0）——
+    // 现在语义只有一份：省略 = 取消。
+    await win.setSizeConstraints({ minHeight: 150 });
+    assert.deepEqual(calls.map((call) => call[0]), ['window.setMinSize', 'window.setMaxSize']);
+    assert.equal(calls[0][1].width, 0, '省略的 minWidth 按取消约束下发，不是"保持不动"');
+    assert.equal(calls[0][1].height, 150);
+
+    calls.length = 0;
+
+    // 空对象：两侧都按 0 下发（清掉全部约束），而不是"一条都不发"
     await win.setSizeConstraints({});
-    assert.equal(calls.length, before);
+    assert.deepEqual(calls.map((call) => call[0]), ['window.setMinSize', 'window.setMaxSize']);
+    assert.equal(calls[0][1].width, 0);
+    assert.equal(calls[1][1].value.width, 0);
+
+    calls.length = 0;
+
+    // null：与空对象同义（取消全部约束）
+    await win.setSizeConstraints(null);
+    assert.deepEqual(calls.map((call) => call[0]), ['window.setMinSize', 'window.setMaxSize']);
 
     clearMocks();
 });

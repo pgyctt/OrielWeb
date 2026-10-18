@@ -22,13 +22,21 @@ import { invoke } from '@orielweb/api/core';
 
 | 模块 | 状态 |
 |---|---|
-| `core` | ✅ `invoke` / `isTauri` / `convertFileSrc`（显式未实现） |
-| `event` | ✅ `listen` / `once` / `emit` / `emitTo` + `TauriEvent`（含名字映射与按需转发） |
-| `window` | ✅ `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow`（恒 `null`）+ `Window` 类 |
-| `dpi` | ✅ 四个类 + 归一 + 换算 |
-| `path` | ✅ `sep` / `delimiter`（同步）+ 7 个路径运算（由宿主算） |
+| `core` | ✅ `invoke`（含逐次调用超时）/ `isTauri` / `convertFileSrc`（走宿主 `asset.read` 的 scope） |
+| `event` | ✅ `listen` / `once` / `emit` / `emitTo` + `TauriEvent`（含名字映射与按需转发，退订时对称关闭） |
+| `window` | ✅ `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow` + `Window` 类（含静态 `Window.getFocusedWindow()`；状态查询、外观开关、`onThemeChanged` / `onScaleChanged`） |
+| `dpi` | ✅ 四个类 + 归一 + `toPhysical` / `toLogical` 换算 |
+| `path` | ✅ `sep` / `delimiter`（同步）+ 7 个路径运算 + 24 个目录解析（由宿主算） |
+| `app` | ✅ `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`（只读元信息，无需能力声明） |
+| `fs` | ✅ 整文件读写一族（`readTextFile` / `writeTextFile` / `readFile` / `writeFile` / `exists` / `size` / `readDir` / `stat` / `lstat` / `mkdir` / `remove` / `rename` / `copyFile` / `truncate`）——**命令授权 + 路径 scope 两道关都必过** |
+| `dialog` | ✅ `open` / `save` / `message` / `ask` / `confirm` |
+| `clipboard` | ✅ `readText` / `writeText` / `clear`（纯文本；`label` 明确拒绝） |
+| `opener` | ✅ `openUrl` / `openPath` / `revealItemInDir`（`openWith` 明确拒绝） |
+| `notification` | ✅ `isPermissionGranted` / `requestPermission` / `sendNotification`（桌面子集） |
+| `autostart` | ✅ `isEnabled` / `enable` / `disable` |
+| `image` | ✅ `Image`（`fromPath` / `fromBytes` / `new`）+ `transformImage`。**没有 `close()`**——本库没有资源表，它是页面侧字节容器 |
 | `mocks` | ✅ `mockIPC` / `mockWindows` / `mockEmit` / `mockConvertFileSrc` / `clearMocks` |
-| `app` / `menu` / `image` / `dialog` / `fs` / … | 尚未实现，见 [TAURI2-PLAN.md](../../docs/TAURI2-PLAN.md) |
+| `menu` / `tray` | 未提供前端包（宿主侧的托盘 API 见 `oriel.tray`，不走这个包） |
 
 ## 关闭接管：语义与 Tauri **相反**
 
@@ -49,9 +57,16 @@ const un = await win.onCloseRequested(async () => {
 ## `window` 方法的能力要求
 
 标题栏必需的那组（`minimize` / `toggleMaximize` / `toggleFullscreen` / `toggleOnTop` /
-`close` / `destroy` / `drag*` / `pickFile` / `contextMenu`）与三条只读查询
-（`isVisible` / `isMaximized` / `title`）**无条件放行**；其余要宿主
-`Allow("window.*")` 或逐条声明。清单与逐条理由见 [API.md §11](../../docs/API.md)。
+`close` / `destroy` / `drag*` / `pickFile` / `contextMenu`）与只读状态查询
+（`isVisible` / `isMaximized` / `isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop` /
+`isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `isEnabled` /
+`theme` / `title`）**无条件放行**；其余要宿主 `Allow("window.*")` 或逐条声明。
+清单与逐条理由见 [API.md §11](../../docs/API.md)。
+
+注意几条**不在**白名单里的：`setEnabled` / `setMaximizable` / `setMinimizable` / `setClosable` /
+`setMaxSize` / `setSizeConstraints` / `requestUserAttention` / `setIcon` / `setBackgroundColor` /
+`getAll` / `getFocused` / `innerSize` 一族——它们要么改的是能力而不只是外观，
+要么泄露跨窗口信息。用之前必须显式声明。
 
 ## `event` 的现状（迁移必读）
 
@@ -60,7 +75,7 @@ const un = await win.onCloseRequested(async () => {
 | `listen` / `once` / `emit` / `emitTo` | ✅ 可用 |
 | 事件对象 `{ event, id, payload }` | ✅ **包装在包内做**——直接调 `window.oriel.on` 的既有页面不受影响 |
 | `emit` / `emitTo` 的宿主命令 | ✅ `event.emit`，**必须显式 `Allow("event.emit")`**（不走 `win.*` 的后门） |
-| 内置事件名 | ✅ `tauri://resize` / `move` / `focus` / `blur` / `close-requested` 可用（高频的三个会**自动打开**宿主转发）；⛔ `tauri://destroyed` **永远收不到**（窗口销毁时页面正在被拆掉） |
+| 内置事件名 | ✅ `tauri://resize` / `move` / `focus` / `blur` / `close-requested` / `scale-change` / `theme-changed` 可用（高频的四个会**自动打开**宿主转发，退订时对称关闭）；⛔ `tauri://destroyed` **永远收不到**（窗口销毁时页面正在被拆掉） |
 
 `mocks` 里的 `mockEmit(name, payload)` 可以模拟宿主推事件，写前端测试时用它造"窗口被 resize 了"这类场景。
 
@@ -110,7 +125,7 @@ import { listen } from "./vendor/orielweb-api/event.js";
 
 ## 与 Tauri 的一致性是被测试强制的
 
-	ests/tauri-alignment.test.mjs 把 `@tauri-apps/api` 与官方插件当**参照实现**，
+`tests/tauri-alignment.test.mjs` 把 `@tauri-apps/api` 与官方插件当**参照实现**，
 机械比对导出面与方法：
 
 * **参照有、我们没有** → 必须在测试的 `GAPS` 里逐条给出原因（那就是迁移会撞上的缺口清单）；
@@ -124,15 +139,21 @@ CI 用 `npm ci` 装好，所以门禁是强制生效的。
 
 ```bash
 cd packages/api
-npm install          # 只装 typescript（devDependency）
+npm ci               # 装 typescript 与参照实现（tauri-alignment 需要它们）
 npm test             # node --test tests/*.test.mjs
 npm run typecheck    # tsc -p . --noEmit
+npm run build:types  # 生成 types/*.d.ts（**提交进仓库**，CI 校验无漂移）
 ```
 
 ## 与 Tauri 的语义差异（迁移必读）
 
 1. **默认 30 秒超时**（Tauri 没有）。长任务必须显式放宽：`window.oriel.timeout = 300000`。
-   per-call `timeout` 尚未实现（P1-7），传了会**明确报错**而不是静默忽略。
-2. **失败值是字符串**。`catch (e) { e.message }` 拿到宿主文案；结构化 `code`/`data` 尚未实现。
+   逐次调用的 `timeout` 已支持（`invoke(cmd, args, { timeout })`），但它**要求宿主声明
+   `supportsPerCallTimeout`**；老宿主会明确报错而不是静默按全局值走。
+2. **失败值是带结构化字段的 `Error`**：`e.message` 是宿主文案，另有可选的 `e.code`
+   （`not_allowed` / `unknown_command` / `invalid_argument` / `path_not_allowed` / …）与 `e.data`。
+   两个字段**只在有值时才存在**（不写 `"code":null`），所以 `if (e.code)` 与 `'code' in e`
+   给出同样的答案。应用命令抛的异常**不带码**——那是应用的错误分类，库不替它编。
 3. **参数名原样透传**，不做 camelCase → snake_case。
 4. **`isTauri()` 在装了 mock 时返回 `true`**——单测应走真实分支，而不是被环境判断带去另一条没有测试覆盖的路。
+5. **`Image` 没有 `close()`**：本库没有资源表，它是页面侧字节容器（见上表的 `image` 行）。

@@ -425,6 +425,18 @@ internal static unsafe class LinuxSignalHandlers
     {
         try
         {
+            // **被新导航取消的旧加载不是失败**。
+            //
+            // WebKitGTK 在 go_back / go_forward / reload、或页面自己发起新导航时，
+            // 会给上一次尚未完成的加载补一条 `load-failed`，错误码是
+            // WEBKIT_NETWORK_ERROR_CANCELLED(302)、文案 "Load request cancelled"。
+            // 把它当成"导航失败"上报，"后退"就会看起来失败——而实际后退是成功的，
+            // 只是中断了上一次加载。浏览器语义里 cancelled 本来也不属于错误。
+            if (IsCancelled(error))
+            {
+                return;
+            }
+
             if (WebviewStates.TryGetValue(webview, out var host))
             {
                 host.OnLoadFailed(
@@ -436,6 +448,31 @@ internal static unsafe class LinuxSignalHandlers
         {
             // 异常不外泄
         }
+    }
+
+    /// <summary>
+    /// 这个 GError 是不是"加载被取消"（见 <see cref="OnLoadFailedTrampoline"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 先看错误码（<c>WEBKIT_NETWORK_ERROR_CANCELLED = 302</c>），再退回看文案——
+    /// 只认文案会在本地化构建上失效，只认错误码则要赌枚举值不变，两个一起判更稳。
+    /// </remarks>
+    private static bool IsCancelled(nint error)
+    {
+        if (error == 0)
+        {
+            return false;
+        }
+
+        // GError 布局：{ GQuark domain(4); gint code(4); gchar* message(8) }
+        if (Marshal.ReadInt32(error, 4) == 302)
+        {
+            return true;
+        }
+
+        string? message = GErrorMessage(error);
+        return message is not null
+            && message.Contains("cancelled", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

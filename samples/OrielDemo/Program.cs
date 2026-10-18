@@ -211,6 +211,9 @@ internal static class Program
                     // getAllWindows / scaleFactor 需要声明（title / isVisible 在白名单里）。
                     c.Allow(
                         "window.getAll",
+                        // 焦点窗口（对标 Tauri 的 getFocusedWindow）：**刻意不进白名单**——
+                        // 它答的是"别的窗口是不是在前台"，属于跨窗口信息。
+                        "window.getFocused",
                         "window.isVisible",
                         "window.isMaximized",
                         "window.scaleFactor",

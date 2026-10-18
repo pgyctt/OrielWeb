@@ -13,6 +13,7 @@
 // 所以这里 import 的就是包的源码本身，不存在"副本过期"的漂移。
 import { invoke, isTauri } from "./vendor/orielweb-api/core.js";
 import { listen } from "./vendor/orielweb-api/event.js";
+import { getCurrentWindow } from "./vendor/orielweb-api/window.js";
 
 const listEl = document.getElementById("todo-list");
 const countEl = document.getElementById("count-label");
@@ -161,6 +162,27 @@ formEl.addEventListener("submit", async (event) => {
 listen("theme.changed", (e) => {
     document.documentElement.dataset.theme = e.payload;
 });
+
+// **启动时主动查一次主题**，不要只等事件。
+//
+// 宿主的补推发生在"导航完成"那一刻，而页面脚本的注册时机取决于模块怎么加载
+// （静态 module 是 defer、动态 import 是异步）——两者之间没有可依赖的先后关系。
+// 只等事件的表现是"主题一直不生效"，而**页面其它功能全都正常**（徽章能显示
+// IPC 已连接），于是很难联想到"事件比监听早到"。
+//
+// `window.theme` 在标题栏白名单里（只读、不泄露跨窗口信息），所以这条查询
+// 不需要额外能力声明。
+getCurrentWindow()
+    .theme()
+    .then((theme) => {
+        // 不覆盖事件已经设过的值：事件更权威（它代表"刚刚变化"）。
+        if (!document.documentElement.dataset.theme) {
+            document.documentElement.dataset.theme = theme;
+        }
+    })
+    .catch(() => {
+        // 拿不到就沿用事件路径；不把失败打到徽章上——它不影响页面其它功能。
+    });
 
 (async () => {
     // 迁移自 `await window.oriel.ready`：包没有 ready（Tauri 也没有）——

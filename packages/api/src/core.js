@@ -45,7 +45,7 @@ export async function invoke(cmd, args, options) {
     // 就是它的降级行为（而不是静默按 30 秒超时）。
     if (transport.supportsPerCallTimeout !== true) {
         throw new Error(
-            'invoke: 当前宿主不支持 per-call timeout（需要 OrielWeb 0.4.0+）。' +
+            'invoke: 当前宿主不支持 per-call timeout（需要 OrielWeb 0.3.6+）。' +
             '请改全局超时：window.oriel.timeout = 300000；或省略 options.timeout。');
     }
 

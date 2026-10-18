@@ -64,7 +64,31 @@
         </footer>
     </main>
 
-    <script type="module" src="app.js"></script>
+    <!--
+      为什么用**经典脚本里的动态 import()** 而不是 <script type="module" src="app.js">：
+
+      ES module 的抓取一律走 CORS 检查，而 WebKitGTK / WKWebView 对**自定义 scheme**
+      的 module script 支持不一致——实测 Windows(WebView2) 上 `type="module"` 能加载，
+      而 macOS/Linux 上同一个页面**脚本静默不执行**：主题不应用、徽章不更新、
+      探针不回报，宿主侧只看到"超时"，完全联想不到加载方式。
+
+      动态 import() 走的是另一条路径（在已加载文档里发起），三平台都能用——
+      自检里那些 `await import('./vendor/...')` 正是这条路。
+
+      所以：容器用经典脚本（不受 module script 的 CORS 限制），
+      app.js 本身仍是 ES module（它里面的 import 语句照常生效）。
+      失败时把原因打到页面上，而不是让页面"看着正常但什么都不做"。
+    -->
+    <script>
+      import("./app.js").catch(function (error) {
+        var badge = document.getElementById("ipc-badge");
+        if (badge) {
+          badge.textContent = "页面脚本加载失败：" + error.message;
+          badge.classList.add("error");
+        }
+        console.error("app.js 加载失败", error);
+      });
+    </script>
 </body>
 </html>
 

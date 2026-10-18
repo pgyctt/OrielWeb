@@ -93,7 +93,36 @@ internal static class ThemeSelfTest
 
         if (!_finished)
         {
-            Finish(window, ok: false, detail: $"{TimeoutMs / 1000} 秒内页面没有把 data-theme 设为 {expected}");
+            // 失败时把**页面侧的可观测状态**打出来：这条失败过很多次，而"20 秒内没设置"
+            // 这一个现象指向好几种完全不同的根因——桥接没注入（window.oriel 缺失）、
+            // 页面脚本没执行（readyState 停在 loading）、或事件到了但监听没注册。
+            // 不打出这些，下一轮还是只能猜。
+            string diagnosis = await DiagnoseAsync(window);
+            Finish(window, ok: false,
+                detail: $"{TimeoutMs / 1000} 秒内页面没有把 data-theme 设为 {expected}{diagnosis}");
+        }
+    }
+
+    /// <summary>读页面侧的关键状态，拼成一段可读的诊断（失败时才调用）。</summary>
+    private static async Task<string> DiagnoseAsync(WebviewWindow window)
+    {
+        try
+        {
+            string raw = await window.EvaluateJs(
+                "JSON.stringify({"
+                + "oriel: typeof window.oriel,"
+                + "onEvent: typeof (window.oriel && window.oriel._onEvent),"
+                + "readyState: document.readyState,"
+                + "theme: document.documentElement.getAttribute('data-theme'),"
+                + "badge: (document.getElementById('ipc-badge') || {}).textContent || null"
+                + "})");
+
+            // EvaluateJs 返回的是 JSON 编码的字符串（外面还套一层引号），去掉它便于阅读
+            return $"；页面状态：{raw.Trim('"').Replace("\\\"", "\"")}";
+        }
+        catch (Exception ex)
+        {
+            return $"；读取页面状态也失败：{ex.Message}";
         }
     }
 
@@ -116,8 +145,10 @@ internal static class ThemeSelfTest
             : $"THEME-SELFTEST: FAIL（{detail}）");
         Console.Out.Flush();
 
-        // 关窗要回 UI 线程（窗口 API 的约束）；这里已在 UI 线程上（EvaluateJs 的续体回来了），
-        // 但 PostToUiThread 是幂等的无害兜底——退出路径上不值得赌 SynchronizationContext 的语义。
-        window.PostToUiThread(window.Close);
+        // 用 Quit 而不是 Close 收尾：自检的退出**不能依赖窗口的关闭流程**——
+        // Linux 上 `gtk_window_close` 要走 delete-event，而没有窗口管理器的环境
+        // （CI 的 xvfb）里那条路不一定成立，进程会挂到脚本的 timeout 才被杀，
+        // 表现为"结论已 PASS 但退出码 124"。Quit 直接停消息循环，三平台都可靠。
+        window.PostToUiThread(window.App.Quit);
     }
 }

@@ -245,6 +245,9 @@ internal static class IpcSelfTest
         }
         Console.Out.Flush();
 
-        _window?.Close();
+        // 收尾用 Quit：Linux 的 `gtk_window_close` 要走 delete-event，无窗口管理器时那条链不成立，
+        // 进程会挂到脚本 timeout（结论已 PASS 却退出码 124，CI 白等 150 秒）。
+        WebviewWindow? window = _window;
+        window?.PostToUiThread(window.App.Quit);
     }
 }

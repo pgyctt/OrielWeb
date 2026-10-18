@@ -203,6 +203,26 @@ if [[ -n "$DOTNET" ]]; then
     echo "dotnet 版本 : $("$DOTNET" --version)"
 fi
 
+# ---------------------------------------------------------------------------
+# 窗口管理器探测
+# ---------------------------------------------------------------------------
+# 有几条自检断言**必须有窗口管理器**才成立：
+#   · 最小化（gtk_window_iconify 要被 WM 收进任务栏，IsMinimized 才会变 true）
+#   · 关掉一个窗口后焦点回到另一个（前台窗口由 WM 指派）
+#   · 「点关闭」走标准路径（gtk_window_close 在无 WM 时不产生完整的 delete 流程）
+# CI 的 xvfb 里**没有 WM**，所以那几条验的是环境而不是库。探测结果交给 demo：
+# 无 WM 时自检把这几条打印成 SKIP（可见、但不计入失败）——
+# 把"环境不足"报成红灯会训练人忽略红灯，比跳过更糟。
+#
+# 判据用 EWMH 的 _NET_SUPPORTING_WM_CHECK：有值说明有符合 EWMH 的 WM 在跑。
+export ORIEL_HAS_WM=0
+if [[ -n "${DISPLAY:-}" ]] && command -v xprop >/dev/null 2>&1; then
+    if xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q 'window id'; then
+        export ORIEL_HAS_WM=1
+    fi
+fi
+echo "窗口管理器  : $([[ "$ORIEL_HAS_WM" == "1" ]] && echo 有 || echo 无（依赖 WM 的断言将 SKIP）)"
+
 if [[ ${#missing[@]} -gt 0 ]]; then
     section "缺少系统依赖，验证无法继续"
     printf '  - %s\n' "${missing[@]}"

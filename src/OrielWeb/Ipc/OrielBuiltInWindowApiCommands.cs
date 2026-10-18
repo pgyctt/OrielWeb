@@ -332,6 +332,12 @@ internal static class OrielBuiltInWindowApiCommands
                 handler = static (sender, _) => GetAllLabels(sender);
                 return true;
 
+            case "window.getFocused":
+                // 返回**焦点窗口的 label**（没有则 null），而不是窗口对象——理由同上。
+                // 页面侧 getFocusedWindow() 拿到 label 再构一个 Window 句柄。
+                handler = static (sender, _) => sender.App.GetFocusedWindow()?.Label;
+                return true;
+
             // ---- 显隐与状态 ----
             case "window.show":
                 handler = static (sender, args) => Mutate(Resolve(sender, args).Show);

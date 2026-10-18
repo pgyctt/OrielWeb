@@ -61,10 +61,15 @@ export function toHostEventName(eventName) {
 }
 
 /**
- * 已打开转发的项（包内记账，避免每次 listen 都发一次 IPC）。
- * @type {Set<'resize' | 'move' | 'focus' | 'scale'>}
+ * 已打开转发的项 → 还有几个订阅者在用（包内记账，避免每次 listen 都发一次 IPC）。
+ *
+ * **用计数而不是 Set**：同一个 kind 可能被多个订阅共享（`tauri://focus` 与
+ * `tauri://blur` 都映射到 `focus`），所以"最后一个订阅者走了才关"需要计数。
+ * 用 Set 的话第一个退订就会把转发关掉，另一个订阅者从此收不到事件。
+ *
+ * @type {Map<'resize' | 'move' | 'focus' | 'scale', number>}
  */
-const enabledForwarding = new Set();
+const forwardingRefCount = new Map();
 
 /**
  * 按需打开宿主→页面的转发。
@@ -78,19 +83,65 @@ const enabledForwarding = new Set();
  * 并说清要怎么修。
  */
 function enableForwarding(kind) {
-    if (!kind || enabledForwarding.has(kind)) {
+    if (!kind) {
         return;
     }
 
-    enabledForwarding.add(kind);
+    const count = forwardingRefCount.get(kind) ?? 0;
+    forwardingRefCount.set(kind, count + 1);
+
+    // 已经开着（count > 1）：不需要再发 IPC
+    if (count > 0) {
+        return;
+    }
 
     // 不等回执（listen 是同步的），但失败要报出来
     invoke('window.setEventForwarding', { [kind]: true }).catch((error) => {
-        enabledForwarding.delete(kind);
+        // 打不开就把计数清零：否则后续的订阅者会以为"已经开着"而不再尝试，
+        // 而这个 kind 永远不会到。清零之后下一次订阅会重新试一次。
+        forwardingRefCount.delete(kind);
         console.error(
             `@orielweb/api/event: 无法打开「${kind}」事件转发，相关事件不会到达页面。` +
             `原因：${error && error.message ? error.message : error}。` +
             '请在宿主侧允许 `window.setEventForwarding`（或用 OrielWindowOptions.EventForwarding 静态开启）。');
+    });
+}
+
+/**
+ * 一个订阅者走了：最后一个走的时候把宿主侧的转发关掉。
+ *
+ * @param {'resize' | 'move' | 'focus' | 'scale' | undefined} kind
+ * @returns {void}
+ * @remarks
+ * **为什么要关**：不关的话，一次 `listen` 会让宿主在整个窗口生命期里持续推送
+ * 该事件（拖动时每像素一条）。页面已经没人听了，那是纯浪费——而且与
+ * `onCloseRequested` 的"退订时关掉接管"不一致，两处收尾策略应当统一。
+ *
+ * 失败**不报错也不 console.error**：关不掉只意味着多推几条事件（宿主那边仍是
+ * 应用配置的值），不影响任何正确性。这与"打不开必须报"是两回事——打不开会让
+ * 页面收不到事件，而关不掉只会多收。
+ */
+function disableForwarding(kind) {
+    if (!kind) {
+        return;
+    }
+
+    const count = forwardingRefCount.get(kind) ?? 0;
+    if (count > 1) {
+        forwardingRefCount.set(kind, count - 1);
+        return;
+    }
+
+    forwardingRefCount.delete(kind);
+
+    // count === 0 说明这个 kind 本来就没打开过（比如打不开时已清零）：
+    // 此时不必发命令，发了也只是把宿主的值从 false 再设成 false。
+    if (count === 0) {
+        return;
+    }
+
+    invoke('window.setEventForwarding', { [kind]: false }).catch(() => {
+        // 见上：关不掉只多推几条事件，不值得打扰调用方
     });
 }
 
@@ -187,6 +238,7 @@ function subscribe(eventName, handler, isOnce) {
     const hostName = mapping?.host ?? eventName;
 
     // 高频事件（尺寸/位置/焦点）在宿主侧默认不推，这里按需打开。
+    // 注意：打开是按 kind 计数的，退订时要对称地减一次（见下面的 unlisten）。
     enableForwarding(mapping?.forwarding);
 
     let set = subscriptions.get(eventName);
@@ -220,10 +272,19 @@ function subscribe(eventName, handler, isOnce) {
 
     // 退订：同时清包内表与底层通道。**幂等**——once 触发时调一次，调用方之后
     // 再调一次也不该出问题（重复删同一个元素是无害的，重复调底层退订也一样）。
+    //
+    // 转发计数只在**第一次**退订时减一次：用一个标志位，否则幂等的第二条要求
+    // 会把计数多减一次，导致"另一个还在听的订阅者突然收不到事件"。
+    let forwardingReleased = false;
     unlisten = () => {
         set.delete(entry);
         if (set.size === 0) {
             subscriptions.delete(eventName);
+        }
+
+        if (!forwardingReleased) {
+            forwardingReleased = true;
+            disableForwarding(mapping?.forwarding);
         }
 
         if (typeof unlistenRaw === 'function') {
@@ -323,4 +384,8 @@ export function __clearEventSubscriptions() {
     }
 
     subscriptions.clear();
+
+    // 兜底：上面每一条 unlisten 都会减计数，但若中途有异常或计数与实际脱节，
+    // 这里直接清空，免得下一个测试从"以为转发还开着"的假状态开始。
+    forwardingRefCount.clear();
 }

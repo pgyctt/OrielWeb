@@ -504,3 +504,107 @@ test('映射表把 Tauri 名翻成宿主名（漏了这条就会静默收不到�
     // 反向确认：没登记的名字原样返回（不认识的照样能当自定义事件用）
     assert.equal(toHostEventName('my-own-event'), 'my-own-event');
 });
+
+// ---- 事件转发开关（window.setEventForwarding）----
+//
+// 高频事件（尺寸/位置/焦点/缩放）在宿主侧默认不推，包在 listen 时按需打开。
+// 这一组钉的是"打开与关闭对称"——旧实现只开不关，退订之后宿主仍在推送，
+// 与 onCloseRequested 的"退订时关掉"不一致。
+
+/** 装一个记录 invoke 调用的传输层。 */
+function makeForwardingTransport() {
+    /** @type {Array<[string, any]>} */
+    const calls = [];
+
+    return {
+        calls,
+        transport: {
+            label: 'main',
+            async invoke(name, args) {
+                calls.push([name, args]);
+                return null;
+            },
+            on() {
+                return () => {};
+            },
+        },
+    };
+}
+
+test('转发：订阅 resize 时打开，退订时关掉（开与关必须对称）', () => {
+    reset();
+    const { calls, transport } = makeForwardingTransport();
+    setTransportOverride(transport);
+
+    const un = listen(TauriEvent.WINDOW_RESIZED, () => {});
+    assert.deepEqual(calls[0], ['window.setEventForwarding', { resize: true }]);
+
+    calls.length = 0;
+    un();
+
+    assert.deepEqual(calls[0], ['window.setEventForwarding', { resize: false }],
+        '退订之后必须把转发关掉，否则宿主会一直推送没人听的事件');
+
+    reset();
+});
+
+test('转发：多个订阅共享同一个 kind 时，最后一个走了才关', () => {
+    reset();
+    const { calls, transport } = makeForwardingTransport();
+    setTransportOverride(transport);
+
+    // tauri://focus 与 tauri://blur 都映射到 focus 这一个 kind
+    const unFocus = listen(TauriEvent.WINDOW_FOCUS, () => {});
+    const unBlur = listen(TauriEvent.WINDOW_BLUR, () => {});
+
+    // 只打开一次（第二个订阅者复用已开的转发）
+    assert.equal(calls.filter((call) => call[1].focus === true).length, 1,
+        '同一个 kind 只该打开一次');
+
+    calls.length = 0;
+
+    // 走掉一个：还没到最后一个，不该关
+    unFocus();
+    assert.equal(calls.length, 0,
+        '还有订阅者在听，不能把转发关掉——那会让另一个订阅者静默收不到事件');
+
+    // 走掉最后一个：关
+    unBlur();
+    assert.deepEqual(calls[0], ['window.setEventForwarding', { focus: false }]);
+
+    reset();
+});
+
+test('转发：退订是幂等的，重复调用不会把计数多减一次', () => {
+    reset();
+    const { calls, transport } = makeForwardingTransport();
+    setTransportOverride(transport);
+
+    const unFirst = listen(TauriEvent.WINDOW_RESIZED, () => {});
+    const unSecond = listen(TauriEvent.WINDOW_RESIZED, () => {});
+
+    calls.length = 0;
+
+    // 同一个退订函数调两次：第二次不该再减计数（否则会把第二个订阅者的份额吃掉）
+    unFirst();
+    unFirst();
+    assert.equal(calls.length, 0, '还有订阅者，不该关');
+
+    unSecond();
+    assert.deepEqual(calls[0], ['window.setEventForwarding', { resize: false }]);
+
+    reset();
+});
+
+test('转发：不需要转发的事件不碰这个命令', () => {
+    reset();
+    const { calls, transport } = makeForwardingTransport();
+    setTransportOverride(transport);
+
+    const un = listen('my-own-event', () => {});
+    un();
+
+    assert.equal(calls.length, 0, '自定义事件不在映射表里，不该发转发命令');
+
+    reset();
+});

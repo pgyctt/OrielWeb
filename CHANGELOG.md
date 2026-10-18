@@ -7,10 +7,17 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
-## 未发布
+## 0.3.6 - 2026-10-18
 
-Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测试先行）。
-详细差异分析与分阶段计划见该文件。
+Tauri 2 API 对齐的完整一轮（`docs/TAURI2-PLAN.md` 的批次 A → H 与 M5）。前端包 `@orielweb/api`
+从 3 个模块扩到 14 个，宿主侧新增 `path.*` / `app.*` / `fs.*` / `dialog.*` / `clipboard.*` /
+`opener` / `notification` / `autostart` / `window.*` 九个命令族，`window` 模块补齐到 Tauri 2 的
+可对齐范围。详细差异分析与分阶段计划见 `docs/TAURI2-PLAN.md`；对齐审计与后续执行计划见
+`docs/TAURI2-ALIGNMENT-AUDIT-2026-10-18.md` 与 `docs/TAURI2-ALIGNMENT-EXECUTION-PLAN-2026-10-18.md`。
+
+**方针**（2026-10-18 定）：**跨平台不一致的不做**。据此把 `window.Window` 的剩余差异分成
+A（跨平台不一致，25 项，不做）与 B（跨平台一致，0 项），并用测试钉住——哪天要在 A 组开工，
+必须先改断言并说明方针变了。
 
 ### 新增
 
@@ -63,7 +70,8 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
   整族放行等于给一个比 `win.*` 大得多的面开后门。逐条理由见
   `OrielCapabilityRules.AlwaysAllowedWindowCommands`。
 - **`@orielweb/api/window`**（对标 `@tauri-apps/api/window`）：`getCurrentWindow` /
-  `getAllWindows` / `getByLabel` / `getFocusedWindow`（**恒 `null`**，见"已知限制"）+ `Window` 类。
+  `getAllWindows` / `getByLabel` / `getFocusedWindow` + `Window` 类（含静态方法
+  `Window.getFocusedWindow()`，Tauri 只提供后者）。
   方法名与 Tauri 一一对应，命令名映射在包内完成（`setAlwaysOnTop` → `window.setOnTop`、
   `unmaximize` → `window.restore`、`setFocus` → `window.focus`）。`setSize` / `setPosition` /
   `setMinSize` 接受 `LogicalSize` 与 `PhysicalSize`（后者按窗口所在显示器的缩放比换算）。
@@ -116,9 +124,16 @@ Tauri 2 API 对齐的第一批（`docs/TAURI2-PLAN.md` 的批次 A + B + E1 测�
   不去重会把一次拖动变成几百次托管事件 + 页面 IPC。
   注意 `WM_KILLFOCUS` 此前刻意不处理（把焦点塞回组合宿主会让页面 caret/IME 错乱）——
   现在只**上报**失焦，**不动焦点归属**，两者互不干涉。
-- **`OrielApp.GetFocusedWindow()` / JS `getFocusedWindow()`**：签名已就位，但**目前恒返回 `null`**
-  ——三平台都还没有"哪个窗口有焦点"的**查询**能力（`FocusChanged` 只上报变化、不记录状态）。
-  保留它是为了让迁移代码能原样编译，而不是假装"没有窗口有焦点"。
+- **`OrielApp.GetFocusedWindow()` / JS `getFocusedWindow()`**（对标 Tauri 2 的
+  `Window.getFocusedWindow()`）：**已实现**——遍历存活窗口、取第一个 `IsFocused` 为真的。
+  三平台都能回答"这个窗口有焦点吗"（Windows 比 `GetForegroundWindow`、Linux
+  `gtk_window_is_active`、macOS `isKeyWindow`），而"哪个窗口有焦点"不需要单独的平台能力；
+  Tauri 的 JS 侧也正是这么做的（`for (const w of await getAllWindows()) if (await w.isFocused())`）。
+  新增宿主命令 `window.getFocused`（返回焦点窗口的 label 或 `null`，**不进标题栏白名单**——
+  它泄露的是跨窗口信息）。JS 侧同时提供模块级 `getFocusedWindow()` 与静态方法
+  `Window.getFocusedWindow()`（Tauri 只提供后者，前者是本库的便利入口）。
+  返回 `null` 的两种情形：应用没有窗口；有窗口但都不在前台（用户切到了别的程序）。
+  最小化的窗口不会被判为有焦点。
 - **结构化错误**（F7）：失败回执带上可选的 `code` 与 `data`，页面 reject 出来的 `Error` 上多了
   这两个字段，于是能按错误类型分支（提示"没有权限"而不是"出错了"）——
   分不清"命令没授权"与"命令自己炸了"是排障时最费时间的一件事。
@@ -541,7 +556,234 @@ H 产出的那份清单现在**每一项都有归属**，测试机械保证不�
 | 宿主事件 | 3 | `onScaleChanged` / `onThemeChanged` / `onDragDropEvent` 需要新的宿主事件 |
 | 请求注意 | 1 | **不难**——三平台都有干净入口，只是本批预算用在了别处 |
 
+#### M5-6：方针下可做的项全部实现（10 个 API）
+
+用户 2026-10-18 定下方针：**跨平台不一致的不做**。据此把剩余 36 项分成 A（不做，25 项）与
+B（可做，1 项 = `onScaleChanged`），并把 B 组做完。清单现在是
+**A·25 项 / B·0 项**，`tauri-alignment.test.mjs` 有测试钉住这两条（每组必须标 A/B 归属、
+B 组必须为空）——哪天要在 A 组开工，必须先改断言并说明方针变了，而不是悄悄往里加实现。
+
+- **`requestUserAttention(type?)` + `UserAttentionType`**（任务栏闪烁 / Dock 弹跳）：
+  三平台各用原生入口——Windows `FlashWindowEx`（`Critical` 用 `FLASHW_TIMERNOFG` 一直闪到被激活、
+  `Informational` 只闪三下、取消走 `FLASHW_STOP`）、Linux `gtk_window_set_urgency_hint`、
+  macOS `requestUserAttention:`（返回请求 id 用于取消）。
+  **取值 1/2 与 Tauri 一致**，且带反向映射（`UserAttentionType[1] === 'Critical'`）并冻结。
+  不传或传 `null` = 取消。**未知值在 JS 层当场抛**——静默当成 `null` 会让"我请求了注意"
+  变成"我取消了注意"，两个相反的意图而现场什么都不发生。
+  **Linux 上两档没有区别**（GTK 只有开/关，没有分级），如实写进接口文档。
+- **`setMaxSize(size?)`**：最大尺寸（逻辑像素的客户区，0 = 不限制）。
+  Windows 走 `WM_GETMINMAXINFO` 的 `ptMaxTrackSize`（framed 窗口做客户区→整窗换算，
+  与 min 同一处处理）；macOS 用 `setContentMaxSize:`（0 映射成 `double.MaxValue`，
+  因为 Cocoa 的"无上限"不是 0）；**Linux 只声明 `GDK_HINT_MAX_SIZE`，不替换既有的
+  `set_size_request` min 机制**——两条路各管一端、互不覆盖。取消上限时掩码里不带那个 hint，
+  而不是"声明一个 0 的上限"（后者会把窗口卡成 0 宽）。
+- **`setSizeConstraints({minWidth?, minHeight?, maxWidth?, maxHeight?} | null)`**：
+  页面侧分派到上面两条命令（宿主表面不增加"组合命令"，组合语义只在页面上存在）。
+  **语义是整体替换**：省略或给 `null` 的项表示**取消那一项的约束**，传 `null` 取消全部。
+  这与 Tauri 一致，也是唯一能在"`Window` 是轻量句柄、不缓存状态"的前提下自洽的做法——
+  "省略即保持不动"要求知道当前约束，而本库既不缓存状态、Tauri 也没有"读取约束"的 API
+  （加一个会被对齐测试的 `EXTRAS` 检查拦住）。**要只改一侧，就把另一侧的现值一起传进来。**
+- **`setMaximizable(bool)` / `setMinimizable(bool)`**：选这一组是因为三平台都有对应的
+  只读查询，改完能读回来（自检里有真断言）。
+  Windows 改 `WS_MAXIMIZEBOX` / `WS_MINIMIZEBOX`——**只写 `GWL_STYLE` 不够**，
+  必须再发一次 `SWP_FRAMECHANGED`，否则系统仍按旧样式画按钮（表现为"属性改了但按钮还在"）；
+  只清这两个位是安全的，Win32 会据此自动灰掉系统菜单里的对应项。
+  macOS 改 styleMask，**`setMaximizable` 在这里与 `setResizable` 是同一个操作**
+  （AppKit 没有独立的最大化位，缩放按钮可用与否完全由 resizable 位决定），副作用已写进文档。
+  **Linux 上为空操作**（GTK 无对应入口，tao 同样如此），且**刻意不记状态**——
+  一旦记了，`IsMaximizable` 就会给出"用户看到的按钮其实还在"的假值；它继续回落 `isResizable`。
+- **`setClosable(bool)`**：三平台落点**不是同一件事**。Windows **灰化系统菜单里的"关闭"项**
+  （`EnableMenuItem(SC_CLOSE, MF_GRAYED)` + `DrawMenuBar`）——关闭按钮在 Win32 里属于系统菜单，
+  没有独立样式位，用清 `WS_SYSMENU` 代替会把三个按钮和整个系统菜单一起干掉，那是"删按钮"
+  而不是"按钮不可用"；macOS 切 `NSWindowStyleMaskClosable`；**Linux 空操作**（GTK 没有这一属性，
+  窗口总能收到 `delete-event`，要"关不掉"得拦 `close-requested`，那是应用层策略）。
+  **顺带修正 `IsClosable` 的读取语义**：原先只读 `WS_SYSMENU`，那答的是"有没有系统菜单"，
+  与 setter 的落点对不上，会"写进去读不回来"。现改为**"存在且未灰化"**
+  （`WS_SYSMENU` 且 `GetMenuState(SC_CLOSE)` 不含 `MF_GRAYED`/`MF_DISABLED`），
+  不变量成立且旧行为向后兼容（从未灰化过的窗口读取结果不变）。
+  实测事实：**无边框窗口也有系统菜单**（frameless 靠 `WM_NCCALCSIZE` 隐藏边框，
+  没摘 `WS_SYSMENU`），所以它的 `IsClosable` 是 `true`。
+- **`onThemeChanged`**：宿主侧三平台**早就实现好了**（Windows 读注册表 + `WM_SETTINGCHANGE`、
+  macOS 听 `AppleInterfaceThemeChangedNotification`、Linux 听 GSettings），
+  `OrielApp.PushTheme` 也已经推给每个窗口，缺的只是页面侧的 Tauri 风格包装。
+  `HOST_EVENT_MAP` 加 `tauri://theme-changed → theme.changed` + `Window#onThemeChanged`。
+  与 Tauri 一致：**只推变化，不推当前值**——初始值要用 `theme()` 读，否则"主题一直没变过"的
+  页面永远收不到第一个值。
+- **`setIcon`（路径 / 字节 / 裸 RGBA 三种形式）**：覆盖 Tauri `JsImage` 的全部五种写法。
+  三平台复用**创建期图标**的代码路径，不写第二份：
+  Windows `WM_SETICON`、Linux `gtk_window_set_icon_from_file` / `gtk_window_set_icon`、
+  macOS `setApplicationIconImage:`。**Windows 上大/小两个槽位都会设**——
+  `ICON_BIG` 给任务栏与 Alt-Tab 大视图、`ICON_SMALL` 给标题栏与 Alt-Tab 小视图；
+  只设大图标的表现是"图标换了但标题栏那个还是旧的"。
+  顺带填掉一个久已记录的缺口：`LoadImageW` 只认 ICO/BMP，喂 PNG 会返回 0 而且不报错
+  （"设了图标但没生效"这种最难查的失败），现在 PNG 先经 `OrielImage` 解码，
+  再交给托盘用的那套 `Win32IconFactory.CreateFromRgba` 造 HICON。
+  字节走 **base64** 过 IPC（数字数组要四倍体积，而 IPC 是 JSON 文本）；
+  `number[]` 的每一项都校验 0..255（`new Uint8Array([999])` 会**静默截断**成 231）。
+  解码失败**静默保持原图标并记一条诊断**（与 `LoadImageW` 返回 0 同语义），
+  但非法 base64 / RGBA 长度不符**当场抛**——两者的修法完全不同。
+  **macOS 上没有窗口级图标**：设的是应用（Dock）图标，会影响整个应用（AppKit 的模型，照实实现）。
+- **`setBackgroundColor(color)`（运行期）**：三平台都落到 **webview 自己的底色**，语义一致——
+  Windows `ICoreWebView2Controller2.DefaultBackgroundColor`、macOS `NSWindow.backgroundColor` +
+  `WKWebView.underPageBackgroundColor`（12+，用 `respondsToSelector:` 探测）、
+  Linux `webkit_web_view_set_background_color`。复用各平台已有的 `ApplyBackgroundColor`，
+  只加一条"运行期值优先、否则回落创建期选项"的分支。页面侧把 Tauri 的四种 `Color` 形状
+  （hex / RGB / RGBA 数组 / 对象）归一成 `0xAARRGGBB` 再发——归一放在 JS 层是因为它能被单测穷举，
+  坏输入一律当场抛并说清是哪一路（"红/绿/蓝/alpha" + 越界值）。
+- **`onScaleChanged`**：**按窗口**的缩放变化（不是应用级广播：同一时刻两个窗口可以待在不同缩放的
+  显示器上，全局事件会让副屏的窗口收到不属于它的值）。Windows 触发点是 `WM_DPICHANGED`
+  （**只上报、不接管**消息，窗口尺寸该不该按 lParam 的建议矩形调整留给 `DefWindowProc`）、
+  Linux 是 GDK 的 `notify::scale-factor`、macOS 用三个 `NSWindowDelegate` 回调
+  （`windowDidResize:` / `windowDidMove:` 覆盖跨屏拖动，`windowDidChangeBackingProperties:`
+  覆盖"只改系统缩放而窗口不动"）。payload 与 Tauri 的 `ScaleFactorChanged` 同形
+  `{ scaleFactor, size }`，其中 `size` 是**物理像素**（迁移代码会照搬 `payload.size.width`，
+  给逻辑尺寸等于悄悄换了单位）。沿用 `OrielWindowEventKind` 的"订阅了才推"机制（新增 `Scale = 8`）。
+
+#### `@orielweb/api/image` 新模块
+
+导出 `Image` 与 `transformImage`（与 Tauri 同名同形状），于是 `setIcon` 支持 `JsImage` 的全部五种形式。
+
+**与 Tauri 的一处本质分歧（有意为之，已记入 `METHOD_DIVERGENCES`）**：Tauri 的 `Image` 是
+**资源表 handle**（继承 `Resource`、持 `rid`、字节留在宿主、有 `close()`）。本库 IPC 是一次性
+请求-回执，**没有资源表**——引入它等于新造一套句柄生命周期（创建/释放/失效检测），那是另一个
+量级的改动，而 `Image` 的实际用途（图标）用字节容器完全够。所以本库的 `Image` 是
+**页面侧字节容器**，三个可观察后果：**没有 `close()`**（迁移代码里的 `await image.close()`
+会抛 `TypeError`——宁可当场炸，不要带着错误的心智模型继续写）、`rgba()` / `size()` 是本地值
+但签名仍是 `Promise`（`await` 照样能跑）、跨 IPC 传的是完整字节。
+
+**尺寸解析在页面侧完成**：PNG 的 IHDR、ICO 的 `ICONDIRENTRY` 都是固定偏移，直接读那几个字节——
+这是"纯 JS 容器"能成立的关键（`size()` 不需要宿主）。ICO 的宽高字段只有 1 字节、
+**0 表示 256**，这个历史坑单独有测试。解码**像素**才请宿主（`window.decodeImage`），结果缓存；
+宿主解出的长度与页面解析的尺寸对不上时报错，不把错位像素交出去。
+
+新增两个宿主命令（都在 demo 白名单里）：`window.readImageFile`（读文件，`Image.fromPath` 用）、
+`window.decodeImage`（PNG/ICO → 裸 RGBA，`Image.rgba()` 用）。另新增包内私有模块
+`image-bytes.js`（不进 exports）：`setIcon` 与 `image.js` 共用"字节归一 / base64 编解 / 格式嗅探"。
+
+> **清单本身漏项**：`image` 模块此前根本没进对齐测试的 `MODULES` 列表，所以"本库缺
+> `@tauri-apps/api/image`"没有任何测试盯着。已登记，对照结果现在是「参照 2，我有 2，缺口 0」。
+
 ### 修复
+
+- **CI 的 smoke-linux / smoke-macos 自 0.3.6 起一直红**（`test` 与 `compile-*` 全绿，只有两个平台的自检作业失败）。
+  根因有两类，都不是"库在 Linux/macOS 上坏了"：
+
+  1. **自检里写死了 Windows 的平台事实**——`path.sep()` 期望 `\`、`path.delimiter()` 期望 `;`、
+     `isAbsolute` 用 `C:`、`configDir == dataDir`、`localDataDir == cacheDir`、
+     "Roaming 与 Local 不同"、`fontDir` 必然 `not_supported`、fs 逃逸路径用 `\` 拼。
+     这些在另两个平台**必然**不成立（POSIX 的分隔符是 `/`、目录布局完全不同、`fontDir` 有值），
+     于是自检一跑就是 8 项红。现在统一按宿主平台取期望值（`window.oriel.platform`），
+     并把 `path` 的导入提前到脚本开头——它原来在 fs 段之后声明，fs 段用它会踩 TDZ。
+  2. **`<script type="module">` 在自定义 scheme 下不执行**：Windows(WebView2) 能加载，
+     macOS(WKWebView) / Linux(WebKitGTK) 上同一个页面**脚本静默不执行**。
+     症状极具误导性——徽章不更新、主题不应用、探针不回报，而宿主侧只看到"超时"。
+     修法：页面容器改成**经典脚本里的动态 `import()`**（这条路三平台都能用，
+     `--selftest api` 里那些 `await import('./vendor/…')` 一直是这么做的），
+     `app.js` 本身仍是 ES module。顺带给 Linux 的 `oriel://` 补上
+     `webkit_security_manager_register_uri_scheme_as_cors_enabled` 注册
+     （module 抓取走 CORS 检查，未登记的 scheme 会被拒；它与 `..._as_secure` 是两件事）。
+
+- **主题在页面侧依赖"事件早于监听"的时序**：宿主只在**导航完成**时补推一次 `theme.changed`，
+  而页面脚本的注册时机取决于模块怎么加载（静态 module 是 defer、动态 import 是异步），
+  两者没有可依赖的先后。现在 `app.js` 启动时主动 `getCurrentWindow().theme()` 查一次
+  （`window.theme` 在标题栏白名单里，无需额外授权），事件只负责后续变化。
+  **这是把跨平台 CI 里"主题永不生效"与本地"改加载方式后主题失效"两个现象一次性修掉的点**——
+  它俩是同一个竞态的两面。
+
+- **`--selftest theme` 的失败信息说不出根因**：只有"20 秒内页面没有把 data-theme 设为 X"，
+  而这一句话对应三种完全不同的原因（桥接没注入 / 页面脚本没执行 / 监听注册晚于事件）。
+  现在失败时会额外打印页面状态（`typeof window.oriel`、`_onEvent`、`readyState`、
+  当前 `data-theme`、徽章文案）——本次就是靠它一眼看出"脚本跑了、桥接在、只是监听晚了"。
+
+- **Linux 的剪贴板读回是乱码**：`ReadClipboardText` 用了 `Marshal.PtrToStringUni`（UTF-16），
+  而 `gtk_clipboard_wait_for_text` 返回的是 **UTF-8** 的 `char*`。后果不是"看起来乱码"那么明显——
+  ASCII 会被两两配对成汉字（`"oriel-selftest"` 读成 `"牯敩⵳晬整瑳…"`），
+  而那看起来像"剪贴板里本来就是乱码"，想不到编码。改用 `PtrToStringUTF8`。
+
+- **`getFocusedWindow()` 在 `--selftest window` 之外没有真断言**：`app.js` 与窗口自检都补了
+  "页面查询与宿主侧一致"的断言；`--selftest api` 里那条"恒为 null"改成
+  "要么 null、要么已知 label，且与 `isFocused()` 自洽"。
+
+- **依赖窗口管理器 / 平台能力的自检项在无 WM 的 CI 环境里假红**：最小化（`iconify`）、
+  "关掉一个窗口后焦点回到另一个"、关闭接管的四条路径，都需要**窗口管理器**才成立；
+  而 xvfb 里没有 WM。现在 `verify-linux.sh` 探测 `_NET_SUPPORTING_WM_CHECK` 并传
+  `ORIEL_HAS_WM`，自检据此把这些项打印成 `SKIP`（可见、但不计入失败）。
+  同理，Linux 上 `IsClosable`（恒 true）与 `setMaximizable` / `setMinimizable`（空操作）
+  是**已登记的平台事实**，对应断言也改为 `SKIP` 而不是 FAIL。
+  跳过不等于通过——输出里写明原因，不会让"这条没验过"消失。
+
+- **自检的收尾依赖窗口关闭流程，导致 Linux 上"结论已 PASS 却退出码 124"**：
+  `theme` / `nav` / `ipc` / `capability` / `scheme` / `multiwindow` 都以 `window.Close()` 收尾，
+  而 GTK 的 `gtk_window_close` 要走 delete-event——没有窗口管理器的环境里那条链不成立，
+  进程于是挂到脚本的 `timeout` 才被杀。后果不只是慢：`smoke-linux` 每项白等 150 秒，
+  18 项就吃掉二十多分钟，而 UI 上只看到"超时"。
+  现统一改成 `App.Quit()`（直接停消息循环，三平台都可靠）。
+  **WSL + xvfb 实测**：改前 `nav`/`theme` 都是 124，改后全部 0。
+
+- **Linux 的 `load-failed` 把"被新导航取消的旧加载"当成真失败**：
+  WebKitGTK 在 `go_back` / `go_forward` / `reload` 或页面自行发起新导航时，会给上一次未完成的
+  加载补一条 `load-failed`，错误码 `WEBKIT_NETWORK_ERROR_CANCELLED(302)`、文案
+  "Load request cancelled"。原来的实现无条件上报失败，于是**后退被记成失败**，
+  而实际后退是成功的。现按错误码 / 文案识别 cancelled 并跳过（浏览器语义里它也不属于错误）。
+  这是 `--selftest nav` 在 Linux 上唯一红的那条。
+
+- **Linux 的剪贴板"清空"没真的清空**：写的时候会 `gtk_clipboard_store` 把内容交给
+  剪贴板管理器持久化（否则应用一退内容就没了），而 `gtk_clipboard_clear` 只放弃本进程的
+  所有权——管理器手里那份还在，于是"清空之后再读"会拿回**旧内容**。
+  现在 clear 之后补一次 `set_text("")` + `store`，让管理器也变成空。
+
+- **`openUrl` 在 POSIX 上会接受裸绝对路径**：`Uri.TryCreate("/tmp/a.txt", UriKind.Absolute)`
+  在 Unix 上**成功**（被当成隐式的 `file:` URI），于是同一条校验在 Windows 上拒绝、
+  在 Linux 上放行——放行之后又被 `OpenExternal` 的白名单挡掉，页面拿到的是 `false`
+  而不是 `invalid_argument`。判据补了半句"原文必须以 `<scheme>:` 开头"。
+  **这条是 Linux 上跑单测才暴露的**（Windows 上 1056 项全绿，Linux 上红 1 项）。
+
+- **`--selftest geometry` / `multiwindow` 在无窗口管理器的环境里假红**：
+  `MoveTo` 依赖 WM（`gtk_window_move` 在 xvfb 下是空操作，位置停在 26,23 或 0,0），
+  所以 geometry 的"OuterPosition 应接近 MoveTo 值"与 windowevents 的同类断言在无 WM 时 SKIP；
+  multiwindow 的"关窗"改为在该环境用 `win.destroy`（同样只作用于发起者，但不经 delete-event），
+  并把"关窗后第一个窗口还能回显"降级为 SKIP——**关窗没把应用带走**这个实质改由
+  `Windows.Count == 1` 直接断言，不再依赖跨窗口求值的时序。
+
+- **`verify-linux.sh` 的窗口管理器探测**：新增 `_NET_SUPPORTING_WM_CHECK` 检测并导出
+  `ORIEL_HAS_WM`，让上述 SKIP 有客观依据（而不是"Linux 就跳过"）。
+
+- **Windows 的 `setIcon` 只设了大图标，漏了小图标**（`ICON_SMALL`）：PNG / 字节 / 裸 RGBA
+  三条路径都只发 `WM_SETICON ICON_BIG`，而 ICO/BMP 路径（`LoadImageW` 那条）一直是两个都设。
+  后果是"图标换了，但标题栏那个还是旧的"——**恰好是这批要消灭的那类"设了但部分没生效"**，
+  而且按输入格式分叉。现在四条路径统一走 `SetIconHandles`，同一个 HICON 同时设到两个槽位
+  （`WM_SETICON` 不接管所有权，同一个句柄设两次是合法的）。
+  另：`ApplyPngIcon` 解码失败时**补上诊断**——字节那条路本来就会记一笔，两条路都是
+  "静默保持原图标"，不该只有一条留下痕迹。
+- **`setSizeConstraints` 的文档承诺与实现矛盾**：文档写"省略或给 `null` 的项保持不动"，
+  而实现把缺省项 `?? 0` 直接下发——`{ minHeight: 150 }` 会**把已设的 minWidth 清成 0**。
+  两版语义只能留一个，而"保持不动"要求知道当前约束（本库不缓存状态、Tauri 也没有读取 API），
+  所以统一为**整体替换**（省略 = 取消那一项），与 Tauri 一致，并把理由写进 JSDoc 与类型声明。
+  测试也补上了"只给一侧中的一个分量"这一档——旧测试只覆盖了"只给上限"与"两侧都给"，
+  正好漏掉了出问题的形状。
+- **`requestUserAttention` 对未知值静默当成取消**：`requestUserAttention(3)` 会被翻成 `null`
+  （= 取消已发出的请求），调用方以为"我请求了注意"、实际执行了相反的操作，而现场什么都不发生。
+  现在 JS 层对既不是两个常量也不是 `null`/`undefined` 的值**当场抛** `TypeError`，
+  并且**不发命令**（发了就是把错误意图执行了一遍）。
+- **`IsClosable` / `GetSystemMenu` 的注释举例与实测相反**：两处写着"无系统菜单的窗口（无边框）"、
+  "未带 `WS_SYSMENU`，如无边框窗口"，而实测是**无边框窗口也有系统菜单**
+  （frameless 靠 `WM_NCCALCSIZE` 隐藏边框，`ComputeStyle` 里照样带 `WS_SYSMENU`），
+  所以它的 `IsClosable` 是 `true`。实现按位判断不受影响，但注释会把人引向"无边框窗口
+  不可关闭"的错误结论，已按实测更正。
+- **事件转发只开不关**：`listen` 时按需打开 `window.setEventForwarding`，但**退订时不关**——
+  一次 `listen` 会让宿主在整个窗口生命期里持续推送该事件（拖动时每像素一条），
+  而页面已经没人听了。这也与 `onCloseRequested` 的"退订时关掉接管"不一致。
+  现改为**引用计数**（同一个 kind 可能被多个订阅共享：`tauri://focus` 与 `tauri://blur`
+  都映射到 `focus`），最后一个订阅者走了才关；退订是幂等的，重复调用不会把计数多减一次
+  （否则会把另一个订阅者的份额吃掉，让它静默收不到事件）。关不掉**不报错**——
+  那只会多推几条事件，不影响正确性，与"打不开必须报"是两回事。
+  此前这个开关**完全没有测试**，现补 4 条（开与关对称、共享 kind 的计数、幂等、不需要转发的事件不碰命令）。
+- **`setEventForwarding` 的返回值走匿名类型，必然失败**：给它加第 4 个字段时自检当场报
+  "命令返回类型 `<>f__AnonymousType0\`4[...]` 需要 JSON 上下文"。这**不是**新引入的：
+  之前返回的是三字段匿名类型，而 demo 的 `JsonSerializerContext` 里没有任何匿名类型注册，
+  所以同样会失败——只是此前从没有自检真正调用过这个命令。后果是转发功能本身是好的
+  （副作用先发生），但每次 `listen` 打开转发都会在页面 `console.error` 里留下一条**假的失败**，
+  排查真实问题时会被误导。改用手拼 JSON 返回 `JsonElement`（与 `SizeOf` / `PositionOf` 同一套做法）。
 
 - **白名单改动因 PowerShell 解析失败而静默丢失**：`window.isEnabled` 的白名单条目
   在一次批量编辑里没写进去——那条命令在**后面**的 JS 编辑处遇到中文解析错误而整体失败，
@@ -670,6 +912,29 @@ H 产出的那份清单现在**每一项都有归属**，测试机械保证不�
   CI checkout 后找不到文件。本仓库全部使用 `PackageReference`（还原到全局缓存），
   从不需要旧式 `packages/` 目录，该规则已删除。
 
+### 文档
+
+- **`API.md` 补上 M5 新增的窗口 API**：`WebviewWindow` 表此前只有 M5-3/4/5 之前的成员，
+  M5-6 的 10 个 API（`SetEnabled` / `SetMaximizable` / `SetMinimizable` / `SetClosable` /
+  `SetMaxSize` / `RequestUserAttention` / `SetIcon` 三种形式 / `SetBackgroundColor`）与
+  M5-1/2 的只读查询（`IsMinimized` / `IsFocused` / `IsFullscreen` / `IsAlwaysOnTop` /
+  `IsDecorated` / `IsResizable` / `IsMaximizable` / `IsMinimizable` / `IsClosable` / `IsEnabled`）
+  全部补齐，并逐条写明三平台落点差异。
+- **`API.md` 的前端包模块表补上 `image`**，并把 `window` 模块的 M5 方法与事件列出来；
+  模块总数从"5 个"更正为 14 个。
+- **`packages/api/README.md` 的模块状态表整体重写**：此前停在"A/B/E1 刚落地"的时点——
+  `convertFileSrc` 标着"显式未实现"（早已实现）、`app` / `dialog` / `fs` / `image` 标着"尚未实现"
+  （都已实现）、`getFocusedWindow` 标着"恒 `null`"（已实现）。另外"与 Tauri 的语义差异"那段
+  还写着"per-call `timeout` 尚未实现"与"失败值是字符串、结构化 `code`/`data` 尚未实现"，
+  两条都已过时。顺带修掉一处制表符导致的乱码（`ests/tauri-alignment.test.mjs`）。
+- **`REVIEW-2026-10-18.md` 里 `setMaxSize` 的 Linux 说明是错的**（写"整体替换 min 机制，
+  故 min/max 合并成一次调用"）：实现只声明 `GDK_HINT_MAX_SIZE`，min 仍走 `set_size_request`，
+  两条路各管一端、互不覆盖。已按代码更正。
+- **版本号统一到 `0.3.6`**：根 `Directory.Build.props` 与 `packages/api/package.json` /
+  `package-lock.json` 此前不一致（0.3.5 / 0.4.0），而 `release.yml` 只认根 `<Version>`。
+  包内的 `0.3.6+` 能力门槛提示（per-call timeout、`getCurrentWindow` 的 label 注入）
+  随之更正——它们此前写的是 `0.4.0+`，但那些能力是本批新增的，不是 0.4.0 的。
+
 ### 已知限制（未验证，不是未实现）
 
 - **Windows 高 DPI 下的换算未实测**：本机只有一台 100% 缩放显示器。
@@ -679,11 +944,23 @@ H 产出的那份清单现在**每一项都有归属**，测试机械保证不�
   代码已通过这两个目标的交叉编译（`linux-x64` / `osx-arm64` / `osx-x64` 均 0 警告 0 错误），
   但运行期行为需要 CI 取证。尤其 Linux 的 `configure-event`、macOS 的 `windowDidMove:`
   与三平台的关闭接管路径都是本次新接的——"编译通过"不等于"事件真的到了"。
-- **`getFocusedWindow()` 恒返回 `null`**：三平台都还没有"哪个窗口有焦点"的**查询**能力
-  （宿主的 `FocusChanged` 只上报变化、不记录状态）。签名先就位是为了让迁移代码能原样编译。
+- **`getFocusedWindow()` 已在 0.3.6 实现**（遍历存活窗口取第一个 `IsFocused` 为真的），
+  但**焦点状态本身没有在 Linux / macOS 上真机取证**：Windows 侧
+  （`GetForegroundWindow` 比对）已在 `--selftest window` 里验过，另两个平台的
+  `gtk_window_is_active` / `isKeyWindow` 只有交叉编译。若某个平台上它恒返回 `null`，
+  先确认 `isFocused` 那一条自检——两者的判定依据是同一个。
 - **`tauri://destroyed` 永远收不到**：窗口销毁时页面正在被拆掉，事件送不出去。
   需要"即将关闭"的通知请用 `tauri://close-requested`（其前提是宿主开了关闭接管）。
-- **`tauri://scale-change` / `tauri://theme-changed` / `tauri://window-created` 未实现**。
+- **`tauri://window-created` 未实现**；`tauri://scale-change`（`onScaleChanged`）与
+  `tauri://theme-changed`（`onThemeChanged`）已在 M5-6 实现。
+- **macOS 缩放变化的两条路径未在真机验证**：`windowDidResize:` / `windowDidMove:` 覆盖跨屏拖动，
+  `windowDidChangeBackingProperties:` 覆盖"只改系统缩放而窗口不动"。改法本身正确且更简单
+  （那个方法本来就是 `NSWindowDelegate` 的正式成员，不需要新观察者），但**选择器名写错时
+  ObjC 会静默不调用**——这类错误只有真机能发现。已记入 ROADMAP 真机清单。
+- **图标与底色的最终显示只能目视**：命令层与解码有自动化覆盖（`--selftest window`），
+  但宿主没有"读回当前图标/底色"的接口（加一个就是偷偷发明 API，会被 `EXTRAS` 检查拦住）。
+  两处容易误解：macOS 的 `setIcon` 影响的是**整个应用**的 Dock 图标；
+  Linux 的 Wayland 下窗口图标由合成器决定，通常忽略该调用。
 - **`innerSize` 等几何查询的 Linux 平台限制**（是 Wayland/X11 的平台事实，不是实现取巧）：
   `OuterSize` 可能与 `InnerSize` 相等（合成器不给装饰尺寸）、`InnerPosition` 恒等于
   `OuterPosition`（GTK 不暴露装饰偏移）、`OuterPosition` 在 Wayland 下恒为 `(0,0)`

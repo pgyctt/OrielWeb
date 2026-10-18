@@ -21,13 +21,15 @@ export function getAllWindows(): Promise<Window[]>;
  */
 export function getByLabel(label: string): Promise<Window | null>;
 /**
- * 有焦点的窗口。
+ * 有焦点的窗口（对标 Tauri 的 `getFocusedWindow`）。
  *
- * @returns {Promise<Window | null>}
+ * @returns {Promise<Window | null>} 没有窗口在前台时 `null`。
  * @remarks
- * **目前恒返回 `null`**：三平台都还没有"哪个窗口有焦点"的**查询**能力
- * （宿主的 `FocusChanged` 只上报变化，不记录状态）。保留签名是为了让迁移代码
- * 能原样编译，但要明确它现在给不出答案——而不是假装"没有窗口有焦点"。
+ * 需要 `window.getFocused` 被允许——"哪个窗口在前台"是跨窗口信息。
+ *
+ * **返回 `null` 的两种情形**：① 应用没有窗口；② 有窗口但都不在前台（用户切到了别的程序）。
+ * 调用方通常不需要区分——"现在没有窗口是活动的"对两者都成立。
+ * 最小化的窗口不会被判为有焦点（它已不是 key window）。
  */
 export function getFocusedWindow(): Promise<Window | null>;
 /**
@@ -53,6 +55,15 @@ export const UserAttentionType: Readonly<{
     Informational: 2;
 }>;
 export class Window {
+    /**
+     * 有焦点的窗口（对标 Tauri 的静态方法 `Window.getFocusedWindow()`）。
+     *
+     * @returns {Promise<Window | null>} 没有窗口在前台时 `null`。
+     * @remarks
+     * 与模块级 `getFocusedWindow()` 是同一个实现（那边是函数、这里是静态方法，
+     * Tauri 两种写法都提供，迁移代码两种都可能出现）。
+     */
+    static getFocusedWindow(): Promise<Window | null>;
     /**
      * @param {string} label
      */
@@ -276,28 +287,45 @@ export class Window {
     /**
      * 一次设置尺寸约束的上下限（对标 Tauri 的 `Window.setSizeConstraints()`）。
      *
-     * @param {{minWidth?: number|null, minHeight?: number|null, maxWidth?: number|null, maxHeight?: number|null}} constraints
-     *   省略或给 `null` 的项**保持不动**（不会把它清成 0）。
+     * @param {{minWidth?: number|null, minHeight?: number|null, maxWidth?: number|null, maxHeight?: number|null}|null} constraints
+     *   **整体替换**语义：省略或给 `null` 的项表示**取消那一项的约束**（不是"保持不动"）。
+     *   传 `null` 表示取消全部约束。
      * @returns {Promise<void>}
      * @remarks
      * 需要 `Allow("window.setMinSize")` 与/或 `Allow("window.setMaxSize")`——
      * 这条在页面上**分派**到那两条命令，宿主没有"组合命令"。
-     * 只给了一侧时只会发一条命令，所以不会出现"另一条失败导致半套约束"。
+     *
+     * **为什么是整体替换而不是"省略即不动"**：后者要求知道"当前约束是什么"，
+     * 而本库的 `Window` 是**轻量句柄**（见类的说明）——它不缓存窗口状态，
+     * 因为窗口可能被别的路径改掉，缓存会与真实情况脱节。要正确实现"保持不动"
+     * 只有两条路：① 包内缓存（与轻量句柄的设计冲突，且缓存会过期）；
+     * ② 新增一条"读取当前约束"的宿主命令——而 Tauri 没有这个 API，加它就是
+     * 偷偷发明 API（会被 `tauri-alignment.test.mjs` 的 `EXTRAS` 检查拦住）。
+     *
+     * 与 Tauri 一致：它的 `setSizeConstraints` 也是把四个字段整体发下去，
+     * 没给的字段就是不约束。所以 `{ minHeight: 150 }` 会**同时**取消宽度约束。
+     * 要只改一侧，就把另一侧的现值一起传进来。
      */
     setSizeConstraints(constraints?: {
         minWidth?: number | null;
         minHeight?: number | null;
         maxWidth?: number | null;
         maxHeight?: number | null;
-    }): Promise<void>;
+    } | null): Promise<void>;
     /**
      * 请求用户注意（任务栏闪烁 / Dock 弹跳）。
      *
      * @param {number | null} [requestType] `UserAttentionType.Critical` /
      *   `UserAttentionType.Informational`；**不传或给 `null` 表示取消**已发出的请求。
      * @returns {Promise<void>}
+     * @throws {TypeError} 给了既不是两个常量也不是 `null`/`undefined` 的值。
      * @remarks **macOS 上两档的区别最明显**（Critical 会一直弹跳到用户来看）；
      * **Linux 上两档没有区别**（GTK 只有开/关）。
+     *
+     * **未知值当场抛而不是静默当成取消**：`requestUserAttention(3)` 若被当成 `null`，
+     * 调用方以为"我请求了注意"，实际是"我取消了注意"——两个相反的意图，
+     * 而失败现场什么都不会发生（本来就不该有可见反馈）。这类静默的反向执行
+     * 比抛错难查得多。
      */
     requestUserAttention(requestType?: number | null): Promise<void>;
     /**

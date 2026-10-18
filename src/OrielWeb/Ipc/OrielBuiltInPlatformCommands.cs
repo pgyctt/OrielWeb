@@ -41,10 +41,23 @@ internal static class OrielBuiltInPlatformCommands
                     RejectOpenWith(args);
 
                     string url = OrielJson.GetRequiredArg<string>(args, "url", null);
-                    if (!Uri.TryCreate(url, UriKind.Absolute, out _))
+
+                    // **必须要求原文里显式带 scheme**，不能只靠 `Uri.TryCreate(Absolute)`：
+                    // 在 POSIX 上 `new Uri("/tmp/a.txt", UriKind.Absolute)` 是**成功**的
+                    // （它被当成隐式的 `file:` URI），于是同一条断言在 Windows 上拒绝、
+                    // 在 Linux 上放行——而放行之后又会被 OpenExternal 的白名单挡掉，
+                    // 页面拿到的是 `false` 而不是 invalid_argument。
+                    // 判据因此加半句："原文以 '<scheme>:' 开头"。
+                    bool hasExplicitScheme =
+                        Uri.TryCreate(url, UriKind.Absolute, out Uri? parsed)
+                        && parsed.Scheme.Length > 0
+                        && url.StartsWith(parsed.Scheme + ":", StringComparison.OrdinalIgnoreCase);
+
+                    if (!hasExplicitScheme)
                     {
                         throw new OrielIpcException(
-                            $"openUrl 的 url 必须是绝对 URL（含协议），实际是「{url}」。")
+                            $"openUrl 的 url 必须是绝对 URL（含协议，如 https://…），实际是「{url}」。" +
+                            "裸路径请用 opener.openPath。")
                         {
                             Code = OrielIpcErrorCodes.InvalidArgument,
                         };

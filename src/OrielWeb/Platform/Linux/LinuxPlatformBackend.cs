@@ -211,10 +211,17 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
     /// </list>
     /// <para>
     /// 返回的字符串由 GTK 分配（<c>g_free</c> 释放）。这里**不释放**：
-    /// <c>Marshal.PtrToStringUni</c> 拷了一份，而 GTK 的 wait_for_text 返回值文档说
-    /// 调用方负责释放——用 <c>GLib.Free</c> 释放更严谨，但那要再绑一个符号；
+    /// 拷贝之后原串就没人用了，而 GTK 的 wait_for_text 返回值文档说调用方负责释放
+    /// ——用 <c>GLib.Free</c> 释放更严谨，但那要再绑一个符号；
     /// 这条路径每次调用泄漏一个短字符串，而它只在用户主动读剪贴板时发生。
     /// 这是一个**已知的、可接受的**取舍，不是漏了。
+    /// </para>
+    /// <para>
+    /// <b>必须用 <c>PtrToStringUTF8</c> 而不是 <c>PtrToStringUni</c></b>：
+    /// <c>gtk_clipboard_wait_for_text</c> 返回的是 **UTF-8** 的 <c>char*</c>。
+    /// 按 UTF-16 解读的后果不是乱码那么"明显"——ASCII 会被两两配对成汉字
+    /// （<c>"oriel-selftest"</c> 读成 <c>"牯敩⵬敳晬整瑳"</c>），
+    /// 而那看起来像"剪贴板里本来就是乱码"，不会让人想到编码。
     /// </para>
     /// </remarks>
     public string? ReadClipboardText()
@@ -226,7 +233,7 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
         }
 
         nint pointer = GtkNative.GtkClipboardWaitForText(clipboard);
-        return pointer == 0 ? null : Marshal.PtrToStringUni(pointer);
+        return pointer == 0 ? null : Marshal.PtrToStringUTF8(pointer);
     }
 
     /// <summary>写剪贴板文本。</summary>
@@ -253,6 +260,19 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
     }
 
     /// <summary>清空剪贴板。</summary>
+    /// <remarks>
+    /// <para>
+    /// <b>只调 <c>gtk_clipboard_clear</c> 不够</b>：X11 的剪贴板是"所有者提供内容"的模型，
+    /// 而本库写的时候会 <c>gtk_clipboard_store</c> 把内容交给**剪贴板管理器**持久化
+    /// （否则应用一退内容就没了）。清空时管理器手里那一份不会跟着消失——
+    /// 于是"清空之后再读"会从管理器拿回**旧内容**，看起来像 clear 没生效。
+    /// </para>
+    /// <para>
+    /// 所以清空要写成"放弃所有权 + 让管理器也拿到空内容"：clear 之后 set 一个空串再 store。
+    /// 代价是读回的是空串而不是 null——两者都表示"没有可粘贴的文本"，
+    /// 而空串本身也是合法文本内容（接口语义允许）。
+    /// </para>
+    /// </remarks>
     public bool ClearClipboard()
     {
         nint clipboard = GtkNative.GtkClipboardGet(GdkSelectionClipboard);
@@ -262,6 +282,10 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
         }
 
         GtkNative.GtkClipboardClear(clipboard);
+
+        // 把"空"也交给管理器，否则它会继续保留上一次 store 的内容
+        GtkNative.GtkClipboardSetText(clipboard, "", -1);
+        GtkNative.GtkClipboardStore(clipboard);
         return true;
     }
 

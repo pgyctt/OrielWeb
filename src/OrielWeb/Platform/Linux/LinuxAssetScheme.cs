@@ -78,6 +78,13 @@ internal static unsafe class LinuxAssetScheme
         if (security != 0)
         {
             GtkNative.WebkitSecurityManagerRegisterUriSchemeAsSecure(security, AssetUrl.Scheme);
+
+            // **CORS 启用**：ES module（<script type="module">）的抓取一律走 CORS 检查，
+            // 未登记为 cors_enabled 的 scheme 会被拒——页面脚本因此**静默不执行**。
+            // 症状是"页面什么都不做"：主题没应用、导航脚本没跑、探针不回报，
+            // 而宿主侧只看到"超时"，完全联想不到 CORS。
+            // 与上面那条 secure 是两件事，两条都要登记。
+            GtkNative.WebkitSecurityManagerRegisterUriSchemeAsCorsEnabled(security, AssetUrl.Scheme);
         }
     }
 

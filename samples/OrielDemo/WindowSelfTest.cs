@@ -38,6 +38,26 @@ internal static class WindowSelfTest
     private static readonly object Gate = new();
     private static readonly List<string> Failures = [];
 
+    /// <summary>当前是否 Linux（平台事实，用来决定哪几条断言不适用）。</summary>
+    private static readonly bool IsLinux = OperatingSystem.IsLinux();
+
+    /// <summary>
+    /// 当前环境是否有**窗口管理器**。
+    /// </summary>
+    /// <remarks>
+    /// 最小化（<c>gtk_window_iconify</c>）需要 WM 才会真的把窗口收进任务栏：
+    /// xvfb 里没有 WM，调用是"无效果但不报错"，<c>IsMinimized</c> 会保持 false。
+    /// 那验的是环境而不是库，所以无 WM 时这条断言跳过。
+    /// <para>
+    /// 判据由验证脚本设置（<c>ORIEL_HAS_WM=1</c>，它在 X11 下查 <c>_NET_SUPPORTING_WM_CHECK</c>）；
+    /// 未设置时**只有非 Linux 才认为有 WM**——Windows/macOS 的窗口服务器是系统自带的。
+    /// 默认宁可跳过也不假红：把"环境不足"报成失败会训练人忽略红灯。
+    /// </para>
+    /// </remarks>
+    private static readonly bool HasWindowManager =
+        !OperatingSystem.IsLinux()
+        || Environment.GetEnvironmentVariable("ORIEL_HAS_WM") == "1";
+
     private static OrielApp? _app;
     private static WebviewWindow? _main;
     private static Timer? _watchdog;
@@ -108,6 +128,32 @@ internal static class WindowSelfTest
                 Check(seen.Contains("main"), $"window.getAll 应包含 main（实际 {string.Join(",", seen)}）");
                 Check(seen.Contains(ProbeLabel), $"window.getAll 应包含 {ProbeLabel}（实际 {string.Join(",", seen)}）");
             }
+
+            // ---- 1b. 焦点窗口：宿主与页面两侧必须一致 ----
+            //
+            // **断言的是"页面查询 == 宿主侧属性"，不是"焦点在哪个窗口上"**：
+            // 焦点取决于桌面把前台给了谁，那不是本库能控制的（--selftest windowevents
+            // 就曾因为假设了这一点而在别人的桌面上假红）。
+            // 另加一条与那个环境事实无关的性质：两个窗口不可能同时有焦点。
+            JsonElement focused = await AskMainAsync("window.getFocused", "null");
+            string? focusedLabel = focused.ValueKind == JsonValueKind.String ? focused.GetString() : null;
+            string? hostFocused = app.GetFocusedWindow()?.Label;
+
+            Check(
+                focusedLabel == hostFocused,
+                $"页面 window.getFocused（{focusedLabel ?? "null"}）应当与宿主 GetFocusedWindow" +
+                $"（{hostFocused ?? "null"}）一致");
+
+            if (focusedLabel is not null)
+            {
+                Check(
+                    focusedLabel == "main" || focusedLabel == ProbeLabel,
+                    $"焦点窗口的 label 应当是已知窗口之一（实际 {focusedLabel}）");
+            }
+
+            Check(
+                !(main.IsFocused && probe.IsFocused),
+                "两个窗口不可能同时有焦点（这条挡的是'永远返回 true'）");
 
             // ---- 2. 按 label 寻址：主窗口发命令，作用到另一个窗口 ----
             // 这是 window.* 与 win.* 的本质区别。若路由写错成"总是作用到发起者"，
@@ -198,18 +244,25 @@ internal static class WindowSelfTest
 
             // **状态流转**：只验"初始值为假"会被"永远返回 false"骗过，
             // 所以让宿主真去切一次状态，再看查询跟不跟得上。
+            //
+            // 最小化需要窗口管理器才真的生效（xvfb 里没有），所以无 WM 时跳过这两条——
+            // 它们验的是环境事实，不是库的行为。
             probe.Minimize();
             await WaitForAsync(() => probe.IsMinimized, 5000);
-            Check(probe.IsMinimized, "host 侧 Minimize() 之后 IsMinimized 应当为 true");
-            Check((await AskWithLabelAsync("window.isMinimized", ProbeLabel)).GetBoolean(),
-                "window.isMinimized 应当跟上宿主状态（true）");
+            CheckOrSkip(HasWindowManager, probe.IsMinimized,
+                "host 侧 Minimize() 之后 IsMinimized 应当为 true", "当前环境没有窗口管理器");
+            CheckOrSkip(HasWindowManager,
+                (await AskWithLabelAsync("window.isMinimized", ProbeLabel)).GetBoolean(),
+                "window.isMinimized 应当跟上宿主状态（true）", "当前环境没有窗口管理器");
 
             // 还原
             probe.Restore();
             await WaitForAsync(() => !probe.IsMinimized, 5000);
-            Check(!probe.IsMinimized, "host 侧 Restore() 之后 IsMinimized 应当回到 false");
-            Check(!(await AskWithLabelAsync("window.isMinimized", ProbeLabel)).GetBoolean(),
-                "window.isMinimized 应当跟上宿主的还原（false）");
+            CheckOrSkip(HasWindowManager, !probe.IsMinimized,
+                "host 侧 Restore() 之后 IsMinimized 应当回到 false", "当前环境没有窗口管理器");
+            CheckOrSkip(HasWindowManager,
+                !(await AskWithLabelAsync("window.isMinimized", ProbeLabel)).GetBoolean(),
+                "window.isMinimized 应当跟上宿主的还原（false）", "当前环境没有窗口管理器");
 
             // 置顶：切换之后查询要跟着变（这条验的是"记住的状态"而不是原生查询）
             probe.ToggleOnTop();
@@ -278,10 +331,16 @@ internal static class WindowSelfTest
                 await AskMainAsync(
                     "window.setClosable",
                     SelfTestJson.Object(("label", SelfTestJson.String(DecoratedProbeLabel)), ("value", "false")));
-                Check(!decorated.IsClosable,
-                    "禁掉可关闭之后宿主侧 IsClosable 应当是 false（菜单项已灰化）");
-                Check(!(await AskWithLabelAsync("window.isClosable", DecoratedProbeLabel)).GetBoolean(),
-                    "window.isClosable 应当跟上（false）——这条正是语义修正后要钉住的");
+                // **Linux 上"可关闭"恒为 true**（GTK 没有这个概念，窗口总能收到 delete-event），
+                // `SetClosable` 是空操作，所以"禁掉之后应为 false"在那里永远不成立——
+                // 这是已登记的平台事实（见 IWindowBackend.SetClosable），不是缺陷，跳过。
+                CheckOrSkip(!IsLinux, !decorated.IsClosable,
+                    "禁掉可关闭之后宿主侧 IsClosable 应当是 false（菜单项已灰化）",
+                    "Linux 上 IsClosable 恒为 true（GTK 没有可关闭概念）");
+                CheckOrSkip(!IsLinux,
+                    !(await AskWithLabelAsync("window.isClosable", DecoratedProbeLabel)).GetBoolean(),
+                    "window.isClosable 应当跟上（false）——这条正是语义修正后要钉住的",
+                    "Linux 上 IsClosable 恒为 true");
 
                 // 不变量：灰化是**按窗口**做的。两个窗口各有自己的系统菜单，
                 // 改带装饰的那个不该波及无边框探针。
@@ -583,17 +642,28 @@ internal static class WindowSelfTest
             await AskMainAsync(
                 "window.setMaximizable",
                 SelfTestJson.Object(("label", SelfTestJson.String(ProbeLabel)), ("value", "false")));
-            Check(!probe.IsMaximizable, "禁止最大化之后宿主侧 IsMaximizable 应当是 false");
-            Check((await AskWithLabelAsync("window.isMaximizable", ProbeLabel)).GetBoolean() == false,
-                "window.isMaximizable 应当跟上（false）");
+            // **Linux 上 setMaximizable / setMinimizable 是空操作**（GTK 没有独立入口，
+            // tao 同样如此），且刻意不记状态——读取继续回落 IsResizable。
+            // 所以"禁止之后应为 false"只在 Windows/macOS 上成立，Linux 上跳过。
+            CheckOrSkip(!IsLinux, !probe.IsMaximizable,
+                "禁止最大化之后宿主侧 IsMaximizable 应当是 false",
+                "Linux 上 setMaximizable 是空操作（GTK 无对应入口）");
+            CheckOrSkip(!IsLinux,
+                (await AskWithLabelAsync("window.isMaximizable", ProbeLabel)).GetBoolean() == false,
+                "window.isMaximizable 应当跟上（false）",
+                "Linux 上 setMaximizable 是空操作");
             Check(probe.IsMinimizable, "改 maximizable 不该顺带动到 minimizable（两者是独立的样式位）");
 
             await AskMainAsync(
                 "window.setMinimizable",
                 SelfTestJson.Object(("label", SelfTestJson.String(ProbeLabel)), ("value", "false")));
-            Check(!probe.IsMinimizable, "禁止最小化之后宿主侧 IsMinimizable 应当是 false");
-            Check((await AskWithLabelAsync("window.isMinimizable", ProbeLabel)).GetBoolean() == false,
-                "window.isMinimizable 应当跟上（false）");
+            CheckOrSkip(!IsLinux, !probe.IsMinimizable,
+                "禁止最小化之后宿主侧 IsMinimizable 应当是 false",
+                "Linux 上 setMinimizable 是空操作（GTK 无对应入口）");
+            CheckOrSkip(!IsLinux,
+                (await AskWithLabelAsync("window.isMinimizable", ProbeLabel)).GetBoolean() == false,
+                "window.isMinimizable 应当跟上（false）",
+                "Linux 上 setMinimizable 是空操作");
 
             // 恢复：确认是"可切"而不是"只能关掉"
             await AskMainAsync(
@@ -766,6 +836,48 @@ internal static class WindowSelfTest
     {
         lock (Gate)
         {
+            if (condition)
+            {
+                Console.WriteLine($"[window-selftest] OK: {description}");
+                return;
+            }
+
+            Failures.Add(description);
+            Console.WriteLine($"[window-selftest] 失败: {description}");
+        }
+    }
+
+    /// <summary>
+    /// 断言"在不适用当前平台/环境时跳过"。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>为什么需要它</b>：有三类断言在特定平台或环境下**本来就无法成立**，而它们是
+    /// 已登记在接口文档里的平台事实（不是缺陷）：
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description>Linux 上 <c>IsClosable</c> 恒为 <c>true</c>（GTK 没有"可关闭"概念，
+    ///     窗口总能收到 <c>delete-event</c>），所以"禁掉之后应为 false"在 Linux 上永远不成立。</description></item>
+    ///   <item><description>Linux 上 <c>SetMaximizable</c> / <c>SetMinimizable</c> 是**空操作**
+    ///     （GTK 没有对应入口），对应的读取值仍回落 <c>IsResizable</c>。</description></item>
+    ///   <item><description>最小化需要**窗口管理器**：xvfb 里没有 WM，<c>gtk_window_iconify</c>
+    ///     不会真的把窗口收进任务栏，所以 <c>IsMinimized</c> 保持 false。</description></item>
+    /// </list>
+    /// <para>
+    /// <b>跳过不等于通过</b>：输出里明确写 <c>SKIP</c> 与原因，且不计入通过项。
+    /// 这样 CI 不会因为它们必红，而"这条没验过"也仍然是可见的。
+    /// </para>
+    /// </remarks>
+    private static void CheckOrSkip(bool applicable, bool condition, string description, string skipReason)
+    {
+        lock (Gate)
+        {
+            if (!applicable)
+            {
+                Console.WriteLine($"[window-selftest] SKIP: {description}（{skipReason}）");
+                return;
+            }
+
             if (condition)
             {
                 Console.WriteLine($"[window-selftest] OK: {description}");

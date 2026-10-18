@@ -249,12 +249,12 @@ internal static class SchemeSelfTest
             return;
         }
 
-        // 优雅退出：关窗口 → 消息循环结束 → Run() 返回 → Program 按 Failed 设退出码。
-        // 不在求值的续体里直接 Environment.Exit（那会跳过各平台的清理）。
+        // 收尾用 Quit：Linux 的 `gtk_window_close` 要走 delete-event，无窗口管理器时那条链不成立，
+        // 进程会挂到脚本 timeout（结论已 PASS 却退出码 124，CI 白等 150 秒）。
         WebviewWindow? window = _window;
         if (window is not null)
         {
-            window.App.PostToMainThread(window.Close);
+            window.App.PostToMainThread(window.App.Quit);
         }
     }
 }

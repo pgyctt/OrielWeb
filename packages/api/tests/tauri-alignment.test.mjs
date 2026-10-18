@@ -170,7 +170,9 @@ const EXTRAS = {
     },
     window: {
         getByLabel: '按 label 取窗口。Tauri 要 `getAllWindows().find(...)`；本库的 label 是寻址单位，所以给了一个直接入口',
-        getFocusedWindow: '取当前聚焦窗口。**恒返回 null**（三平台都还没有"哪个窗口有焦点"的查询能力）——签名先就位是为了让迁移代码能编译',
+        getFocusedWindow: '模块级的便利函数。Tauri 只提供静态方法 `Window.getFocusedWindow()`（本库也提供，两者等价）；' +
+            '包内给一个模块级导出是为了让 `import { getFocusedWindow }` 这种写法也能用——' +
+            '多一个入口不会与 Tauri 冲突（同名同义），而少一个会让一部分迁移代码在 import 处就报错',
     },
     mocks: {
         getMockWindowLabels: '读 mock 出来的窗口 label 列表，便于断言',

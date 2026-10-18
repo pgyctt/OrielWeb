@@ -123,6 +123,20 @@ internal static class ApiSelfTest
             const checks = [];
             const check = (name, ok, detail) => checks.push({ name, ok: ok === true, detail: String(detail ?? '') });
 
+            // 宿主平台：**所有平台相关的期望值都从这里取**，不写死某一平台。
+            // 自检在三个平台的 CI 上都跑（smoke-windows / smoke-linux / smoke-macos），
+            // 任何一处写死 Windows 的断言都会让另两个平台必然红——而那不是库的缺陷。
+            // 用 `window.oriel.platform`（宿主注入）而不是 navigator：与库内部的平台判断同源。
+            const hostPlatform = (window.oriel && window.oriel.platform) || '';
+            const isWindowsHost = hostPlatform === 'windows';
+            const isMacOsHost = hostPlatform === 'macos';
+
+            // path 模块在**前面几段**就要用（fs 段的逃逸路径要按平台拼分隔符），
+            // 所以提前导入；后面 path 那一节直接复用这个绑定。
+            // 放到段内声明会让 fs 段踩到 TDZ（`Cannot access 'path' before initialization`），
+            // 而那看起来像"fs 命令没按预期拒绝"——排查方向会完全错。
+            const path = await import(vendor + '/path.js');
+
             try {
                 // ---- core ----
                 const core = await import(vendor + '/core.js');
@@ -243,10 +257,13 @@ internal static class ApiSelfTest
                 await fs.remove(fsRoot + '/api-selftest-copy.txt');
                 check('fs.remove 删掉文件', (await fs.exists(fsRoot + '/api-selftest-copy.txt')) === false, 'ok');
 
-                // **scope 逃逸必须被挡**：demo 只声明了临时目录，所以这里必然被拒
+                // **scope 逃逸必须被挡**：demo 只声明了临时目录，所以这里必然被拒。
+                // 用平台相关的绝对路径（Windows 盘符 / POSIX 根），否则在 Linux 上
+                // `C:\Windows\win.ini` 只是个"不存在的相对文件名"，虽然同样会被拒，
+                // 但那时验的已经不是"绝对路径越界"这件事了。
                 let fsEscapeCode = 'unset';
                 try {
-                    await fs.readTextFile('C:\\Windows\\win.ini');
+                    await fs.readTextFile(isWindowsHost ? 'C:\\Windows\\win.ini' : '/etc/hostname');
                 } catch (e) {
                     fsEscapeCode = e && e.code;
                 }
@@ -254,13 +271,22 @@ internal static class ApiSelfTest
                     fsEscapeCode === 'path_not_allowed', fsEscapeCode);
 
                 let dotdotCode = 'unset';
+                let dotdotDetail = '';
                 try {
-                    await fs.readTextFile(fsRoot + '\\..\\..\\escape.txt');
+                    // **用 path.sep() 拼，不能写死反斜杠**：Linux/macOS 上 `\` 是普通文件名字符，
+                    // 拼出来的路径**仍在 scope 内**（只是文件不存在），于是断言会退化
+                    // 成"读一个不存在的文件"（错误码不是 path_not_allowed）而在 CI 上必红。
+                    const dotdot = ['..', '..', 'escape.txt'].reduce(
+                        (left, right) => left + path.sep() + right, fsRoot);
+                    dotdotDetail = dotdot;
+                    await fs.readTextFile(dotdot);
                 } catch (e) {
                     dotdotCode = e && e.code;
+                    // 把 message 也带上：只报"码不对"看不出到底是 scope 放行、还是路径不合法
+                    dotdotDetail = String(e && e.code) + ' / ' + String(e && e.message);
                 }
                 check('fs 用 .. 逃逸出 scope → path_not_allowed（归一再判定）',
-                    dotdotCode === 'path_not_allowed', dotdotCode);
+                    dotdotCode === 'path_not_allowed', dotdotDetail);
 
                 // ---- 平台集成（F5）：opener / notification / autostart ----
                 //
@@ -400,14 +426,24 @@ internal static class ApiSelfTest
                 check('convertFileSrc 给出 oriel://file.oriel/ 形态的 URL',
                     imgUrl.startsWith('oriel://file.oriel/'), imgUrl);
 
-                // 真请求一次：这是"整段编码没被引擎归一掉"的唯一取证方式
+                // 真请求一次：这是"整段编码没被引擎归一掉"的唯一取证方式。
+                //
+                // **asset 协议目前只在 Windows 上真的提供内容**：Linux / macOS 的 scheme
+                // 处理器还没接授权器，`Serve` 一律 403（fail-closed，见 F2 的说明与
+                // CHANGELOG 的"已知限制"）。所以"能加载出来"这条只在 Windows 上成立；
+                // 另两个平台改为断言"**确实被拒**"——那也证明了 URL 形态是通的。
                 const imgOk = await new Promise(function (resolve) {
                     const probe = new Image();
                     probe.onload = function () { resolve(probe.naturalWidth === 1); };
                     probe.onerror = function () { resolve(false); };
                     probe.src = imgUrl;
                 });
-                check('页面能真的加载 convertFileSrc 出来的 URL（%2F 没被引擎归一）', imgOk, imgUrl);
+                if (isWindowsHost) {
+                    check('页面能真的加载 convertFileSrc 出来的 URL（%2F 没被引擎归一）', imgOk, imgUrl);
+                } else {
+                    check('非 Windows 上 asset 协议 fail-closed：convertFileSrc 的 URL 被拒（403）',
+                        imgOk === false, imgUrl);
+                }
 
                 // **scope 之外的必须加载失败**：这是 convertFileSrc 的关键安全性质——
                 // 否则它就是一个绕过 fs scope 的读取通道
@@ -431,13 +467,18 @@ internal static class ApiSelfTest
                 check('目录不能通过文件通道取到', dirOk === false, dirUrl);
 
                 // ---- path（F1）：同步常量 + 路径运算 ----
-                const path = await import(vendor + '/path.js');
+                // `path` 已在脚本开头导入（fs 段的逃逸路径也要用它的 sep）。
 
-                // sep/delimiter 是**同步**的（读宿主注入的常量），所以这里刻意不 await
-                check('path.sep() 与宿主平台一致（本机 Windows 上是反斜杠）',
-                    path.sep() === '\\', JSON.stringify(path.sep()));
-                check('path.delimiter() 与宿主平台一致（本机 Windows 上是分号）',
-                    path.delimiter() === ';', JSON.stringify(path.delimiter()));
+                // sep/delimiter 是**同步**的（读宿主注入的常量），所以这里刻意不 await。
+                //
+                // **期望值必须按宿主平台取**，不能写死反斜杠/分号：自检在三个平台的 CI 上都跑，
+                // 写死 Windows 的值会让 Linux/macOS 的 smoke **必然**红，而那不是库的缺陷。
+                check('path.sep() 与宿主平台一致',
+                    path.sep() === (isWindowsHost ? '\\' : '/'),
+                    `${hostPlatform} → ${JSON.stringify(path.sep())}`);
+                check('path.delimiter() 与宿主平台一致',
+                    path.delimiter() === (isWindowsHost ? ';' : ':'),
+                    `${hostPlatform} → ${JSON.stringify(path.delimiter())}`);
 
                 const joined = await path.join('a', 'b', 'c');
                 check('path.join 按平台分隔符拼接',
@@ -460,9 +501,14 @@ internal static class ApiSelfTest
                     (await path.dirname(dirInput)) === ['a', 'b'].join(path.sep()),
                     await path.dirname(dirInput));
 
+                // isAbsolute 的判据按平台取：Windows 用 `C:\x`（盘符），POSIX 用 `/x`。
+                // 写死 `C:` 拼平台分隔符在 Linux 上会得到 `C:/x`——那**也**是绝对路径，
+                // 所以这条在 Windows 上永远看不出写错了，只在别处露馅。
+                const absoluteInput = isWindowsHost ? 'C:\\x' : '/x';
                 check('path.isAbsolute 判平台相关的绝对性',
-                    (await path.isAbsolute(['C:', 'x'].join(path.sep()))) === true
-                        && (await path.isAbsolute('a/b')) === false, 'ok');
+                    (await path.isAbsolute(absoluteInput)) === true
+                        && (await path.isAbsolute('a/b')) === false,
+                    `${absoluteInput} / a/b`);
 
                 // normalize 是**词法**的：不存在的路径也要能归一（Tauri 用 canonicalize，会在这里报错）
                 const ghost = ['nonexistent-oriel', 'sub', '..', 'file.txt'].join(path.sep());
@@ -489,18 +535,27 @@ internal static class ApiSelfTest
                     appData.endsWith(appId) && appData.startsWith(await path.dataDir()),
                     appData);
 
-                // Windows 上这四格分成两对（Roaming / Local）——把 Data 与 LocalData
-                // 混成一条实现会让其中一对双双错掉，而那种错在 Linux/macOS 上看不出来
+                // 四格目录的平台差异（**按平台给期望值**，不能写死 Windows 那一套）：
+                //   Windows：Data=Roaming、LocalData=Local、Cache=Local、Config=Roaming
+                //   Linux/macOS：Data=LocalData=~/.local/share、Cache=~/.cache、
+                //                Config=~/.config（macOS 是 ~/Library/Application Support 等）
+                // 也就是说"config == data"与"localData == cache"**只在 Windows 上成立**，
+                // 在另两个平台它们恰好都**不**成立。写死任何一套都会让另一个平台必红。
                 const config = await path.configDir();
                 const data = await path.dataDir();
                 const localData = await path.localDataDir();
                 const cache = await path.cacheDir();
-                check('path.configDir() 与 path.dataDir() 同（Windows 上都是 Roaming）',
-                    config === data, config + ' vs ' + data);
-                check('path.localDataDir() 与 path.cacheDir() 同（Windows 上都是 Local）',
-                    localData === cache, localData + ' vs ' + cache);
+                check('path.configDir() 与 path.dataDir() 的关系与平台一致',
+                    isWindowsHost ? config === data : config !== data,
+                    `${config} vs ${data}（${hostPlatform}）`);
+                check('path.localDataDir() 与 path.cacheDir() 的关系与平台一致',
+                    isWindowsHost ? localData === cache : localData !== cache,
+                    `${localData} vs ${cache}（${hostPlatform}）`);
+                // Windows 上 Roaming 与 Local 必须是不同目录（混成一条实现会让一对双双错掉）；
+                // POSIX 上没有 Roaming/Local 之分，这一条不适用。
                 check('Windows 上 Roaming 与 Local 是不同目录',
-                    data !== localData, data + ' vs ' + localData);
+                    isWindowsHost ? data !== localData : true,
+                    `${data} vs ${localData}（${hostPlatform}）`);
 
                 // 下载目录**不能**靠 .NET 的 SpecialFolder 得到（没有那个成员），
                 // 而 publicDir 也不是 CommonDocuments（那个多一层 \Documents）。
@@ -512,15 +567,23 @@ internal static class ApiSelfTest
                     !/[\\/]Documents$/.test(publicDir), publicDir);
 
                 // 平台不支持的那几格要以 not_supported 明确拒绝（与 Tauri 一致），
-                // 而不是给一个编出来的值
+                // 而不是给一个编出来的值。
+                // **fontDir 只在 Windows 上"不支持"**：Linux 给 ~/.local/share/fonts、
+                // macOS 给 ~/Library/Fonts，所以另两个平台上这条应当**成功**。
                 let fontCode = 'unset';
+                let fontValue = null;
                 try {
-                    await path.fontDir();
+                    fontValue = await path.fontDir();
                 } catch (e) {
                     fontCode = e && e.code;
                 }
-                check('path.fontDir() 在 Windows 上以 not_supported 被拒（与 Tauri 一致）',
-                    fontCode === 'not_supported', fontCode);
+                check(isWindowsHost
+                        ? 'path.fontDir() 在 Windows 上以 not_supported 被拒（与 Tauri 一致）'
+                        : 'path.fontDir() 在非 Windows 上给得出路径（Tauri 同样支持）',
+                    isWindowsHost
+                        ? fontCode === 'not_supported'
+                        : typeof fontValue === 'string' && fontValue.length > 0,
+                    isWindowsHost ? fontCode : String(fontValue));
 
                 // resolveResource 的越界校验
                 const resource = await path.resolveResource('assets/logo.svg');
@@ -644,9 +707,21 @@ internal static class ApiSelfTest
                     Array.isArray(all) && all.some(function (w) { return w.label === 'main'; }),
                     Array.isArray(all) ? all.map(function (w) { return w.label; }).join(',') : typeof all);
 
-                // getFocusedWindow 恒 null（三平台都还没有"哪个窗口有焦点"的查询能力）
-                check('window.getFocusedWindow() 恒为 null（如实标注）',
-                    (await win.getFocusedWindow()) === null, 'M3');
+                // getFocusedWindow：**已实现**（遍历存活窗口取第一个 IsFocused 为真的）。
+                // 断言"形状与自洽性"，不断言"焦点一定在谁身上"——那取决于桌面把前台给了谁，
+                // 不归本库控制（无窗口管理器的 CI 环境里尤其不可靠）。
+                const focused = await win.getFocusedWindow();
+                const allLabels = all.map(function (w) { return w.label; });
+                check('window.getFocusedWindow() 要么给 null、要么给一个已知 label',
+                    focused === null || (focused && allLabels.indexOf(focused.label) >= 0),
+                    focused === null ? 'null' : focused.label);
+                // 与 isFocused 自洽：返回的窗口自己必须报告有焦点；返回 null 时不该有窗口声称有焦点
+                check('window.getFocusedWindow() 与 isFocused() 自洽',
+                    focused === null
+                        ? (await Promise.all(all.map(function (w) { return w.isFocused(); })))
+                            .every(function (v) { return v === false; })
+                        : (await focused.isFocused()) === true,
+                    focused === null ? 'null' : focused.label);
 
                 // ---- 几何查询（E2）：断言形状与单位，不断言具体数值 ----
                 // 具体数值依赖平台与主题（边框 16、标题栏 39 在别的系统上会变），

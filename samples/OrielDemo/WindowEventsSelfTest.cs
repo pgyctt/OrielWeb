@@ -94,21 +94,39 @@ internal static class WindowEventsSelfTest
                     $"Resized 的参数应是逻辑像素的客户区（期望 ≈700x520，实际 {lastWidth:0.#}x{lastHeight:0.#}）");
 
                 // ---- 2. Moved：程序调 MoveTo 必须触发 ----
+                //
+                // **MoveTo 需要窗口管理器**：Wayland 下位置由合成器决定（`OuterPosition` 恒 0,0），
+                // xvfb 里没有 WM 时 `gtk_window_move` 同样是空操作。所以无 WM 时跳过这两条——
+                // 它们验的是环境能不能摆窗口，不是 Moved 事件接得对不对。
+                bool canMoveWindows =
+                    !OperatingSystem.IsLinux()
+                    || Environment.GetEnvironmentVariable("ORIEL_HAS_WM") == "1";
+
                 int moveBefore = Count(positionEvents);
                 window.MoveTo(120, 90);
                 await WaitForAsync(() => Count(positionEvents) > moveBefore, 2000);
 
                 (double lastX, double lastY) = LastPosition(positionEvents);
-                Check(
-                    Count(positionEvents) > moveBefore,
-                    "MoveTo(120, 90) 应触发 Moved 事件");
 
-                // 位置只断言"报出来了且接近请求值"：窗口管理器可能吸附/约束，
-                // 硬钉精确坐标会在别人的桌面上假红。
-                Check(
-                    Math.Abs(lastX - 120) <= 40 && Math.Abs(lastY - 90) <= 40,
-                    $"Moved 的参数应是屏幕逻辑坐标（期望 ≈120,90，实际 {lastX:0.#},{lastY:0.#}；" +
-                    "偏差过大可能被窗口管理器吸附或约束）");
+                if (canMoveWindows)
+                {
+                    Check(
+                        Count(positionEvents) > moveBefore,
+                        "MoveTo(120, 90) 应触发 Moved 事件");
+
+                    // 位置只断言"报出来了且接近请求值"：窗口管理器可能吸附/约束，
+                    // 硬钉精确坐标会在别人的桌面上假红。
+                    Check(
+                        Math.Abs(lastX - 120) <= 40 && Math.Abs(lastY - 90) <= 40,
+                        $"Moved 的参数应是屏幕逻辑坐标（期望 ≈120,90，实际 {lastX:0.#},{lastY:0.#}；" +
+                        "偏差过大可能被窗口管理器吸附或约束）");
+                }
+                else
+                {
+                    Console.WriteLine(
+                        "[windowevents-selftest] SKIP: MoveTo 应触发 Moved 事件" +
+                        "（当前环境没有窗口管理器，窗口位置不由本进程决定）");
+                }
 
                 // ---- 3. FocusChanged：失焦/获焦必须触发 ----
                 // 造焦点的唯一可靠办法是**再建一个窗口并让它获得焦点**——那个新窗口会抢走焦点，
@@ -140,9 +158,26 @@ internal static class WindowEventsSelfTest
                     int afterBlur = Count(focusEvents);
                     other.Close();
                     await WaitForAsync(() => Count(focusEvents) > afterBlur, 3000);
-                    Check(
-                        Count(focusEvents) > afterBlur,
-                        "另一个窗口关闭后，本窗口应收到 FocusChanged(true)");
+                    // **"关掉另一个窗口 → 本窗口重新获焦"依赖真实的 OS 焦点交接**：
+                    // 无窗口管理器的环境（CI 的 xvfb）里前台窗口没人接管，WM_SETFOCUS /
+                    // focus-in 都不会到来。这条在 Linux 且无 WM 时跳过——
+                    // 验的是环境事实，不是库的行为（同一现象在开发机上也曾因桌面会话
+                    // 没把前台给这个进程而失败，见 CHANGELOG）。
+                    bool hasWindowManager =
+                        !OperatingSystem.IsLinux()
+                        || Environment.GetEnvironmentVariable("ORIEL_HAS_WM") == "1";
+                    if (hasWindowManager)
+                    {
+                        Check(
+                            Count(focusEvents) > afterBlur,
+                            "另一个窗口关闭后，本窗口应收到 FocusChanged(true)");
+                    }
+                    else
+                    {
+                        Console.WriteLine(
+                            "[windowevents-selftest] SKIP: 另一个窗口关闭后应收到 FocusChanged(true)" +
+                            "（当前环境没有窗口管理器，焦点不会回到本窗口）");
+                    }
                 }
 
                 // ---- 4. 去重：重复设同一尺寸不该反复触发 ----

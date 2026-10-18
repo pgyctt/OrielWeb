@@ -644,10 +644,15 @@ internal partial class Win32WindowHost : IWindowBackend
     /// <summary>把 PNG 文件解码成 RGBA 再造成 HICON 设上去（见 <see cref="ApplyExplicitIcon"/>）。</summary>
     private static void ApplyPngIcon(nint hwnd, string path)
     {
-        if (!OrielImage.TryFromFile(path, out OrielImage? image, out _) || image is null)
+        if (!OrielImage.TryFromFile(path, out OrielImage? image, out string? failure) || image is null)
         {
             // 路径不存在或不是可识别的 PNG/ICO：保持现有图标，不抛——
             // 与 LoadImageW 返回 0 时的行为一致（创建期图标也是这个语义）。
+            // 但**记一笔**：与字节那条路（SetIconFromBytes）保持对称——两条路都是
+            // "静默保持原图标"，就不该只有一条留下诊断。
+            OrielDiagnostics.Report(
+                $"[OrielWeb] setIcon 的图标文件无法解码（保持原图标）：{path}" +
+                (string.IsNullOrEmpty(failure) ? "。" : $"——{failure}"));
             return;
         }
 
@@ -656,8 +661,30 @@ internal partial class Win32WindowHost : IWindowBackend
         nint icon = Win32IconFactory.CreateFromRgba(image);
         if (icon != 0)
         {
-            _ = Win32.SendMessageW(hwnd, Win32Constants.WM_SETICON, Win32Constants.ICON_BIG, icon);
+            SetIconHandles(hwnd, icon);
         }
+    }
+
+    /// <summary>
+    /// 把同一个 HICON 同时设到大、小两个槽位（见 <see cref="ApplyExplicitIcon"/>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>两个槽位都要设</b>：<c>ICON_BIG</c> 给任务栏与 Alt-Tab 大视图，<c>ICON_SMALL</c>
+    /// 给标题栏与 Alt-Tab 小视图。只设大图标的表现是"图标换了，但标题栏那个还是旧的"
+    /// ——而 ICO/BMP 路径（<see cref="ApplyExplicitIcon"/> 里走 <c>LoadImageW</c> 那条）
+    /// 一直是两个都设，所以这里必须对齐，否则"设了图标但部分没生效"会按输入格式分叉。
+    /// </para>
+    /// <para>
+    /// 同一个句柄设两次是合法的：<c>WM_SETICON</c> 不接管所有权，系统按槽位各记一份。
+    /// 本库的图标句柄本来就不释放（见 <see cref="ApplyExplicitIcon"/> 的说明），
+    /// 所以这里不需要额外跟踪。
+    /// </para>
+    /// </remarks>
+    private static void SetIconHandles(nint hwnd, nint icon)
+    {
+        _ = Win32.SendMessageW(hwnd, Win32Constants.WM_SETICON, Win32Constants.ICON_BIG, icon);
+        _ = Win32.SendMessageW(hwnd, Win32Constants.WM_SETICON, Win32Constants.ICON_SMALL, icon);
     }
 
     private static unsafe void EnsureWindowClass()
@@ -2089,8 +2116,14 @@ internal partial class Win32WindowHost : IWindowBackend
     /// 这里必然读到 <c>false</c>（前提是它本来有系统菜单）。
     /// </para>
     /// <para>
-    /// 无系统菜单的窗口（无边框）没有关闭按钮，所以是 <c>false</c>；
-    /// <c>GetMenuState</c> 对不存在的项返回 <c>0xFFFFFFFF</c>，一并按"不可关"处理。
+    /// 窗口没有系统菜单时是 <c>false</c>；<c>GetMenuState</c> 对不存在的项返回
+    /// <c>0xFFFFFFFF</c>，一并按"不可关"处理。
+    /// </para>
+    /// <para>
+    /// <b>无边框窗口同样有系统菜单</b>（实测）：本库的 frameless 靠 <c>WM_NCCALCSIZE</c>
+    /// 隐藏边框，<c>ComputeStyle</c> 里照样带 <c>WS_SYSMENU</c>（见
+    /// <see cref="ComputeStyle"/>）——所以它的 <c>IsClosable</c> 是 <c>true</c>，
+    /// 与"有没有可见标题栏"无关。要让它不可关得显式调 <see cref="SetClosable"/>。
     /// </para>
     /// </remarks>
     public bool IsClosable
@@ -2416,7 +2449,10 @@ internal partial class Win32WindowHost : IWindowBackend
     /// 落点是**灰化系统菜单里的"关闭"项**（<c>SC_CLOSE</c>），而不是清 <c>WS_SYSMENU</c>。
     /// 后者会把标题栏上三个按钮和整个系统菜单一起干掉，那是"删掉按钮"而不是"关闭按钮不可用"。
     /// <para>
-    /// 窗口没有系统菜单时（无边框窗口）**什么都不做**——那种窗口本来就没有关闭按钮可灰。
+    /// 窗口没有系统菜单时**什么都不做**——那种窗口本来就没有关闭按钮可灰。
+    /// 注意**无边框窗口不属于这一类**：本库的 frameless 只是靠 <c>WM_NCCALCSIZE</c>
+    /// 隐藏边框，<c>ComputeStyle</c> 里仍带 <c>WS_SYSMENU</c>，所以它有系统菜单、
+    /// 这里会真的去灰化（实测确认）。
     /// </para>
     /// </remarks>
     public void SetClosable(bool enabled)
@@ -2480,7 +2516,7 @@ internal partial class Win32WindowHost : IWindowBackend
         nint icon = Win32IconFactory.CreateFromRgba(image);
         if (icon != 0)
         {
-            _ = Win32.SendMessageW(_hwnd, Win32Constants.WM_SETICON, Win32Constants.ICON_BIG, icon);
+            SetIconHandles(_hwnd, icon);
         }
     }
 
@@ -2509,7 +2545,7 @@ internal partial class Win32WindowHost : IWindowBackend
         nint icon = Win32IconFactory.CreateFromRgba(new OrielImage(rgba, width, height));
         if (icon != 0)
         {
-            _ = Win32.SendMessageW(_hwnd, Win32Constants.WM_SETICON, Win32Constants.ICON_BIG, icon);
+            SetIconHandles(_hwnd, icon);
         }
     }
 

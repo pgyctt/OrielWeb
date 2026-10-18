@@ -741,6 +741,25 @@ internal static unsafe partial class GtkNative
     [LibraryImport(WebKit, EntryPoint = "webkit_security_manager_register_uri_scheme_as_secure", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void WebkitSecurityManagerRegisterUriSchemeAsSecure(nint manager, string scheme);
 
+    /// <summary>
+    /// 把自定义 scheme 标记为 **CORS 启用**。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>这条是 <c>&lt;script type="module"&gt;</c> 能加载的前提</b>：ES module 的抓取走
+    /// CORS 检查（module script 一律以 CORS 模式请求），而未登记的 scheme 会被直接拒绝
+    /// ——表现是页面脚本**静默不执行**（控制台一条 CORS/module 错误，而宿主侧看不到），
+    /// 于是"页面什么都没发生"：主题没应用、导航脚本没跑、探针没回报。
+    /// </para>
+    /// <para>
+    /// 与 <c>..._as_secure</c> 是两件不同的事：secure 管 <c>isSecureContext</c>，
+    /// CORS 管"这个 scheme 的资源能不能被同 scheme 的文档当 module/跨源请求抓取"。
+    /// WebKitGTK 上两者都要显式登记（官方文档里 module 那条明确要求 CORS enabled）。
+    /// </para>
+    /// </remarks>
+    [LibraryImport(WebKit, EntryPoint = "webkit_security_manager_register_uri_scheme_as_cors_enabled", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial void WebkitSecurityManagerRegisterUriSchemeAsCorsEnabled(nint manager, string scheme);
+
     /// <summary>请求的完整 URI（返回 gchar*，归 request 所有，不要释放）。</summary>
     /// <remarks>
     /// 用完整 URI 而不是 <c>get_path</c>：路径的百分号解码、query 与 fragment 的处理

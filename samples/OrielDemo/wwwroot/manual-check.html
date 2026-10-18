@@ -303,6 +303,12 @@
         </section>
     </main>
 
-    <script type="module" src="manual-check.js"></script>
+    <!-- 与 index.html 同一理由：经典脚本 + 动态 import()，绕开自定义 scheme 下
+         <script type="module"> 在 WebKitGTK/WKWebView 上不执行的问题。 -->
+    <script>
+      import("./manual-check.js").catch(function (error) {
+        console.error("manual-check.js 加载失败", error);
+      });
+    </script>
 </body>
 </html>

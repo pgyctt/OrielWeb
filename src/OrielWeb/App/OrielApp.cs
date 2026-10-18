@@ -183,14 +183,41 @@ public sealed class OrielApp : IDisposable
     /// <summary>
     /// 当前有焦点的窗口（对标 Tauri 2 的 <c>Window.getFocusedWindow</c>）。
     /// </summary>
-    /// <returns>焦点窗口；平台取不到或没有窗口时有焦点时返回 <c>null</c>。</returns>
+    /// <returns>焦点窗口；没有任何窗口有焦点时返回 <c>null</c>。</returns>
     /// <remarks>
-    /// <b>目前恒返回 null</b>：三平台都还没有"窗口是否聚焦"的查询能力
-    /// （P0-3 的 focus 事件只上报变化，不记录状态）。这里保留签名是为了让迁移代码
-    /// 能原样编译，而不是等实现时才改调用点——但要明确它现在给不出答案，
-    /// 而不是假装"没有窗口有焦点"。
+    /// <para>
+    /// 实现是**遍历存活窗口、取第一个 <see cref="WebviewWindow.IsFocused"/> 为真的**——
+    /// 三个平台都能回答"这个窗口有焦点吗"（Windows 比 <c>GetForegroundWindow</c>、
+    /// Linux <c>gtk_window_is_active</c>、macOS <c>isKeyWindow</c>），
+    /// 而"哪个窗口有焦点"不需要单独的平台能力。
+    /// </para>
+    /// <para>
+    /// <b>为什么遍历而不是让平台直接给答案</b>：三平台都没有"返回焦点窗口"的单次调用，
+    /// 且"应用内哪个窗口有焦点"本来就是本库的记账范围——窗口集合只有 <see cref="Windows"/> 一个来源，
+    /// 在这里判定不会出现"平台说的焦点窗口不在我的列表里"这种不一致。
+    /// </para>
+    /// <para>
+    /// <b>返回 <c>null</c> 的两种情形要分开理解</b>：① 应用没有任何窗口；② 有窗口但都不在前台
+    /// （用户切到了别的程序）。调用方通常不需要区分——"现在没有窗口是活动的"对两者都成立。
+    /// 注意**最小化的窗口不会**被判为有焦点（它已不是 key window）。
+    /// </para>
+    /// <para>
+    /// 与 <c>IsFocused</c> 一样按**窗口**判而不是按应用判：多窗口应用里同时只有一个 key window，
+    /// 所以循环第一个命中的就是答案，不需要比较先后。
+    /// </para>
     /// </remarks>
-    public WebviewWindow? GetFocusedWindow() => null;
+    public WebviewWindow? GetFocusedWindow()
+    {
+        foreach (WebviewWindow window in _windows)
+        {
+            if (window.IsFocused)
+            {
+                return window;
+            }
+        }
+
+        return null;
+    }
 
     /// <summary>内嵌资源表（未用内嵌资源时为 null）。运行时新建的窗口也用它。</summary>
     private EmbeddedAssetStore? _assets;

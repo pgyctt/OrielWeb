@@ -186,6 +186,14 @@ internal static class Win32Constants
     /// <summary>WM_SETICON 的 wParam：小图标（标题栏 / Alt-Tab）与大图标（任务栏）。</summary>
     public const nuint ICON_SMALL = 0;
     public const nuint ICON_BIG = 1;
+    /// <summary>
+    /// 取窗口当前图标（wParam 同样是 <see cref="ICON_SMALL"/> / <see cref="ICON_BIG"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 自检用它把"图标真的设上去了"变成可断言的事实——否则那条断言只能靠目视。
+    /// 注意它返回的是**当前生效的句柄**，窗口没设过图标时返回 0。
+    /// </remarks>
+    public const uint WM_GETICON = 0x007F;
     /// <summary>LoadImage 的 type 参数：图标。</summary>
     public const uint IMAGE_ICON = 1;
     /// <summary>LoadImage 的 fuLoad 标志：从文件路径加载（而非资源）。</summary>
@@ -921,7 +929,11 @@ internal static unsafe partial class Win32
     /// 传 <c>false</c>——取**当前**系统菜单。传 <c>true</c> 会把系统菜单重置回默认项
     /// （那会顺手清掉我们做过的灰化），所以本库只用 <c>false</c>。
     /// </param>
-    /// <returns>系统菜单句柄；窗口没有系统菜单（未带 <c>WS_SYSMENU</c>，如无边框窗口）时为 0。</returns>
+    /// <returns>
+    /// 系统菜单句柄；窗口没有系统菜单（未带 <c>WS_SYSMENU</c>）时为 0。
+    /// <b>注意"无边框"不等于"没有系统菜单"</b>：本库的 frameless 靠 <c>WM_NCCALCSIZE</c>
+    /// 隐藏边框，样式里仍带 <c>WS_SYSMENU</c>（实测），所以那种窗口这里会返回非 0。
+    /// </returns>
     [LibraryImport("user32")]
     internal static partial nint GetSystemMenu(nint hwnd, [MarshalAs(UnmanagedType.Bool)] bool revert);
 

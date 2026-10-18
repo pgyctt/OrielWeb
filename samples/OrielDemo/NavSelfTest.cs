@@ -327,8 +327,12 @@ internal static class NavSelfTest
         }
         Console.Out.Flush();
 
-        // 优雅退出：关窗口 → 消息循环结束 → Run() 返回 → Main 按 Failed 设置退出码。
-        // 不在 GLib/AppKit 的调用栈里 Environment.Exit：那会跳过各自的清理（实测 GTK 下直接 abort）。
-        _window?.Close();
+        // 退出用 Quit 而不是 Close：自检的退出**不该依赖窗口的关闭流程**——
+        // Linux 上 `gtk_window_close` 要走 delete-event，而没有窗口管理器的环境
+        // （CI 的 xvfb）里那条路不一定成立，进程会挂到脚本的 timeout 才被杀，
+        // 表现为"结论已 PASS 但退出码 124"，而 CI 那一步因此白等 150 秒。
+        // Quit 直接停消息循环，三平台都可靠。
+        WebviewWindow? window = _window;
+        window?.PostToUiThread(window.App.Quit);
     }
 }
