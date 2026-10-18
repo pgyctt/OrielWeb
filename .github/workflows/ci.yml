@@ -65,15 +65,25 @@ jobs:
         # 那是"模块名与 Tauri 一一对应"这句话的取证——不装参照实现的话那份测试会跳过，
         # 而"跳过的门禁"等于没有门禁。
         working-directory: packages/api
-        run: |
-          npm ci
-          npm test
+        # **两步而不是一条 run 里两行**：Windows runner 的默认 shell 是 pwsh，
+        # 多行 run 不会因前一条原生命令失败而中断（bash 有 -e，pwsh 没有）。
+        # 2026-10-19 的 CI 就因此把"npm ci 503 失败 + npm test 通过"这步报成了绿色，
+        # 直到下一步 npx 找不到本地 typescript 才炸——错误现场和真实原因隔了两步。
+        run: npm ci
+
+      - name: Frontend API tests
+        working-directory: packages/api
+        run: npm test
 
       - name: Frontend API typecheck
         # 类型检查是**门禁**而不是产物：包的 exports 直接指向 src/*.js，没有 dist/。
         # 关掉它的话，JSDoc 里的类型声明会慢慢与实现漂移，而漂移只在消费方 IDE 里可见。
         working-directory: packages/api
-        run: npx tsc -p . --noEmit
+        # `--no-install`：typescript 缺失时**报错**，而不是去 registry 下同名包。
+        # `tsc` 在 npm 上是一个无关的废弃包（2.0.4），npx 会装上它然后吐出
+        # "This is not the tsc command you are looking for" —— 真正的病因（依赖没装好）
+        # 被这行包装得像"类型检查不通过"。
+        run: npx --no-install tsc -p . --noEmit
 
       - name: Frontend API types are up to date
         # types/ 是 `tsc -p tsconfig.types.json` 的产物，**提交进仓库**（包的 exports.types 指向它）。
@@ -84,7 +94,7 @@ jobs:
         # 而那时已经没有办法 review 差异了。
         run: |
           cd packages/api
-          npx tsc -p tsconfig.types.json
+          npx --no-install tsc -p tsconfig.types.json
           cd ../..
           git diff --exit-code packages/api/types/
 
