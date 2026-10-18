@@ -41,6 +41,11 @@ const HOST_EVENT_MAP = Object.freeze({
     // 关闭请求由宿主侧的关闭接管开关直接决定推送时机（挂起时必须推），
     // 所以它不需要"订阅了才推"的中间态。
     'tauri://close-requested': { host: 'close-requested' },
+    // 主题变化是**应用级广播**：宿主在检测到系统主题变了之后主动推给每个窗口
+    // （见 OrielApp.PushTheme），所以也不需要 forwarding 那套"订阅了才推"。
+    // 顺带一提，宿主推的载荷就是裸的 "dark" / "light"，与 Tauri 的 Theme 形状一致，
+    // 不需要在这一层翻译。
+    'tauri://theme-changed': { host: 'theme.changed' },
 });
 
 /**

@@ -436,3 +436,45 @@ test('包内包装不影响底层 on 的裸 payload 语义（既有页面不受�
 
     reset();
 });
+
+// ---- 主题变化：宿主广播 → 页面回调 ----
+
+test('onThemeChanged：映射到宿主 theme.changed，载荷原样透传', async () => {
+    reset();
+    mockIPC(() => null);
+
+    const { Window } = await import('../src/window.js');
+    const win = new Window('main');
+
+    /** @type {any[]} */
+    const received = [];
+    const unlisten = await win.onThemeChanged((e) => received.push(e));
+
+    // 宿主推的就是裸的 "dark" / "light"，与 Tauri 的 Theme 形状一致——
+    // 所以这一层**不该**做任何翻译，收到什么就交什么给页面。
+    mockEmit('theme.changed', 'dark');
+    mockEmit('theme.changed', 'light');
+
+    assert.equal(received.length, 2);
+    assert.equal(received[0].payload, 'dark');
+    assert.equal(received[1].payload, 'light');
+
+    // 事件名要报成 Tauri 的名字，否则迁移代码里
+    // `e.event === TauriEvent.WINDOW_THEME_CHANGED` 不成立
+    assert.equal(received[0].event, TauriEvent.WINDOW_THEME_CHANGED);
+
+    unlisten();
+    mockEmit('theme.changed', 'dark');
+    assert.equal(received.length, 2, '退订之后不该再收到');
+
+    reset();
+});
+
+test('onThemeChanged：映射表把 Tauri 名翻成宿主名（漏了这条就会静默收不到）', async () => {
+    const { toHostEventName } = await import('../src/event.js');
+
+    assert.equal(toHostEventName('tauri://theme-changed'), 'theme.changed');
+
+    // 反向确认：没登记的名字原样返回（不认识的照样能当自定义事件用）
+    assert.equal(toHostEventName('my-own-event'), 'my-own-event');
+});

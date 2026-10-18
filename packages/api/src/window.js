@@ -870,6 +870,23 @@ export class Window {
     }
 
     /**
+     * 订阅系统主题变化（对标 Tauri 的 `onThemeChanged`）。
+     *
+     * @param {(event: { event: string, id: number, payload: 'light' | 'dark' }) => void} handler
+     * @returns {Promise<() => void>}
+     * @remarks
+     * 三平台都由宿主检测系统主题并广播（Windows 读注册表 + `WM_SETTINGCHANGE`、
+     * macOS 听 `AppleInterfaceThemeChangedNotification`、Linux 听 GSettings），
+     * 概念跨平台一致，所以这条在三个平台上都能用。
+     *
+     * **只推"变化"，不推当前值**（与 Tauri 一致）：初始值请用 `theme()` 读——
+     * 否则页面在"主题一直没变过"时会永远收不到第一个值。
+     */
+    onThemeChanged(handler) {
+        return listenAsync(TauriEvent.WINDOW_THEME_CHANGED, handler);
+    }
+
+    /**
      * 订阅本窗口的焦点变化（对标 Tauri 的 `onFocusChanged`）。
      * @param {(event: { event: string, id: number, payload: null }) => void} handler
      * @returns {Promise<() => void>}

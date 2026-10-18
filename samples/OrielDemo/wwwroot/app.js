@@ -151,6 +151,10 @@ formEl.addEventListener("submit", async (event) => {
 // 主题：宿主在系统主题变化时、以及每次导航完成后都会推 theme.changed（payload 是 "light" / "dark"）。
 // 这里把它落到 <html data-theme>（页面按需换配色）。
 //
+// 这里用底层 listen + 宿主事件名，是因为本页通篇都是这个风格（见上面的 maximized / demo.windowLabel）。
+// **迁移来的 Tauri 代码可以走 Tauri 那个入口**：`getCurrentWindow().onThemeChanged(handler)`——
+// 它内部就是映射到这条 theme.changed 上的（见 packages/api/src/event.js 的 HOST_EVENT_MAP）。
+//
 // 早先这里还会 postMessage 回显一条给宿主做自检；迁移时**去掉了**——宿主改为直接读这个
 // data-theme 属性（见 ThemeSelfTest）。两处好处：示例页不再夹带测试钩子；
 // 而且自检验的是"页面真的应用了主题"这个可见效果，比验一条旁路回显更接近用户看到的东西。
