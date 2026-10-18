@@ -7,6 +7,33 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
+## 0.3.7 - 2026-10-18
+
+修 0.3.6 的两个 macOS 缺陷，其中 `requestUserAttention` 是**一调用就崩**的回归，
+所以 0.3.6 发布后数小时内即出补丁版。
+
+### 修复
+
+- **`requestUserAttention` 在 macOS 上崩溃（SIGABRT）**：`requestUserAttention:` 与
+  `cancelUserAttentionRequest:` 都是 `NSApplication` 的**实例方法**，0.3.6 把前者发给了
+  `NSWindow`、后者发给了 `NSApplication` 的**类对象**——两条路径都会因 unrecognized selector
+  抛 `NSException`，而未捕获的 ObjC 异常会直接终止进程（退出码 134）。
+  统一改用 `sharedApplication` 实例。
+  **影响面**：macOS 上任何调用 `window.requestUserAttention` / `requestUserAttention()` 的应用，
+  调用即崩；不调则无影响。
+  **为什么没在发布前拦住**：`--selftest window` 正好走到这一步时崩，而 0.3.6 的 CI 在发布**之前**
+  就已红（`smoke-macos`）——当时同批还有 Linux 的 `nav` 超时失败，发布闸只校验版本号、
+  不校验 CI 结论，于是带病发布。这是流程问题，不只是代码问题（见下）。
+- **api 自检的目录断言写错（不是实现缺陷）**：macOS 的 `configDir` 与 `dataDir` 同为
+  `~/Library/Application Support`（与 Windows 的 Roaming 同构）。0.3.6 的断言把 macOS 与 Linux
+  归成一类，导致 `--selftest api` 在 macOS 上必红。
+
+### 已知限制
+
+- `--selftest tray-js` 在 macOS 上仍是 SIGSEGV（**0.3.6 之前就存在**，不是本版引入）：
+  C# 侧的 `tray` 自检全绿，只有"页面调 `tray.new`"这条路径崩，日志里没有栈。
+  排查需要 macOS 真机 lldb，或在 `tray.new` 各步骤补 stderr 后跑一轮 CI。单独跟踪。
+
 ## 0.3.6 - 2026-10-18
 
 Tauri 2 API 对齐的完整一轮（`docs/TAURI2-PLAN.md` 的批次 A → H 与 M5）。前端包 `@orielweb/api`
