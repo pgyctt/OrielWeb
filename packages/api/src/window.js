@@ -575,9 +575,23 @@ export class Window {
         // Image 实例：取它的字节（见 image.js）。这里用鸭子类型而不是 instanceof，
         // 免得"从另一个副本加载的 Image"被判成不认识——那在单测与多入口打包里都发生过。
         if (isImageLike(icon)) {
+            const image = /** @type {import('./image.js').Image} */ (icon);
+
+            // Image.new 建的图**没有编码字节**，只有裸 RGBA——而宿主侧的图标工厂本来就吃
+            // RGBA（OrielImage 是 RGBA 容器），所以直接送 rgba + 尺寸，
+            // **不需要先把 RGBA 编码成 PNG**（本库也没有 PNG 编码器）。
+            if (image.hasEncodedBytes === false) {
+                return invoke('window.setIcon', {
+                    label: this.label,
+                    rgba: bytesToBase64(image.rgbaBytes),
+                    width: image.width,
+                    height: image.height,
+                });
+            }
+
             return invoke('window.setIcon', {
                 label: this.label,
-                bytes: bytesToBase64(/** @type {import('./image.js').Image} */ (icon).bytes),
+                bytes: bytesToBase64(image.bytes),
             });
         }
 

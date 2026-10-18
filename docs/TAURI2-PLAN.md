@@ -359,9 +359,11 @@ F1 ─→ F2（scope 系统是 convertFileSrc 的前置）
 这是"纯 JS 容器"能成立的关键（`size()` 不需要宿主）。解码**像素**才要宿主
 （`window.decodeImage` → `OrielImage.FromBytes`），结果缓存。
 
-`Image.new`（裸 RGBA 建图）的产物**不能直接喂给 `setIcon`**：宿主只认 PNG/ICO 字节，
-而本库不内置 PNG 编码器。这一点写在 `image.js` 的文档里，而不是让它到宿主侧才
-以一个语焉不详的错误失败。
+`Image.new`（裸 RGBA 建图）的产物**可以直接喂给 `setIcon`**——这一点我最初写反了。
+宿主侧的图标工厂本来就吃 RGBA（`OrielImage` 是 RGBA 容器，`new OrielImage(rgba, w, h)`
+不做任何格式解码），所以 `setIcon` 收三种输入：`path` / `bytes`（PNG/ICO）/ `rgba` + 尺寸。
+**不需要 PNG 编码器**，本库也就不必内置一个。长度不符在**命令层**就被拒（平台侧也查，
+但那时的错误只进诊断日志，页面拿不到反馈——而"像素数不对"是调用方能自己修的）。
 
 **顺带补的清单缺口**：`image` 模块此前**根本没进对齐测试的 `MODULES` 列表**，
 所以"本库缺 `@tauri-apps/api/image`"这件事没有任何测试盯着。已登记，

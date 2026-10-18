@@ -1342,6 +1342,33 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         }
     }
 
+    /// <summary>从裸 RGBA 设置窗口图标（见 <see cref="IWindowBackend.SetIconFromRgba"/>）。</summary>
+    /// <remarks>
+    /// 与 <see cref="SetIconFromBytes"/> 共用后半段，只是跳过解码。
+    /// 落点仍是**应用（Dock）图标**——macOS 没有窗口级图标。
+    /// </remarks>
+    public void SetIconFromRgba(byte[] rgba, int width, int height)
+    {
+        if (rgba is null || rgba.Length == 0)
+        {
+            return;
+        }
+
+        if (width <= 0 || height <= 0 || rgba.Length != width * height * 4)
+        {
+            OrielDiagnostics.Report(
+                $"[OrielWeb] setIcon 的 RGBA 长度不符：{width}x{height} 需要 {width * height * 4} 字节，" +
+                $"收到 {rgba.Length} 字节。");
+            return;
+        }
+
+        nint nsImage = MacOSImageFactory.CreateNSImage(new OrielImage(rgba, width, height));
+        if (nsImage != 0)
+        {
+            ObjCRuntime.SendVoidObj(SharedApplication(), ObjCRuntime.Sel("setApplicationIconImage:"), nsImage);
+        }
+    }
+
     /// <summary>
     /// 设置是否可关闭（切 <c>NSWindowStyleMaskClosable</c>，见 <see cref="IWindowBackend.SetClosable"/>）。
     /// </summary>

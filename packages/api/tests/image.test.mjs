@@ -183,6 +183,64 @@ test('Image 没有 close()：本库没有资源表可释放', async () => {
     assert.equal(image.close, undefined);
 });
 
+test('Image.new 的产物能直接设成图标（走 rgba 而不是编码字节）', async () => {
+    clearMocks();
+    const { Window } = await import('../src/window.js');
+    const { calls, transport } = makeTransport('main', { 'window.setIcon': null });
+    setTransportOverride(transport);
+
+    // 1x1 的不透明红
+    const rgba = new Uint8Array([255, 0, 0, 255]);
+    const image = await Image.new(rgba, 1, 1);
+
+    // 关键：`hasEncodedBytes` 为 false（没有 PNG/ICO 字节），但**照样能设**
+    assert.equal(image.hasEncodedBytes, false);
+    assert.equal(image.width, 1);
+    assert.equal(image.height, 1);
+
+    await new Window('main').setIcon(image);
+
+    // 送的是 rgba + 尺寸，**不是** bytes —— 宿主侧的图标工厂本来就吃 RGBA，
+    // 所以不需要在页面侧把 RGBA 编码成 PNG（本库也没有 PNG 编码器）。
+    const args = calls[0][1];
+    assert.equal(args.bytes, undefined, '不该走编码字节那条路');
+    assert.equal(args.rgba, Buffer.from(rgba).toString('base64'));
+    assert.equal(args.width, 1);
+    assert.equal(args.height, 1);
+
+    clearMocks();
+});
+
+test('Image.fromBytes 的产物走 bytes（有编码字节）', async () => {
+    clearMocks();
+    const { Window } = await import('../src/window.js');
+    const { calls, transport } = makeTransport('main', { 'window.setIcon': null });
+    setTransportOverride(transport);
+
+    const png = pngHeader(2, 2);
+    const image = await Image.fromBytes(png);
+
+    assert.equal(image.hasEncodedBytes, true);
+    await new Window('main').setIcon(image);
+
+    const args = calls[0][1];
+    assert.equal(args.bytes, Buffer.from(png).toString('base64'));
+    assert.equal(args.rgba, undefined);
+
+    clearMocks();
+});
+
+test('rgbaBytes：没解码过的编码图会明确抛（而不是给空数组）', async () => {
+    const image = await Image.fromBytes(pngHeader(4, 4));
+
+    // 同步访问器不做解码，所以这里必然抛；给空数组会让 setIcon 传一段错位的像素
+    assert.throws(() => image.rgbaBytes, (error) => error instanceof TypeError && /await rgba/.test(error.message));
+
+    // Image.new 建的图有本地像素，直接可读
+    const raw = await Image.new(new Uint8Array([1, 2, 3, 4]), 1, 1);
+    assert.deepEqual(Array.from(raw.rgbaBytes), [1, 2, 3, 4]);
+});
+
 test('transformImage：四种形式都能转，null 原样返回', async () => {
     const png = pngHeader(1, 1);
 

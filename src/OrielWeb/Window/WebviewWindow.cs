@@ -463,6 +463,16 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// <remarks>落点与平台差异同 <see cref="SetIcon"/>。见 <see cref="IWindowBackend.SetIconFromBytes"/>。</remarks>
     public void SetIconFromBytes(byte[] bytes) => Backend.SetIconFromBytes(bytes);
 
+    /// <summary>
+    /// 从**裸 RGBA** 设置窗口图标（`Image.new(rgba, w, h)` 那条路，不需要先编码成 PNG）。
+    /// </summary>
+    /// <param name="rgba">行优先、自上而下的 RGBA，长度必须正好 <paramref name="width"/> * <paramref name="height"/> * 4。</param>
+    /// <param name="width">宽（像素）。</param>
+    /// <param name="height">高（像素）。</param>
+    /// <remarks>落点与平台差异同 <see cref="SetIcon"/>。见 <see cref="IWindowBackend.SetIconFromRgba"/>。</remarks>
+    public void SetIconFromRgba(byte[] rgba, int width, int height)
+        => Backend.SetIconFromRgba(rgba, width, height);
+
     /// <summary>设置窗口底色（对标 Tauri 的 `Window.setBackgroundColor()`）。</summary>
     /// <param name="argb"><c>0xAARRGGBB</c>。</param>
     /// <remarks>

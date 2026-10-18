@@ -1525,6 +1525,39 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         }
     }
 
+    /// <summary>从裸 RGBA 设置窗口图标（见 <see cref="IWindowBackend.SetIconFromRgba"/>）。</summary>
+    /// <remarks>与 <see cref="SetIconFromBytes"/> 共用后半段，只是跳过解码。</remarks>
+    public void SetIconFromRgba(byte[] rgba, int width, int height)
+    {
+        if (!WindowAlive || rgba is null || rgba.Length == 0)
+        {
+            return;
+        }
+
+        if (width <= 0 || height <= 0 || rgba.Length != width * height * 4)
+        {
+            OrielDiagnostics.Report(
+                $"[OrielWeb] setIcon 的 RGBA 长度不符：{width}x{height} 需要 {width * height * 4} 字节，" +
+                $"收到 {rgba.Length} 字节。");
+            return;
+        }
+
+        nint pixbuf = GtkPixbufFactory.CreatePixbuf(new OrielImage(rgba, width, height));
+        if (pixbuf == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            GtkNative.GtkWindowSetIcon(_gtkWindow, pixbuf);
+        }
+        finally
+        {
+            GtkNative.GObjectUnref(pixbuf);
+        }
+    }
+
     /// <summary>
     /// 设置窗口底色（见 <see cref="IWindowBackend.SetBackgroundColor"/>）。
     /// </summary>

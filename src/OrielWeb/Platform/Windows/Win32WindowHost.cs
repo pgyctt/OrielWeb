@@ -2484,6 +2484,35 @@ internal partial class Win32WindowHost : IWindowBackend
         }
     }
 
+    /// <summary>从裸 RGBA 设置窗口图标（见 <see cref="IWindowBackend.SetIconFromRgba"/>）。</summary>
+    /// <remarks>
+    /// 与 <see cref="SetIconFromBytes"/> 共用后半段，只是跳过解码——
+    /// <see cref="OrielImage"/> 的构造函数本来就是"收 RGBA + 尺寸"，不做格式解码。
+    /// </remarks>
+    public void SetIconFromRgba(byte[] rgba, int width, int height)
+    {
+        if (_hwnd == 0 || rgba is null || rgba.Length == 0)
+        {
+            return;
+        }
+
+        if (width <= 0 || height <= 0 || rgba.Length != width * height * 4)
+        {
+            // 长度对不上就**不猜**：给工厂一个错位的缓冲，画出来是乱码图标，
+            // 那比"没设上"更难查（看着像颜色错了）。
+            OrielDiagnostics.Report(
+                $"[OrielWeb] setIcon 的 RGBA 长度不符：{width}x{height} 需要 {width * height * 4} 字节，" +
+                $"收到 {rgba.Length} 字节。");
+            return;
+        }
+
+        nint icon = Win32IconFactory.CreateFromRgba(new OrielImage(rgba, width, height));
+        if (icon != 0)
+        {
+            _ = Win32.SendMessageW(_hwnd, Win32Constants.WM_SETICON, Win32Constants.ICON_BIG, icon);
+        }
+    }
+
     /// <summary>
     /// 设置窗口底色（见 <see cref="IWindowBackend.SetBackgroundColor"/>）。
     /// </summary>

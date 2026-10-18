@@ -410,6 +410,55 @@ internal static class WindowSelfTest
 
                 Check(badImageRejected, "window.decodeImage 对非图像数据应当报错");
 
+                // ---- 裸 RGBA 设图标（Image.new 那条路）----
+                //
+                // **宿主侧的图标工厂本来就吃 RGBA**（OrielImage 是 RGBA 容器，构造时不解码），
+                // 所以 `Image.new(rgba, w, h)` 的产物可以直接设成图标，
+                // 不需要在页面侧把 RGBA 编码成 PNG。这里验的就是那条路。
+                byte[] solidRgba = new byte[8 * 8 * 4];
+                for (int i = 0; i < solidRgba.Length; i += 4)
+                {
+                    solidRgba[i] = 0x20;      // R
+                    solidRgba[i + 1] = 0x80;  // G
+                    solidRgba[i + 2] = 0xC0;  // B
+                    solidRgba[i + 3] = 0xFF;  // A
+                }
+
+                await AskMainAsync(
+                    "window.setIcon",
+                    SelfTestJson.Object(
+                        ("label", SelfTestJson.String(ProbeLabel)),
+                        ("rgba", SelfTestJson.String(Convert.ToBase64String(solidRgba))),
+                        ("width", "8"),
+                        ("height", "8")));
+
+                // 长度不符必须在**命令层**就被拒：平台侧也会查，但那时的错误只进诊断日志，
+                // 页面拿不到任何反馈——而"像素数不对"是调用方能自己修的问题。
+                bool wrongRgbaRejected = false;
+                try
+                {
+                    await AskMainAsync(
+                        "window.setIcon",
+                        SelfTestJson.Object(
+                            ("label", SelfTestJson.String(ProbeLabel)),
+                            ("rgba", SelfTestJson.String(Convert.ToBase64String(new byte[10]))),
+                            ("width", "8"),
+                            ("height", "8")));
+                }
+                catch (InvalidOperationException)
+                {
+                    wrongRgbaRejected = true;
+                }
+
+                Check(wrongRgbaRejected, "RGBA 长度与尺寸不符时应当被拒（不能画出一个乱码图标）");
+
+                // 收尾：把图标设回 app.png，免得探针窗口留下一个纯色方块
+                await AskMainAsync(
+                    "window.setIcon",
+                    SelfTestJson.Object(
+                        ("label", SelfTestJson.String(ProbeLabel)),
+                        ("bytes", SelfTestJson.String(iconBase64))));
+
                 // ---- 窗口底色（M5-6）----
                 //
                 // **断言强度同样有限**（与图标那组同理）：Tauri 与本库都没有"读回当前底色"

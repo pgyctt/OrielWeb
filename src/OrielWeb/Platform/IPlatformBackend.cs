@@ -272,6 +272,23 @@ internal interface IWindowBackend
     void SetIconFromBytes(byte[] bytes);
 
     /// <summary>
+    /// 设置窗口图标，像素数据是**裸 RGBA**（不解码任何格式）。
+    /// </summary>
+    /// <param name="rgba">行优先、自上而下的 RGBA，长度必须正好 <paramref name="width"/> * <paramref name="height"/> * 4。</param>
+    /// <param name="width">宽（像素）。</param>
+    /// <param name="height">高（像素）。</param>
+    /// <remarks>
+    /// 这是 `@orielweb/api/image` 的 `Image.new(rgba, w, h)` 那条路。
+    /// **不需要先把 RGBA 编码成 PNG**：三平台的图标工厂本来就收
+    /// <see cref="OrielImage"/>（那是个 RGBA 容器，构造时不做解码），
+    /// 所以这里直接 <c>new OrielImage(rgba, w, h)</c> 再交给工厂即可。
+    /// <para>
+    /// 平台差异同 <see cref="SetIcon(string)"/>（macOS 影响整个应用、Linux 的 Wayland 通常忽略）。
+    /// </para>
+    /// </remarks>
+    void SetIconFromRgba(byte[] rgba, int width, int height);
+
+    /// <summary>
     /// 设置窗口底色（<c>0xAARRGGBB</c>）——页面透明、或内核还没加载完时看到的那个颜色。
     /// </summary>
     /// <remarks>

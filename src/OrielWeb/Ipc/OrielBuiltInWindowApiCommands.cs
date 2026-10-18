@@ -156,8 +156,9 @@ internal static class OrielBuiltInWindowApiCommands
                 };
                 return true;
 
-            // 图标：两种参数二选一——`path`（文件路径）或 `bytes`（base64 的图像数据）。
-            // 字节走 base64 而不是数字数组：同一个 32x32 PNG 用数组要四倍体积，
+            // 图标：三种参数三选一——`path`（文件路径）、`bytes`（base64 的 PNG/ICO）、
+            // `rgba` + `width` + `height`（裸 RGBA，来自 Image.new）。
+            // 二进制一律走 base64 而不是数字数组：同一个 32x32 PNG 用数组要四倍体积，
             // 而 IPC 是 JSON 文本，体积直接变成解析开销。
             case "window.setIcon":
                 handler = static (sender, args) =>
@@ -188,7 +189,43 @@ internal static class OrielBuiltInWindowApiCommands
                         return null;
                     }
 
-                    throw new OrielIpcException("window.setIcon 需要 path 或 bytes 其中之一。");
+                    // 裸 RGBA：Image.new(rgba, w, h) 那条路。宿主侧的图标工厂本来就吃
+                    // RGBA（OrielImage 是 RGBA 容器），所以**不需要先编码成 PNG**。
+                    if (OptionalString(args, "rgba") is { } rgbaBase64)
+                    {
+                        byte[] rgba;
+                        try
+                        {
+                            rgba = Convert.FromBase64String(rgbaBase64);
+                        }
+                        catch (FormatException ex)
+                        {
+                            throw new OrielIpcException($"window.setIcon 的 rgba 不是合法的 base64：{ex.Message}");
+                        }
+
+                        int width = RequiredInt(args, "width", "window.setIcon");
+                        int height = RequiredInt(args, "height", "window.setIcon");
+
+                        // 长度在这里就查：平台侧也会查，但那时的错误只会进诊断日志，
+                        // 页面拿不到任何反馈——而"像素数不对"是调用方能自己修的问题。
+                        if (width <= 0 || height <= 0)
+                        {
+                            throw new OrielIpcException(
+                                $"window.setIcon 的尺寸必须是正整数（收到 {width}x{height}）。");
+                        }
+
+                        if (rgba.Length != width * height * 4)
+                        {
+                            throw new OrielIpcException(
+                                $"window.setIcon 的 rgba 长度不符：{width}x{height} 需要 " +
+                                $"{width * height * 4} 字节，收到 {rgba.Length} 字节。");
+                        }
+
+                        target.SetIconFromRgba(rgba, width, height);
+                        return null;
+                    }
+
+                    throw new OrielIpcException("window.setIcon 需要 path、bytes 或 rgba+width+height 其中之一。");
                 };
                 return true;
 

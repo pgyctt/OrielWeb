@@ -110,9 +110,9 @@ export class Image {
      * @remarks
      * 与 Tauri 一致返回 `Promise`。
      *
-     * **这条返回的 Image 不能直接喂给 `setIcon`**（宿主只认 PNG/ICO 字节）——
-     * 除非你先把它编码成 PNG。本库不内置 PNG 编码器（那是另一个量级的代码），
-     * 所以这里如实说明，而不是让它到宿主侧才以一个语焉不详的错误失败。
+     * **这条返回的 Image 可以直接喂给 `setIcon`**：宿主侧的图标工厂本来就吃 RGBA
+     * （`OrielImage` 是 RGBA 容器，构造时不做格式解码），所以 `setIcon` 会走
+     * `rgba` + 尺寸那条参数，**不需要先把像素编码成 PNG**。
      */
     static async new(rgba, width, height) {
         const bytes = toImageBytes(rgba);
@@ -192,6 +192,55 @@ export class Image {
      */
     async size() {
         return { width: this._size.width, height: this._size.height };
+    }
+
+    /**
+     * 宽（像素）——同步读取，供 `setIcon` 这类内部路径用。
+     *
+     * @returns {number}
+     */
+    get width() {
+        return this._size.width;
+    }
+
+    /**
+     * 高（像素）——同步读取，供 `setIcon` 这类内部路径用。
+     *
+     * @returns {number}
+     */
+    get height() {
+        return this._size.height;
+    }
+
+    /**
+     * 是否持有**编码字节**（PNG/ICO）。
+     *
+     * @returns {boolean}
+     * @remarks
+     * `Image.new`（裸 RGBA）建的图是 `false`：那种图没有编码形式，
+     * 但**照样能设成图标**——宿主侧的图标工厂本来就吃 RGBA。
+     */
+    get hasEncodedBytes() {
+        return this._hasEncodedBytes;
+    }
+
+    /**
+     * 裸 RGBA 像素（`width * height * 4` 字节）。
+     *
+     * @returns {Uint8Array}
+     * @throws {TypeError} 这张图只有编码字节、还没解码过。
+     * @remarks
+     * 与 `rgba()` 的区别：这个是**同步**的，且**不会**触发解码。它给内部路径用
+     * （`setIcon` 要的是"现在就有没有像素"），而 `rgba()` 是公开 API、
+     * 会按需请宿主解码一次。
+     */
+    get rgbaBytes() {
+        if (this._rgba === null) {
+            throw new TypeError(
+                'Image.rgbaBytes: 这张图还没有解码过的像素（编码字节的图请用 await rgba()）');
+        }
+
+        return this._rgba;
     }
 
     /**
