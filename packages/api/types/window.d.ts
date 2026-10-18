@@ -535,6 +535,30 @@ export class Window {
         payload: "light" | "dark";
     }) => void): Promise<() => void>;
     /**
+     * 订阅窗口所在显示器的缩放比变化（对标 Tauri 的 `onScaleChanged`）。
+     *
+     * @param {(event: { event: string, id: number, payload: { scaleFactor: number, size: { width: number, height: number } } }) => void} handler
+     * @returns {Promise<() => void>}
+     * @remarks
+     * `payload.size` 是**物理像素**（Tauri 那边是 `PhysicalSize`）——迁移代码会照搬
+     * `payload.size.width` 这类读法，给逻辑尺寸等于悄悄换了单位。
+     *
+     * 三平台都由宿主检测并上报：Windows `WM_DPICHANGED`、macOS
+     * `NSWindowDidChangeBackingPropertiesNotification`、Linux GDK 的 `notify::scale-factor`。
+     * 事件是**按窗口**的：同一时刻两个窗口可以待在不同缩放的显示器上。
+     */
+    onScaleChanged(handler: (event: {
+        event: string;
+        id: number;
+        payload: {
+            scaleFactor: number;
+            size: {
+                width: number;
+                height: number;
+            };
+        };
+    }) => void): Promise<() => void>;
+    /**
      * 订阅本窗口的焦点变化（对标 Tauri 的 `onFocusChanged`）。
      * @param {(event: { event: string, id: number, payload: null }) => void} handler
      * @returns {Promise<() => void>}

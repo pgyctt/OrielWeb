@@ -358,6 +358,27 @@ internal static class WindowSelfTest
                     SelfTestJson.Object(
                         ("label", SelfTestJson.String(ProbeLabel)),
                         ("argb", "4294967295")));   // 0xFFFFFFFF
+
+                // ---- 缩放变化事件的转发开关（M5-6）----
+                //
+                // 缩放**变化本身**没法在无人自检里造出来（要跨屏拖动窗口或改系统缩放设置），
+                // 所以这里验的是它可验证的那一半：宿主侧的 forwarding 开关。
+                // 页面侧订阅 scale.changed 时会自动打开这一项（见 event.js 的 HOST_EVENT_MAP），
+                // 开关解析错了页面就静默收不到事件——正是最难查的那种。
+                JsonElement forwarding = await AskMainAsync(
+                    "window.setEventForwarding",
+                    SelfTestJson.Object(("scale", "true")));
+                Check(forwarding.GetProperty("scale").GetBoolean(),
+                    "打开 scale 转发之后返回值里 scale 应当是 true");
+
+                JsonElement forwardingOff = await AskMainAsync(
+                    "window.setEventForwarding",
+                    SelfTestJson.Object(("scale", "false")));
+                Check(!forwardingOff.GetProperty("scale").GetBoolean(),
+                    "关掉之后应当回到 false（确认是可开关的，不是恒真）");
+
+                Check(forwardingOff.GetProperty("resize").GetBoolean() == false,
+                    "改 scale 不该顺带动到 resize 那一位");
             }
             finally
             {

@@ -337,7 +337,20 @@ F1 ─→ F2（scope 系统是 convertFileSrc 的前置）
 | **M5-3** Window 事件转发 | ✅ 完成 | `Window.listen` / `once` / `emit` / `emitTo`（纯委托到 `event` 模块）+ `unminimize`（映射到 `window.restore`，三平台同一个原生动作） |
 | **M5-4** `isEnabled` / `setEnabled` | ✅ 完成（Windows 已验证） | 三平台：`IsWindowEnabled`/`EnableWindow`、`gtk_widget_get_sensitive`/`set_sensitive`、Cocoa `ignoresMouseEvents`。**macOS 只挡鼠标不挡键盘**，如实记录。`isEnabled` 进白名单、`setEnabled` 不进 |
 | **M5-5** 剩余 36 项的**归类** | ✅ 完成（归类，不是实现） | H 的清单现在**每一项都有归属**：已实现 / 有意不做（2 项移动端专有）/ 待做（36 项，按批次优先级分 9 组、每组写明为什么还没做）。见 `packages/api/tests/tauri-alignment.test.mjs` 的 `METHOD_GAP_GROUPS` |
-| **M5-6** 待做清单的实现 | 🔄 进行中（9 项已实现；方针下待做 **1** 项） | **已完成**：`requestUserAttention` + `UserAttentionType`；`setMaxSize`；`setSizeConstraints`；`setMaximizable` / `setMinimizable`；`setClosable`（Windows 灰化系统菜单 `SC_CLOSE`，顺带把 `IsClosable` 从"有 `WS_SYSMENU`"修正为"存在且未灰化"）；`onThemeChanged`（宿主三平台早就检测并广播 `theme.changed`，缺的只是页面侧包装）；`setIcon`（**路径形式**；三平台复用创建期图标代码——Windows 顺手填掉了"`LoadImageW` 只认 ICO/BMP，喂 PNG 静默返回 0"这个久已记录的缺口，PNG 现在经 `OrielImage` + 托盘那套 `Win32IconFactory.CreateFromRgba` 造 HICON）；`setBackgroundColor`（三平台一致的 webview 底色；**复用**创建期的 `ApplyBackgroundColor`，各加一条"运行期优先、否则回落创建期选项"的分支，ARGB 拆解集中到 `OrielWindowOptions.UnpackArgb`）。<br>**方针（用户 2026-10-18 定）：跨平台不一致的不做。** 据此把剩余待做项分成 A/B 标记（见 `tauri-alignment.test.mjs` 的 `METHOD_GAP_GROUPS`，有测试钉住）：**A·跨平台不一致 = 不做**（外观开关 4 项、每平台一套 6 项、特效 2 项、光标 6 项、任务栏徽标 4 项、`setTheme` 共 **23** 项）；**B·跨平台一致·待做 = 1 项**（`onScaleChanged`）。另有 `onDragDropEvent` 记入 `METHOD_DIVERGENCES`（**有意不做**）。 |
+| **M5-6** 待做清单的实现 | ✅ 方针下完成（10 项已实现；方针下待做 **0** 项） | **已完成**：`requestUserAttention` + `UserAttentionType`；`setMaxSize`；`setSizeConstraints`；`setMaximizable` / `setMinimizable`；`setClosable`（Windows 灰化系统菜单 `SC_CLOSE`，顺带把 `IsClosable` 从"有 `WS_SYSMENU`"修正为"存在且未灰化"）；`onThemeChanged`；`setIcon`（路径形式）；`setBackgroundColor`（复用创建期的 `ApplyBackgroundColor` + `OrielWindowOptions.UnpackArgb`）；`onScaleChanged`（**按窗口**的缩放变化：Windows `WM_DPICHANGED`、Linux GDK `notify::scale-factor`、macOS 顺带在 `windowDidResize:`/`windowDidMove:` 里查——后者有已知漏报：只改系统缩放而窗口不动时不报）。<br>**方针（用户 2026-10-18 定）：跨平台不一致的不做。** A/B 标记见 `tauri-alignment.test.mjs` 的 `METHOD_GAP_GROUPS`（有测试钉住）：**A·跨平台不一致 = 不做**（外观开关 4 项、每平台一套 6 项、特效 2 项、光标 6 项、任务栏徽标 4 项、`setTheme` 共 **23** 项）；**B·跨平台一致·待做 = 0 项**。另有 `onDragDropEvent` 记入 `METHOD_DIVERGENCES`（**有意不做**）。 |
+
+### 顺带修掉的一个既有缺陷：`window.setEventForwarding` 的返回值（2026-10-18）
+
+做 `onScaleChanged` 时给 `setEventForwarding` 的返回值加了第 4 个字段（`scale`），自检当场报：
+
+> 命令返回类型 `<>f__AnonymousType0`4[System.Boolean, …]` 需要 JSON 上下文：请在应用入口调用 `.UseJsonContext(context)`，并在该 `JsonSerializerContext` 上为该类型添加 `[JsonSerializable]`
+
+**这不是我引入的**：那之前返回的是 `<>f__AnonymousType0`3`（三个 bool），demo 的 `JsonSerializerContext` 里**没有任何匿名类型注册**，所以**同样会失败**——只是此前从没有自检真正调用过这个命令（`window` 自检现在第一次覆盖它）。
+
+后果是：**转发功能本身是好的**（副作用先发生），但每次 `listen(...)` 打开转发都会在页面 `console.error` 里留下一条假的失败（`event.js` 的 `enableForwarding` 刻意把失败打出来），排查真实问题时会被它误导。
+
+修法与 `SizeOf` / `PositionOf` 一致：**手拼 JSON 返回 `JsonElement`**，不再要求应用注册库内部的匿名类型。这与本文件里早就写下的那条注释是同一个道理——那条注释说"不这么做的理由是要求应用注册它的 STJ 上下文，那对内建命令是很不合理的负担"，只是 `setEventForwarding` 当时没照着做。
+
 
 ### 背景色：一次错误结论的更正（2026-10-18）
 

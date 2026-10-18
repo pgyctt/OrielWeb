@@ -324,6 +324,20 @@ internal interface IWindowBackend
     double ScaleFactor { get; }
 
     /// <summary>
+    /// 窗口所在显示器的缩放比发生了变化（见 <see cref="ScaleFactor"/>）；参数是**新的缩放比**。
+    /// </summary>
+    /// <remarks>
+    /// <b>按窗口而不是按应用广播</b>：同一时刻两个窗口可以待在不同缩放的显示器上，
+    /// 所以"缩放变了"必须按窗口说——一个全局事件会让副屏上的窗口收到不属于它的值。
+    /// <para>
+    /// 三平台的触发点：Windows <c>WM_DPICHANGED</c>、macOS
+    /// <c>NSWindowDidChangeBackingPropertiesNotification</c>、Linux GDK 的
+    /// <c>notify::scale-factor</c>。
+    /// </para>
+    /// </remarks>
+    event Action<double>? ScaleFactorChanged;
+
+    /// <summary>
     /// **客户区**尺寸（逻辑像素）——即 <see cref="IWindowBackend.Resize"/> 的逆运算。
     /// </summary>
     /// <remarks>

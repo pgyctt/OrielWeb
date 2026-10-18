@@ -120,6 +120,15 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// （那会让页面的 caret/选区/IME 错乱），本事件只做通知。
     /// </remarks>
     public event Action<bool>? FocusChanged;
+
+    /// <summary>
+    /// 窗口所在显示器的缩放比变了（对标 Tauri 2 的 <c>onScaleChanged</c>）；参数是新的缩放比。
+    /// </summary>
+    /// <remarks>
+    /// 页面侧同名事件（<c>scale.changed</c>）的 payload 多带一个物理尺寸，见
+    /// <see cref="IWindowBackend.ScaleFactorChanged"/>。
+    /// </remarks>
+    public event Action<double>? ScaleFactorChanged;
     /// <summary>导航开始（新文档开始加载）；参数为即将加载的 URL（平台未提供时为空串）。</summary>
     public event Action<string>? NavigationStarting;
     /// <summary>导航完成（成功与失败都触发，失败时 <see cref="OrielNavigationCompletedEventArgs.Error"/> 非空）。</summary>
@@ -231,6 +240,7 @@ public sealed class WebviewWindow : IOrielWindowControl
         backend.Resized += args => Resized?.Invoke(args);
         backend.Moved += args => Moved?.Invoke(args);
         backend.FocusChanged += focused => FocusChanged?.Invoke(focused);
+        backend.ScaleFactorChanged += scale => ScaleFactorChanged?.Invoke(scale);
         backend.NavigationStarting += url => NavigationStarting?.Invoke(url);
         backend.NavigationCompleted += args => NavigationCompleted?.Invoke(args);
         backend.ConsoleMessage += args => ConsoleMessage?.Invoke(args);

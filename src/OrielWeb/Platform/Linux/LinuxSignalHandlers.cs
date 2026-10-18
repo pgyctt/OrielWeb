@@ -114,6 +114,10 @@ internal static unsafe class LinuxSignalHandlers
             (delegate* unmanaged<nint, nint, nint, void>)&OnTitleNotifyTrampoline, 0, 0, 0);
         GtkNative.GSignalConnectData(userContentManager, "script-message-received::oriel",
             (delegate* unmanaged<nint, nint, nint, void>)&OnScriptMessageTrampoline, 0, 0, 0);
+        // 缩放变化（对标 Tauri 2 的 onScaleChanged）：scale-factor 是 GtkWidget 的属性，
+        // 用 notify:: 听它的变化。签名与主题那条一样是 (GObject*, GParamSpec*, gpointer) → void。
+        GtkNative.GSignalConnectData(gtkWindow, "notify::scale-factor",
+            (delegate* unmanaged<nint, nint, nint, void>)&OnScaleFactorNotifyTrampoline, 0, 0, 0);
         // 拖放载荷：只在 webview 上接（落点也设在 webview 上，见 LinuxWindowHost.Create）
         GtkNative.GSignalConnectData(webview, "drag-data-received",
             (delegate* unmanaged<nint, nint, int, int, nint, uint, uint, nint, void>)&OnDragDataReceivedTrampoline, 0, 0, 0);
@@ -211,6 +215,23 @@ internal static unsafe class LinuxSignalHandlers
             // 异常不外泄
         }
         return 0;
+    }
+
+    // GTK3 的 "notify::scale-factor"（GObject*, GParamSpec*, gpointer）→ void。
+    [UnmanagedCallersOnly]
+    internal static void OnScaleFactorNotifyTrampoline(nint widget, nint paramSpec, nint data)
+    {
+        try
+        {
+            if (WindowStates.TryGetValue(widget, out var host))
+            {
+                host.ReportScaleFactorIfChanged();
+            }
+        }
+        catch
+        {
+            // 异常不外泄
+        }
     }
 
     // GTK3 的 "focus-in-event" / "focus-out-event" → gboolean。

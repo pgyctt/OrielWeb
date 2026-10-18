@@ -470,10 +470,36 @@ test('onThemeChanged：映射到宿主 theme.changed，载荷原样透传', asyn
     reset();
 });
 
-test('onThemeChanged：映射表把 Tauri 名翻成宿主名（漏了这条就会静默收不到）', async () => {
+test('onScaleChanged：映射到宿主 scale.changed，且带 forwarding（页面订阅才推）', async () => {
+    reset();
+    mockIPC(() => null);
+
+    const { Window } = await import('../src/window.js');
+    const win = new Window('main');
+
+    /** @type {any[]} */
+    const received = [];
+    const unlisten = await win.onScaleChanged((e) => received.push(e));
+
+    // payload 与 Tauri 的 ScaleFactorChanged 同形：size 是**物理**尺寸
+    mockEmit('scale.changed', { scaleFactor: 2, size: { width: 1600, height: 1200 } });
+
+    assert.equal(received.length, 1);
+    assert.equal(received[0].event, TauriEvent.WINDOW_SCALE_FACTOR_CHANGED);
+    assert.deepEqual(received[0].payload, { scaleFactor: 2, size: { width: 1600, height: 1200 } });
+
+    unlisten();
+    mockEmit('scale.changed', { scaleFactor: 1, size: { width: 800, height: 600 } });
+    assert.equal(received.length, 1, '退订之后不该再收到');
+
+    reset();
+});
+
+test('映射表把 Tauri 名翻成宿主名（漏了这条就会静默收不到）', async () => {
     const { toHostEventName } = await import('../src/event.js');
 
     assert.equal(toHostEventName('tauri://theme-changed'), 'theme.changed');
+    assert.equal(toHostEventName('tauri://scale-change'), 'scale.changed');
 
     // 反向确认：没登记的名字原样返回（不认识的照样能当自定义事件用）
     assert.equal(toHostEventName('my-own-event'), 'my-own-event');

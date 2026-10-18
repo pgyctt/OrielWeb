@@ -124,6 +124,7 @@ internal partial class Win32WindowHost : IWindowBackend
     private event Action<OrielSizeChangedEventArgs>? Resized;
     private event Action<OrielPositionChangedEventArgs>? Moved;
     private event Action<bool>? FocusChanged;
+    private event Action<double>? ScaleFactorChanged;
     private event Action<string>? NavigationStarting;
     private event Action<OrielNavigationCompletedEventArgs>? NavigationCompleted;
     private event Action<OrielConsoleMessageEventArgs>? ConsoleMessage;
@@ -141,6 +142,11 @@ internal partial class Win32WindowHost : IWindowBackend
 
     // 上一次已上报的焦点状态；null 表示"还没报过"（首个 WM_SETFOCUS 必须报，哪怕值相同）
     private bool? _lastReportedFocus;
+
+    // 上一次已上报的缩放比；null 表示"还没报过"。
+    // 浮点比较用容差而不是 ==：DPI 是整数算出来的比值（如 144/96），但中途经过除法，
+    // 拿 == 比会在"其实没变"时多报一次事件。
+    private double? _lastReportedScaleFactor;
 
     // 强制销毁中：Destroy() 置它，用来让关闭路径上的判断看出"这次不受拦"。
     private bool _forceDestroy;
@@ -186,6 +192,12 @@ internal partial class Win32WindowHost : IWindowBackend
     event Action<OrielSizeChangedEventArgs>? IWindowBackend.Resized { add => Resized += value; remove => Resized -= value; }
     event Action<OrielPositionChangedEventArgs>? IWindowBackend.Moved { add => Moved += value; remove => Moved -= value; }
     event Action<bool>? IWindowBackend.FocusChanged { add => FocusChanged += value; remove => FocusChanged -= value; }
+
+    event Action<double>? IWindowBackend.ScaleFactorChanged
+    {
+        add => ScaleFactorChanged += value;
+        remove => ScaleFactorChanged -= value;
+    }
     event Action<string>? IWindowBackend.NavigationStarting { add => NavigationStarting += value; remove => NavigationStarting -= value; }
     event Action<OrielNavigationCompletedEventArgs>? IWindowBackend.NavigationCompleted { add => NavigationCompleted += value; remove => NavigationCompleted -= value; }
     event Action<OrielConsoleMessageEventArgs>? IWindowBackend.ConsoleMessage { add => ConsoleMessage += value; remove => ConsoleMessage -= value; }
@@ -947,6 +959,15 @@ internal partial class Win32WindowHost : IWindowBackend
                 HandleFileDrop((nint)wParam);
                 return 0;
 
+            case Win32Constants.WM_DPICHANGED:
+                // **只上报，不接管**：窗口尺寸该不该按 lParam 那个建议矩形调整，
+                // 留给 DefWindowProc 的默认处理（break 会落到末尾的 DefWindowProcW）。
+                //
+                // 本库此前没有这个分支，也就是说一直走默认路径。加分支的目的只是
+                // 让页面能知道缩放变了；顺手改布局行为会引入一个我无法目视验证的变化。
+                ReportScaleFactor();
+                break;
+
             case Win32Constants.WM_DESTROY:
                 OnWindowDestroyedCore();
                 return 0;
@@ -1629,6 +1650,33 @@ internal partial class Win32WindowHost : IWindowBackend
         if ((EventForwarding & OrielWindowEventKind.Move) != 0)
         {
             PushEventOnUi("move", OrielEventPayload.Position(x, y));
+        }
+    }
+
+    /// <summary>
+    /// 上报缩放比变化（见 <see cref="IWindowBackend.ScaleFactorChanged"/>）；与上次相同则跳过。
+    /// </summary>
+    /// <remarks>
+    /// 由 <c>WM_DPICHANGED</c> 调用。payload 里的 <c>size</c> 是**物理像素**客户区
+    /// （与 Tauri 的 <c>PhysicalSize</c> 对齐），所以按新缩放比把逻辑客户区乘回去。
+    /// </remarks>
+    private void ReportScaleFactor()
+    {
+        double scale = CurrentScaleFactor();
+        if (_lastReportedScaleFactor is { } previous && Math.Abs(previous - scale) < 0.0001)
+        {
+            return;
+        }
+
+        _lastReportedScaleFactor = scale;
+        ScaleFactorChanged?.Invoke(scale);
+
+        if ((EventForwarding & OrielWindowEventKind.Scale) != 0)
+        {
+            OrielSize inner = InnerSize;
+            PushEventOnUi(
+                "scale.changed",
+                OrielEventPayload.ScaleFactor(scale, inner.Width * scale, inner.Height * scale));
         }
     }
 

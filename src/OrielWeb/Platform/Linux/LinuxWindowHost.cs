@@ -110,6 +110,8 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     private event Action<OrielSizeChangedEventArgs>? Resized;
     private event Action<OrielPositionChangedEventArgs>? Moved;
     private event Action<bool>? FocusChanged;
+    private event Action<double>? ScaleFactorChanged;
+    private double? _lastReportedScaleFactor;
     private event Action<string>? NavigationStarting;
     private event Action<OrielNavigationCompletedEventArgs>? NavigationCompleted;
     private event Action<OrielConsoleMessageEventArgs>? ConsoleMessage;
@@ -230,6 +232,12 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     event Action<OrielSizeChangedEventArgs>? IWindowBackend.Resized { add => Resized += value; remove => Resized -= value; }
     event Action<OrielPositionChangedEventArgs>? IWindowBackend.Moved { add => Moved += value; remove => Moved -= value; }
     event Action<bool>? IWindowBackend.FocusChanged { add => FocusChanged += value; remove => FocusChanged -= value; }
+
+    event Action<double>? IWindowBackend.ScaleFactorChanged
+    {
+        add => ScaleFactorChanged += value;
+        remove => ScaleFactorChanged -= value;
+    }
     event Action<string>? IWindowBackend.NavigationStarting { add => NavigationStarting += value; remove => NavigationStarting -= value; }
     event Action<OrielNavigationCompletedEventArgs>? IWindowBackend.NavigationCompleted { add => NavigationCompleted += value; remove => NavigationCompleted -= value; }
     event Action<OrielConsoleMessageEventArgs>? IWindowBackend.ConsoleMessage { add => ConsoleMessage += value; remove => ConsoleMessage -= value; }
@@ -1286,6 +1294,32 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         if ((EventForwarding & OrielWindowEventKind.Move) != 0)
         {
             PushEventOnUi("move", OrielEventPayload.Position(x, y));
+        }
+    }
+
+    /// <summary>
+    /// 缩放比变了就上报（由 GDK 的 <c>notify::scale-factor</c> 调用；见 <see cref="IWindowBackend.ScaleFactorChanged"/>）。
+    /// </summary>
+    /// <remarks>
+    /// payload 里的 <c>size</c> 是**物理像素**客户区（与 Tauri 的 <c>PhysicalSize</c> 对齐）。
+    /// </remarks>
+    internal void ReportScaleFactorIfChanged()
+    {
+        double scale = CurrentScaleFactor();
+        if (_lastReportedScaleFactor is { } previous && Math.Abs(previous - scale) < 0.0001)
+        {
+            return;
+        }
+
+        _lastReportedScaleFactor = scale;
+        ScaleFactorChanged?.Invoke(scale);
+
+        if ((EventForwarding & OrielWindowEventKind.Scale) != 0)
+        {
+            OrielSize inner = InnerSize;
+            PushEventOnUi(
+                "scale.changed",
+                OrielEventPayload.ScaleFactor(scale, inner.Width * scale, inner.Height * scale));
         }
     }
 

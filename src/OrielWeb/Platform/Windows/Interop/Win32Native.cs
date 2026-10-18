@@ -36,6 +36,16 @@ internal static class Win32Constants
     public const uint WM_NULL = 0x0000;
     public const uint WM_CONTEXTMENU = 0x007B;
 
+    /// <summary>
+    /// 窗口被移到不同 DPI 的显示器（或 DPI 设置变了）时收到。
+    /// </summary>
+    /// <remarks>
+    /// wParam 高字是新 DPI（低字同值），lParam 是系统建议的新窗口矩形。
+    /// <b>本库只用它来上报缩放变化，不接管消息</b>——不改窗口尺寸，
+    /// 把 lParam 那个建议矩形的处理留给 <c>DefWindowProc</c>。
+    /// </remarks>
+    public const uint WM_DPICHANGED = 0x02E0;
+
     /// <summary>有文件被拖到窗口上；wParam 是 HDROP，用完必须 DragFinish。</summary>
     public const uint WM_DROPFILES = 0x0233;
 

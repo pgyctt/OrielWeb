@@ -94,6 +94,9 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     // 上一次已上报的焦点状态；null 表示"还没报过"（首个 didBecomeKey 必须报，哪怕值相同）
     private bool? _lastReportedFocus;
 
+    /// <summary>上一次已上报的缩放比；null 表示"还没报过"。</summary>
+    private double? _lastReportedScaleFactor;
+
     // 强制销毁中：Destroy() 置它，用来让关闭路径上的判断看出"这次不受拦"。
     private bool _forceDestroy;
 
@@ -105,6 +108,7 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     private event Action<OrielSizeChangedEventArgs>? Resized;
     private event Action<OrielPositionChangedEventArgs>? Moved;
     private event Action<bool>? FocusChanged;
+    private event Action<double>? ScaleFactorChanged;
     private event Action<string>? NavigationStarting;
     private event Action<OrielNavigationCompletedEventArgs>? NavigationCompleted;
     private event Action<OrielConsoleMessageEventArgs>? ConsoleMessage;
@@ -259,6 +263,12 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     event Action<OrielSizeChangedEventArgs>? IWindowBackend.Resized { add => Resized += value; remove => Resized -= value; }
     event Action<OrielPositionChangedEventArgs>? IWindowBackend.Moved { add => Moved += value; remove => Moved -= value; }
     event Action<bool>? IWindowBackend.FocusChanged { add => FocusChanged += value; remove => FocusChanged -= value; }
+
+    event Action<double>? IWindowBackend.ScaleFactorChanged
+    {
+        add => ScaleFactorChanged += value;
+        remove => ScaleFactorChanged -= value;
+    }
     event Action<string>? IWindowBackend.NavigationStarting { add => NavigationStarting += value; remove => NavigationStarting -= value; }
     event Action<OrielNavigationCompletedEventArgs>? IWindowBackend.NavigationCompleted { add => NavigationCompleted += value; remove => NavigationCompleted -= value; }
     event Action<OrielConsoleMessageEventArgs>? IWindowBackend.ConsoleMessage { add => ConsoleMessage += value; remove => ConsoleMessage -= value; }
@@ -1414,6 +1424,10 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
             return;
         }
 
+        // 窗口几何变了就顺带看一眼缩放比：窗口被拖到不同缩放的显示器时，
+        // windowDidResize: / windowDidMove: 至少有一条会发（见下面 ReportScaleFactorIfChanged 的说明）。
+        ReportScaleFactorIfChanged();
+
         nint contentView = ObjCRuntime.SendId(_nsWindow, ObjCRuntime.Sel("contentView"));
         if (contentView == 0)
         {
@@ -1449,6 +1463,43 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     /// <c>y_app = maxY - (origin.y + height)</c>。这与 <see cref="MoveTo"/> 的换算是同一套
     /// （那边是 <c>setFrameTopLeftPoint</c> 直接吃左上角语义，方向相反但依据相同）。
     /// </remarks>
+    /// <summary>
+    /// 缩放比变了就上报（见 <see cref="IWindowBackend.ScaleFactorChanged"/>）。
+    /// </summary>
+    /// <remarks>
+    /// <b>触发点是 <c>windowDidResize:</c> / <c>windowDidMove:</c>（经 ReportGeometry / ReportPosition），
+    /// 而不是一条专门的通知。</b>窗口被拖到不同缩放的显示器上时这两条至少有一条会发，
+    /// 所以"跨屏移动"这个主要场景被覆盖了，而且不用再引入一个通知观察者。
+    /// <para>
+    /// <b>已知的漏报场景</b>：在"系统设置 → 显示器"里只改缩放、窗口完全不动时，这两条回调都不发，
+    /// 页面就收不到 <c>scale.changed</c>。要覆盖它得观察
+    /// <c>NSWindowDidChangeBackingPropertiesNotification</c>；这里如实记下这个缺口，
+    /// 而不是假装它是完整的。
+    /// </para>
+    /// <para>
+    /// payload 里的 <c>size</c> 是**物理像素**客户区（与 Tauri 的 <c>PhysicalSize</c> 对齐）。
+    /// </para>
+    /// </remarks>
+    internal void ReportScaleFactorIfChanged()
+    {
+        double scale = ScaleFactor;
+        if (_lastReportedScaleFactor is { } previous && Math.Abs(previous - scale) < 0.0001)
+        {
+            return;
+        }
+
+        _lastReportedScaleFactor = scale;
+        ScaleFactorChanged?.Invoke(scale);
+
+        if ((EventForwarding & OrielWindowEventKind.Scale) != 0)
+        {
+            OrielSize inner = InnerSize;
+            PushEventOnUi(
+                "scale.changed",
+                OrielEventPayload.ScaleFactor(scale, inner.Width * scale, inner.Height * scale));
+        }
+    }
+
     internal void ReportPosition()
     {
         if (_nsWindow == 0)

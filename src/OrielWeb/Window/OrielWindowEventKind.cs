@@ -31,4 +31,14 @@ public enum OrielWindowEventKind
 
     /// <summary>获得/失去焦点（页面侧事件名 <c>focus</c> / <c>blur</c>，payload 为 <c>null</c>）。</summary>
     Focus = 4,
+
+    /// <summary>
+    /// 窗口所在显示器的缩放比变化（页面侧事件名 <c>scale.changed</c>，
+    /// payload <c>{ scaleFactor, size }</c>，与 Tauri 的 <c>ScaleFactorChanged</c> 同形）。
+    /// </summary>
+    /// <remarks>
+    /// 它不是高频事件（只在窗口跨到不同 DPI 的显示器、或系统缩放设置变了时来一次），
+    /// 但仍然做成"订阅了才推"：与其余事件保持同一套机制，少一个特例。
+    /// </remarks>
+    Scale = 8,
 }

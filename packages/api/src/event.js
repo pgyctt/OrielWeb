@@ -31,7 +31,7 @@ import { getTransport } from './internal.js';
  * 那条事件送不到（Tauri 的 JS 侧同样如此，它是给 Rust 侧用的）。
  * 需要"窗口要关了"的通知请用 `tauri://close-requested`。
  *
- * @type {Record<string, { host: string, forwarding?: 'resize' | 'move' | 'focus' }>}
+ * @type {Record<string, { host: string, forwarding?: 'resize' | 'move' | 'focus' | 'scale' }>}
  */
 const HOST_EVENT_MAP = Object.freeze({
     'tauri://resize': { host: 'resize', forwarding: 'resize' },
@@ -46,6 +46,8 @@ const HOST_EVENT_MAP = Object.freeze({
     // 顺带一提，宿主推的载荷就是裸的 "dark" / "light"，与 Tauri 的 Theme 形状一致，
     // 不需要在这一层翻译。
     'tauri://theme-changed': { host: 'theme.changed' },
+    // 缩放变化：与 resize/move/focus 同类，需要 forwarding（页面订阅了宿主才推）。
+    'tauri://scale-change': { host: 'scale.changed', forwarding: 'scale' },
 });
 
 /**
@@ -60,14 +62,14 @@ export function toHostEventName(eventName) {
 
 /**
  * 已打开转发的项（包内记账，避免每次 listen 都发一次 IPC）。
- * @type {Set<'resize' | 'move' | 'focus'>}
+ * @type {Set<'resize' | 'move' | 'focus' | 'scale'>}
  */
 const enabledForwarding = new Set();
 
 /**
  * 按需打开宿主→页面的转发。
  *
- * @param {'resize' | 'move' | 'focus' | undefined} kind
+ * @param {'resize' | 'move' | 'focus' | 'scale' | undefined} kind
  * @returns {void}
  * @remarks
  * **失败必须让人看见**：命令被能力门禁拒掉时事件永远不会到，

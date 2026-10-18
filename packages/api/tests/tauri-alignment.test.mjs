@@ -353,15 +353,12 @@ const METHOD_GAP_GROUPS = [
         methods: ['window.Window#setTheme'],
     },
     {
-        reason: '【B·跨平台一致·待做】`onScaleChanged` 要缩放变化通知。' +
-            '三平台都有对应机制（Windows `WM_DPICHANGED`、macOS `viewDidChangeBackingProperties`、' +
-            'Linux GDK 的 scale-factor 通知），概念跨平台一致，**方针下可以做**，' +
-            '只差三个平台各加一条监听再接上事件通道。' +
-            '（`onThemeChanged` 已经做完了——宿主侧本来就三平台就绪；' +
-            '`onDragDropEvent` 已移入 METHOD_DIVERGENCES，那是**有意不做**。）',
-        methods: [
-            'window.Window#onScaleChanged',
-        ],
+        reason: '【B·跨平台一致·待做】`onScaleChanged` 已经做完了：三平台各自检测并把'
+            + '`scale.changed` 推给页面（Windows `WM_DPICHANGED`、Linux GDK 的 `notify::scale-factor`、'
+            + 'macOS 顺带在 `windowDidResize:`/`windowDidMove:` 里查——后者**有一个已知漏报**：'
+            + '只改系统缩放而窗口不动时两条回调都不发，详见 MacOSWindowHost.ReportScaleFactorIfChanged 的说明）。'
+            + '本组现在是空的：方针下可做的项已经全部实现，剩下的都在 A 组（方针排除）。',
+        methods: [],
     },
 ];
 
@@ -383,16 +380,21 @@ test('待做清单的每一项都标了 A/B 归属（方针：跨平台不一致
         `这些组没标 A/B 归属（reason 要以【A· 或【B· 开头）：\n  - ${offenders.join('\n  - ')}`);
 });
 
-test('方针下可做的组只剩 B 组（A 组全部是"不做"）', () => {
+test('方针下可做的组（B 组）现在是空的——剩下的都在 A 组（方针排除）', () => {
     const doable = METHOD_GAP_GROUPS
         .filter((group) => group.reason.startsWith('【B·'))
         .flatMap((group) => group.methods);
 
-    // 钉住当前结论：A 组的那些**不做**。哪天要在 A 组里开工，
-    // 就必须先改这条断言并说明方针变了——而不是悄悄往里加实现。
-    assert.deepEqual(
-        doable.map((m) => m.split('#')[1]).sort(), ['onScaleChanged'],
-        'B 组（跨平台一致、方针下可做）应当只有 onScaleChanged');
+    // 钉住当前结论：方针下可做的项**已经全部实现**。
+    // 哪天要重新在 A 组里开工，必须先改这条断言并说明方针变了——而不是悄悄往里加实现。
+    assert.deepEqual(doable, [],
+        'B 组（跨平台一致、方针下可做）应当为空：可做的都实现了');
+
+    // 反面：A 组必须非空且明确标为"方针不做"，否则这份清单就退化成"什么都没做"
+    const excluded = METHOD_GAP_GROUPS
+        .filter((group) => group.reason.startsWith('【A·'))
+        .flatMap((group) => group.methods);
+    assert.ok(excluded.length > 0, 'A 组（方针排除）应当列出具体项');
 });
 
 test('同名类的方法也对得上（我们缺的都在 METHOD_DIVERGENCES 里）', async (t) => {

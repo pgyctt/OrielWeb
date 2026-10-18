@@ -548,7 +548,7 @@ internal static class OrielBuiltInWindowApiCommands
     /// （页面的两次 listen 各自只打开自己要的那一项，不需要知道别的项当前是什么状态）。
     /// </para>
     /// </remarks>
-    private static object SetEventForwarding(IOrielWindowControl sender, JsonElement args)
+    private static JsonElement SetEventForwarding(IOrielWindowControl sender, JsonElement args)
     {
         // 与 win.setCloseIntercept 一样只作用于**发起者**：转发是"我这个页面的订阅行为"，
         // 按 label 改别的窗口的转发开关既没有用例，也会让"谁订阅了什么"变得难以推理。
@@ -575,16 +575,30 @@ internal static class OrielBuiltInWindowApiCommands
             kinds = focus ? kinds | OrielWindowEventKind.Focus : kinds & ~OrielWindowEventKind.Focus;
         }
 
+        if (OptionalBool(args, "scale") is { } scale)
+        {
+            kinds = scale ? kinds | OrielWindowEventKind.Scale : kinds & ~OrielWindowEventKind.Scale;
+        }
+
         window.EventForwarding = kinds;
 
-        // 返回当前生效的项，便于页面断言"我开的确实开了"
-        return new
-        {
-            resize = (kinds & OrielWindowEventKind.Resize) != 0,
-            move = (kinds & OrielWindowEventKind.Move) != 0,
-            focus = (kinds & OrielWindowEventKind.Focus) != 0,
-        };
+        // 返回当前生效的项，便于页面断言"我开的确实开了"。
+        //
+        // **手拼 JSON 而不是匿名对象**：内建命令的返回值走 OrielJson.WriteResult，
+        // 匿名对象是普通类型，走 STJ 需要应用在自己的 JsonSerializerContext 上注册这个
+        // 编译器生成的名字（<>f__AnonymousType0`4[…]）——那对应用是不合理的负担，
+        // 而且**加一个字段就会换一个新类型**：原先 demo 注册的是三字段那个，
+        // 这里加了 scale 之后自检当场报"需要 JSON 上下文"（真实回归，被自检抓到）。
+        // 与 SizeOf / PositionOf 同一套做法。
+        return JsonDocument.Parse(
+            $"{{\"resize\":{Bool((kinds & OrielWindowEventKind.Resize) != 0)}," +
+            $"\"move\":{Bool((kinds & OrielWindowEventKind.Move) != 0)}," +
+            $"\"focus\":{Bool((kinds & OrielWindowEventKind.Focus) != 0)}," +
+            $"\"scale\":{Bool((kinds & OrielWindowEventKind.Scale) != 0)}}}").RootElement.Clone();
     }
+
+    /// <summary>布尔 → JSON 字面量（<c>true</c> / <c>false</c>）。</summary>
+    private static string Bool(bool value) => value ? "true" : "false";
 
     private static object? Mutate(Action action)
     {

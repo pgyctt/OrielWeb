@@ -29,6 +29,17 @@ internal static class OrielEventPayload
         => $"{{\"x\":{Number(x)},\"y\":{Number(y)}}}";
 
     /// <summary>
+    /// 缩放变化事件的 payload：<c>{ "scaleFactor": …, "size": { "width": …, "height": … } }</c>。
+    /// </summary>
+    /// <remarks>
+    /// 形状与 Tauri 的 <c>ScaleFactorChanged</c> 一致（那里 <c>size</c> 是 <c>PhysicalSize</c>，
+    /// 所以这里的宽高也是**物理像素**）——迁移代码会照搬 <c>payload.size.width</c> 这类读法，
+    /// 给它逻辑尺寸就等于悄悄换了单位。
+    /// </remarks>
+    internal static string ScaleFactor(double scaleFactor, double physicalWidth, double physicalHeight)
+        => $"{{\"scaleFactor\":{Number(scaleFactor)},\"size\":{Size(physicalWidth, physicalHeight)}}}";
+
+    /// <summary>
     /// 数值 → JSON 数字字面量。
     /// </summary>
     /// <remarks>
