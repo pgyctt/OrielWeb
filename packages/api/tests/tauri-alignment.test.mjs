@@ -302,8 +302,10 @@ const METHOD_GAP_GROUPS = [
             '`setAlwaysOnBottom` 同样只有 Windows/macOS 有；`setFocusable` 在 macOS 上没有公开入口' +
             '（只有私有的 `_setPreventsActivation`，用它等于把自己绑到未公开 API 上）；' +
             '`setBackgroundColor` 语义倒是一致（Tauri 文档写明它是"webview 加载中、或透明页面背后'
-            + '看到"的那个颜色），但三平台 webview 都铺满客户区，**没有读取路径能闭环验证**'
-            + '（写进去读不回来，等于没法证明它生效）。' +
+            + '看到"的那个颜色），**但本库连创建期的底色都没实现**——'
+            + '`OrielWindowOptions.WithBackgroundColor` 设置了不生效、也不报错，'
+            + '`TryGetBackgroundArgb` 全仓零调用者（详见 docs/TAURI2-PLAN.md 的那一节）。'
+            + '要做就得连创建期一起补，且 Windows 侧还缺 `ICoreWebView2Controller` 的 COM 互操作。' +
             '`setDecorations`：Windows 上 `ComputeStyle` 是**创建期的静态决定**，' +
             '运行期切换要改整套样式并让 `WM_NCCALCSIZE` 的分支跟着变，而那条路我无法目视验证。',
         methods: [

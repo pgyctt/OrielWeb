@@ -337,7 +337,28 @@ F1 ─→ F2（scope 系统是 convertFileSrc 的前置）
 | **M5-3** Window 事件转发 | ✅ 完成 | `Window.listen` / `once` / `emit` / `emitTo`（纯委托到 `event` 模块）+ `unminimize`（映射到 `window.restore`，三平台同一个原生动作） |
 | **M5-4** `isEnabled` / `setEnabled` | ✅ 完成（Windows 已验证） | 三平台：`IsWindowEnabled`/`EnableWindow`、`gtk_widget_get_sensitive`/`set_sensitive`、Cocoa `ignoresMouseEvents`。**macOS 只挡鼠标不挡键盘**，如实记录。`isEnabled` 进白名单、`setEnabled` 不进 |
 | **M5-5** 剩余 36 项的**归类** | ✅ 完成（归类，不是实现） | H 的清单现在**每一项都有归属**：已实现 / 有意不做（2 项移动端专有）/ 待做（36 项，按批次优先级分 9 组、每组写明为什么还没做）。见 `packages/api/tests/tauri-alignment.test.mjs` 的 `METHOD_GAP_GROUPS` |
-| **M5-6** 待做清单的实现 | 🔄 进行中（7 项已实现；方针下待做 **1** 项） | **已完成**：`requestUserAttention` + `UserAttentionType`；`setMaxSize`（Windows `ptMaxTrackSize` / macOS `setContentMaxSize:` / **Linux 走 geometry hints——那会整体替换 `set_size_request`，所以 min/max 合并成一次调用**）；`setSizeConstraints`；`setMaximizable` / `setMinimizable`；`setClosable`（**Windows 灰化系统菜单 `SC_CLOSE`**，顺带把 `IsClosable` 从"有 `WS_SYSMENU`"修正为"存在且未灰化"，否则写进去读不回来）；`onThemeChanged`（宿主三平台早就检测并广播 `theme.changed`，缺的只是页面侧包装）。<br>**方针（用户 2026-10-18 定）：跨平台不一致的不做。** 据此把剩余待做项分成 A/B 标记（见 `tauri-alignment.test.mjs` 的 `METHOD_GAP_GROUPS`，有测试钉住）：**A·跨平台不一致 = 不做**（外观开关 6 项、每平台一套 6 项、特效 2 项、光标 6 项、任务栏徽标 4 项、`setTheme` 共 **25** 项——理由各不相同，逐组写在清单里）；**B·跨平台一致·待做 = 1 项**（`onScaleChanged`，三平台都有 DPI 变化通知）。另有 `onDragDropEvent` 记入 `METHOD_DIVERGENCES`（**有意不做**：页面通道上拿不到文件路径，那是浏览器安全模型决定的，造个形状像但没有 `paths` 的事件只会误导迁移代码）。 |
+| **M5-6** 待做清单的实现 | 🔄 进行中（8 项已实现；方针下待做 **1** 项） | **已完成**：`requestUserAttention` + `UserAttentionType`；`setMaxSize`；`setSizeConstraints`；`setMaximizable` / `setMinimizable`；`setClosable`（Windows 灰化系统菜单 `SC_CLOSE`，顺带把 `IsClosable` 从"有 `WS_SYSMENU`"修正为"存在且未灰化"）；`onThemeChanged`（宿主三平台早就检测并广播 `theme.changed`，缺的只是页面侧包装）；`setIcon`（**路径形式**；三平台复用创建期图标代码——Windows 顺手填掉了"`LoadImageW` 只认 ICO/BMP，喂 PNG 静默返回 0"这个久已记录的缺口，PNG 现在经 `OrielImage` + 托盘那套 `Win32IconFactory.CreateFromRgba` 造 HICON）。<br>**方针（用户 2026-10-18 定）：跨平台不一致的不做。** 据此把剩余待做项分成 A/B 标记（见 `tauri-alignment.test.mjs` 的 `METHOD_GAP_GROUPS`，有测试钉住）：**A·跨平台不一致 = 不做**（外观开关 5 项、每平台一套 6 项、特效 2 项、光标 6 项、任务栏徽标 4 项、`setTheme` 共 **24** 项）；**B·跨平台一致·待做 = 1 项**（`onScaleChanged`）。另有 `onDragDropEvent` 记入 `METHOD_DIVERGENCES`（**有意不做**）。 |
+
+### 背景色：一个此前未被发现的缺陷（2026-10-18 查证）
+
+做 `setBackgroundColor` 的调研时发现：**`OrielWindowOptions.BackgroundColor` / `WithBackgroundColor(...)` 是一个设置了完全没有效果的公开 API。**
+
+- `WindowOptionsTests.cs` 有 3 个测试覆盖它，但**只验证 ARGB 的解包**（`TryGetBackgroundArgb`），没有一个测试验证"底色真的生效"；
+- 而 `TryGetBackgroundArgb` 在整个仓库里**零调用者**，平台侧也没有任何 `Background` 落点（`DefaultBackgroundColor` / `underPageBackgroundColor` / `webkit_web_view_set_background_color` 都**只出现在注释里**）;
+- 也就是说，用户写 `.WithBackgroundColor(0xFF123456)` 会正确存下、正确解析，然后**什么都不发生，也不报错**——正是最难查的那类失败。代码注释描述的"内核就绪前的底色"这个功能，创建期与运行期**都没实现**。
+
+**要做 `setBackgroundColor`，得连同创建期一起补**（它们是同一个功能的两端，只补运行期会让这个缺陷换一种形式留下来）。三平台的真实成本：
+
+| 平台 | 落点 | 现状 |
+| --- | --- | --- |
+| Linux | `webkit_web_view_set_background_color`（+ 已定义的 `GdkRGBA`） | P/Invoke 已就位，**只差调用** |
+| macOS | `WKWebView.underPageBackgroundColor`（12+）或 `NSWindow.backgroundColor`；`ObjCRuntime` 有 `SendVoidDouble4` 可造 NSColor | **只差调用** |
+| Windows | WebView2 controller 的 `put_DefaultBackgroundColor` | **本库尚无 `ICoreWebView2Controller` 接口定义**，要新增 COM 互操作 + `COREWEBVIEW2_COLOR` 结构 |
+
+另外它**没有读取路径可闭环验证**（Tauri 也没有 `backgroundColor` 的读 API，加一个就是"偷偷发明 API"，会被 `EXTRAS` 检查拦住），所以自检只能验"命令跑得通 + 颜色解析正确"，**证明不了颜色真的显示出来了**。
+
+**结论**：这项不是"再写一个 setter"，而是"补一个整体缺失的功能 + Windows 新增 COM 互操作"。建议单独一轮做，不要塞进别的批次里。
+
 
 ### M3 的状态（2026-10-17）
 
