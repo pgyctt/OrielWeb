@@ -536,17 +536,21 @@ internal static class ApiSelfTest
                     appData);
 
                 // 四格目录的平台差异（**按平台给期望值**，不能写死 Windows 那一套）：
-                //   Windows：Data=Roaming、LocalData=Local、Cache=Local、Config=Roaming
-                //   Linux/macOS：Data=LocalData=~/.local/share、Cache=~/.cache、
-                //                Config=~/.config（macOS 是 ~/Library/Application Support 等）
-                // 也就是说"config == data"与"localData == cache"**只在 Windows 上成立**，
-                // 在另两个平台它们恰好都**不**成立。写死任何一套都会让另一个平台必红。
+                //   Windows：Data=LocalData=Config=Roaming、Cache=Local
+                //   Linux：  Data=LocalData=~/.local/share、Cache=~/.cache、Config=~/.config
+                //   macOS：  Data=LocalData=Config=~/Library/Application Support、Cache=~/Library/Caches
+                //
+                // 于是两条关系的真值表是：
+                //   config == data      → Windows ✅、macOS ✅、Linux ❌
+                //   localData == cache  → Windows ✅、macOS ❌、Linux ❌
+                // **macOS 的 config 与 data 同为 Application Support**（`dirs` 的 macOS 映射就
+                // 是这样，Tauri 与本库一致）——早先这里把 macOS 与 Linux 归成一类，断言必红。
                 const config = await path.configDir();
                 const data = await path.dataDir();
                 const localData = await path.localDataDir();
                 const cache = await path.cacheDir();
                 check('path.configDir() 与 path.dataDir() 的关系与平台一致',
-                    isWindowsHost ? config === data : config !== data,
+                    (isWindowsHost || isMacOsHost) ? config === data : config !== data,
                     `${config} vs ${data}（${hostPlatform}）`);
                 check('path.localDataDir() 与 path.cacheDir() 的关系与平台一致',
                     isWindowsHost ? localData === cache : localData !== cache,

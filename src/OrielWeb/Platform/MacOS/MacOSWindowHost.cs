@@ -374,9 +374,17 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
 
     /// <summary>请求用户注意（见 <see cref="IWindowBackend.RequestUserAttention"/>）。</summary>
     /// <remarks>
+    /// <para>
     /// <c>requestUserAttention:</c> 的取值是 <c>NSCriticalRequest = 0</c> /
     /// <c>NSInformationalRequest = 10</c>（**不是** 0/1，容易记错），
     /// 返回值是一个请求 id，取消时要交给 <c>cancelUserAttentionRequest:</c>。
+    /// </para>
+    /// <para>
+    /// <b>两条消息都必须发给 <c>NSApplication</c> 的实例，不是 <c>NSWindow</c>，也不是类对象。</b>
+    /// 它们都是 <c>NSApplication</c> 的**实例方法**：发给窗口会因 unrecognized selector 抛
+    /// <c>NSException</c>（进程直接 SIGABRT），发给类对象同理。这也是"应用级注意力"而非
+    /// "窗口级"的语义来源——Dock 图标弹跳本来就是整个应用的行为。
+    /// </para>
     /// </remarks>
     public void RequestUserAttention(OrielUserAttention? type)
     {
@@ -390,7 +398,7 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
             if (_attentionRequestId != 0)
             {
                 ObjCRuntime.SendVoidNint(
-                    ObjCRuntime.GetClass("NSApplication"),
+                    SharedApplication(),
                     ObjCRuntime.Sel("cancelUserAttentionRequest:"),
                     _attentionRequestId);
                 _attentionRequestId = 0;
@@ -405,7 +413,7 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         int request = type == OrielUserAttention.Critical ? NsCriticalRequest : NsInformationalRequest;
 
         _attentionRequestId = ObjCRuntime.SendNintNint(
-            _nsWindow, ObjCRuntime.Sel("requestUserAttention:"), request);
+            SharedApplication(), ObjCRuntime.Sel("requestUserAttention:"), request);
     }
 
     /// <summary>
