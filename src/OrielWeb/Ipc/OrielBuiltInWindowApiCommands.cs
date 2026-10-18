@@ -127,6 +127,35 @@ internal static class OrielBuiltInWindowApiCommands
                 };
                 return true;
 
+            // 图像模块（`@orielweb/api/image`）用的两条。
+            //
+            // 本库没有资源表，`Image` 是**页面侧的字节容器**（见 packages/api/src/image.js 开头），
+            // 所以它只需要两个"跟宿主打交道"的入口：把文件读成字节、把字节解码成 RGBA。
+            // 解码放宿主是因为宿主本来就有解码器（OrielImage），页面侧不该再带一份 PNG 解码器。
+            case "window.readImageFile":
+                handler = static (sender, args) =>
+                    Convert.ToBase64String(ReadImageFile(OrielJson.GetRequiredArg<string>(args, "path", null)));
+                return true;
+
+            case "window.decodeImage":
+                handler = static (sender, args) =>
+                {
+                    string base64 = OrielJson.GetRequiredArg<string>(args, "bytes", null);
+                    byte[] data;
+                    try
+                    {
+                        data = Convert.FromBase64String(base64);
+                    }
+                    catch (FormatException ex)
+                    {
+                        // 与 setIcon 一样：编码错与图像错分开报，两者的修法不同
+                        throw new OrielIpcException($"window.decodeImage 的 bytes 不是合法的 base64：{ex.Message}");
+                    }
+
+                    return Convert.ToBase64String(DecodeImageToRgba(data));
+                };
+                return true;
+
             // 图标：两种参数二选一——`path`（文件路径）或 `bytes`（base64 的图像数据）。
             // 字节走 base64 而不是数字数组：同一个 32x32 PNG 用数组要四倍体积，
             // 而 IPC 是 JSON 文本，体积直接变成解析开销。
@@ -625,6 +654,42 @@ internal static class OrielBuiltInWindowApiCommands
 
     /// <summary>布尔 → JSON 字面量（<c>true</c> / <c>false</c>）。</summary>
     private static string Bool(bool value) => value ? "true" : "false";
+
+    /// <summary>读图像文件（<c>window.readImageFile</c> 用）。</summary>
+    /// <remarks>
+    /// 出错统一抛 <see cref="OrielIpcException"/>：页面拿到的是一个**说清原因**的失败
+    /// （文件不存在 / 权限不足 / 太大），而不是一个裸的 IO 异常文本。
+    /// </remarks>
+    private static byte[] ReadImageFile(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new OrielIpcException("window.readImageFile: path 不能为空。");
+        }
+
+        try
+        {
+            return File.ReadAllBytes(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException
+                                       or ArgumentException)
+        {
+            throw new OrielIpcException($"window.readImageFile 读不到「{path}」：{ex.Message}");
+        }
+    }
+
+    /// <summary>把 PNG/ICO 字节解码成裸 RGBA（<c>window.decodeImage</c> 用）。</summary>
+    private static byte[] DecodeImageToRgba(byte[] data)
+    {
+        try
+        {
+            return OrielImage.FromBytes(data).Rgba.ToArray();
+        }
+        catch (OrielImageFormatException ex)
+        {
+            throw new OrielIpcException($"window.decodeImage 解不出图像：{ex.Message}");
+        }
+    }
 
     private static object? Mutate(Action action)
     {

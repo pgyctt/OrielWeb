@@ -234,6 +234,10 @@ internal static class Program
                         "window.setMinimizable",
                         "window.setClosable",
                         "window.setIcon",
+                        // 图像模块（@orielweb/api/image）用：把文件读成字节、把字节解码成 RGBA。
+                        // 两条都放进白名单：它们只碰调用方指定的那个文件，不涉及跨窗口越权。
+                        "window.readImageFile",
+                        "window.decodeImage",
                         "window.setBackgroundColor",
                         // 几何查询（E2）：**刻意不放进标题栏白名单**——自绘标题栏不需要它们，
                         // 而它们能按 label 读到**别的**窗口的几何。所以要用必须显式声明。

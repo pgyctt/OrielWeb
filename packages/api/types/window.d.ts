@@ -223,21 +223,22 @@ export class Window {
     /**
      * 设置窗口图标。
      *
-     * @param {string} icon 图像文件路径（PNG / ICO）。
+     * @param {import('./image.js').JsImage} icon 路径、PNG/ICO 字节，或 `Image` 实例。
      * @returns {Promise<void>}
      * @remarks
      * 需要 `Allow("window.setIcon")`。
      *
-     * **只支持路径**：Tauri 的 `setIcon` 还收 `Uint8Array` / `ArrayBuffer` / `number[]`
-     * （ICO/PNG 原始字节）以及 `Image` 对象（资源表 handle）。前三种本库暂未支持，
-     * 第四种要先实现 `@orielweb/api/image`；传这几种会**当场抛 TypeError 并说明原因**，
-     * 而不是发一条注定失败的 IPC。
+     * 接受 Tauri 的 `JsImage` 全部五种形式：`string`（文件路径）、`Uint8Array` /
+     * `ArrayBuffer` / `number[]`（PNG/ICO 字节）、`Image` 实例。
+     *
+     * **`Image` 在本库是"字节容器"而不是资源表 handle**（见 `@orielweb/api/image` 的说明）——
+     * 它只是把字节和尺寸一起拿着，方便在多次调用间复用；传到宿主时仍是字节。
      *
      * **平台差异（两处）**：
      * - macOS 上没有窗口级图标，这里设的是**应用（Dock）图标**，会影响整个应用；
      * - Linux 的 Wayland 下窗口图标由合成器决定，通常忽略本调用。
      */
-    setIcon(icon: string): Promise<void>;
+    setIcon(icon: import("./image.js").JsImage): Promise<void>;
     /**
      * 设置窗口底色。
      *

@@ -15,6 +15,8 @@
 import { invoke } from './core.js';
 import { getTransport } from './internal.js';
 import { listen, once, emit, emitTo, TauriEvent } from './event.js';
+// 图像字节的共享工具：与 `image.js` 共用同一份，免得两边对"越界字节要不要拦"分叉。
+import { toImageBytes, bytesToBase64, assertImageFormat } from './image-bytes.js';
 import {
     LogicalSize,
     LogicalPosition,
@@ -94,66 +96,21 @@ function labelOf(target) {
 }
 
 /**
- * 把 Tauri `JsImage` 里的三种"字节"写法归一成 `Uint8Array`；不是字节形式就返回 `null`。
+ * 判断是不是 `@orielweb/api/image` 的 `Image` 实例。
  *
  * @param {any} value
- * @returns {Uint8Array | null}
+ * @returns {boolean}
  * @remarks
- * `number[]` 的每一项都要校验成 0..255 的整数：`new Uint8Array([999])` 会**静默截断**
- * 成 231，于是页面拿到一个"没报错但图标不对"的结果。这类输入通常来自
- * `Array.from(fileReader.result)`，写错一位就会被截断，所以宁可当场抛。
+ * **鸭子类型而不是 `instanceof Image`**：`instanceof` 在"同一份包被加载了两次"时
+ * 会给出 `false`（这是双入口包的经典问题——比如页面从两个路径各 import 了一次）。
+ * 而这里要问的只是"它有没有 Image 该有的东西"，用形状判断既够用又更稳。
+ * 判据取 `bytes`（Uint8Array）+ `isOrielImage` 标记，见 image.js。
  */
-function toImageBytes(value) {
-    if (value instanceof Uint8Array) {
-        return value;
-    }
-
-    if (value instanceof ArrayBuffer) {
-        return new Uint8Array(value);
-    }
-
-    // TypedArray / DataView 一族（Tauri 的类型只写了 Uint8Array，但别的视图在运行时同样常见）
-    if (ArrayBuffer.isView(value)) {
-        return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-    }
-
-    if (Array.isArray(value)) {
-        for (let i = 0; i < value.length; i++) {
-            const byte = value[i];
-            if (typeof byte !== 'number' || !Number.isInteger(byte) || byte < 0 || byte > 255) {
-                throw new TypeError(
-                    `setIcon: 字节数组的第 ${i} 项不是 0..255 的整数（收到 ${String(byte)}）——` +
-                    '它会被 Uint8Array 静默截断，所以这里直接拒。');
-            }
-        }
-
-        return Uint8Array.from(value);
-    }
-
-    return null;
-}
-
-/**
- * `Uint8Array` → base64。
- *
- * @param {Uint8Array} bytes
- * @returns {string}
- * @remarks
- * 不用 `btoa(String.fromCharCode(...bytes))`：那个写法在参数量大时会**爆栈**
- * （展开运算符把每个字节都变成一个实参），而图标动辄几十 KB。
- * 分块累加是这里唯一需要小心的地方。
- */
-function bytesToBase64(bytes) {
-    // 分块是为了不把每个字节都变成一个实参：一次 apply/展开几万个参数会爆栈，
-    // 而图标动辄几十 KB。0x4000 是留了余量的值（V8 的实参上限约 65535）。
-    const CHUNK = 0x4000;
-    let binary = '';
-
-    for (let i = 0; i < bytes.length; i += CHUNK) {
-        binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-    }
-
-    return btoa(binary);
+function isImageLike(value) {
+    return value !== null
+        && typeof value === 'object'
+        && value.isOrielImage === true
+        && value.bytes instanceof Uint8Array;
 }
 
 /**
@@ -591,15 +548,16 @@ export class Window {
     /**
      * 设置窗口图标。
      *
-     * @param {string} icon 图像文件路径（PNG / ICO）。
+     * @param {import('./image.js').JsImage} icon 路径、PNG/ICO 字节，或 `Image` 实例。
      * @returns {Promise<void>}
      * @remarks
      * 需要 `Allow("window.setIcon")`。
      *
-     * **只支持路径**：Tauri 的 `setIcon` 还收 `Uint8Array` / `ArrayBuffer` / `number[]`
-     * （ICO/PNG 原始字节）以及 `Image` 对象（资源表 handle）。前三种本库暂未支持，
-     * 第四种要先实现 `@orielweb/api/image`；传这几种会**当场抛 TypeError 并说明原因**，
-     * 而不是发一条注定失败的 IPC。
+     * 接受 Tauri 的 `JsImage` 全部五种形式：`string`（文件路径）、`Uint8Array` /
+     * `ArrayBuffer` / `number[]`（PNG/ICO 字节）、`Image` 实例。
+     *
+     * **`Image` 在本库是"字节容器"而不是资源表 handle**（见 `@orielweb/api/image` 的说明）——
+     * 它只是把字节和尺寸一起拿着，方便在多次调用间复用；传到宿主时仍是字节。
      *
      * **平台差异（两处）**：
      * - macOS 上没有窗口级图标，这里设的是**应用（Dock）图标**，会影响整个应用；
@@ -614,16 +572,26 @@ export class Window {
             return invoke('window.setIcon', { label: this.label, path: icon });
         }
 
+        // Image 实例：取它的字节（见 image.js）。这里用鸭子类型而不是 instanceof，
+        // 免得"从另一个副本加载的 Image"被判成不认识——那在单测与多入口打包里都发生过。
+        if (isImageLike(icon)) {
+            return invoke('window.setIcon', {
+                label: this.label,
+                bytes: bytesToBase64(/** @type {import('./image.js').Image} */ (icon).bytes),
+            });
+        }
+
         // Tauri 的 JsImage 里，"字节"有三种写法：Uint8Array / ArrayBuffer / number[]。
         // 它们等价，这里统一成 Uint8Array 再编码。
         const bytes = toImageBytes(icon);
         if (bytes !== null) {
+            assertImageFormat(bytes, 'setIcon');
             return invoke('window.setIcon', { label: this.label, bytes: bytesToBase64(bytes) });
         }
 
         throw new TypeError(
             'setIcon: icon 必须是文件路径（string）、Uint8Array / ArrayBuffer / number[] 形式的' +
-            'PNG/ICO 字节，或 Image 对象——**Image 对象本库还不支持**（那需要 @orielweb/api/image）。');
+            'PNG/ICO 字节，或 @orielweb/api/image 的 Image 实例。');
     }
 
     /**

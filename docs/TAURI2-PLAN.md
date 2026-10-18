@@ -339,6 +339,34 @@ F1 ─→ F2（scope 系统是 convertFileSrc 的前置）
 | **M5-5** 剩余 36 项的**归类** | ✅ 完成（归类，不是实现） | H 的清单现在**每一项都有归属**：已实现 / 有意不做（2 项移动端专有）/ 待做（36 项，按批次优先级分 9 组、每组写明为什么还没做）。见 `packages/api/tests/tauri-alignment.test.mjs` 的 `METHOD_GAP_GROUPS` |
 | **M5-6** 待做清单的实现 | ✅ 方针下完成（10 项已实现；方针下待做 **0** 项） | **已完成**：`requestUserAttention` + `UserAttentionType`；`setMaxSize`；`setSizeConstraints`；`setMaximizable` / `setMinimizable`；`setClosable`（Windows 灰化系统菜单 `SC_CLOSE`，顺带把 `IsClosable` 从"有 `WS_SYSMENU`"修正为"存在且未灰化"）；`onThemeChanged`；`setIcon`（路径形式）；`setBackgroundColor`（复用创建期的 `ApplyBackgroundColor` + `OrielWindowOptions.UnpackArgb`）；`onScaleChanged`（**按窗口**的缩放变化：Windows `WM_DPICHANGED`、Linux GDK `notify::scale-factor`、macOS 顺带在 `windowDidResize:`/`windowDidMove:` 里查——后者有已知漏报：只改系统缩放而窗口不动时不报）。<br>**方针（用户 2026-10-18 定）：跨平台不一致的不做。** A/B 标记见 `tauri-alignment.test.mjs` 的 `METHOD_GAP_GROUPS`（有测试钉住）：**A·跨平台不一致 = 不做**（外观开关 4 项、每平台一套 6 项、特效 2 项、光标 6 项、任务栏徽标 4 项、`setTheme` 共 **23** 项）；**B·跨平台一致·待做 = 0 项**。另有 `onDragDropEvent` 记入 `METHOD_DIVERGENCES`（**有意不做**）。 |
 
+### `@orielweb/api/image`：与 Tauri 的一处本质分歧（2026-10-18）
+
+新增 `packages/api/src/image.js`，导出 `Image` 与 `transformImage`（与 Tauri 同名同形状）。
+但 `Image` 的**实现模型不同**，这是有意的：
+
+| | Tauri | 本库 |
+| --- | --- | --- |
+| `Image` 是什么 | **资源表 handle**（继承 `Resource`，持有宿主侧 `rid`），字节留在宿主 | **页面侧字节容器**（持有 `Uint8Array`） |
+| `close()` | 有，用来释放那条记录 | **没有**（无宿主侧资源可释放，空方法只会骗人） |
+| `rgba()` / `size()` | 异步（要问宿主） | 本地值，但签名仍是 `Promise`（`await` 照样能跑） |
+| 跨 IPC 传 | 只传 `rid` | 传完整字节（图标量级无所谓，几百 KB 的大图会慢） |
+
+**为什么不做资源表**：本库 IPC 是一次性请求-回执，没有"把对象存到宿主那边再引用它"的协议。
+引入它等于新造一套句柄生命周期（创建/释放/失效检测），那是另一个量级的改动，
+而 `Image` 的实际用途（图标、菜单图标）用字节容器完全够。
+
+**尺寸解析在页面侧完成**：PNG 的 IHDR、ICO 的 ICONDIRENTRY 都是固定偏移，直接读那几个字节——
+这是"纯 JS 容器"能成立的关键（`size()` 不需要宿主）。解码**像素**才要宿主
+（`window.decodeImage` → `OrielImage.FromBytes`），结果缓存。
+
+`Image.new`（裸 RGBA 建图）的产物**不能直接喂给 `setIcon`**：宿主只认 PNG/ICO 字节，
+而本库不内置 PNG 编码器。这一点写在 `image.js` 的文档里，而不是让它到宿主侧才
+以一个语焉不详的错误失败。
+
+**顺带补的清单缺口**：`image` 模块此前**根本没进对齐测试的 `MODULES` 列表**，
+所以"本库缺 `@tauri-apps/api/image`"这件事没有任何测试盯着。已登记，
+现在对照结果是「参照 2，我有 2，缺口 0」，`close` 记入 `METHOD_DIVERGENCES`。
+
 ### 顺带修掉的一个既有缺陷：`window.setEventForwarding` 的返回值（2026-10-18）
 
 做 `onScaleChanged` 时给 `setEventForwarding` 的返回值加了第 4 个字段（`scale`），自检当场报：

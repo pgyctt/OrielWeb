@@ -41,6 +41,9 @@ const MODULES = [
     { ours: '../src/path.js', theirs: '@tauri-apps/api/path', label: 'path' },
     { ours: '../src/app.js', theirs: '@tauri-apps/api/app', label: 'app' },
     { ours: '../src/mocks.js', theirs: '@tauri-apps/api/mocks', label: 'mocks' },
+    // image 模块此前**根本没登记**（清单缺口，2026-10-18 补）：
+    // 于是"本库缺 `@tauri-apps/api/image`"这件事没有任何测试盯着。
+    { ours: '../src/image.js', theirs: '@tauri-apps/api/image', label: 'image' },
     { ours: '../src/fs.js', theirs: '@tauri-apps/plugin-fs', label: 'fs' },
     { ours: '../src/dialog.js', theirs: '@tauri-apps/plugin-dialog', label: 'dialog' },
     { ours: '../src/clipboard.js', theirs: '@tauri-apps/plugin-clipboard-manager', label: 'clipboard' },
@@ -253,6 +256,13 @@ test('与 @tauri-apps/api 的导出面一致（差异都在清单里）', async 
  * @type {Record<string, string>}
  */
 const METHOD_DIVERGENCES = {
+    close:
+        '**Image.close() 有意不做**：Tauri 的 `Image` 继承 `Resource`（资源表里的一条记录，' +
+        '带 `rid`），`close()` 用来释放那条记录。本库**没有资源表**——IPC 是一次性请求-回执，' +
+        '没有"把对象存到宿主那边再引用它"的协议，`Image` 只是**页面侧的字节容器**，' +
+        '没有任何宿主侧资源可释放。给一个空的 `close()` 会让调用方以为"不关就泄漏"，' +
+        '所以**不给**比给一个骗人的空方法诚实。迁移代码里的 `await image.close()` 会抛 ' +
+        '`TypeError`（不是静默跳过）——宁可当场炸，也不要让人带着错误的心智模型继续写。',
     onDragDropEvent:
         '**有意不做**：文件拖放走宿主 `WebviewWindow.FileDropped` 事件，不在页面事件通道上。' +
         '这不是省事——浏览器安全模型决定了**页面拿不到文件路径**（Tauri 能给出路径，' +

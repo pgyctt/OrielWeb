@@ -370,6 +370,46 @@ internal static class WindowSelfTest
 
                 Check(badBase64Rejected, "非法的 base64 应当被拒（不能当成图像解码失败静默放过）");
 
+                // ---- 图像模块的两条宿主命令（@orielweb/api/image 用）----
+                //
+                // `Image` 在本库是页面侧的字节容器（没有资源表），所以它只需要这两条：
+                // 读文件、解码成 RGBA。页面侧逻辑由 packages/api/tests/image.test.mjs 覆盖，
+                // 这里验**宿主这一侧**：真的读得出 app.png 的字节、解得出长度正确的 RGBA。
+                JsonElement readBack = await AskMainAsync(
+                    "window.readImageFile",
+                    SelfTestJson.Object(("path", SelfTestJson.String(iconPath))));
+                string readBase64 = readBack.GetString() ?? "";
+                Check(readBase64.Length > 0, "window.readImageFile 应当读回非空的 base64");
+                Check(
+                    Convert.FromBase64String(readBase64).Length == new FileInfo(iconPath).Length,
+                    "读回的字节数应当与文件大小一致");
+
+                // 解码：RGBA 长度必须是 4 的倍数。不断言具体尺寸——那取决于 app.png，
+                // 硬编码会随资源替换而失效。
+                JsonElement decodedImage = await AskMainAsync(
+                    "window.decodeImage",
+                    SelfTestJson.Object(("bytes", SelfTestJson.String(readBase64))));
+                string rgbaBase64 = decodedImage.GetString() ?? "";
+                int rgbaLength = rgbaBase64.Length == 0 ? 0 : Convert.FromBase64String(rgbaBase64).Length;
+                Check(rgbaLength > 0 && rgbaLength % 4 == 0,
+                    $"window.decodeImage 应当给出非空、长度为 4 的倍数的 RGBA（实际 {rgbaLength} 字节）");
+
+                // 坏数据：解码失败必须报错（而不是返回一段长度不对的缓冲）
+                bool badImageRejected = false;
+                try
+                {
+                    await AskMainAsync(
+                        "window.decodeImage",
+                        SelfTestJson.Object(
+                            ("bytes", SelfTestJson.String(Convert.ToBase64String("not an image"u8.ToArray())))));
+                }
+                catch (InvalidOperationException)
+                {
+                    badImageRejected = true;
+                }
+
+                Check(badImageRejected, "window.decodeImage 对非图像数据应当报错");
+
                 // ---- 窗口底色（M5-6）----
                 //
                 // **断言强度同样有限**（与图标那组同理）：Tauri 与本库都没有"读回当前底色"

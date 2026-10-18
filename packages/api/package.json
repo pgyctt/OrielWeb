@@ -72,6 +72,10 @@
     "./mocks": {
       "types": "./types/mocks.d.ts",
       "default": "./src/mocks.js"
+    },
+    "./image": {
+      "types": "./types/image.d.ts",
+      "default": "./src/image.js"
     }
   },
   "scripts": {
