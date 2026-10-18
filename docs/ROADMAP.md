@@ -4,7 +4,8 @@
 
 ## API 与 Tauri 2 对齐（进行中）
 
-完整差异分析与分阶段清单见 [TAURI2-ALIGNMENT.md](TAURI2-ALIGNMENT.md)。只记**还没做**的前置项：
+完整差异分析与分阶段清单见 [对齐审计](TAURI2-ALIGNMENT-AUDIT-2026-10-18.md) 与
+[执行计划](TAURI2-ALIGNMENT-EXECUTION-PLAN-2026-10-18.md)。只记**还没做**的前置项：
 
 | 缺口 | 为什么必须先做 |
 |---|---|

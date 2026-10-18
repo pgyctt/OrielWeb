@@ -20,6 +20,8 @@ on:
 permissions:
   # 上传 Release 资产需要写权限
   contents: write
+  # 读同 commit 的 CI 结论（发布闸：「Require green CI on this commit」那一步）
+  actions: read
 
 # 快速连推两个 tag 时不并发跑：两次运行的同名 Release 资产会互相覆盖
 # （NuGet 侧另有 --skip-duplicate 兜底）。排队串行即可，不取消进行中的那次。
@@ -247,6 +249,46 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+
+      - name: Require green CI on this commit
+        # **发布闸：同 commit 的 CI 必须绿，否则拒绝发布。**
+        #
+        # 为什么需要它：本工作流由 tag 推送触发，与 ci.yml 是**两条独立的运行**。
+        # 下面那条 Test 只覆盖单测，而 CI 还跑三平台 smoke（真机自检）。
+        # 0.3.6 就是在这个缺口下发出去的：smoke-macos 当时已红（tray-js 崩溃），
+        # 但 release 只看版本号一致就把包推上了 nuget.org——用户拿到的是崩溃版本。
+        #
+        # 两个细节：
+        #   * tag 推送与 main 的 push 几乎同时发生，CI 通常还没跑完，所以这里要**等**；
+        #   * 等不到（该 commit 没触发过 CI，例如给旧提交补 tag）按失败处理——
+        #     "没验过"与"验过且通过"不是一回事，静默放行等于把闸门又拆了。
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $sha = "${{ github.sha }}"
+          $deadline = (Get-Date).AddMinutes(20)
+          Write-Output "等待 commit $sha 的 CI 结论（最多 20 分钟）…"
+          while ((Get-Date) -lt $deadline) {
+            $runs = gh run list --commit $sha --workflow ci.yml --limit 1 --json status,conclusion,url | ConvertFrom-Json
+            if ($runs.Count -eq 0) {
+              Write-Output "尚无针对该 commit 的 CI 运行，30s 后重试…"
+              Start-Sleep -Seconds 30
+              continue
+            }
+            $run = $runs[0]
+            Write-Output "status=$($run.status) conclusion=$($run.conclusion) $($run.url)"
+            if ($run.status -eq 'completed') {
+              if ($run.conclusion -ne 'success') {
+                throw "该 commit 的 CI 结论是 $($run.conclusion)，拒绝发布。先修好 CI 再打 tag（详见 $($run.url)）"
+              }
+              Write-Output "CI 已绿：允许发布"
+              exit 0
+            }
+            Start-Sleep -Seconds 30
+          }
+          throw "等待 CI 超时（20 分钟）：该 commit 可能没有触发过 ci.yml。拒绝发布——'没验过'不能当成'验过'。"
 
       - name: Test
         # 发布前再跑一遍（tag 推送不会触发 ci.yml 的 push 触发器）

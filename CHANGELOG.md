@@ -36,10 +36,10 @@
 
 ## 0.3.6 - 2026-10-18
 
-Tauri 2 API 对齐的完整一轮（`docs/TAURI2-PLAN.md` 的批次 A → H 与 M5）。前端包 `@orielweb/api`
+Tauri 2 API 对齐的完整一轮（批次 A → H 与 M5）。前端包 `@orielweb/api`
 从 3 个模块扩到 14 个，宿主侧新增 `path.*` / `app.*` / `fs.*` / `dialog.*` / `clipboard.*` /
 `opener` / `notification` / `autostart` / `window.*` 九个命令族，`window` 模块补齐到 Tauri 2 的
-可对齐范围。详细差异分析与分阶段计划见 `docs/TAURI2-PLAN.md`；对齐审计与后续执行计划见
+可对齐范围。对齐审计与后续执行计划见
 `docs/TAURI2-ALIGNMENT-AUDIT-2026-10-18.md` 与 `docs/TAURI2-ALIGNMENT-EXECUTION-PLAN-2026-10-18.md`。
 
 **方针**（2026-10-18 定）：**跨平台不一致的不做**。据此把 `window.Window` 的剩余差异分成

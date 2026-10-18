@@ -174,8 +174,17 @@ internal static class TraySelfTest
         const string script = """
             (async () => {
               const report = [];
-              const check = (ok, what) => report.push((ok ? 'OK: ' : '失败: ') + what);
+              // 每完成一步立即回传：进程若在下一步崩溃，这条进度就是崩溃点。
+              // 最终的 report 仍照旧一次性回传（结论判定不受影响）。
+              const progress = (line) => oriel.postMessage('tray-js-progress', { line });
+              const check = (ok, what) => {
+                const line = (ok ? 'OK: ' : '失败: ') + what;
+                report.push(line);
+                progress(line);
+              };
+              progress('脚本开始执行');
               try {
+                progress('即将调用 tray.new');
                 const tray = await oriel.tray.new({ id: 'js-tray', tooltip: 'from page', iconAsTemplate: false });
                 check(tray && tray.id === 'js-tray', 'oriel.tray.new 返回带 id 的句柄');
 
@@ -185,10 +194,15 @@ internal static class TraySelfTest
                 const all = await oriel.tray.getAll();
                 check(all.some((t) => t.id === 'js-tray'), 'getAll 里能看到它');
 
+                progress('即将调用 tray.setTooltip');
                 await tray.setTooltip('changed');
+                progress('即将调用 tray.setTitle');
                 await tray.setTitle('99');
+                progress('即将调用 tray.setIconAsTemplate');
                 await tray.setIconAsTemplate(true);
+                progress('即将调用 tray.setMenu');
                 await tray.setMenu([{ id: 'x', label: 'X' }, { type: 'separator' }]);
+                progress('即将调用 tray.setVisible');
                 await tray.setVisible(false);
                 await tray.setVisible(true);
                 check(true, '句柄的全部 set* 方法都成功往返');
@@ -196,6 +210,7 @@ internal static class TraySelfTest
                 const missing = await oriel.tray.getById('no-such');
                 check(missing === null, '不存在的 id 返回 null');
 
+                progress('即将调用 tray.close');
                 const removed = await tray.close();
                 check(removed === true, 'close() 移除成功');
                 check((await oriel.tray.getById('js-tray')) === null, '移除后取不到了');
@@ -213,6 +228,29 @@ internal static class TraySelfTest
 
         window.MessageReceived += args =>
         {
+            // **即时进度**（诊断通道）：页面每完成一步就推一条，宿主立刻打印。
+            //
+            // 为什么需要它：`tray-js` 在 macOS 上曾出现 SIGSEGV（退出码 139），而原来的
+            // report 是**脚本跑完后一次性回传**的——进程一崩，日志里只剩"开始"，
+            // 连崩在 new / setMenu / close 哪一步都不知道。分段上报之后，最后一条进度
+            // 就是崩溃点。这条通道不参与结论判定，只是取证。
+            if (args.Name == "tray-js-progress")
+            {
+                try
+                {
+                    using var progress = System.Text.Json.JsonDocument.Parse(args.Json);
+                    string line = progress.RootElement.GetProperty("line").GetString() ?? string.Empty;
+                    Console.WriteLine($"[tray-js-selftest] 进度: {line}");
+                    Console.Out.Flush();
+                }
+                catch
+                {
+                    // 诊断输出坏了不该影响自检结论
+                }
+
+                return;
+            }
+
             if (args.Name != "tray-js-selftest")
             {
                 return;
