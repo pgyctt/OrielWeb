@@ -1486,6 +1486,45 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         _ = GtkNative.GtkWindowSetIconFromFile(_gtkWindow, path, 0);
     }
 
+    /// <summary>从内存里的图像字节设置窗口图标（见 <see cref="IWindowBackend.SetIconFromBytes"/>）。</summary>
+    /// <remarks>
+    /// 与托盘图标共用 <see cref="GtkPixbufFactory"/>（RGBA → GdkPixbuf）。
+    /// 注意 <c>gtk_window_set_icon</c> 会 ref 一次，所以这里仍要释放**自己**那份 pixbuf。
+    /// </remarks>
+    public void SetIconFromBytes(byte[] bytes)
+    {
+        if (!WindowAlive || bytes is null || bytes.Length == 0)
+        {
+            return;
+        }
+
+        OrielImage image;
+        try
+        {
+            image = OrielImage.FromBytes(bytes);
+        }
+        catch (OrielImageFormatException ex)
+        {
+            OrielDiagnostics.Report($"[OrielWeb] setIcon 的图像数据无法解码：{ex.Message}");
+            return;
+        }
+
+        nint pixbuf = GtkPixbufFactory.CreatePixbuf(image);
+        if (pixbuf == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            GtkNative.GtkWindowSetIcon(_gtkWindow, pixbuf);
+        }
+        finally
+        {
+            GtkNative.GObjectUnref(pixbuf);
+        }
+    }
+
     /// <summary>
     /// 设置窗口底色（见 <see cref="IWindowBackend.SetBackgroundColor"/>）。
     /// </summary>

@@ -458,6 +458,11 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// </remarks>
     public void SetIcon(string path) => Backend.SetIcon(path);
 
+    /// <summary>从内存里的图像字节设置窗口图标（对标 Tauri 的 `setIcon` 收字节形式）。</summary>
+    /// <param name="bytes">PNG 或 ICO 的原始字节。</param>
+    /// <remarks>落点与平台差异同 <see cref="SetIcon"/>。见 <see cref="IWindowBackend.SetIconFromBytes"/>。</remarks>
+    public void SetIconFromBytes(byte[] bytes) => Backend.SetIconFromBytes(bytes);
+
     /// <summary>设置窗口底色（对标 Tauri 的 `Window.setBackgroundColor()`）。</summary>
     /// <param name="argb"><c>0xAARRGGBB</c>。</param>
     /// <remarks>

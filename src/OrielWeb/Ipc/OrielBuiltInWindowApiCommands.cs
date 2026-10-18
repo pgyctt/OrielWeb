@@ -127,13 +127,39 @@ internal static class OrielBuiltInWindowApiCommands
                 };
                 return true;
 
-            // 图标：收路径字符串。Tauri 的 setIcon 还收字节数组与 Image handle，
-            // 这两种本库暂不支持（见 docs 的记录），所以这里只解析 path 一种参数。
+            // 图标：两种参数二选一——`path`（文件路径）或 `bytes`（base64 的图像数据）。
+            // 字节走 base64 而不是数字数组：同一个 32x32 PNG 用数组要四倍体积，
+            // 而 IPC 是 JSON 文本，体积直接变成解析开销。
             case "window.setIcon":
                 handler = static (sender, args) =>
                 {
-                    Resolve(sender, args).SetIcon(OrielJson.GetRequiredArg<string>(args, "path", null));
-                    return null;
+                    var target = Resolve(sender, args);
+
+                    if (OptionalString(args, "path") is { } iconPath)
+                    {
+                        target.SetIcon(iconPath);
+                        return null;
+                    }
+
+                    if (OptionalString(args, "bytes") is { } base64)
+                    {
+                        byte[] decoded;
+                        try
+                        {
+                            decoded = Convert.FromBase64String(base64);
+                        }
+                        catch (FormatException ex)
+                        {
+                            // 说清是**编码**错而不是图像错：这两种错误的修法完全不同
+                            // （前者是页面侧的转换 bug，后者是选错了文件）。
+                            throw new OrielIpcException($"window.setIcon 的 bytes 不是合法的 base64：{ex.Message}");
+                        }
+
+                        target.SetIconFromBytes(decoded);
+                        return null;
+                    }
+
+                    throw new OrielIpcException("window.setIcon 需要 path 或 bytes 其中之一。");
                 };
                 return true;
 
@@ -635,6 +661,18 @@ internal static class OrielBuiltInWindowApiCommands
            && args.TryGetProperty(property, out JsonElement element)
            && element.ValueKind is JsonValueKind.True or JsonValueKind.False
             ? element.GetBoolean()
+            : null;
+
+    /// <summary>取可选的字符串参数；缺失、类型不对或空串都给 <c>null</c>。</summary>
+    /// <remarks>
+    /// 空串算"没给"：这些参数都是路径/base64 之类，空串是明显的占位符而不是有意义的输入，
+    /// 让它落到"两个参数都没给"的错误分支比让它传到平台侧更好排查。
+    /// </remarks>
+    private static string? OptionalString(JsonElement args, string property)
+        => args.ValueKind == JsonValueKind.Object
+           && args.TryGetProperty(property, out JsonElement element)
+           && element.ValueKind == JsonValueKind.String
+            ? (element.GetString() is { Length: > 0 } value ? value : null)
             : null;
 
     private static int RequiredInt(JsonElement args, string property, string commandName)

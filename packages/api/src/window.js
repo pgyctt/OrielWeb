@@ -94,6 +94,69 @@ function labelOf(target) {
 }
 
 /**
+ * 把 Tauri `JsImage` 里的三种"字节"写法归一成 `Uint8Array`；不是字节形式就返回 `null`。
+ *
+ * @param {any} value
+ * @returns {Uint8Array | null}
+ * @remarks
+ * `number[]` 的每一项都要校验成 0..255 的整数：`new Uint8Array([999])` 会**静默截断**
+ * 成 231，于是页面拿到一个"没报错但图标不对"的结果。这类输入通常来自
+ * `Array.from(fileReader.result)`，写错一位就会被截断，所以宁可当场抛。
+ */
+function toImageBytes(value) {
+    if (value instanceof Uint8Array) {
+        return value;
+    }
+
+    if (value instanceof ArrayBuffer) {
+        return new Uint8Array(value);
+    }
+
+    // TypedArray / DataView 一族（Tauri 的类型只写了 Uint8Array，但别的视图在运行时同样常见）
+    if (ArrayBuffer.isView(value)) {
+        return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    }
+
+    if (Array.isArray(value)) {
+        for (let i = 0; i < value.length; i++) {
+            const byte = value[i];
+            if (typeof byte !== 'number' || !Number.isInteger(byte) || byte < 0 || byte > 255) {
+                throw new TypeError(
+                    `setIcon: 字节数组的第 ${i} 项不是 0..255 的整数（收到 ${String(byte)}）——` +
+                    '它会被 Uint8Array 静默截断，所以这里直接拒。');
+            }
+        }
+
+        return Uint8Array.from(value);
+    }
+
+    return null;
+}
+
+/**
+ * `Uint8Array` → base64。
+ *
+ * @param {Uint8Array} bytes
+ * @returns {string}
+ * @remarks
+ * 不用 `btoa(String.fromCharCode(...bytes))`：那个写法在参数量大时会**爆栈**
+ * （展开运算符把每个字节都变成一个实参），而图标动辄几十 KB。
+ * 分块累加是这里唯一需要小心的地方。
+ */
+function bytesToBase64(bytes) {
+    // 分块是为了不把每个字节都变成一个实参：一次 apply/展开几万个参数会爆栈，
+    // 而图标动辄几十 KB。0x4000 是留了余量的值（V8 的实参上限约 65535）。
+    const CHUNK = 0x4000;
+    let binary = '';
+
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+    }
+
+    return btoa(binary);
+}
+
+/**
  * 把 Tauri 的 `Color` 归一成宿主认的 `0xAARRGGBB`。
  *
  * 接受四种形状（与 Tauri 的类型定义一致）：
@@ -543,17 +606,24 @@ export class Window {
      * - Linux 的 Wayland 下窗口图标由合成器决定，通常忽略本调用。
      */
     setIcon(icon) {
-        if (typeof icon !== 'string') {
-            throw new TypeError(
-                'setIcon: 目前只支持图像文件路径（string）。字节数组与 Image 对象的形式还未支持' +
-                '——见本方法的文档。');
+        if (typeof icon === 'string') {
+            if (icon === '') {
+                throw new TypeError('setIcon: 路径不能是空字符串');
+            }
+
+            return invoke('window.setIcon', { label: this.label, path: icon });
         }
 
-        if (icon === '') {
-            throw new TypeError('setIcon: 路径不能是空字符串');
+        // Tauri 的 JsImage 里，"字节"有三种写法：Uint8Array / ArrayBuffer / number[]。
+        // 它们等价，这里统一成 Uint8Array 再编码。
+        const bytes = toImageBytes(icon);
+        if (bytes !== null) {
+            return invoke('window.setIcon', { label: this.label, bytes: bytesToBase64(bytes) });
         }
 
-        return invoke('window.setIcon', { label: this.label, path: icon });
+        throw new TypeError(
+            'setIcon: icon 必须是文件路径（string）、Uint8Array / ArrayBuffer / number[] 形式的' +
+            'PNG/ICO 字节，或 Image 对象——**Image 对象本库还不支持**（那需要 @orielweb/api/image）。');
     }
 
     /**

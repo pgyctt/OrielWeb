@@ -334,6 +334,42 @@ internal static class WindowSelfTest
                         ("label", SelfTestJson.String(ProbeLabel)),
                         ("path", SelfTestJson.String(Path.Combine(AppContext.BaseDirectory, "no-such-icon.png")))));
 
+                // ---- 字节形式（M5-6 补）：把 app.png 读成字节再设回去 ----
+                //
+                // 这条比路径形式**强**：它真的走完了"base64 → 宿主解码 → 造原生图标"整条路，
+                // 而末尾的坏字节用例证明解码失败是被处理掉的（不抛、保持原图标）。
+                string iconBase64 = Convert.ToBase64String(await File.ReadAllBytesAsync(iconPath));
+                await AskMainAsync(
+                    "window.setIcon",
+                    SelfTestJson.Object(
+                        ("label", SelfTestJson.String(ProbeLabel)),
+                        ("bytes", SelfTestJson.String(iconBase64))));
+
+                // 坏字节：不是 PNG/ICO → 不该抛（与"路径不存在"同一语义）
+                await AskMainAsync(
+                    "window.setIcon",
+                    SelfTestJson.Object(
+                        ("label", SelfTestJson.String(ProbeLabel)),
+                        ("bytes", SelfTestJson.String(Convert.ToBase64String("not an image"u8.ToArray())))));
+
+                // 非法 base64：**应当抛**，而且错误信息要指向"编码"而不是"图像"
+                // （两者的修法完全不同：一个是页面的转换 bug，一个是选错了文件）
+                bool badBase64Rejected = false;
+                try
+                {
+                    await AskMainAsync(
+                        "window.setIcon",
+                        SelfTestJson.Object(
+                            ("label", SelfTestJson.String(ProbeLabel)),
+                            ("bytes", SelfTestJson.String("这显然不是 base64!!"))));
+                }
+                catch (InvalidOperationException)
+                {
+                    badBase64Rejected = true;
+                }
+
+                Check(badBase64Rejected, "非法的 base64 应当被拒（不能当成图像解码失败静默放过）");
+
                 // ---- 窗口底色（M5-6）----
                 //
                 // **断言强度同样有限**（与图标那组同理）：Tauri 与本库都没有"读回当前底色"

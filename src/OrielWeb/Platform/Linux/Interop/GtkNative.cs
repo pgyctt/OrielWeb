@@ -641,6 +641,18 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gtk, EntryPoint = "gtk_window_set_icon_from_file", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial int GtkWindowSetIconFromFile(nint window, string filename, nint error);
 
+    /// <summary>
+    /// 用一个 <c>GdkPixbuf</c> 设置窗口图标（对标 <c>gtk_window_set_icon</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 这是"从内存里的图像数据设图标"那条路——<c>_from_file</c> 那条要求先落盘，
+    /// 而页面给的字节本来就在内存里，为它写一个临时文件既慢又留下垃圾。
+    /// GTK 会**接管这个 pixbuf 的引用**（<c>gtk_window_set_icon</c> 会 ref 一次），
+    /// 所以调用方仍然要自己 <c>g_object_unref</c> 掉自己那份（见调用点）。
+    /// </remarks>
+    [LibraryImport(Gtk, EntryPoint = "gtk_window_set_icon")]
+    internal static partial void GtkWindowSetIcon(nint window, nint pixbuf);
+
     [LibraryImport(WebKit, EntryPoint = "webkit_web_view_load_uri", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void WebkitWebViewLoadUri(nint webview, string uri);
 

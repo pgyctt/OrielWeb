@@ -1312,6 +1312,36 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         ApplyIconToApplication(path);
     }
 
+    /// <summary>从内存里的图像字节设置窗口图标（见 <see cref="IWindowBackend.SetIconFromBytes"/>）。</summary>
+    /// <remarks>
+    /// 与托盘图标共用 <see cref="MacOSImageFactory.CreateNSImage"/>（RGBA → CGImage → NSImage）。
+    /// 落点仍是**应用（Dock）图标**——macOS 没有窗口级图标（见 <see cref="SetIcon"/>）。
+    /// </remarks>
+    public void SetIconFromBytes(byte[] bytes)
+    {
+        if (bytes is null || bytes.Length == 0)
+        {
+            return;
+        }
+
+        OrielImage image;
+        try
+        {
+            image = OrielImage.FromBytes(bytes);
+        }
+        catch (OrielImageFormatException ex)
+        {
+            OrielDiagnostics.Report($"[OrielWeb] setIcon 的图像数据无法解码：{ex.Message}");
+            return;
+        }
+
+        nint nsImage = MacOSImageFactory.CreateNSImage(image);
+        if (nsImage != 0)
+        {
+            ObjCRuntime.SendVoidObj(SharedApplication(), ObjCRuntime.Sel("setApplicationIconImage:"), nsImage);
+        }
+    }
+
     /// <summary>
     /// 设置是否可关闭（切 <c>NSWindowStyleMaskClosable</c>，见 <see cref="IWindowBackend.SetClosable"/>）。
     /// </summary>

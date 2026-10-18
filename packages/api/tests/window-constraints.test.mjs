@@ -135,7 +135,7 @@ test('setClosable 同样只收布尔，且与另外两个走同一条路径', as
     clearMocks();
 });
 
-test('setIcon 只收路径字符串，其他 JsImage 形式当场抛并说明原因', async () => {
+test('setIcon 只拒 Image 对象，路径与字节都收', async () => {
     clearMocks();
     const { calls, transport } = makeTransport('main', { 'window.setIcon': null });
     setTransportOverride(transport);
@@ -145,16 +145,13 @@ test('setIcon 只收路径字符串，其他 JsImage 形式当场抛并说明原
     await win.setIcon('/icons/app.png');
     assert.deepEqual(calls[0], ['window.setIcon', { label: 'main', path: '/icons/app.png' }]);
 
-    // Tauri 的 JsImage 还包含字节形式与 Image handle。本库都不支持——
-    // 关键是**当场抛**并且错误信息说清"为什么"，而不是发一条注定失败的 IPC
-    // （后者在页面上表现为一个没有上下文的 reject）。
-    for (const unsupported of [new Uint8Array([1, 2]), new ArrayBuffer(4), [1, 2, 3], { handle: 1 }]) {
-        assert.throws(
-            () => win.setIcon(unsupported),
-            (error) => error instanceof TypeError && /路径/.test(error.message),
-            `这些输入应当被拒：${String(unsupported)}`);
-    }
+    // 早先这条测试断言"字节形式应当被拒"——现在它们**已经支持了**（见下面两个用例），
+    // 所以这里只留 Image 对象：它是 JsImage 里唯一还需要 @orielweb/api/image 的形式。
+    assert.throws(
+        () => win.setIcon({ rid: 1 }),
+        (error) => error instanceof TypeError && /Image/.test(error.message));
 
+    assert.throws(() => win.setIcon(null), TypeError);
     assert.throws(() => win.setIcon(''), TypeError);
 
     // 抛了就不该发命令
@@ -234,6 +231,58 @@ test('setBackgroundColor：坏输入当场抛，且说清错在哪', async () =>
     // 一条都不该发出去
     assert.equal(calls.length, 0);
 
+    clearMocks();
+});
+
+test('setIcon：字节的三种写法都编码成同一个 base64', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', { 'window.setIcon': null });
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    // 一个最小的 PNG 头 + 两个任意字节；这里只验**编码**，不验图像能否解码（那是宿主的事）
+    const bytes = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+    await win.setIcon(Uint8Array.from(bytes));
+    await win.setIcon(Uint8Array.from(bytes).buffer);       // ArrayBuffer
+    await win.setIcon(bytes);                                // number[]
+
+    assert.equal(calls.length, 3);
+
+    // 三种写法必须给出**同一个** base64——否则同一个图标会因为写法不同而表现不同
+    const encoded = calls.map((call) => call[1].bytes);
+    assert.deepEqual(encoded[1], encoded[0], 'ArrayBuffer 与 Uint8Array 应当一致');
+    assert.deepEqual(encoded[2], encoded[0], 'number[] 与 Uint8Array 应当一致');
+
+    // 与手工 base64 对账（\x89PNG\r\n\x1a\n）
+    assert.equal(encoded[0], btoa('\x89PNG\r\n\x1a\n'));
+
+    // 路径形式仍然走 path，不能与 bytes 混在一起
+    await win.setIcon('/icons/app.png');
+    assert.equal(calls[3][1].path, '/icons/app.png');
+    assert.equal(calls[3][1].bytes, undefined);
+
+    clearMocks();
+});
+
+test('setIcon：越界的字节必须当场抛（Uint8Array 会静默截断）', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', { 'window.setIcon': null });
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    // 999 会被 new Uint8Array 截断成 231——不拦的话页面拿到的是"没报错但图标不对"
+    assert.throws(() => win.setIcon([999]), (e) => e instanceof TypeError && /0\.\.255/.test(e.message));
+    assert.throws(() => win.setIcon([0, -1]), TypeError);
+    assert.throws(() => win.setIcon([0, 1.5]), TypeError);
+    assert.throws(() => win.setIcon([0, '2']), TypeError);
+
+    // Image 对象（本库还不支持）也要给出可排查的说明
+    assert.throws(() => win.setIcon({ rid: 1 }), (e) => e instanceof TypeError && /Image/.test(e.message));
+
+    assert.equal(calls.length, 0);
     clearMocks();
 });
 

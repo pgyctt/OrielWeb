@@ -255,6 +255,23 @@ internal interface IWindowBackend
     void SetIcon(string path);
 
     /// <summary>
+    /// 设置窗口图标，图像数据直接来自内存（PNG / ICO 字节）。
+    /// </summary>
+    /// <param name="bytes">PNG 或 ICO 的原始字节（ICON 与 PNG 都收，见 <see cref="OrielImage.FromBytes"/>）。</param>
+    /// <remarks>
+    /// 与 <see cref="SetIcon(string)"/> 是同一个落点、同一套平台差异（macOS 影响整个应用、
+    /// Linux 的 Wayland 通常忽略），区别只在数据从哪来：
+    /// 这条把字节交给各平台的"RGBA → 原生图像"工厂
+    /// （Windows <c>Win32IconFactory</c>、macOS <c>MacOSImageFactory</c>、Linux <c>GtkPixbufFactory</c>），
+    /// 而那三个工厂本来就是给托盘图标用的——这里只是把它们接到窗口图标上。
+    /// <para>
+    /// 新增这一条是因为 Tauri 的 <c>JsImage</c> 里字符串（路径）只占一种，
+    /// 另外三种都是字节/数组形式。
+    /// </para>
+    /// </remarks>
+    void SetIconFromBytes(byte[] bytes);
+
+    /// <summary>
     /// 设置窗口底色（<c>0xAARRGGBB</c>）——页面透明、或内核还没加载完时看到的那个颜色。
     /// </summary>
     /// <remarks>

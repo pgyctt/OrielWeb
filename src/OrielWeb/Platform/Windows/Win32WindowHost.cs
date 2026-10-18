@@ -2452,6 +2452,38 @@ internal partial class Win32WindowHost : IWindowBackend
         ApplyExplicitIcon(_hwnd, path);
     }
 
+    /// <summary>从内存里的图像字节设置窗口图标（见 <see cref="IWindowBackend.SetIconFromBytes"/>）。</summary>
+    /// <remarks>
+    /// 与 PNG 文件那条路（<see cref="ApplyPngIcon"/>）共用后半段：解码成 RGBA 再交给
+    /// 托盘那套 <see cref="Win32IconFactory.CreateFromRgba"/>。差别只是数据来源。
+    /// </remarks>
+    public void SetIconFromBytes(byte[] bytes)
+    {
+        if (_hwnd == 0 || bytes is null || bytes.Length == 0)
+        {
+            return;
+        }
+
+        OrielImage image;
+        try
+        {
+            image = OrielImage.FromBytes(bytes);
+        }
+        catch (OrielImageFormatException ex)
+        {
+            // 认不出的格式：保持现有图标，不抛——与 LoadImageW 返回 0 时的语义一致。
+            // 但**记一笔**：这条路上"静默失败"是页面最难查的那种（它只知道命令成功了）。
+            OrielDiagnostics.Report($"[OrielWeb] setIcon 的图像数据无法解码：{ex.Message}");
+            return;
+        }
+
+        nint icon = Win32IconFactory.CreateFromRgba(image);
+        if (icon != 0)
+        {
+            _ = Win32.SendMessageW(_hwnd, Win32Constants.WM_SETICON, Win32Constants.ICON_BIG, icon);
+        }
+    }
+
     /// <summary>
     /// 设置窗口底色（见 <see cref="IWindowBackend.SetBackgroundColor"/>）。
     /// </summary>
