@@ -448,6 +448,14 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// </remarks>
     public void SetIcon(string path) => Backend.SetIcon(path);
 
+    /// <summary>设置窗口底色（对标 Tauri 的 `Window.setBackgroundColor()`）。</summary>
+    /// <param name="argb"><c>0xAARRGGBB</c>。</param>
+    /// <remarks>
+    /// 这是"页面透明、或内核还没加载完时露出来"的颜色。三平台都落到 webview 自己的底色，
+    /// 语义一致。见 <see cref="IWindowBackend.SetBackgroundColor"/>。
+    /// </remarks>
+    public void SetBackgroundColor(uint argb) => Backend.SetBackgroundColor(argb);
+
     public void Focus() => Backend.Focus();
     public void Maximize() => Backend.Maximize();
     public void Minimize() => Backend.Minimize();

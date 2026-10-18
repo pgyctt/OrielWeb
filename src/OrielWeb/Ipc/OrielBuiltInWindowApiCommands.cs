@@ -137,6 +137,18 @@ internal static class OrielBuiltInWindowApiCommands
                 };
                 return true;
 
+            // 底色：页面侧已经把 hex / 数组 / 对象统一解析成 ARGB 整数，这里只收整数。
+            // 解析放在页面侧而不是这里，是因为 Tauri 的 Color 有四种形状，
+            // 而那套归一化逻辑在 JS 里能写单测、在宿主这边只能靠真机试。
+            case "window.setBackgroundColor":
+                handler = static (sender, args) =>
+                {
+                    Resolve(sender, args).SetBackgroundColor(
+                        OrielJson.GetRequiredArg<uint>(args, "argb", null));
+                    return null;
+                };
+                return true;
+
             // ---- 尺寸约束（M5-6）----
             //
             // 只给 setMaxSize；min 早就有 window.setMinSize 了。页面侧的

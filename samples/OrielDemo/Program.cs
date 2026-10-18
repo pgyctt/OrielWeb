@@ -234,6 +234,7 @@ internal static class Program
                         "window.setMinimizable",
                         "window.setClosable",
                         "window.setIcon",
+                        "window.setBackgroundColor",
                         // 几何查询（E2）：**刻意不放进标题栏白名单**——自绘标题栏不需要它们，
                         // 而它们能按 label 读到**别的**窗口的几何。所以要用必须显式声明。
                         "window.innerSize",

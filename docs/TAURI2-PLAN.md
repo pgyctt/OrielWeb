@@ -337,27 +337,25 @@ F1 ─→ F2（scope 系统是 convertFileSrc 的前置）
 | **M5-3** Window 事件转发 | ✅ 完成 | `Window.listen` / `once` / `emit` / `emitTo`（纯委托到 `event` 模块）+ `unminimize`（映射到 `window.restore`，三平台同一个原生动作） |
 | **M5-4** `isEnabled` / `setEnabled` | ✅ 完成（Windows 已验证） | 三平台：`IsWindowEnabled`/`EnableWindow`、`gtk_widget_get_sensitive`/`set_sensitive`、Cocoa `ignoresMouseEvents`。**macOS 只挡鼠标不挡键盘**，如实记录。`isEnabled` 进白名单、`setEnabled` 不进 |
 | **M5-5** 剩余 36 项的**归类** | ✅ 完成（归类，不是实现） | H 的清单现在**每一项都有归属**：已实现 / 有意不做（2 项移动端专有）/ 待做（36 项，按批次优先级分 9 组、每组写明为什么还没做）。见 `packages/api/tests/tauri-alignment.test.mjs` 的 `METHOD_GAP_GROUPS` |
-| **M5-6** 待做清单的实现 | 🔄 进行中（8 项已实现；方针下待做 **1** 项） | **已完成**：`requestUserAttention` + `UserAttentionType`；`setMaxSize`；`setSizeConstraints`；`setMaximizable` / `setMinimizable`；`setClosable`（Windows 灰化系统菜单 `SC_CLOSE`，顺带把 `IsClosable` 从"有 `WS_SYSMENU`"修正为"存在且未灰化"）；`onThemeChanged`（宿主三平台早就检测并广播 `theme.changed`，缺的只是页面侧包装）；`setIcon`（**路径形式**；三平台复用创建期图标代码——Windows 顺手填掉了"`LoadImageW` 只认 ICO/BMP，喂 PNG 静默返回 0"这个久已记录的缺口，PNG 现在经 `OrielImage` + 托盘那套 `Win32IconFactory.CreateFromRgba` 造 HICON）。<br>**方针（用户 2026-10-18 定）：跨平台不一致的不做。** 据此把剩余待做项分成 A/B 标记（见 `tauri-alignment.test.mjs` 的 `METHOD_GAP_GROUPS`，有测试钉住）：**A·跨平台不一致 = 不做**（外观开关 5 项、每平台一套 6 项、特效 2 项、光标 6 项、任务栏徽标 4 项、`setTheme` 共 **24** 项）；**B·跨平台一致·待做 = 1 项**（`onScaleChanged`）。另有 `onDragDropEvent` 记入 `METHOD_DIVERGENCES`（**有意不做**）。 |
+| **M5-6** 待做清单的实现 | 🔄 进行中（9 项已实现；方针下待做 **1** 项） | **已完成**：`requestUserAttention` + `UserAttentionType`；`setMaxSize`；`setSizeConstraints`；`setMaximizable` / `setMinimizable`；`setClosable`（Windows 灰化系统菜单 `SC_CLOSE`，顺带把 `IsClosable` 从"有 `WS_SYSMENU`"修正为"存在且未灰化"）；`onThemeChanged`（宿主三平台早就检测并广播 `theme.changed`，缺的只是页面侧包装）；`setIcon`（**路径形式**；三平台复用创建期图标代码——Windows 顺手填掉了"`LoadImageW` 只认 ICO/BMP，喂 PNG 静默返回 0"这个久已记录的缺口，PNG 现在经 `OrielImage` + 托盘那套 `Win32IconFactory.CreateFromRgba` 造 HICON）；`setBackgroundColor`（三平台一致的 webview 底色；**复用**创建期的 `ApplyBackgroundColor`，各加一条"运行期优先、否则回落创建期选项"的分支，ARGB 拆解集中到 `OrielWindowOptions.UnpackArgb`）。<br>**方针（用户 2026-10-18 定）：跨平台不一致的不做。** 据此把剩余待做项分成 A/B 标记（见 `tauri-alignment.test.mjs` 的 `METHOD_GAP_GROUPS`，有测试钉住）：**A·跨平台不一致 = 不做**（外观开关 4 项、每平台一套 6 项、特效 2 项、光标 6 项、任务栏徽标 4 项、`setTheme` 共 **23** 项）；**B·跨平台一致·待做 = 1 项**（`onScaleChanged`）。另有 `onDragDropEvent` 记入 `METHOD_DIVERGENCES`（**有意不做**）。 |
 
-### 背景色：一个此前未被发现的缺陷（2026-10-18 查证）
+### 背景色：一次错误结论的更正（2026-10-18）
 
-做 `setBackgroundColor` 的调研时发现：**`OrielWindowOptions.BackgroundColor` / `WithBackgroundColor(...)` 是一个设置了完全没有效果的公开 API。**
+**更正**：本节原先写着"`WithBackgroundColor` 是一个设置了完全没有效果的公开 API、`TryGetBackgroundArgb` 全仓零调用者"。**这个结论是错的。**
 
-- `WindowOptionsTests.cs` 有 3 个测试覆盖它，但**只验证 ARGB 的解包**（`TryGetBackgroundArgb`），没有一个测试验证"底色真的生效"；
-- 而 `TryGetBackgroundArgb` 在整个仓库里**零调用者**，平台侧也没有任何 `Background` 落点（`DefaultBackgroundColor` / `underPageBackgroundColor` / `webkit_web_view_set_background_color` 都**只出现在注释里**）;
-- 也就是说，用户写 `.WithBackgroundColor(0xFF123456)` 会正确存下、正确解析，然后**什么都不发生，也不报错**——正是最难查的那类失败。代码注释描述的"内核就绪前的底色"这个功能，创建期与运行期**都没实现**。
+真实情况是：创建期背景色**早就完整实现了**，三平台各有落点：
 
-**要做 `setBackgroundColor`，得连同创建期一起补**（它们是同一个功能的两端，只补运行期会让这个缺陷换一种形式留下来）。三平台的真实成本：
-
-| 平台 | 落点 | 现状 |
+| 平台 | 实现 | 位置 |
 | --- | --- | --- |
-| Linux | `webkit_web_view_set_background_color`（+ 已定义的 `GdkRGBA`） | P/Invoke 已就位，**只差调用** |
-| macOS | `WKWebView.underPageBackgroundColor`（12+）或 `NSWindow.backgroundColor`；`ObjCRuntime` 有 `SendVoidDouble4` 可造 NSColor | **只差调用** |
-| Windows | WebView2 controller 的 `put_DefaultBackgroundColor` | **本库尚无 `ICoreWebView2Controller` 接口定义**，要新增 COM 互操作 + `COREWEBVIEW2_COLOR` 结构 |
+| Windows | `WebView2Utilities.GetInterface<ICoreWebView2Controller2>` + `put_DefaultBackgroundColor(...).ThrowOnError()` | `Win32WindowHost.cs` 的 `ApplyBackgroundColor`（由 `InitializeWebView2` 之后调用） |
+| macOS | `NSWindow.backgroundColor` + `WKWebView.underPageBackgroundColor`（`respondsToSelector:` 探测 12+） | `MacOSWindowHost.cs` 的创建流程 |
+| Linux | `webkit_web_view_set_background_color` | `LinuxWindowHost.cs` 的 `ApplyBackgroundColor` |
 
-另外它**没有读取路径可闭环验证**（Tauri 也没有 `backgroundColor` 的读 API，加一个就是"偷偷发明 API"，会被 `EXTRAS` 检查拦住），所以自检只能验"命令跑得通 + 颜色解析正确"，**证明不了颜色真的显示出来了**。
+**我为什么会判错**：用 `Select-String -Path src\OrielWeb\**\*.cs` 搜索时，PowerShell 的通配符 `**` **不会递归子目录**——它没扫到任何 `Platform\Windows\**`、`Platform\Linux\**`、`Platform\MacOS\**` 下的文件，于是我看到的"零调用者"只是"搜索范围为零"。**同一原因可能还影响过本项目其他结论**，所以：本仓搜代码一律用 `grep`/`rg` 工具，不要用 PowerShell 的 `**` 通配符。
 
-**结论**：这项不是"再写一个 setter"，而是"补一个整体缺失的功能 + Windows 新增 COM 互操作"。建议单独一轮做，不要塞进别的批次里。
+**这一轮的真正增量**是运行期 `setBackgroundColor`：三平台各加一个"运行期值优先、否则回落创建期选项"的分支，**复用**已有的 `ApplyBackgroundColor`，并把 ARGB 拆解集中到 `OrielWindowOptions.UnpackArgb`（拆法仍然只有一处）。原先被误判为"缺失"的创建期功能一行都没改。
+
+它**没有读取路径可闭环验证**（Tauri 也没有 `backgroundColor` 的读 API，加一个就是"偷偷发明 API"，会被 `EXTRAS` 检查拦住），所以自检只能验"命令跑得通 + 颜色解析正确"，**证明不了颜色真的显示出来了**——这一点不变。
 
 
 ### M3 的状态（2026-10-17）

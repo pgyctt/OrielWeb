@@ -163,6 +163,80 @@ test('setIcon 只收路径字符串，其他 JsImage 形式当场抛并说明原
     clearMocks();
 });
 
+test('setBackgroundColor：四种 Color 形状都归一成 0xAARRGGBB', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', { 'window.setBackgroundColor': null });
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+    const send = async (color) => {
+        await win.setBackgroundColor(color);
+        return calls[calls.length - 1][1].argb;
+    };
+
+    // hex：长写
+    assert.equal(await send('#123456'), 0xFF123456);
+    assert.equal(await send('#12345678'), 0x78123456);
+
+    // 不带 # 也认（从 CSS 抄过来的值常常没有 #）
+    assert.equal(await send('123456'), 0xFF123456);
+
+    // 短写展开：每位复制一次（#abc → #aabbcc）
+    assert.equal(await send('#abc'), 0xFFAABBCC);
+    assert.equal(await send('#abcd'), 0xDD_AABBCC);
+
+    // 数组：3 个按全不透明，4 个用给的 alpha
+    assert.equal(await send([18, 52, 86]), 0xFF123456);
+    assert.equal(await send([18, 52, 86, 120]), 0x78123456);
+
+    // 对象
+    assert.equal(await send({ red: 18, green: 52, blue: 86, alpha: 120 }), 0x78123456);
+    // alpha 缺省 → 全不透明。写错成 0 会让窗口整个透明，看着像"没生效"
+    assert.equal(await send({ red: 18, green: 52, blue: 86 }), 0xFF123456);
+
+    // 0 与 255 是边界，必须原样透传（不能因为 falsy 就当缺省）
+    assert.equal(await send([0, 0, 0, 0]), 0x00000000);
+    assert.equal(await send([255, 255, 255, 255]), 0xFFFFFFFF);
+
+    // 结果必须是无符号整数：用 << 24 算出负数会让宿主的 uint 解析拒绝
+    assert.ok((await send('#ffffff')) > 0, 'ARGB 应当是正数（无符号）');
+
+    clearMocks();
+});
+
+test('setBackgroundColor：坏输入当场抛，且说清错在哪', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', { 'window.setBackgroundColor': null });
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    // 分量越界 / 非整数：报出是哪一路
+    assert.throws(() => win.setBackgroundColor([256, 0, 0]), (e) => e instanceof TypeError && /红/.test(e.message));
+    assert.throws(() => win.setBackgroundColor([0, -1, 0]), (e) => e instanceof TypeError && /绿/.test(e.message));
+    assert.throws(() => win.setBackgroundColor([0, 0, 1.5]), (e) => e instanceof TypeError && /蓝/.test(e.message));
+    assert.throws(() => win.setBackgroundColor({ red: 0, green: 0, blue: 0, alpha: 300 }),
+        (e) => e instanceof TypeError && /alpha/.test(e.message));
+
+    // 长度不对
+    assert.throws(() => win.setBackgroundColor([1, 2]), TypeError);
+    assert.throws(() => win.setBackgroundColor([1, 2, 3, 4, 5]), TypeError);
+
+    // 认不出的字符串（含长度不对的 hex）
+    assert.throws(() => win.setBackgroundColor('#12345'), TypeError);
+    assert.throws(() => win.setBackgroundColor('tomato'), TypeError);
+    assert.throws(() => win.setBackgroundColor('#gggggg'), TypeError);
+
+    // 类型就不对
+    assert.throws(() => win.setBackgroundColor(null), TypeError);
+    assert.throws(() => win.setBackgroundColor(123), TypeError);
+
+    // 一条都不该发出去
+    assert.equal(calls.length, 0);
+
+    clearMocks();
+});
+
 test('setSizeConstraints 只发给了值的那一侧', async () => {
     clearMocks();
     const { calls, transport } = makeTransport('main', {

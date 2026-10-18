@@ -39,6 +39,9 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     /// <summary>窗口销毁后句柄已清零；门面在 Closed 之后迟到的调用经各 IWindowBackend 入口的这个守卫直接放弃。</summary>
     private bool WindowAlive => _gtkWindow != 0;
     private nint _webview;
+
+    /// <summary>运行期设过的窗口底色（<c>setBackgroundColor</c>）；<c>null</c> 表示没设过，用于回落创建期选项。</summary>
+    private uint? _runtimeBackgroundArgb;
     private nint _userContentManager;
     private volatile bool _loadedRaised;
 
@@ -665,6 +668,8 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
             _ = GtkNative.GtkWindowSetIconFromFile(_gtkWindow, _options.Icon, 0);
         }
 
+        // 底色（WithBackgroundColor）在创建期就应用过了：见上面那处 ApplyBackgroundColor()。
+
         if (_options.X is not null || _options.Y is not null)
         {
             // At(x,y)（与 Windows/macOS 对齐）：map 之前发出的 move 请求会被窗口管理器
@@ -713,10 +718,19 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     /// </remarks>
     private void ApplyBackgroundColor()
     {
-        if (_webview == 0 || !_options.TryGetBackgroundArgb(out byte a, out byte r, out byte g, out byte b))
+        // 运行期设过就以它为准（后设的赢）；没设过才回落到创建期选项。
+        uint? effective = _runtimeBackgroundArgb;
+        if (effective is null && _options.TryGetBackgroundArgb(out byte ca, out byte cr, out byte cg, out byte cb))
+        {
+            effective = ((uint)ca << 24) | ((uint)cr << 16) | ((uint)cg << 8) | cb;
+        }
+
+        if (effective is not { } argb || _webview == 0)
         {
             return;
         }
+
+        OrielWindowOptions.UnpackArgb(argb, out byte a, out byte r, out byte g, out byte b);
 
         var rgba = new GdkRGBA
         {
@@ -1436,6 +1450,19 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         }
 
         _ = GtkNative.GtkWindowSetIconFromFile(_gtkWindow, path, 0);
+    }
+
+    /// <summary>
+    /// 设置窗口底色（见 <see cref="IWindowBackend.SetBackgroundColor"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 只记下运行期的值再走一遍 <see cref="ApplyBackgroundColor"/>——创建期与运行期
+    /// 在 WebKitGTK 上是同一件事，没有理由写两份。
+    /// </remarks>
+    public void SetBackgroundColor(uint argb)
+    {
+        _runtimeBackgroundArgb = argb;
+        ApplyBackgroundColor();
     }
 
     /// <summary>

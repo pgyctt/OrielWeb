@@ -301,16 +301,13 @@ const METHOD_GAP_GROUPS = [
         reason: '【A·跨平台不一致】**各自缺一半**：`setShadow` 在 Linux 上没有对应概念（GTK 无阴影 API）；' +
             '`setAlwaysOnBottom` 同样只有 Windows/macOS 有；`setFocusable` 在 macOS 上没有公开入口' +
             '（只有私有的 `_setPreventsActivation`，用它等于把自己绑到未公开 API 上）；' +
-            '`setBackgroundColor` 语义倒是一致（Tauri 文档写明它是"webview 加载中、或透明页面背后'
-            + '看到"的那个颜色），**但本库连创建期的底色都没实现**——'
-            + '`OrielWindowOptions.WithBackgroundColor` 设置了不生效、也不报错，'
-            + '`TryGetBackgroundArgb` 全仓零调用者（详见 docs/TAURI2-PLAN.md 的那一节）。'
-            + '要做就得连创建期一起补，且 Windows 侧还缺 `ICoreWebView2Controller` 的 COM 互操作。' +
+            '`setBackgroundColor` **已经做了**（运行期），它是三平台一致的：'
+            + '都落到 webview 自己的底色（Windows `DefaultBackgroundColor`、'
+            + 'macOS `underPageBackgroundColor`、Linux `webkit_web_view_set_background_color`）。' +
             '`setDecorations`：Windows 上 `ComputeStyle` 是**创建期的静态决定**，' +
             '运行期切换要改整套样式并让 `WM_NCCALCSIZE` 的分支跟着变，而那条路我无法目视验证。',
         methods: [
             'window.Window#setDecorations', 'window.Window#setShadow',
-            'window.Window#setBackgroundColor',
             'window.Window#setFocusable',
             'window.Window#setAlwaysOnBottom',
         ],

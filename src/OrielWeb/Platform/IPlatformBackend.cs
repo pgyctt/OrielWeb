@@ -254,6 +254,23 @@ internal interface IWindowBackend
     /// </remarks>
     void SetIcon(string path);
 
+    /// <summary>
+    /// 设置窗口底色（<c>0xAARRGGBB</c>）——页面透明、或内核还没加载完时看到的那个颜色。
+    /// </summary>
+    /// <remarks>
+    /// 三平台都落到**引擎的底色**（而不是窗口客户区的画刷）：
+    /// Windows <c>ICoreWebView2Controller2.DefaultBackgroundColor</c>、
+    /// macOS <c>WKWebView.underPageBackgroundColor</c>（12+；取不到时回落
+    /// <c>NSWindow.backgroundColor</c>）、Linux <c>webkit_web_view_set_background_color</c>。
+    /// <para>
+    /// 之所以是三平台一致的：这三处都是"webview 自己的底色"，语义相同。
+    /// 这也与 <see cref="OrielWindowOptions.BackgroundColor"/> 的约定一致——
+    /// 该方法与它**共用同一套 ARGB 拆解**（<c>TryGetBackgroundArgb</c>），
+    /// 免得某平台把 R 与 B 搞反（那种错在深色底上不容易一眼看出来）。
+    /// </para>
+    /// </remarks>
+    void SetBackgroundColor(uint argb);
+
     void Show();
     void Hide();
     void Close();

@@ -354,25 +354,37 @@ public sealed class OrielWindowOptions
         => WithBackgroundColor(0xFF000000u | ((uint)red << 16) | ((uint)green << 8) | blue);
 
     /// <summary>
-    /// 底色拆成 (A, R, G, B)；未设置时返回 false。
+    /// ARGB 拆成四分量。
     /// </summary>
     /// <remarks>
-    /// 三个平台的实现都从这里取分量：ARGB 的拆法只写一处，免得某平台把 R 与 B 搞反
-    /// （那种错在深色底上不容易一眼看出来）。
+    /// **拆法只写这一处**：三平台（创建期与运行期的 <c>setBackgroundColor</c>）都从这里取分量，
+    /// 免得某平台把 R 与 B 搞反——那种错在深色底上不容易一眼看出来。
     /// </remarks>
-    internal bool TryGetBackgroundArgb(out byte a, out byte r, out byte g, out byte b)
+    internal static void UnpackArgb(uint argb, out byte a, out byte r, out byte g, out byte b)
     {
-        a = r = g = b = 0;
-        if (BackgroundColor is not { } argb)
-        {
-            return false;
-        }
-
         a = (byte)(argb >> 24);
         r = (byte)(argb >> 16);
         g = (byte)(argb >> 8);
         b = (byte)argb;
-        return true;
+    }
+
+    /// <summary>
+    /// 创建期底色拆成 (A, R, G, B)；未设置时返回 false。
+    /// </summary>
+    /// <remarks>
+    /// 运行期设过底色时，平台侧**不会**走这里（见各平台 <c>ApplyBackgroundColor</c> 的
+    /// "运行期优先"分支）——但两边共用 <see cref="UnpackArgb"/>，所以拆法仍然只有一处。
+    /// </remarks>
+    internal bool TryGetBackgroundArgb(out byte a, out byte r, out byte g, out byte b)
+    {
+        if (BackgroundColor is { } argb)
+        {
+            UnpackArgb(argb, out a, out r, out g, out b);
+            return true;
+        }
+
+        a = r = g = b = 0;
+        return false;
     }
 
     /// <summary>启动即最大化；见 <see cref="Maximized"/>。</summary>

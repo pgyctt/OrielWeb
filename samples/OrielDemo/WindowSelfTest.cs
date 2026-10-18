@@ -83,6 +83,10 @@ internal static class WindowSelfTest
                       .WithTitle("窗口探针")
                       .WithSize(360, 260)
                       .WithFrameless()
+                      // 创建期底色（WithBackgroundColor）：给一个值，让这条路径每次自检都真跑一遍。
+                      // 此前 demo 没设过它，于是"创建期底色"没有任何覆盖——而它正是
+                      // 运行期 setBackgroundColor 的回落分支。
+                      .WithBackgroundColor(0xFF102030)
                       .WithUrl(ProbeUrl));
 
             // 等它真的进了窗口表——CreateWindow 返回时页面还没加载完，
@@ -329,6 +333,31 @@ internal static class WindowSelfTest
                     SelfTestJson.Object(
                         ("label", SelfTestJson.String(ProbeLabel)),
                         ("path", SelfTestJson.String(Path.Combine(AppContext.BaseDirectory, "no-such-icon.png")))));
+
+                // ---- 窗口底色（M5-6）----
+                //
+                // **断言强度同样有限**（与图标那组同理）：Tauri 与本库都没有"读回当前底色"
+                // 的接口，加一个就是偷偷发明 API（会被对齐测试的 EXTRAS 检查拦住）。
+                // 所以这里验的是"命令跑得通 + 各种 Color 形状都能被宿主接受"。
+                await AskMainAsync(
+                    "window.setBackgroundColor",
+                    SelfTestJson.Object(
+                        ("label", SelfTestJson.String(ProbeLabel)),
+                        ("argb", "4278190080")));   // 0xFF000000，不透明黑
+
+                // alpha = 0（全透明）：边界值，宿主必须原样收下
+                await AskMainAsync(
+                    "window.setBackgroundColor",
+                    SelfTestJson.Object(
+                        ("label", SelfTestJson.String(ProbeLabel)),
+                        ("argb", "0")));
+
+                // 回到不透明
+                await AskMainAsync(
+                    "window.setBackgroundColor",
+                    SelfTestJson.Object(
+                        ("label", SelfTestJson.String(ProbeLabel)),
+                        ("argb", "4294967295")));   // 0xFFFFFFFF
             }
             finally
             {

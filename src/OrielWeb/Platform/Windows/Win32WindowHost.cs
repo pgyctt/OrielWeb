@@ -69,6 +69,9 @@ internal partial class Win32WindowHost : IWindowBackend
 
     /// <summary>同一组合控制器的 <c>ICoreWebView2Controller</c> 视图（bounds / visible / focus 用）。</summary>
     private ICoreWebView2Controller? _controller;
+
+    /// <summary>运行期设过的窗口底色（<c>setBackgroundColor</c>）；<c>null</c> 表示没设过，用于回落创建期选项。</summary>
+    private uint? _runtimeBackgroundArgb;
     private IComObject<ICoreWebView2>? _webView;
     private CoreWebView2Events? _webViewEvents;
     private CoreWebView2CompositionControllerEvents? _compositionEvents;
@@ -577,6 +580,9 @@ internal partial class Win32WindowHost : IWindowBackend
         }
 
         InitializeWebView2();
+
+        // 创建期的底色在 InitializeWebView2 里就应用过了（_controller 在那里才建出来），
+        // 这里不再重复。
     }
 
     /// <summary>用 <see cref="OrielWindowOptions.Icon"/> 指定的文件覆盖本窗口的图标。</summary>
@@ -1409,10 +1415,19 @@ internal partial class Win32WindowHost : IWindowBackend
     /// </remarks>
     private void ApplyBackgroundColor()
     {
-        if (_controller is null || !_options.TryGetBackgroundArgb(out byte a, out byte r, out byte g, out byte b))
+        // 运行期设过就以它为准（后设的赢）；没设过才回落到创建期选项。
+        uint? effective = _runtimeBackgroundArgb;
+        if (effective is null && _options.TryGetBackgroundArgb(out byte ca, out byte cr, out byte cg, out byte cb))
+        {
+            effective = ((uint)ca << 24) | ((uint)cr << 16) | ((uint)cg << 8) | cb;
+        }
+
+        if (effective is not { } argb || _controller is null)
         {
             return;
         }
+
+        OrielWindowOptions.UnpackArgb(argb, out byte a, out byte r, out byte g, out byte b);
 
         try
         {
@@ -2387,6 +2402,19 @@ internal partial class Win32WindowHost : IWindowBackend
         }
 
         ApplyExplicitIcon(_hwnd, path);
+    }
+
+    /// <summary>
+    /// 设置窗口底色（见 <see cref="IWindowBackend.SetBackgroundColor"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 只是记下运行期的值再走一遍 <see cref="ApplyBackgroundColor"/>——创建期与运行期
+    /// 在 WebView2 上是同一件事（都是 <c>DefaultBackgroundColor</c>），没有理由写两份。
+    /// </remarks>
+    public void SetBackgroundColor(uint argb)
+    {
+        _runtimeBackgroundArgb = argb;
+        ApplyBackgroundColor();
     }
 
     /// <summary>

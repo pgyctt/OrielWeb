@@ -94,7 +94,94 @@ function labelOf(target) {
 }
 
 /**
- * 把一个 `unknown` 的抛出错值渲染成可读文案。
+ * 把 Tauri 的 `Color` 归一成宿主认的 `0xAARRGGBB`。
+ *
+ * 接受四种形状（与 Tauri 的类型定义一致）：
+ * - `'#rgb'` / `'#rgba'` / `'#rrggbb'` / `'#rrggbbaa'`（也接受不带 `#` 的同样写法）
+ * - `[r, g, b]`（此时 alpha 按 255）
+ * - `[r, g, b, a]`
+ * - `{ red, green, blue, alpha }`（alpha 缺省按 255）
+ *
+ * @param {any} color
+ * @returns {number} 0xAARRGGBB 的无符号整数
+ * @remarks
+ * 这里**只在页面侧做一次**归一：宿主只认整数，于是"hex 记错一位""数组给三个还是四个"
+ * 这类错误全在这一层被挡住并给出可排查的文案，而不是变成一个颜色不对但也不报错的窗口。
+ */
+function parseColorToArgb(color) {
+    /**
+     * @param {number} r
+     * @param {number} g
+     * @param {number} b
+     * @param {number} a
+     * @returns {number}
+     */
+    const fromBytes = (r, g, b, a) =>
+        ((((a & 0xFF) << 24) | ((r & 0xFF) << 16) | ((g & 0xFF) << 8) | (b & 0xFF)) >>> 0);
+
+    /**
+     * @param {any} value
+     * @param {string} what
+     * @returns {number}
+     */
+    const checkByte = (value, what) => {
+        if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 255) {
+            throw new TypeError(`setBackgroundColor: ${what} 必须是 0..255 的整数（收到 ${String(value)}）`);
+        }
+        return value;
+    };
+
+    if (typeof color === 'string') {
+        // 短写与长写都收：Tauri 的类型是泛指的字符串，而 `#fff` 在 CSS 里太常见，
+        // 直接拒掉会让从 CSS 抄过来的颜色值莫名其妙地失败。
+        const hex = color.startsWith('#') ? color.slice(1) : color;
+        if (!/^[0-9a-fA-F]+$/.test(hex) || ![3, 4, 6, 8].includes(hex.length)) {
+            throw new TypeError(
+                `setBackgroundColor: 认不出这个颜色字符串「${color}」——` +
+                '支持 #rgb / #rgba / #rrggbb / #rrggbbaa。');
+        }
+
+        /** @param {string} part */
+        const expand = (part) => parseInt(hex.length <= 4 ? part + part : part, 16);
+        const step = hex.length <= 4 ? 1 : 2;
+
+        const r = expand(hex.slice(0, step));
+        const g = expand(hex.slice(step, step * 2));
+        const b = expand(hex.slice(step * 2, step * 3));
+        // 没写 alpha 就是全不透明——写成 0 会让窗口整个透明，那是"看着像没生效"的经典坑
+        const a = hex.length === 4 || hex.length === 8 ? expand(hex.slice(step * 3, step * 4)) : 255;
+
+        return fromBytes(r, g, b, a);
+    }
+
+    if (Array.isArray(color)) {
+        if (color.length !== 3 && color.length !== 4) {
+            throw new TypeError(
+                `setBackgroundColor: 颜色数组要给 3 个（RGB）或 4 个（RGBA）分量，收到 ${color.length} 个`);
+        }
+
+        return fromBytes(
+            checkByte(color[0], '红'),
+            checkByte(color[1], '绿'),
+            checkByte(color[2], '蓝'),
+            color.length === 4 ? checkByte(color[3], 'alpha') : 255);
+    }
+
+    if (color !== null && typeof color === 'object') {
+        return fromBytes(
+            checkByte(color.red, 'red'),
+            checkByte(color.green, 'green'),
+            checkByte(color.blue, 'blue'),
+            color.alpha === undefined ? 255 : checkByte(color.alpha, 'alpha'));
+    }
+
+    throw new TypeError(
+        'setBackgroundColor: color 必须是 hex 字符串、[r,g,b] / [r,g,b,a] 数组，' +
+        `或 { red, green, blue, alpha } 对象（收到 ${typeof color}）`);
+}
+
+/**
+ * 把任意错误值取成可读文案。
  *
  * @param {unknown} error
  * @returns {string}
@@ -467,6 +554,29 @@ export class Window {
         }
 
         return invoke('window.setIcon', { label: this.label, path: icon });
+    }
+
+    /**
+     * 设置窗口底色。
+     *
+     * @param {string | [number, number, number] | [number, number, number, number] | { red: number, green: number, blue: number, alpha?: number }} color
+     *   Tauri 的 `Color`：hex 字符串、RGB(A) 数组或对象。
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setBackgroundColor")`。
+     *
+     * 这是**页面透明、或内核还没加载完时露出来**的颜色（Tauri 的文档也是这么说的）。
+     * 三平台都落到 webview 自己的底色：Windows `DefaultBackgroundColor`、
+     * macOS `underPageBackgroundColor`、Linux `webkit_web_view_set_background_color`。
+     *
+     * 四种输入形状都在这里归一成宿主认的 `0xAARRGGBB` 整数——
+     * 放在这一层是因为它能在单测里穷举（宿主那边只能靠真机试）。
+     */
+    setBackgroundColor(color) {
+        return invoke('window.setBackgroundColor', {
+            label: this.label,
+            argb: parseColorToArgb(color),
+        });
     }
 
     // ---- 尺寸约束（M5-6）----

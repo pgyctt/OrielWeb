@@ -239,6 +239,28 @@ export class Window {
      */
     setIcon(icon: string): Promise<void>;
     /**
+     * 设置窗口底色。
+     *
+     * @param {string | [number, number, number] | [number, number, number, number] | { red: number, green: number, blue: number, alpha?: number }} color
+     *   Tauri 的 `Color`：hex 字符串、RGB(A) 数组或对象。
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setBackgroundColor")`。
+     *
+     * 这是**页面透明、或内核还没加载完时露出来**的颜色（Tauri 的文档也是这么说的）。
+     * 三平台都落到 webview 自己的底色：Windows `DefaultBackgroundColor`、
+     * macOS `underPageBackgroundColor`、Linux `webkit_web_view_set_background_color`。
+     *
+     * 四种输入形状都在这里归一成宿主认的 `0xAARRGGBB` 整数——
+     * 放在这一层是因为它能在单测里穷举（宿主那边只能靠真机试）。
+     */
+    setBackgroundColor(color: string | [number, number, number] | [number, number, number, number] | {
+        red: number;
+        green: number;
+        blue: number;
+        alpha?: number;
+    }): Promise<void>;
+    /**
      * 设置窗口的最大尺寸。
      *
      * @param {import('./dpi.js').SizeObject | {width: number, height: number} | [number, number] | null} size

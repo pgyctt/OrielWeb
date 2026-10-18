@@ -45,6 +45,9 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     private nint _nsWindow;
     private nint _nsWindowDelegate;
     private nint _webview;
+
+    /// <summary>运行期设过的窗口底色（<c>setBackgroundColor</c>）；<c>null</c> 表示没设过，用于回落创建期选项。</summary>
+    private uint? _runtimeBackgroundArgb;
     private nint _navigationDelegate;
     private nint _scriptHandler;
     /// <summary>承载拖放的容器视图（webview 是它的子视图）。</summary>
@@ -590,32 +593,9 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         // Ctrl+滚轮那一路在 macOS 上不是引擎默认行为，由桥接脚本的缩放闸门兜住。
         ObjCRuntime.SendVoidBool(_webview, ObjCRuntime.Sel("setAllowsMagnification:"), _options.Zoom);
 
-        // 内核就绪前的底色（见 OrielWindowOptions.BackgroundColor）：窗口底色 +（12+）WKWebView 的
-        // underPageBackgroundColor——后者才是"页面没铺满时露出来的那块"，老系统上取不到就只剩窗口底色。
-        // NSColor 由类方法返回、autoreleased，不需要自己 release。
-        if (_options.TryGetBackgroundArgb(out byte bgA, out byte bgR, out byte bgG, out byte bgB))
-        {
-            nint color = ObjCRuntime.SendIdDouble4(
-                ObjCRuntime.GetClass("NSColor"),
-                ObjCRuntime.Sel("colorWithSRGBRed:green:blue:alpha:"),
-                bgR / 255.0,
-                bgG / 255.0,
-                bgB / 255.0,
-                bgA / 255.0);
-
-            if (color != 0)
-            {
-                ObjCRuntime.SendVoidObj(_nsWindow, ObjCRuntime.Sel("setBackgroundColor:"), color);
-
-                if (ObjCRuntime.SendBoolRetObj(
-                        _webview,
-                        ObjCRuntime.Sel("respondsToSelector:"),
-                        ObjCRuntime.Sel("setUnderPageBackgroundColor:")))
-                {
-                    ObjCRuntime.SendVoidObj(_webview, ObjCRuntime.Sel("setUnderPageBackgroundColor:"), color);
-                }
-            }
-        }
+        // 内核就绪前的底色（见 OrielWindowOptions.BackgroundColor）。创建期与运行期共用
+        // ApplyBackgroundColor——AppKit 那边两边都是同一组 setter。
+        ApplyBackgroundColor();
 
         _navigationDelegate = MacOSObjCClasses.CreateNavigationDelegate(this);
         ObjCRuntime.SendVoidObj(_webview, ObjCRuntime.Sel("setNavigationDelegate:"), _navigationDelegate);
@@ -697,6 +677,8 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
             ApplyIconToApplication(_options.Icon);
         }
 
+        // 底色（WithBackgroundColor）在创建期由上面那处 ApplyBackgroundColor() 应用。
+
         Navigate();
     }
 
@@ -719,6 +701,77 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         if (image != 0)
         {
             ObjCRuntime.SendVoidObj(SharedApplication(), ObjCRuntime.Sel("setApplicationIconImage:"), image);
+        }
+    }
+
+    /// <summary>
+    /// 设置窗口底色（见 <see cref="IWindowBackend.SetBackgroundColor"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 只记下运行期的值再走一遍 <see cref="ApplyBackgroundColor"/>——创建期与运行期
+    /// 在 AppKit 上是同一组 setter，没有理由写两份。
+    /// </remarks>
+    public void SetBackgroundColor(uint argb)
+    {
+        _runtimeBackgroundArgb = argb;
+        ApplyBackgroundColor();
+    }
+
+    /// <summary>
+    /// 把当前生效的底色应用上去（见 <see cref="SetBackgroundColor"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 设两处：<c>NSWindow.backgroundColor</c>（窗口底色）与（12+）
+    /// <c>WKWebView.underPageBackgroundColor</c>——后者才是"页面没铺满时露出来的那块"。
+    /// 老系统上取不到就只剩窗口底色。
+    /// <para>
+    /// <c>underPageBackgroundColor</c> 是 macOS 12 才有的选择器，对老系统发这条消息不是
+    /// 抛异常而是 trap，所以先用 <c>respondsToSelector:</c> 问一句。
+    /// </para>
+    /// <para>
+    /// 用 <c>colorWithSRGBRed:…</c> 而不是 <c>colorWithRed:…</c>：后者按**设备**色彩空间解释，
+    /// 同一个数值在 P3 屏与 sRGB 屏上会显示成不同的颜色。
+    /// NSColor 由类方法返回、autoreleased，不需要自己 release。
+    /// </para>
+    /// </remarks>
+    private void ApplyBackgroundColor()
+    {
+        // 运行期设过就以它为准（后设的赢）；没设过才回落到创建期选项。
+        uint? effective = _runtimeBackgroundArgb;
+        if (effective is null && _options.TryGetBackgroundArgb(out byte ca, out byte cr, out byte cg, out byte cb))
+        {
+            effective = ((uint)ca << 24) | ((uint)cr << 16) | ((uint)cg << 8) | cb;
+        }
+
+        if (effective is not { } argb || _nsWindow == 0)
+        {
+            return;
+        }
+
+        OrielWindowOptions.UnpackArgb(argb, out byte a, out byte r, out byte g, out byte b);
+
+        nint color = ObjCRuntime.SendIdDouble4(
+            ObjCRuntime.GetClass("NSColor"),
+            ObjCRuntime.Sel("colorWithSRGBRed:green:blue:alpha:"),
+            r / 255.0,
+            g / 255.0,
+            b / 255.0,
+            a / 255.0);
+
+        if (color == 0)
+        {
+            return;
+        }
+
+        ObjCRuntime.SendVoidObj(_nsWindow, ObjCRuntime.Sel("setBackgroundColor:"), color);
+
+        if (_webview != 0
+            && ObjCRuntime.SendBoolRetObj(
+                _webview,
+                ObjCRuntime.Sel("respondsToSelector:"),
+                ObjCRuntime.Sel("setUnderPageBackgroundColor:")))
+        {
+            ObjCRuntime.SendVoidObj(_webview, ObjCRuntime.Sel("setUnderPageBackgroundColor:"), color);
         }
     }
 
