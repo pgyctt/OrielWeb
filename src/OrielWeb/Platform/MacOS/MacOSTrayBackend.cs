@@ -58,6 +58,16 @@ internal sealed class MacOSTrayBackend : ITrayBackend
             throw new InvalidOperationException("创建状态项失败（NSStatusBar.statusItemWithLength: 返回 nil）。");
         }
 
+        // **必须 retain。** `statusItemWithLength:` 不符合 alloc/new/copy 命名，返回的是
+        // **autoreleased** 对象：不 retain 的话，本对象只是"借"了它一个 runloop 周期。
+        //
+        // 症状是**跨 IPC 才炸**：`--selftest tray` 在同一个调用栈里创建并使用，pool 还没排空，
+        // 一切正常；而页面调 `tray.new` 之后，WebKit 处理下一条消息前会排空 autorelease pool，
+        // `_statusItem`（以及它的 `button`）就被释放了。此时再调 `tray.setTooltip` 等任何命令，
+        // 相当于给野指针发消息 → SIGSEGV（退出码 139），日志里只有"即将调用"没有结果。
+        // 这正是 tray-js 自检在 macOS 上崩在 setTooltip 的原因。
+        ObjCRuntime.objc_retain(_statusItem);
+
         _handler = MacOSTrayHandler.Create(this);
         _button = ObjCRuntime.SendId(_statusItem, ObjCRuntime.Sel("button"));
         if (_button != 0)
@@ -244,6 +254,10 @@ internal sealed class MacOSTrayBackend : ITrayBackend
             nint statusBar = ObjCRuntime.SendId(
                 ObjCRuntime.GetClassOrThrow("NSStatusBar"), ObjCRuntime.Sel("systemStatusBar"));
             ObjCRuntime.SendVoidObj(statusBar, ObjCRuntime.Sel("removeStatusItem:"), _statusItem);
+
+            // 与构造里的 objc_retain 配对。`removeStatusItem:` 只是把它从菜单栏摘掉，
+            // 不会替我们释放那次 retain。
+            ObjCRuntime.objc_release(_statusItem);
             _statusItem = 0;
         }
 
