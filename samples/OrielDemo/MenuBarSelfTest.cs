@@ -115,6 +115,14 @@ internal static class MenuBarSelfTest
             (async () => {
                 const vendor = './vendor/orielweb-api';
                 const post = (payload) => oriel.postMessage('menubar-echo', payload);
+                const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+                // **每次改完布局要等一拍再发回执**：菜单栏插/摘只是改了 GTK 布局盒的
+                // 子部件表，webview 的分配尺寸要等下一次布局走完才更新。宿主收到回执时
+                // 立刻量 InnerSize，不等这一拍就会量到改动之前的值——表现是
+                // "装了菜单栏但内高没变"或"拆了没还回来"，看起来像几何契约坏了。
+                // 宿主侧另有 gtk_widget_queue_resize 显式排队重算，两道一起上。
+                const settle = () => sleep(200);
 
                 try {
                     const { Menu } = await import(vendor + '/menu.js');
@@ -135,6 +143,7 @@ internal static class MenuBarSelfTest
                     } catch (e) {
                         windowError = String((e && e.message) || e);
                     }
+                    await settle();
                     post({ step: 'window', error: windowError });
 
                     // ② 装应用菜单（三平台都该成功——macOS 上这还是唯一的路）。
@@ -147,6 +156,7 @@ internal static class MenuBarSelfTest
                     } catch (e) {
                         appError = String((e && e.message) || e);
                     }
+                    await settle();
                     post({ step: 'app', error: appError });
 
                     // ③ 拆掉窗口菜单栏（空菜单 = 移除，不是错误）。
@@ -157,6 +167,7 @@ internal static class MenuBarSelfTest
                     } catch (e) {
                         removeError = String((e && e.message) || e);
                     }
+                    await settle();
                     post({ step: 'remove', error: removeError });
 
                     // ④ 平台语义：macOS 上 setAsWindowMenu 必须是 not_supported。
@@ -168,6 +179,7 @@ internal static class MenuBarSelfTest
                     } catch (e) {
                         platformError = String((e && e.message) || e);
                     }
+                    await settle();
                     post({ step: 'platform', error: platformError });
                 } catch (e) {
                     post({ step: 'fatal', error: String((e && e.message) || e) });

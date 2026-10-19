@@ -98,6 +98,16 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gtk, EntryPoint = "gtk_widget_get_preferred_height")]
     internal static partial void GtkWidgetGetPreferredHeight(nint widget, out int minimumHeight, out int naturalHeight);
 
+    /// <summary>
+    /// 要求 GTK 下次布局时重算这个部件的尺寸。
+    /// </summary>
+    /// <remarks>
+    /// 往布局盒里插/摘一个部件之后必须调：否则 webview 的**分配尺寸**要等到别的原因触发布局
+    /// 才更新，紧随其后读 <c>InnerSize</c> 会拿到改动之前的值。
+    /// </remarks>
+    [LibraryImport(Gtk, EntryPoint = "gtk_widget_queue_resize")]
+    internal static partial void GtkWidgetQueueResize(nint widget);
+
     [LibraryImport(Gtk, EntryPoint = "gtk_widget_show_all")]
     internal static partial void GtkWidgetShowAll(nint widget);
 

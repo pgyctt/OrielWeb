@@ -524,6 +524,11 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         GtkNative.GtkBoxReorderChild(_rootBox, bar.Handle, 0);
         GtkNative.GtkWidgetShowAll(bar.Handle);
 
+        // **要显式排队重算**：pack/remove 只是改了盒的子部件表，webview 的分配尺寸
+        // 要等下一次布局走完才更新。不排队的话，紧随其后读 InnerSize 会拿到**改之前**的值
+        // ——表现是"加了菜单栏但 innerSize 没变"或"拆了没还回来"。
+        GtkNative.GtkWidgetQueueResize(_rootBox);
+
         // 菜单栏高度变了，最小尺寸的换算也要跟着重算（见 ApplyMinSizeRequest）。
         ApplyMinSizeRequest();
     }
@@ -553,6 +558,8 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         if (_rootBox != 0)
         {
             GtkNative.GtkContainerRemove(_rootBox, bar.Handle);
+            // 与装上时同样要紧：移除只是改了子部件表，webview 的分配要等下一次布局。
+            GtkNative.GtkWidgetQueueResize(_rootBox);
         }
 
         bar.Dispose();
