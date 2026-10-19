@@ -917,7 +917,7 @@ document.addEventListener('contextmenu', (e) => {
 |---|---|---|---|
 | 菜单对象 | Rust 侧资源（持 `rid`） | 页面侧纯数据 | `new Menu()` / `append` / `items()` **不发 IPC**，因此不可能失败；`popup()` 之后改菜单不影响已弹出的那个（快照） |
 | `action` 回传 | 回调挂在资源上 | `menu.itemclicked` 事件 + 本次弹出的 id 前缀 | 只有**有 `id` 的项**能挂 `action`；一次只能有一个菜单在屏上 |
-| `popup()` 完成时机 | 文档说"菜单一显示就 resolve" | **Windows 阻塞到用户选择**；macOS/Linux 立即 resolve | **别在 `await menu.popup()` 之后假设用户已经选过了**，可靠信号是 `action` |
+| `popup()` 完成时机 | 文档说"菜单一显示就 resolve" | **Windows 与 macOS 阻塞到用户选择**；只有 Linux 立即 resolve | **别在 `await menu.popup()` 之后假设用户已经选过了**，可靠信号是 `action` |
 | `close()` | 来自 `Resource`，释放 `rid` | 本库扩展：**关掉在屏菜单**（等价 Esc） | Windows 上 `popup` 阻塞时，这是页面唯一能用代码关掉菜单的路 |
 | `setIcon` | 设置图标 | **抛错**（没有图像资源表） | `IconMenuItem` 能构造、能加入菜单，但画成普通文本项 |
 | `setAsAppMenu` / `setAsWindowMenu` | 设菜单栏 | **抛错**（B6b） | 菜单栏要动窗口布局（Linux 尤其），单独一批 |

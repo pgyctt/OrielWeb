@@ -492,16 +492,18 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         {
             _contextMenu.Popup(_webview, position);
 
-            // macOS 的弹出本来就不阻塞，"自动关闭"在这里是"到点了把它收起来"。
+            // macOS 的弹出**也是阻塞的**：`popUpMenuPositioningItem:atLocation:inView:`
+            // 直到用户选择或点外面才返回（Apple 文档没写这件事，实测如此）。
             //
-            // **必须回主线程**：AppKit 的所有菜单操作都要求主线程，从后台线程发
-            // cancelTracking 会让 objc 在错误线程上走消息转发（实测崩在
-            // doesNotRecognizeSelector，而栈里看不出与菜单有关）。
+            // 所以自动关闭**必须从后台线程直接调 `cancelTracking`**，不能投回主线程：
+            // 主线程此刻正卡在菜单的跟踪循环里，任何投递到 default run loop mode 的动作
+            // （包括 PostToUiThread）都要等菜单关掉才执行——那就成了死锁。
+            // `cancelTracking` 只是给事件循环设一个"取消"标志，从别的线程调用是安全的。
             if (autoDismissAfter is { } delay)
             {
                 MacOSMenu pending = _contextMenu;
                 _ = Task.Delay(delay).ContinueWith(
-                    _ => PostToUiThread(pending.CancelTracking),
+                    _ => pending.CancelTracking(),
                     TaskScheduler.Default);
             }
         }

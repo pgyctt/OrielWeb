@@ -156,7 +156,8 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// </summary>
     /// <remarks>
     /// <b>Windows 上这个调用会阻塞</b>，直到用户选择或取消——原生弹出菜单自带模态消息循环。
-    /// macOS 与 Linux 是异步弹出（调用立即返回，之后事件才来）。
+    /// <b>macOS 同样阻塞</b>（AppKit 的 <c>popUpMenuPositioningItem:</c> 跟踪到用户选择）；
+    /// 只有 Linux 是异步弹出（调用立即返回，之后事件才来）。
     /// 因此不要从"需要立刻继续"的路径里调用它（例如页面命令处理里同步等结果）；三平台的共同保证只有
     /// "用户选中自定义项后会触发事件"，没有"调用返回时用户已选完"。
     /// </remarks>

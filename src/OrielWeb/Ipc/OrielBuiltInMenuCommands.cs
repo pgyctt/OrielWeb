@@ -66,7 +66,8 @@ internal static class OrielBuiltInMenuCommands
     /// <summary>弹出一个页面定义的菜单。</summary>
     /// <remarks>
     /// <b>Windows 上这个命令是阻塞的</b>（原生菜单自带模态循环），直到用户选择或取消才回执。
-    /// macOS / Linux 立即返回，点击通过 <c>menu.itemclicked</c> 事件到达页面。
+    /// <b>macOS 也是阻塞的</b>（AppKit 的 <c>popUpMenuPositioningItem:</c> 跟踪到用户选择），
+    /// 只有 Linux 立即返回（GTK 的菜单是异步的）。点击通过 <c>menu.itemclicked</c> 事件到达页面。
     /// 这一点无法在三平台上统一，只能如实写进文档。
     /// </remarks>
     private static object? Popup(IOrielWindowControl sender, JsonElement args)

@@ -491,7 +491,8 @@ internal interface IWindowBackend
 
     /// <summary>
     /// 弹出一个上下文菜单。<b>Windows 上是阻塞的</b>（TrackPopupMenu 自带模态消息循环，
-    /// 直到用户选择或取消才返回），macOS 与 Linux 是异步弹出——这一点写进文档，因为它影响调用时机。
+    /// 直到用户选择或取消才返回），macOS 同样阻塞（<c>popUpMenuPositioningItem:</c> 跟踪到用户选择），
+    /// 只有 Linux 是异步弹出（GTK 的菜单不阻塞）——这一点写进文档，因为它影响调用时机。
     /// </summary>
     /// <param name="items">菜单树。</param>
     /// <param name="position">
