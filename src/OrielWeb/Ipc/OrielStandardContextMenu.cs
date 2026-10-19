@@ -10,7 +10,7 @@ namespace OrielWeb.Ipc;
 /// </para>
 /// <para>
 /// 只放**跨应用通用**的项：应用自己的菜单项（业务动作、勾选项）仍应由应用用
-/// <see cref="WebviewWindow.ShowContextMenu"/> 自己弹，那是它才知道的内容。
+/// <see cref="WebviewWindow.ShowContextMenu(IReadOnlyList{OrielMenuItem})"/> 自己弹，那是它才知道的内容。
 /// 编辑类 role 是尽力而为的（见 <see cref="OrielMenuRoles"/> 的说明）。
 /// </para>
 /// </remarks>

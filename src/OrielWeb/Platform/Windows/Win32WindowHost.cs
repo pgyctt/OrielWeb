@@ -369,13 +369,13 @@ internal partial class Win32WindowHost : IWindowBackend
     }
 
     /// <summary>
-    /// 上下文菜单：构建 → 在鼠标位置弹出（**阻塞**）→ 释放。
+    /// 上下文菜单：构建 → 弹出（**阻塞**）→ 释放。
     /// </summary>
     /// <remarks>
     /// 每次调用都新建并销毁原生菜单：上下文菜单的内容通常随调用点而变（点在不同对象上），
     /// 缓存它反而要额外判断"内容变了没有"。
     /// </remarks>
-    public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items)
+    public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items, OrielPosition? position)
     {
         using Win32Menu? menu = Win32Menu.Build(items);
         if (menu is null)
@@ -383,12 +383,45 @@ internal partial class Win32WindowHost : IWindowBackend
             return;
         }
 
-        OrielMenuItem? item = menu.Popup(_hwnd);
+        POINT? screenPoint = null;
+        if (position is { } logical)
+        {
+            // 页面给的是**客户区逻辑像素**，Win32 要**屏幕物理像素**：两步都不能省。
+            // 少第一步（乘 DPI）在 150% 屏上菜单会弹到偏左上四分之一的位置；
+            // 少第二步（客户端 → 屏幕）窗口不在 (0,0) 时菜单会弹到屏幕左上角附近。
+            uint dpi = Win32.GetDpiForWindow(_hwnd);
+            var point = new POINT(
+                LogicalPixels.ToPhysical((int)Math.Round(logical.X), dpi),
+                LogicalPixels.ToPhysical((int)Math.Round(logical.Y), dpi));
+
+            if (Win32.ClientToScreen(_hwnd, ref point))
+            {
+                screenPoint = point;
+            }
+        }
+
+        OrielMenuItem? item = menu.Popup(_hwnd, screenPoint);
         if (item is not null)
         {
             ActivateMenuItem(item);
         }
     }
+
+    /// <summary>
+    /// 结束正在跟踪的菜单（<c>EndMenu</c>，等价于用户按 Esc）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 必须在 UI 线程上调用——Win32 的菜单跟踪是**线程局部**的，<c>EndMenu</c> 只结束
+    /// 调用线程自己的模态循环。调用方（<c>menu.close</c> 命令）已经从 IPC 回到 UI 线程，
+    /// 所以这里不再二次编组。
+    /// </para>
+    /// <para>
+    /// 没有菜单在跟踪时返回 false 是正常情形（页面可能重复调 <c>menu.close</c>），
+    /// 不记日志、不抛错。
+    /// </para>
+    /// </remarks>
+    public void CloseContextMenu() => _ = Win32.EndMenu();
 
     /// <summary>菜单项 → 行为：role 走共享解释器，自定义项上报到 <see cref="ContextMenuItemClicked"/>。</summary>
     private void ActivateMenuItem(OrielMenuItem item)

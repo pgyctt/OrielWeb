@@ -163,6 +163,14 @@ internal sealed class OrielIpcGuard
             return true;
         }
 
+        // menu.* 里目前只有 popup 放行（逐条理由见 IsAlwaysAllowedMenuCommand）。
+        // 不整族放行的理由：后面会长出"把菜单设为窗口/应用菜单栏"，那是另一个能力面。
+        if (OrielCapabilityRules.IsAlwaysAllowedMenuCommand(commandName))
+        {
+            denialReason = null;
+            return true;
+        }
+
         // path.* 族**整族放行**（逐条理由见 IsAlwaysAllowedPathCommand）。
         // 它之所以能整族放行、而 window.* 不能：本族只对页面自己给的字符串做运算，
         // 不做 I/O、不读宿主状态、不涉及别的窗口。

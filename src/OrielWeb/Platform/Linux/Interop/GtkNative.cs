@@ -251,6 +251,26 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gtk, EntryPoint = "gtk_menu_popup_at_pointer")]
     internal static partial void GtkMenuPopupAtPointer(nint menu, nint triggerEvent);
 
+    /// <summary>
+    /// 在 <paramref name="relativeTo"/> 的矩形处弹出（GTK 3.22+）。
+    /// </summary>
+    /// <param name="menu">菜单。</param>
+    /// <param name="relativeTo">定位基准的 <c>GdkWindow</c>（这里是 webview 的）。</param>
+    /// <param name="rect">基准矩形（坐标是 <paramref name="relativeTo"/> 内的**应用像素**）。</param>
+    /// <param name="rectAnchor">矩形上的哪个锚点。</param>
+    /// <param name="menuAnchor">菜单的哪个点对准该锚点。</param>
+    /// <param name="triggerEvent">
+    /// 触发事件。<b>可以为 0</b>——与 <see cref="GtkMenuPopupAtPointer"/> 不同：
+    /// 那条路径没有事件就定不了位，而这条的定位信息全在矩形里。
+    /// </param>
+    [LibraryImport(Gtk, EntryPoint = "gtk_menu_popup_at_rect")]
+    internal static partial void GtkMenuPopupAtRect(
+        nint menu, nint relativeTo, ref GdkRectangle rect, int rectAnchor, int menuAnchor, nint triggerEvent);
+
+    /// <summary>收起菜单（没有在显示时是空操作）。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_menu_popdown")]
+    internal static partial void GtkMenuPopdown(nint menu);
+
     [LibraryImport(Gtk, EntryPoint = "gtk_window_close")]
     internal static partial void GtkWindowClose(nint window);
 

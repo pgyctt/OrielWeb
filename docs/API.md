@@ -17,6 +17,7 @@
 - [8. 对话框](#8-对话框)
 - [9. 文件拖放](#9-文件拖放)
 - [10. 内建右键菜单](#10-内建右键菜单)
+  - [10.1 页面侧菜单](#101-页面侧菜单orielwebapimenu)
 - [11. 页面侧 API](#11-页面侧-api)
 - [12. 打包与分发（Velopack）](#12-打包与分发velopack)
 - [13. 运行要求](#13-运行要求)
@@ -238,6 +239,8 @@ WebviewWindow? again = app.GetWindow("settings");   // 按 label 取回（不存
 | `void InvokeOnUiThread(Action action)` | 同步编组：投递并阻塞等待完成；动作抛的异常原样带回调用方 |
 | **窗口命令与菜单** | |
 | `ShowContextMenu(IReadOnlyList<OrielMenuItem> items)` | 弹应用自己的上下文菜单（见 §10） |
+| `ShowContextMenu(items, OrielPosition? position)` | 同上，但指定位置（逻辑像素，相对客户区左上角；`null` = 跟随鼠标） |
+| `CloseContextMenu()` | 关掉正在显示的菜单（Windows 上能提前结束那个阻塞的弹出） |
 | `OrielContextMenuPolicy ContextMenuPolicy { get; set; }` | 运行期改，**下次右键即生效**（见 §10） |
 | **对话框** | |
 | `ShowMessage(string text, string? title = null, OrielMessageBoxIcon icon = OrielMessageBoxIcon.Info)` | 模态，阻塞到用户关闭 |
@@ -886,6 +889,41 @@ window.ContextMenuPolicy = OrielContextMenuPolicy.Editing;  // Editing（默认�
 > **为什么 macOS/Linux 是接管而不是"就地增删引擎菜单"**：后者在 WebKitGTK 4.1 上会破坏内存
 > （连点右键几次就崩），所以改成自己弹菜单、编辑命令经 `webkit_web_view_execute_editing_command` 走引擎。
 
+### 10.1 页面侧菜单（`@orielweb/api/menu`）
+
+宿主侧的 `window.ShowContextMenu(items)` 与页面侧的 `Menu.popup()` 是**同一条通道**：
+页面把整棵菜单树发过来，宿主按它构建原生菜单并弹出。
+
+```js
+import { Menu } from '@orielweb/api/menu';
+
+const menu = await Menu.new({
+  items: [
+    { id: 'copy', text: 'Copy', accelerator: 'CmdOrCtrl+C', action: (id) => console.log(id) },
+    { item: 'Separator' },
+    { text: 'More', items: [{ id: 'deep', text: 'Deep' }] },
+  ],
+});
+
+document.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  void menu.popup({ x: e.clientX, y: e.clientY });
+});
+```
+
+与 Tauri 的四处差异，都是**结构性**的（本库没有资源表），不是没做完：
+
+| 项 | Tauri 2 | 本库 | 影响 |
+|---|---|---|---|
+| 菜单对象 | Rust 侧资源（持 `rid`） | 页面侧纯数据 | `new Menu()` / `append` / `items()` **不发 IPC**，因此不可能失败；`popup()` 之后改菜单不影响已弹出的那个（快照） |
+| `action` 回传 | 回调挂在资源上 | `menu.itemclicked` 事件 + 本次弹出的 id 前缀 | 只有**有 `id` 的项**能挂 `action`；一次只能有一个菜单在屏上 |
+| `popup()` 完成时机 | 文档说"菜单一显示就 resolve" | **Windows 阻塞到用户选择**；macOS/Linux 立即 resolve | **别在 `await menu.popup()` 之后假设用户已经选过了**，可靠信号是 `action` |
+| `close()` | 来自 `Resource`，释放 `rid` | 本库扩展：**关掉在屏菜单**（等价 Esc） | Windows 上 `popup` 阻塞时，这是页面唯一能用代码关掉菜单的路 |
+| `setIcon` | 设置图标 | **抛错**（没有图像资源表） | `IconMenuItem` 能构造、能加入菜单，但画成普通文本项 |
+| `setAsAppMenu` / `setAsWindowMenu` | 设菜单栏 | **抛错**（B6b） | 菜单栏要动窗口布局（Linux 尤其），单独一批 |
+
+`NativeIcon` 是 56 个 macOS `NSImage` 名称的常量表，键集与 Tauri **逐键一致**（对齐账本盯着它）。
+
 ## 11. 页面侧 API
 
 桥接脚本在文档创建时注入，只安装到**可信来源**（见 §4）。
@@ -896,7 +934,7 @@ window.ContextMenuPolicy = OrielContextMenuPolicy.Editing;  // Editing（默认�
 
 ### 11.2 `@orielweb/api`（推荐）
 
-模块名与 `@tauri-apps/api` 一一对应，迁移 = 换 import 前缀。当前已提供 `core` / `event` / `window` / `dpi` / `mocks` / `path` / `app` / `fs` / `opener` / `notification` / `autostart` / `clipboard` / `dialog` / `image`（14 个）。
+模块名与 `@tauri-apps/api` 一一对应，迁移 = 换 import 前缀。当前已提供 `core` / `event` / `window` / `dpi` / `mocks` / `path` / `app` / `fs` / `opener` / `notification` / `autostart` / `clipboard` / `dialog` / `image` / `menu`（15 个）。
 
 ```js
 import { getCurrentWindow } from '@orielweb/api/window';
@@ -931,6 +969,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 | `dialog` | `open` / `save` / `message` / `ask` / `confirm` |
 | `dpi` | `LogicalSize` / `PhysicalSize` / `LogicalPosition` / `PhysicalPosition` + 归一与换算（`toPhysical` / `toLogical`） |
 | `image` | `Image`（`fromPath` / `fromBytes` / `new`）+ `transformImage`。**与 Tauri 的本质分歧**：Tauri 的 `Image` 是资源表 handle（持 `rid`、有 `close()`），本库没有资源表——它是**页面侧字节容器**，因此**没有 `close()`**（迁移代码里的 `await image.close()` 会抛 `TypeError`，宁可当场炸也不要带着错误的心智模型继续写）。`rgba()` / `size()` 是本地值，但签名仍是 `Promise`（`await` 照样能跑）。尺寸解析（PNG 的 IHDR、ICO 的 `ICONDIRENTRY`，其中宽高字段的 **0 表示 256**）在页面侧完成；解码**像素**才请宿主（`window.decodeImage`），结果缓存 |
+| `menu` | `Menu` / `Submenu` / `MenuItem` / `CheckMenuItem` / `IconMenuItem` / `PredefinedMenuItem` / `NativeIcon` / `itemFromKind`。**只做"弹出"那一半**：`Menu.popup(at?, window?)`。菜单栏（`setAsAppMenu` / `setAsWindowMenu`）留到 B6b，现在调用会明确抛错。菜单树是**页面侧的纯数据**（没有 `rid`），`popup()` 时整棵发给宿主；`action` 经 `menu.itemclicked` 事件回到页面。另加一条本库扩展 `close()`（关掉在屏菜单，见 §10） |
 | `mocks` | `mockIPC` / `mockWindows` / `mockEmit` / `mockConvertFileSrc` / `clearMocks` |
 
 ### `path` 模块

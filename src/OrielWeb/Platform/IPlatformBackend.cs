@@ -490,10 +490,33 @@ internal interface IWindowBackend
     void EmitEvent(string name, string jsonPayload);
 
     /// <summary>
-    /// 在鼠标位置弹出一个上下文菜单。<b>Windows 上是阻塞的</b>（TrackPopupMenu 自带模态消息循环，
+    /// 弹出一个上下文菜单。<b>Windows 上是阻塞的</b>（TrackPopupMenu 自带模态消息循环，
     /// 直到用户选择或取消才返回），macOS 与 Linux 是异步弹出——这一点写进文档，因为它影响调用时机。
     /// </summary>
-    void ShowContextMenu(IReadOnlyList<OrielMenuItem> items);
+    /// <param name="items">菜单树。</param>
+    /// <param name="position">
+    /// 弹出位置（**逻辑像素**，相对窗口客户区左上角）；<c>null</c> 表示"当前鼠标位置"。
+    /// 页面侧 <c>menu.popup(at)</c> 的物理坐标在进入这里之前已由命令层换算成逻辑像素——
+    /// 后端只认一种单位，免得三平台各自再判一次。
+    /// </param>
+    void ShowContextMenu(IReadOnlyList<OrielMenuItem> items, OrielPosition? position);
+
+    /// <summary>
+    /// 关掉当前正在显示的上下文菜单（没有菜单在屏上时是空操作）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 为什么需要它：<b>Windows 的弹出是阻塞的</b>——<see cref="ShowContextMenu"/> 在用户选择
+    /// 之前不返回。这意味着两件事：页面上的"关闭菜单"按钮点不到（UI 线程被占着），
+    /// 无交互的自检也跑不完。Tauri 那边的 <c>Menu</c> 是资源，Rust 侧可以在另一条线程上
+    /// 结束它；本库没有资源表，所以显式给一条命令。
+    /// </para>
+    /// <para>
+    /// 三平台的落点：Windows 发 <c>EndMenu</c>（结束 TrackPopupMenu 的模态循环，等价于用户按 Esc）；
+    /// macOS <c>cancelTracking</c>；GTK <c>gtk_menu_popdown</c>。
+    /// </para>
+    /// </remarks>
+    void CloseContextMenu();
 
     /// <summary>上下文菜单里的自定义项被点击，参数是该项的 <see cref="OrielMenuItem.Id"/>。</summary>
     event Action<string>? ContextMenuItemClicked;

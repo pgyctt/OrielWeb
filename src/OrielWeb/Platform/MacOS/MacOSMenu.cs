@@ -54,13 +54,32 @@ internal sealed unsafe class MacOSMenu : IDisposable
     internal nint Handle => _handle;
 
     /// <summary>
-    /// 在给定视图里、当前鼠标位置弹出（异步：返回后用户才可能选择）。
+    /// 在给定视图里弹出（异步：返回后用户才可能选择）。
     /// 因此调用方要让菜单对象活到选择发生——不能弹出后立刻释放。
     /// </summary>
-    internal void Popup(nint view)
+    /// <param name="view">弹出的基准视图（webview）。</param>
+    /// <param name="position">
+    /// 指定位置（逻辑像素，**相对视图左上角、y 向下**）；<c>null</c> 表示跟随当前鼠标事件。
+    /// </param>
+    /// <remarks>
+    /// 两条路径用的是**不同的 AppKit 入口**，不能合并：
+    /// <list type="bullet">
+    ///   <item><description>跟随鼠标：<c>popUpContextMenu:withEvent:forView:</c> 从当前
+    ///     <c>NSEvent</c> 取位置——没有事件就撤，不能猜。</description></item>
+    ///   <item><description>指定位置：<c>popUpMenuPositioningItem:atLocation:inView:</c>，
+    ///     位置是**视图坐标**（若非 flipped 视图则原点在左下）。</description></item>
+    /// </list>
+    /// </remarks>
+    internal void Popup(nint view, OrielPosition? position = null)
     {
         if (_handle == 0 || _disposed)
         {
+            return;
+        }
+
+        if (position is { } logical)
+        {
+            PopupAt(view, logical);
             return;
         }
 
@@ -82,6 +101,65 @@ internal sealed unsafe class MacOSMenu : IDisposable
             _handle,
             currentEvent,
             view);
+    }
+
+    /// <summary>在视图坐标的指定点弹出。</summary>
+    /// <remarks>
+    /// <c>atLocation:</c> 用的是视图自身的坐标系：flipped 视图（WebKit 的几个视图都是）
+    /// 原点在左上、y 向下，与页面坐标一致；非 flipped 视图原点在左下，要翻一次。
+    /// <c>isFlipped</c> 直接问视图，而不是按"WebKit 一定是 flipped"假设——
+    /// 换引擎或换承载控件时那个假设会静默失效，表现是菜单弹到上下镜像的位置。
+    /// </remarks>
+    private void PopupAt(nint view, OrielPosition logical)
+    {
+        double y = logical.Y;
+        if (!ObjCRuntime.SendBoolRet(view, ObjCRuntime.Sel("isFlipped")))
+        {
+            // 非 flipped：视图高度 - y（视图高度取 bounds 的 height）
+            y = ReadViewHeight(view) - logical.Y;
+        }
+
+        _ = ObjCRuntime.SendIdObjDouble2Obj(
+            ObjCRuntime.GetClassOrThrow("NSMenu"),
+            ObjCRuntime.Sel("popUpMenuPositioningItem:atLocation:inView:"),
+            0,
+            logical.X,
+            y,
+            view);
+    }
+
+    /// <summary>读 NSView 的高度（KVC + getValue，避开 NSRect 的结构体返回）。</summary>
+    private static double ReadViewHeight(nint view)
+    {
+        nint boxed = ObjCRuntime.SendIdObj(
+            view, ObjCRuntime.Sel("valueForKey:"), ObjCRuntime.MakeNSString("bounds"));
+
+        if (boxed == 0)
+        {
+            return 0;
+        }
+
+        unsafe
+        {
+            double* buffer = stackalloc double[4];
+            ObjCRuntime.SendVoidObj(boxed, ObjCRuntime.Sel("getValue:"), (nint)buffer);
+            return buffer[3];
+        }
+    }
+
+    /// <summary>取消正在跟踪的菜单（<c>cancelTracking</c>）；没有在跟踪时是空操作。</summary>
+    /// <remarks>
+    /// <c>NSMenu</c> 的 <c>cancelTracking</c> 会结束当前的事件跟踪循环，效果与用户按 Esc 相同。
+    /// 必须在主线程调用（AppKit 的全部菜单操作都要求主线程）。
+    /// </remarks>
+    internal void CancelTracking()
+    {
+        if (_handle == 0 || _disposed)
+        {
+            return;
+        }
+
+        ObjCRuntime.SendVoid(_handle, ObjCRuntime.Sel("cancelTracking"));
     }
 
     public void Dispose()

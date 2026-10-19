@@ -476,22 +476,31 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     private MacOSMenu? _contextMenu;
 
     /// <summary>
-    /// 上下文菜单：构建 → 在鼠标位置弹出。
+    /// 上下文菜单：构建 → 弹出。
     /// </summary>
     /// <remarks>
     /// 弹出是异步的，菜单对象因此留到下一次弹出前才释放（不能弹完即抛）。
-    /// 位置由当前 <c>NSEvent</c> 决定；没有当前事件时 <see cref="MacOSMenu.Popup"/> 会明确跳过并记日志，
-    /// 而不是弹到随机位置。
+    /// <paramref name="position"/> 为 null 时位置由当前 <c>NSEvent</c> 决定；
+    /// 没有当前事件时 <see cref="MacOSMenu.Popup"/> 会明确跳过并记日志，而不是弹到随机位置。
     /// </remarks>
-    public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items)
+    public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items, OrielPosition? position)
     {
         _contextMenu?.Dispose();
         _contextMenu = MacOSMenu.Build(items, ActivateMenuItem);
         if (_contextMenu is not null && _webview != 0)
         {
-            _contextMenu.Popup(_webview);
+            _contextMenu.Popup(_webview, position);
         }
     }
+
+    /// <summary>
+    /// 取消正在跟踪的菜单（<c>cancelTracking</c>）。
+    /// </summary>
+    /// <remarks>
+    /// macOS 的弹出本来就不阻塞调用方，所以这条主要用于"页面要求关掉菜单"
+    /// （例如快捷键 Esc 由页面处理时）。没有菜单在屏上是空操作。
+    /// </remarks>
+    public void CloseContextMenu() => _contextMenu?.CancelTracking();
 
     private void ActivateMenuItem(OrielMenuItem item)
     {

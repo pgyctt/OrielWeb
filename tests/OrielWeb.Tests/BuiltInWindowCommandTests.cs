@@ -114,7 +114,17 @@ public sealed class BuiltInWindowCommandTests
         /// <summary>下一次 <see cref="ShowMessageDialog"/> 的返回值（null 表示"被外部关掉"）。</summary>
         public MessageResult? NextMessageResult { get; set; } = MessageResult.Ok;
 
+        /// <summary>缩放比：菜单命令要把物理坐标换成逻辑坐标时读它。</summary>
+        public double ScaleFactor { get; set; } = 1.0;
+
         public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items) => Calls.Add($"showContextMenu:{items.Count}");
+
+        /// <summary>带位置的弹出（<c>menu.popup</c> 用）：把位置一起记下来，便于断言换算。</summary>
+        public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items, OrielPosition? position)
+            => Calls.Add($"showContextMenuAt:{items.Count}:{position?.X},{position?.Y}");
+
+        /// <summary>记录"关掉在屏菜单"（<c>menu.close</c> 用）。与 showContextMenu 分开记，两者语义相反。</summary>
+        public void CloseContextMenu() => Calls.Add("closeContextMenu");
     }
 
     private static OrielCommandDispatcher CreateDispatcher()

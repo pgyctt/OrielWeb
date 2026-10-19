@@ -440,12 +440,23 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     /// GtkMenu 的 GCHandle 根住的是捕获了本宿主的闭包，漏掉它整棵宿主对象树都回收不了
     /// （评审 P2-8 修的就是这条链）。
     /// </remarks>
-    public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items)
+    public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items, OrielPosition? position)
     {
         _contextMenu?.Dispose();
         _contextMenu = GtkMenu.Build(items, item => ActivateMenuItem(item));
-        _contextMenu?.Popup();
+
+        // 指定位置时要给 GDK 一个定位基准的 GdkWindow。取 webview 的而不是顶层窗口的：
+        // 页面给的坐标是**客户区**坐标，webview 的 GdkWindow 原点正是客户区左上角。
+        // 拿不到（未 realize）时传 0，GtkMenu.Popup 会退回指针定位。
+        nint relativeTo = position is null || _webview == 0
+            ? 0
+            : GtkNative.GtkWidgetGetWindow(_webview);
+
+        _contextMenu?.Popup(0, position, relativeTo);
     }
+
+    /// <summary>收起正在显示的上下文菜单（<c>gtk_menu_popdown</c>）；没有在显示时是空操作。</summary>
+    public void CloseContextMenu() => _contextMenu?.Popdown();
 
     private void ActivateMenuItem(OrielMenuItem item)
     {

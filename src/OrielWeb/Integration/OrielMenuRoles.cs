@@ -109,9 +109,42 @@ internal static class OrielMenuRoles
             case OrielMenuRole.Delete:
                 return ExecCommand(window, "delete");
 
+            case OrielMenuRole.About:
+                return ShowAbout(app, window);
+
             default:
                 return false;
         }
+    }
+
+    /// <summary>
+    /// "关于"：弹一个含应用名与版本的宿主消息框。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// macOS 本可以走 <c>orderFrontStandardAboutPanel:</c>（系统标准面板，还会自动读
+    /// Info.plist 的图标与版权），但那在 Windows/Linux 上没有对应物——于是三平台会给出
+    /// 三种不同的"关于"体验，而这正是 <see cref="OrielMenuRoles"/> 存在要避免的分叉。
+    /// 统一用一个消息框：信息少一点（没有图标/版权），但三平台一致、且用的是应用自己
+    /// <see cref="OrielApp.Info"/> 里的名字与版本。
+    /// </para>
+    /// <para>
+    /// 没有窗口时返回 false（调用方忽略该项）：消息框是**模态于某个窗口**的，
+    /// 没有窗口就没有可挂的父窗口，弹一个游离的对话框不如不弹。
+    /// </para>
+    /// </remarks>
+    private static bool ShowAbout(OrielApp app, WebviewWindow? window)
+    {
+        if (window is null)
+        {
+            return false;
+        }
+
+        string name = app.Info.Name;
+        string version = app.Info.Version;
+
+        _ = window.ShowDialog($"{name} {version}", $"关于 {name}", "info", MessageButtons.Ok, "确定", "取消");
+        return true;
     }
 
     private static bool ExecCommand(WebviewWindow? window, string command)

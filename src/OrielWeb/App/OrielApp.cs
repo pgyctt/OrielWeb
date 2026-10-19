@@ -341,6 +341,17 @@ public sealed class OrielApp : IDisposable
             }
         };
 
+        // 上下文菜单的自定义项被点击 → 推给**页面**（事件名见 MenuItemClickedEventName）。
+        //
+        // 为什么在应用层订阅、而不是在 menu.popup 命令里按需订阅：订阅必须只发生一次，
+        // 而 popup 每次调用都会经过——按需订阅会随弹出次数累积处理器。放在建窗处，
+        // 一个窗口恰好一条，与"主题补推"同一套生命周期。
+        //
+        // 宿主自己弹的菜单（win.contextMenu / window.contextMenu）也会走到这里，但那些
+        // 标准项只有 role、没有 id，后端不会触发 ContextMenuItemClicked——所以页面收到
+        // 的一定是它自己那棵菜单的点击。
+        created.ContextMenuItemClicked += id => PushMenuItemClick(created, id);
+
         // 关闭后从列表里摘掉：否则 Windows 会越用越长，而"遍历所有窗口"的应用代码
         // （例如把某个设置套用到每个窗口）会作用到已经销毁的窗口上。
         // 走 ClosedBookkeeping 而不是公共 Closed 事件：摘除必须发生在用户的 Closed 处理器**之前**，
@@ -413,6 +424,33 @@ public sealed class OrielApp : IDisposable
     /// <summary>把主题推给某个窗口的页面。参数已是 JSON 文本（见 <see cref="WebviewWindow.EmitEvent(string, string)"/>）。</summary>
     private static void PushTheme(WebviewWindow window, OrielTheme theme)
         => window.EmitEvent(ThemeEventName, theme == OrielTheme.Dark ? "\"dark\"" : "\"light\"");
+
+    /// <summary>
+    /// 页面侧可见的"菜单项被点击"事件名：<c>oriel.on('menu.itemclicked', ({ id }) =&gt; …)</c>。
+    /// </summary>
+    /// <remarks>
+    /// Tauri 的菜单项用 <c>action</c> 回调直接绑定（项在 Rust 侧是资源，回调挂在它上面）；
+    /// 本库没有资源表，菜单树每次 popup 都是**一次性**发给宿主的，所以回调只能靠事件回来。
+    /// 事件名是我们自己的——Tauri 没有对应事件，这一点写在 <c>API.md</c> 里。
+    /// </remarks>
+    internal const string MenuItemClickedEventName = "menu.itemclicked";
+
+    /// <summary>把菜单点击推给窗口的页面。</summary>
+    /// <remarks>
+    /// 窗口正在销毁时 <see cref="WebviewWindow.EmitEvent"/> 会抛——菜单点击是"用户动作的尾巴"，
+    /// 不值得让它把原生回调链炸掉。这种情况静默丢弃，与主题补推同一姿态。
+    /// </remarks>
+    private static void PushMenuItemClick(WebviewWindow window, string id)
+    {
+        try
+        {
+            window.EmitEvent(MenuItemClickedEventName, $"{{\"id\":{JsonText.EncodeString(id)}}}");
+        }
+        catch (InvalidOperationException)
+        {
+            // 窗口已销毁：页面已经不在，没人接这条事件。
+        }
+    }
 
     // ------------------------------------------------------------------
     // 显示器

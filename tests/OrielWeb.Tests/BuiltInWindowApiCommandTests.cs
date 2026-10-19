@@ -336,7 +336,14 @@ public sealed class BuiltInWindowApiCommandTests
             return null;
         }
 
+        public double ScaleFactor => 1.0;
+
         public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items) => Calls.Add("showContextMenu");
+
+        public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items, OrielPosition? position)
+            => Calls.Add("showContextMenuAt");
+
+        public void CloseContextMenu() => Calls.Add("closeContextMenu");
 
         // 下面四个是 IOrielWindowControl 为 dialog.* 加的新成员。
         // 本文件测的是 window.*，不调它们，所以只记录、不回值。

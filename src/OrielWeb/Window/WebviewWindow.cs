@@ -161,6 +161,21 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// "用户选中自定义项后会触发事件"，没有"调用返回时用户已选完"。
     /// </remarks>
     public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items)
+        => ShowContextMenu(items, null);
+
+    /// <summary>
+    /// 在指定位置弹出上下文菜单（对标 Tauri 2 的 <c>Menu.popup(at?)</c>）。
+    /// </summary>
+    /// <param name="items">菜单树。</param>
+    /// <param name="position">
+    /// 弹出位置（**逻辑像素**，相对窗口客户区左上角）；<c>null</c> 表示鼠标位置。
+    /// </param>
+    /// <remarks>
+    /// 与单参版本的区别只有位置来源：单参版本等价于传 <c>null</c>（跟随鼠标）。
+    /// 两个重载而不是把参数并进一个，是为了不破坏既有调用点——
+    /// <see cref="ShowContextMenu(IReadOnlyList{OrielMenuItem})"/> 是 0.1 起的公开 API。
+    /// </remarks>
+    public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items, OrielPosition? position)
     {
         ArgumentNullException.ThrowIfNull(items);
         if (items.Count == 0)
@@ -168,8 +183,23 @@ public sealed class WebviewWindow : IOrielWindowControl
             return;
         }
 
-        Backend.ShowContextMenu(items);
+        Backend.ShowContextMenu(items, position);
     }
+
+    /// <summary>
+    /// 关掉当前正在显示的上下文菜单（没有菜单在屏上时是空操作）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 主要用途是<b>把 Windows 上那个阻塞的弹出提前结束</b>：<see cref="ShowContextMenu(IReadOnlyList{OrielMenuItem}, OrielPosition?)"/>
+    /// 在用户选择之前不返回，而 UI 线程被占着时页面上的按钮点不到——想"用代码关掉菜单"
+    /// 只能从这里进来（页面侧是 <c>menu.close()</c>）。
+    /// </para>
+    /// <para>
+    /// macOS 与 Linux 的弹出本来就不阻塞，这条对它们是"用户按 Esc"的等价物。
+    /// </para>
+    /// </remarks>
+    public void CloseContextMenu() => Backend.CloseContextMenu();
 
     /// <summary>
     /// 渲染引擎**内建**右键菜单的策略，可随时改（**下次右键**即生效，无需重建窗口）。
@@ -177,7 +207,7 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// <see cref="OrielContextMenuPolicy.Editing"/>。
     /// </summary>
     /// <remarks>
-    /// 与 <see cref="ShowContextMenu"/> 无关：那是宿主自己构造并弹出的菜单，走另一条通道，
+    /// 与 <see cref="ShowContextMenu(IReadOnlyList{OrielMenuItem})"/> 无关：那是宿主自己构造并弹出的菜单，走另一条通道，
     /// 两者互不干涉（可以同时用）。
     /// </remarks>
     public OrielContextMenuPolicy ContextMenuPolicy

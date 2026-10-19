@@ -702,31 +702,7 @@ internal static class OrielBuiltInWindowApiCommands
     /// </para>
     /// </remarks>
     private static WebviewWindow Resolve(IOrielWindowControl sender, JsonElement args)
-    {
-        string? label = OptionalText(args, "label");
-        OrielApp app = sender.App;
-
-        if (label is null)
-        {
-            string? ownLabel = sender.Label;
-            if (ownLabel is null)
-            {
-                throw new OrielIpcException(
-                    "无法确定发起命令的窗口：窗口后端尚未就位。请在页面加载完成后再调用。")
-                {
-                    Code = OrielIpcErrorCodes.NoSourceWindow,
-                };
-            }
-
-            label = ownLabel;
-        }
-
-        return app.GetWindow(label) ?? throw new OrielIpcException(
-            $"找不到 label 为「{label}」的窗口：它可能已被关闭，或 label 拼错了。")
-        {
-            Code = OrielIpcErrorCodes.TargetNotFound,
-        };
-    }
+        => OrielCommandTarget.Resolve(sender, args);
 
     /// <summary>列出所有存活窗口的 label。</summary>
     private static object GetAllLabels(IOrielWindowControl sender)

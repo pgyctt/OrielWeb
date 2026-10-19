@@ -5,7 +5,7 @@ namespace OrielWeb;
 /// </summary>
 /// <remarks>
 /// 这个名字容易和 <see cref="OrielMenuItem"/> 那套（宿主自建的上下文菜单，见
-/// <see cref="WebviewWindow.ShowContextMenu"/>）混淆——两者是**两条独立通道**：
+/// <see cref="WebviewWindow.ShowContextMenu(IReadOnlyList{OrielMenuItem})"/>）混淆——两者是**两条独立通道**：
 /// 这里管的是 WebView2 / WKWebView / WebKitGTK 自己弹的那个菜单，
 /// 而那套是宿主窗口弹自己构造的菜单。它们互不干涉，可以同时使用。
 /// </remarks>

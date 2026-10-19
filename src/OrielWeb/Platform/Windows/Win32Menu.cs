@@ -49,17 +49,23 @@ internal sealed unsafe class Win32Menu : IDisposable
         => _targets.TryGetValue(commandId, out OrielMenuItem? item) ? item : null;
 
     /// <summary>
-    /// 在鼠标位置弹出并跟踪，返回用户选中的项（取消或选到不可选项时为 null）。
+    /// 弹出并跟踪，返回用户选中的项（取消或选到不可选项时为 null）。
     /// 这是**阻塞调用**：<c>TrackPopupMenuEx</c> 自带模态消息循环。
     /// </summary>
-    internal OrielMenuItem? Popup(nint ownerHwnd)
+    /// <param name="ownerHwnd">宿主窗口（菜单的属主，也是 <c>TPM_RETURNCMD</c> 的接收方）。</param>
+    /// <param name="screenPoint">
+    /// 屏幕坐标（**物理像素**）。<c>null</c> 表示鼠标当前位置。
+    /// 调用方负责把逻辑像素换算成屏幕物理坐标——客户端坐标与屏幕坐标之间还差一个
+    /// <c>ClientToScreen</c>，那一步需要窗口句柄，属于窗口宿主的职责（见 <c>Win32WindowHost</c>）。
+    /// </param>
+    internal OrielMenuItem? Popup(nint ownerHwnd, POINT? screenPoint = null)
     {
         if (_handle == 0)
         {
             return null;
         }
 
-        _ = Win32.GetCursorPos(out POINT cursor);
+        POINT anchor = screenPoint ?? (Win32.GetCursorPos(out POINT cursor) ? cursor : default);
 
         // 两处经典 workaround，缺了会出"点菜单外面不消失"或"菜单立刻被关掉"：
         // 弹出前把宿主窗口置前台；跟踪结束后补一条 WM_NULL 收尾消息队列。
@@ -67,8 +73,8 @@ internal sealed unsafe class Win32Menu : IDisposable
         uint command = Win32.TrackPopupMenuEx(
             _handle,
             Win32Constants.TPM_RIGHTBUTTON | Win32Constants.TPM_RETURNCMD,
-            cursor.X,
-            cursor.Y,
+            anchor.X,
+            anchor.Y,
             ownerHwnd,
             0);
         _ = Win32.PostMessageW(ownerHwnd, Win32Constants.WM_NULL, 0, 0);

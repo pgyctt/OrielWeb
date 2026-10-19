@@ -442,7 +442,7 @@ pwsh tools/verify-windows.ps1 -Stages selftest   # 含 windownew
 | B3 | ✅ 完成（2026-10-19，按 D-1 选 A） | `12a046c`：thenable 函数，三种写法并存；`instanceof Promise` 是唯一差别 |
 | B4 | ✅ 完成（2026-10-19） | `b993aa1` + `fecd7d6`：`window.new`、`@orielweb/api/webviewWindow`、`--selftest windownew`（三平台 PASS） |
 | B5 | ✅ 完成（2026-10-19） | `5c3c17c`：`IMonitorBackend` + 三平台 `*MonitorBackend`、5 个 `window.*` 命令、`--selftest monitors`（Windows 实测 PASS，Linux/macOS 走 CI） |
-| B6a | 待开始 | 菜单模型 + popup，复用既有三平台构建器 |
+| B6a | ✅ 完成（2026-10-19） | `@orielweb/api/menu`（8 个导出，`NativeIcon` 56 键逐键对齐）、`menu.popup` / `menu.close`、三平台按坐标弹出、`--selftest menu` |
 | B6b | 待开始（可裁剪） | Linux 要做窗口布局改造，建议最后做或不做 |
 | B7 | 待开始 | 需要 2–3 个真实 Tauri 应用做迁移演练 |
 
@@ -465,6 +465,27 @@ pwsh tools/verify-windows.ps1 -Stages selftest   # 含 windownew
 > 分开之后每个文件只讲一件事，与 `ITrayBackend` 同一套分层；`OrielApp` 只多一行
 > `MonitorBackend = _backend.Monitors`。**后续批次若要再加应用级能力，沿用这个形状**
 > ——先问"这是一个新的子后端，还是现有子后端的一个成员"，不要往主接口上继续堆。
+>
+> **B6a 有三处值得记住的教训**：
+>
+> 1. **`NativeIcon` 凭印象写就是错的**。第一版多出 `Apple`/`Document`/`Generic*` 等 12 个
+>    Tauri 里根本不存在的键，又少了 `Bluetooth`/`Caution`/`TrashFull` 等。这些都不会让任何
+>    代码报错——它们只是让"用 `NativeIcon.Apple` 的迁移代码"在运行期拿到 `undefined`。
+>    教训是**常量表必须从参照实现枚举出来**，不能手写；现在这张表由对齐账本的常量比对逐键盯着。
+>
+> 2. **子菜单的 `items` 曾经是空的**。`MenuItemBase._wire()` 调 `_wireCore(id)` 时没把
+>    `actions`/`token` 往下传，而 `Submenu._wireCore` 靠这两个参数递归序列化子项。表现是
+>    "菜单弹出来了，但子菜单是空的"——单测一跑就红（22 条里 4 条），因为断言直接看线格式。
+>    这印证了 B0 那条原则：**先让差异可见**。
+>
+> 3. **`menu.close` 不是锦上添花，是必需品**。Windows 的 `TrackPopupMenuEx` 自带模态循环，
+>    `popup()` 在用户选择前不返回，UI 线程被占着时页面上的按钮点不到。Tauri 那边菜单是 Rust
+>    资源、可以在别的线程上结束它；本库没有资源表，只能显式给一条命令。**没有它，无交互的自检
+>    也跑不完**（这正是自检脚本里必须 `setTimeout` 调 `close` 的原因）。
+>
+> 4. **账本的 `METHOD_DIVERGENCES` 是按方法名索引的扁平表**，一个名字只能有一条理由。
+>    `close` 恰好落在两种不同情形上（menu 有、Image 没有），登记之后 `Image` 缺 `close`
+>    这件事就被静默掩盖了。已补一条与扁平表无关的独立断言钉住 `Image`。
 
 ---
 

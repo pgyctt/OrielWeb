@@ -670,6 +670,17 @@ internal static unsafe partial class Win32
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool SetForegroundWindow(nint hwnd);
 
+    /// <summary>
+    /// 结束调用线程上正在进行的菜单模态循环（等价于用户按 Esc）。
+    /// </summary>
+    /// <remarks>
+    /// 必须在**拥有那个菜单的线程**上调用（Win32 的菜单跟踪是线程局部的）。
+    /// 返回 false 表示该线程上没有菜单在跟踪——空操作，不是错误。
+    /// </remarks>
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool EndMenu();
+
     [LibraryImport("user32")]
     internal static partial nint SetFocus(nint hwnd);
 

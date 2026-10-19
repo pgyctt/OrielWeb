@@ -80,6 +80,10 @@
     "./image": {
       "types": "./types/image.d.ts",
       "default": "./src/image.js"
+    },
+    "./menu": {
+      "types": "./types/menu.d.ts",
+      "default": "./src/menu.js"
     }
   },
   "scripts": {

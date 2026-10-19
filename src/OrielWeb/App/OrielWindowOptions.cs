@@ -293,7 +293,7 @@ public sealed class OrielWindowOptions
     /// webview **内建**右键菜单的策略；默认 <see cref="OrielContextMenuPolicy.Editing"/>（只留剪切/复制/粘贴）。
     /// </summary>
     /// <remarks>
-    /// 只作用于渲染引擎自己弹的菜单。宿主用 <see cref="WebviewWindow.ShowContextMenu"/> 弹的自建菜单
+    /// 只作用于渲染引擎自己弹的菜单。宿主用 <see cref="WebviewWindow.ShowContextMenu(IReadOnlyList{OrielMenuItem})"/> 弹的自建菜单
     /// 走的是另一条通道，不受影响。
     /// <para>
     /// 这是**初始值**；运行时可以改（下次右键就生效，无需重建窗口），见

@@ -42,6 +42,8 @@ const MODULES = [
     { ours: '../src/window.js', theirs: '@tauri-apps/api/window', label: 'window' },
     // 页面建窗。它是 `Window` 的**子类**——方法比对要能沿原型链走（见下方 collectMethods）。
     { ours: '../src/webviewWindow.js', theirs: '@tauri-apps/api/webviewWindow', label: 'webviewWindow' },
+    // 菜单模型（B6a）。只做"弹出"那一半：菜单栏的 setAsAppMenu/setAsWindowMenu 在 B6b。
+    { ours: '../src/menu.js', theirs: '@tauri-apps/api/menu', label: 'menu' },
     { ours: '../src/path.js', theirs: '@tauri-apps/api/path', label: 'path' },
     { ours: '../src/app.js', theirs: '@tauri-apps/api/app', label: 'app' },
     { ours: '../src/mocks.js', theirs: '@tauri-apps/api/mocks', label: 'mocks' },
@@ -82,17 +84,9 @@ const PLANNED_MODULES = [
         label: 'tray',
         theirs: '@tauri-apps/api/tray',
         ours: '../src/tray.js',
-        batch: 'B6a',
+        batch: 'B6b',
         note: '托盘。宿主已有 OrielTray 与桥接层 oriel.tray（含 new/getById/getAll/onEvent），' +
             '缺的是**包内模块**：迁移代码 import 的是 @tauri-apps/api/tray',
-    },
-    {
-        label: 'menu',
-        theirs: '@tauri-apps/api/menu',
-        ours: '../src/menu.js',
-        batch: 'B6a',
-        note: '菜单模型。C# 已有 OrielMenuItem 与三平台构建器（只服务托盘/上下文菜单），' +
-            '页面侧没有模型，也没有 popup',
     },
 ];
 
@@ -332,9 +326,9 @@ test('未实现模块有登记，且登记与代码状态一致', async (t) => {
         }
     }
 
-    // 模块数不变量：三个模块仍在计划里（少一个说明有人删了条目而不是做了实现）
-    assert.equal(PLANNED_MODULES.length, 3,
-        'PLANNED_MODULES 应当登记 3 个未实现模块（tray/menu/webview）');
+    // 模块数不变量：两个模块仍在计划里（少一个说明有人删了条目而不是做了实现）
+    assert.equal(PLANNED_MODULES.length, 2,
+        'PLANNED_MODULES 应当登记 2 个未实现模块（tray/webview）');
 
     assert.deepEqual(problems, [], `未实现模块登记有问题：\n  - ${problems.join('\n  - ')}`);
 
@@ -398,12 +392,21 @@ test('常量对象的键与值都与参照实现一致', async (t) => {
  */
 const METHOD_DIVERGENCES = {
     close:
-        '**Image.close() 有意不做**：Tauri 的 `Image` 继承 `Resource`（资源表里的一条记录，' +
-        '带 `rid`），`close()` 用来释放那条记录。本库**没有资源表**——IPC 是一次性请求-回执，' +
-        '没有"把对象存到宿主那边再引用它"的协议，`Image` 只是**页面侧的字节容器**，' +
-        '没有任何宿主侧资源可释放。给一个空的 `close()` 会让调用方以为"不关就泄漏"，' +
-        '所以**不给**比给一个骗人的空方法诚实。迁移代码里的 `await image.close()` 会抛 ' +
-        '`TypeError`（不是静默跳过）——宁可当场炸，也不要让人带着错误的心智模型继续写。',
+        '**同名不同义（menu）**：Tauri 的 `Menu.close()` 来自 `Resource`，释放的是 Rust 侧资源表里' +
+        '那条记录（`rid`）。本库没有资源表，所以**不存在**要释放的宿主对象。' +
+        '但本库仍然给了一个 `close()`，它做的是另一件事：**关掉当前正在显示的菜单**' +
+        '（等价于用户按 Esc）。' +
+        '为什么必须给：Windows 的 `popup()` 会阻塞到用户选择，UI 线程被占着时页面上的按钮点不到——' +
+        '没有这条命令，页面就完全无法用代码关掉自己弹的菜单。' +
+        '**这是一处有意的语义分歧，迁移代码里的 `await menu.close()` 不会抛错，但也不会释放任何资源**' +
+        '（本来就没有资源可释放）。',
+
+    closeImage:
+        '**Image.close() 有意不做**：`Image` 只是**页面侧的字节容器**，没有任何宿主侧资源可释放。' +
+        '给一个空的 `close()` 会让调用方以为"不关就泄漏"，所以**不给**比给一个骗人的空方法诚实。' +
+        '迁移代码里的 `await image.close()` 会抛 `TypeError`（不是静默跳过）——' +
+        '宁可当场炸，也不要让人带着错误的心智模型继续写。' +
+        '（注意与 `menu` 的 `close` 不同：那个是真的有活干——关掉在屏的菜单。）',
     onDragDropEvent:
         '**有意不做**：文件拖放走宿主 `WebviewWindow.FileDropped` 事件，不在页面事件通道上。' +
         '这不是省事——浏览器安全模型决定了**页面拿不到文件路径**（Tauri 能给出路径，' +
@@ -447,6 +450,13 @@ const METHOD_DIVERGENCES = {
 
     reparent:
         '同上：把 webview 移到另一个窗口。本库没有"webview 可从窗口脱离"的模型。',
+
+    // ---- menu（B6a）----
+
+    rid:
+        '**结构性差异**：Tauri 的菜单类是 `Resource` 的子类，`rid` 是 Rust 侧资源表里的句柄。' +
+        '本库没有资源表（IPC 是一次性请求-回执），菜单树是**页面侧的纯数据**，' +
+        '`popup()` 时整棵发给宿主。没有 rid 可给。',
 };
 
 /**
@@ -676,4 +686,22 @@ test('同名类的方法也对得上（我们缺的都在 METHOD_DIVERGENCES 里
 
     console.log(`[alignment] 比对了 ${compared} 个同名类的方法`);
     assert.deepEqual(problems, [], `方法对照发现 ${problems.length} 处未记录差异：\n  - ${problems.join('\n  - ')}`);
+});
+
+test('`close` 的分歧按类分开记：menu 有（关菜单）、Image 没有', () => {
+    // `METHOD_DIVERGENCES` 是**按方法名**索引的扁平表，一个名字只能有一条理由。
+    // `close` 恰好落在两种完全不同的情形上，于是名字冲突了：
+    //   * `menu.*` 的 `close()` **存在**，做的是"关掉在屏菜单"（本库扩展，Tauri 那边是释放 rid）；
+    //   * `Image.close()` **不存在**，因为 Image 只是页面侧字节容器，没有宿主资源可释放。
+    //
+    // 冲突的后果是**真实缺口被掩盖**：把 `close` 登记进分歧表之后，方法比对会对所有类
+    // 跳过这个名字——`Image` 少了 `close` 这件事就再也没人盯着了。
+    // 所以这里单独把它钉死，用一条与扁平表无关的断言。
+    return import('../src/image.js').then(({ Image }) => {
+        assert.equal(
+            Object.getOwnPropertyNames(Image.prototype).includes('close'),
+            false,
+            'Image.close 仍然不该存在（没有资源表可释放）；' +
+            '如果哪天加了，请把 METHOD_DIVERGENCES.closeImage 删掉并更新这条断言');
+    });
 });

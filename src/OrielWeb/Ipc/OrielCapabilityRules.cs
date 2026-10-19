@@ -329,6 +329,42 @@ internal static class OrielCapabilityRules
     }
 
     /// <summary>
+    /// 始终放行的 <c>menu.*</c> 命令。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>只放行 <c>menu.popup</c> 与 <c>menu.close</c></b>，不按 <c>menu.</c> 前缀整族放行：
+    /// 这一族后面还会长出 <c>setAsWindowMenu</c> / <c>setAsAppMenu</c>（改整个窗口/应用的菜单栏），
+    /// 那是与"弹一个属于本窗口的上下文菜单"完全不同的能力面。按前缀放行等于提前替它们开了后门。
+    /// </para>
+    /// <para>
+    /// 为什么这两条可以无条件放行：它们只影响**发起调用的那个窗口**，内容也由页面自己给，
+    /// 与既有的 <c>window.contextMenu</c>（弹库内建的标准编辑菜单）同一姿态——
+    /// 能弹/关菜单的页面并不能因此多做到任何它本来做不到的事。
+    /// <c>menu.close</c> 更是纯减法（只可能关掉菜单，不可能弹出或改内容）。
+    /// </para>
+    /// </remarks>
+    internal static readonly string[] AlwaysAllowedMenuCommands =
+    [
+        "menu.popup",
+        "menu.close",
+    ];
+
+    /// <summary>判断某个 <c>menu.*</c> 命令是否属于"始终放行"的那几条。</summary>
+    internal static bool IsAlwaysAllowedMenuCommand(string name)
+    {
+        foreach (string allowed in AlwaysAllowedMenuCommands)
+        {
+            if (string.Equals(allowed, name, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// 按 allow / deny 两组模式判定一个命令名。
     /// </summary>
     /// <remarks>

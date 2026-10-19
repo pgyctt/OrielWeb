@@ -63,18 +63,53 @@ internal sealed unsafe class GtkMenu : IDisposable
     }
 
     /// <summary>
-    /// 在指针位置弹出。
+    /// 弹出菜单。
     /// </summary>
     /// <param name="triggerEvent">
     /// 触发本次弹出的 <c>GdkEvent</c>。从信号处理器里弹时**必须**把它传进来：GTK 靠这个事件
     /// 定位并决定抓取，传 0 时它会报 "no trigger event for menu popup" 并弹不出来。
     /// 从异步 IPC 回调里弹（没有当前事件）时只能传 0，此时 GTK 退化为"用当前指针位置"。
     /// </param>
-    internal void Popup(nint triggerEvent = 0)
+    /// <param name="position">
+    /// 指定位置（应用像素，相对窗口客户区）；<c>null</c> 表示跟随指针。
+    /// </param>
+    /// <param name="relativeTo">
+    /// 定位基准的 <c>GdkWindow</c>（webview 的窗口）。只在 <paramref name="position"/>
+    /// 非空时用得上；为 0 时退回指针定位。
+    /// </param>
+    internal void Popup(nint triggerEvent = 0, OrielPosition? position = null, nint relativeTo = 0)
+    {
+        if (_handle == 0 || _disposed)
+        {
+            return;
+        }
+
+        if (position is { } logical && relativeTo != 0)
+        {
+            // GTK 的应用像素与库的逻辑像素一一对应（都是 CSS px），不需要再换算缩放比。
+            // 基准矩形取 1x1：菜单的左上角贴在该点上。
+            var rect = new GdkRectangle
+            {
+                X = (int)Math.Round(logical.X),
+                Y = (int)Math.Round(logical.Y),
+                Width = 1,
+                Height = 1,
+            };
+
+            // GDK_GRAVITY_NORTH_WEST = 1（两端都用左上角对齐）
+            GtkNative.GtkMenuPopupAtRect(_handle, relativeTo, ref rect, 1, 1, triggerEvent);
+            return;
+        }
+
+        GtkNative.GtkMenuPopupAtPointer(_handle, triggerEvent);
+    }
+
+    /// <summary>收起菜单；没有在显示时是空操作。</summary>
+    internal void Popdown()
     {
         if (_handle != 0 && !_disposed)
         {
-            GtkNative.GtkMenuPopupAtPointer(_handle, triggerEvent);
+            GtkNative.GtkMenuPopdown(_handle);
         }
     }
 

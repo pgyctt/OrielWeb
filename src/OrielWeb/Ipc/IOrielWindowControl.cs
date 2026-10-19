@@ -28,6 +28,15 @@ internal interface IOrielWindowControl
     bool IsVisible { get; }
 
     /// <summary>
+    /// 本窗口的缩放比（物理像素 / 逻辑像素）。
+    /// </summary>
+    /// <remarks>
+    /// <c>menu.popup</c> 要用它把页面给的**物理**坐标换成宿主认的**逻辑**坐标。
+    /// 换算放在命令层而不是各平台后端：三份实现各写一次换算会得到三个略有差异的舍入。
+    /// </remarks>
+    double ScaleFactor { get; }
+
+    /// <summary>
     /// 本窗口的 label。
     /// </summary>
     /// <remarks>
@@ -90,4 +99,27 @@ internal interface IOrielWindowControl
         string message, string? title, string kind, MessageButtons buttons, string okLabel, string cancelLabel);
 
     void ShowContextMenu(IReadOnlyList<OrielMenuItem> items);
+
+    /// <summary>
+    /// 在指定位置弹出上下文菜单（<c>menu.popup</c> 用）。
+    /// </summary>
+    /// <param name="items">菜单树。</param>
+    /// <param name="position">
+    /// 弹出位置（**逻辑像素**，相对窗口客户区左上角）；<c>null</c> 表示鼠标位置。
+    /// </param>
+    /// <remarks>
+    /// 放在接口上而不是让命令层直接摸 <see cref="WebviewWindow"/> 的重载：命令层只认这个窄接口，
+    /// 否则它就得依赖具体窗口类型——那是它一直在避免的事，也会让"菜单树解析"这段逻辑
+    /// 在单测里完全够不着（假窗口实现不了 <see cref="WebviewWindow"/> 的额外重载）。
+    /// </remarks>
+    void ShowContextMenu(IReadOnlyList<OrielMenuItem> items, OrielPosition? position);
+
+    /// <summary>
+    /// 关掉当前正在显示的上下文菜单（<c>menu.close</c> 用）。
+    /// </summary>
+    /// <remarks>
+    /// 必须在接口上出现而不是让命令层直接摸 <see cref="WebviewWindow"/>：命令层只认这个窄接口，
+    /// 否则它就得依赖具体窗口类型（那是它一直在避免的事）。
+    /// </remarks>
+    void CloseContextMenu();
 }

@@ -323,6 +323,28 @@ internal sealed class OrielCommandDispatcher
             return;
         }
 
+        // 内建菜单命令族（menu.*）：页面把整棵菜单树发过来，宿主弹一次。
+        // 无状态（没有资源表），因此不存在"句柄在哪"的问题；能走到这里说明
+        // menu.popup 已在白名单里（见 OrielCapabilityRules.IsAlwaysAllowedMenuCommand）。
+        if (OrielBuiltInMenuCommands.TryGet(name, out var menuBuiltIn))
+        {
+            if (window is null)
+            {
+                ReplyError(sink, id, ErrorReply.Text($"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。", OrielIpcErrorCodes.NoSourceWindow));
+                return;
+            }
+
+            try
+            {
+                ReplyOk(sink, id, menuBuiltIn(window, args));
+            }
+            catch (Exception ex)
+            {
+                ReplyError(sink, id, DescribeBuiltInFailure(name, ex));
+            }
+            return;
+        }
+
         if (!_routes.TryGetValue(name, out var route))
         {
             ReplyError(sink, id, ErrorReply.Text($"未知命令 '{name}'。请确认方法已标注 [OrielCommand] 且所在程序集被应用引用。", OrielIpcErrorCodes.UnknownCommand));

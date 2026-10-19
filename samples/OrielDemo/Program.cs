@@ -52,7 +52,7 @@ internal static class Program
     /// <c>--selftest</c> 认得的名字。加一个自检只需在这里加名字 + 在 Main 里加一行判定。
     /// </summary>
     private static readonly string[] SelfTestNames =
-        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowevents", "event", "close", "window", "windownew", "monitors", "api"];
+        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowevents", "event", "close", "window", "windownew", "monitors", "menu", "api"];
 
     /// <summary>本次请求的自检名字是否就是 <paramref name="name"/>（忽略大小写与首尾空白）。</summary>
     private static bool IsSelfTest(string? requested, string name)
@@ -160,6 +160,9 @@ internal static class Program
         // monitors：显示器模型（枚举 / 主屏 / 按点查 / 窗口所在屏 / 光标）。
         // 三个平台三套原生 API，单测只能验到 JSON 形状，数值必须真机取证。
         var monitorsSelfTest = IsSelfTest(selfTest, "monitors");
+        // menu：页面侧菜单模型 + menu.popup 真的弹出了原生菜单。
+        // 三平台的弹出路径完全不同（Win32 / GTK / AppKit），只能真跑取证。
+        var menuSelfTest = IsSelfTest(selfTest, "menu");
         // api：前端包在真实页面里能不能用（ESM 加载 / 各类往返）。
         var apiSelfTest = IsSelfTest(selfTest, "api");
         // --manual-check：手动验证操作台（停在那里等人点，不自动退出）。
@@ -174,7 +177,8 @@ internal static class Program
             || singleInstanceSelfTest || shellSelfTest || capabilitySelfTest || multiWindowSelfTest
             || schemeSelfTest || exitSelfTest || threadingSelfTest || traySelfTest || trayJsSelfTest
             || geometrySelfTest || geometryFramelessSelfTest || windowEventsSelfTest || eventSelfTest
-            || closeSelfTest || windowSelfTest || windowNewSelfTest || monitorsSelfTest || apiSelfTest;
+            || closeSelfTest || windowSelfTest || windowNewSelfTest || monitorsSelfTest
+            || menuSelfTest || apiSelfTest;
         var manualCheck = !anySelfTest && !args.Contains("--todo");
 
         // 主题自检需要 OrielApp（主题是应用级的），所以这里显式 Build 再 Run；
@@ -466,6 +470,13 @@ internal static class Program
                     WebviewWindow created = win;
                     created.Loaded += () => MonitorSelfTest.Begin(created.App, created);
                 }
+                if (menuSelfTest)
+                {
+                    // 与 windownew 同一时序：订阅在 onCreated（早于导航），开始跑在 Loaded（后端已就位）。
+                    MenuSelfTest.Attach(win);
+                    WebviewWindow created = win;
+                    created.Loaded += () => MenuSelfTest.Begin(created.App, created);
+                }
                 if (apiSelfTest)
                 {
                     // 前端包自检：订阅同样要早于导航——探针脚本在页面解析时就会跑完并回显。
@@ -567,6 +578,7 @@ internal static class Program
             || (windowSelfTest && WindowSelfTest.Failed)
             || (windowNewSelfTest && WindowNewSelfTest.Failed)
             || (monitorsSelfTest && MonitorSelfTest.Failed)
+            || (menuSelfTest && MenuSelfTest.Failed)
             || (apiSelfTest && ApiSelfTest.Failed)
             || ((traySelfTest || trayJsSelfTest) && TraySelfTest.Failed))
         {

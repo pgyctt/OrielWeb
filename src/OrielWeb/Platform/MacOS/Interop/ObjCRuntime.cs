@@ -169,6 +169,18 @@ internal static unsafe partial class ObjCRuntime
     internal static partial nint SendIdObjDouble2(nint self, nint sel, nint obj, double a, double b);
 
     /// <summary>
+    /// 一个对象 + 两个 double（NSPoint）+ 再一个对象的调用
+    /// （如 <c>+[NSMenu popUpMenuPositioningItem:atLocation:inView:]</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 参数顺序必须与原生逐槽对应：<c>item</c> 走整数寄存器、<c>location</c> 走浮点寄存器、
+    /// <c>view</c> 再回到整数寄存器。写成"两个 double 放最后"的形态（<see cref="SendIdObjDouble2"/>）
+    /// 会让 view 被塞进浮点槽，AppKit 收到一个野指针——表现为弹出时崩在离这里很远的地方。
+    /// </remarks>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendIdObjDouble2Obj(nint self, nint sel, nint obj, double a, double b, nint tail);
+
+    /// <summary>
     /// 四个 double（NSRect）+ 一个整数 + 两个对象参数的调用
     /// （如 <c>NSTrackingArea initWithRect:options:owner:userInfo:</c>）。
     /// </summary>
