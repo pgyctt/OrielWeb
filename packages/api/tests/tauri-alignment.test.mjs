@@ -549,6 +549,65 @@ const METHOD_GAPS = Object.fromEntries(
     METHOD_GAP_GROUPS.flatMap((group) => group.methods.map((method) => [method, group.reason])),
 );
 
+/**
+ * **我们有、参照实现的类没有**的方法——方法级的 `EXTRAS`。
+ *
+ * 键是 `<模块>.<类>#<方法>`，值是有意扩展的理由。
+ *
+ * 为什么需要这一层：`EXTRAS` 只覆盖**导出面**（模块导出了什么名字），而
+ * "某个类多了一个方法"在那一层完全看不出来。2026-10-19 就踩过一次：
+ * 给 `Menu` / `Submenu` 加了 `close()`（关掉在屏菜单），而 Tauri 的同名方法来自
+ * `Resource`、语义是"释放 rid"——账本当时只查"参照有、我们没有"，于是这处
+ * **同名不同义**的分歧没有任何断言盯着。
+ *
+ * 判据与导出面的 `EXTRAS` 一致：加一个 Tauri 没有的方法**可以**，但必须在这里
+ * 说明原因，否则它就是一处"偷偷发明了自己的 API"。
+ *
+ * @type {Record<string, string>}
+ */
+const METHOD_EXTRAS = {
+    'menu.Menu#close':
+        '**本库扩展**：关掉当前正在显示的菜单（等价于用户按 Esc）。' +
+        'Tauri 的 `Menu.close()` 来自 `Resource`，释放的是 Rust 侧资源表那条记录——' +
+        '本库没有资源表，但**必须有这条命令**：Windows 的 `popup()` 会阻塞到用户选择，' +
+        'UI 线程被占着时页面上的按钮点不到，没有它页面就完全无法用代码关掉自己弹的菜单。',
+    'menu.Submenu#close':
+        '同上（`Submenu` 也能 `popup()`，因此也需要能关掉自己弹出的那个）。',
+
+    // ---- 既有模块（2026-10-19 加方法级反向检查时一次查出来的 8 处）----
+    //
+    // 这 8 个方法此前**完全没有约束**：账本只查"参照有、我们没有"。它们不是新加的，
+    // 而是一直就在那里——这说明导出面的 EXTRAS 对"类多了一个方法"是瞎的。
+
+    'window.Window#toggleFullscreen':
+        '**便利方法**：`setFullscreen(!(await isFullscreen()))` 的合成。' +
+        'Tauri 只给 setter + 查询，调用方每次都要自己写这三步，而"取反"是压倒性的常见用法。' +
+        '名字与 `toggleMaximize` 同族（那个 Tauri 有，本库照做），所以不会误导。',
+    'window.Window#toggleAlwaysOnTop':
+        '同上：`setAlwaysOnTop(!(await isAlwaysOnTop()))` 的合成，与 `toggleMaximize` 同族。',
+    'webviewWindow.WebviewWindow#toggleFullscreen':
+        '与 `window.Window#toggleFullscreen` 同一个方法（`WebviewWindow extends Window`，' +
+        '不重抄，只是原型链上能被看到）。理由同上。',
+    'webviewWindow.WebviewWindow#toggleAlwaysOnTop':
+        '与 `window.Window#toggleAlwaysOnTop` 同一个方法（继承而来）。理由同上。',
+
+    'image.Image#width':
+        '**本地值读取**：从已解析的尺寸里直接读宽度，不请宿主。' +
+        'Tauri 的 `Image` 有 `size()` 但没有 `width()` / `height()`，调用方要写 ' +
+        '`(await image.size()).width`——多一次 await、多一层解构。' +
+        '本库的尺寸在页面侧就已解析好（PNG 的 IHDR / ICO 的目录项），给两个直接读取器是纯加法。',
+    'image.Image#height': '同上。',
+    'image.Image#rgbaBytes':
+        '**原始像素的直读入口**：`rgba()` 返回 `Uint8Array` 的副本（要跨 IPC 复制），' +
+        '而 `rgbaBytes()` 返回**不复制**的视图，供"只想读几个像素"或"自己喂给 canvas"的场景。' +
+        'Tauri 没有对应物（那边像素在 Rust 侧）。两个名字都留，是因为它们的拷贝语义不同，' +
+        '合并成一个会让"我改这个数组会不会影响 Image"变成要靠文档回答的问题。',
+    'image.Image#hasEncodedBytes':
+        '**本库特有状态查询**：`Image` 可能是"只有 RGBA 没有编码字节"的（`fromBytes` 传原始像素），' +
+        '这时 `toBytes()` 拿不到 PNG。Tauri 的 Image 总是持编码字节，所以没有这个问题、' +
+        '也就没有这个方法。给出来是为了让调用方在调 `toBytes()` 前能判断。',
+};
+
 test('待做清单的每一项都标了 A/B 归属（方针：跨平台不一致的不做）', () => {
     // 这条挡的是"清单慢慢退化成没人敢信的历史文档"：
     // 往 METHOD_GAP_GROUPS 里加一组却不说清它是"方针下能做"还是"方针下不做"，
@@ -680,6 +739,33 @@ test('同名类的方法也对得上（我们缺的都在 METHOD_DIVERGENCES 里
                     problems.push(
                         `${key}: 清单里列着"还没实现"，但其实已经实现了（清单过期）。`);
                 }
+            }
+
+            // **反向检查二：我们独有的方法**。
+            //
+            // 导出面的 EXTRAS 只管"模块导出了什么名字"，管不到"某个类多了一个方法"。
+            // 少了这一条，给类加方法就是**完全无约束**的——而那正是"偷偷发明自己的 API"
+            // 最隐蔽的形态（它不影响 import，只在调用时才暴露）。
+            const theirMethods = collectMethods(theirClass);
+
+            for (const method of ourMethods) {
+                if (theirMethods.has(method)) {
+                    continue;
+                }
+
+                // 下划线前缀是内部实现（`_wire` / `_wireCore` 等），不是公开 API 面。
+                if (method.startsWith('_')) {
+                    continue;
+                }
+
+                const key = `${module.label}.${name}#${method}`;
+                if (key in METHOD_EXTRAS) {
+                    continue;
+                }
+
+                problems.push(
+                    `${key}: 我们有、Tauri 的类没有，且没记进 METHOD_EXTRAS。` +
+                    '包应当只提供 Tauri 有的方法；自己的扩展要写清理由。');
             }
         }
     }

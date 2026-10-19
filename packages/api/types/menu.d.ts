@@ -37,6 +37,35 @@ export class MenuItem extends MenuItemBase {
     /** @type {string | null} */
     _accelerator: string | null;
     /**
+     * 显示文本（对标 `MenuItem.text`）。
+     *
+     * @returns {Promise<string>}
+     * @remarks 这些方法**不在基类上**：Tauri 的 `Menu` 是个容器，没有 `text()`；
+     * `PredefinedMenuItem` 只有 `text`/`setText`。放在基类上会让它们凭空多出
+     * "看起来能用、语义却不成立"的方法（对 `Menu` 调 `setEnabled()` 是什么意思？）。
+     */
+    text(): Promise<string>;
+    /**
+     * 设置显示文本（对标 `MenuItem.setText`）。
+     *
+     * @param {string} text
+     * @returns {Promise<void>}
+     */
+    setText(text: string): Promise<void>;
+    /**
+     * 是否可用（对标 `MenuItem.isEnabled`）。
+     *
+     * @returns {Promise<boolean>}
+     */
+    isEnabled(): Promise<boolean>;
+    /**
+     * 设置是否可用（对标 `MenuItem.setEnabled`）。
+     *
+     * @param {boolean} enabled
+     * @returns {Promise<void>}
+     */
+    setEnabled(enabled: boolean): Promise<void>;
+    /**
      * 设置加速键（对标 `MenuItem.setAccelerator`）。
      *
      * @param {string | null} accelerator `null` 表示移除。
@@ -142,6 +171,22 @@ export class PredefinedMenuItem extends MenuItemBase {
     _item: string | {
         About: unknown;
     };
+    /**
+     * 显示文本（对标 `PredefinedMenuItem.text`）。
+     *
+     * @returns {Promise<string>}
+     * @remarks 预定义项**只有** `text` / `setText`——没有 `isEnabled` / `setEnabled`。
+     * 这不是漏了：Tauri 那边也没有（预定义项的可用性由平台自己决定，
+     * 例如没有选区时 `Copy` 自动灰掉）。
+     */
+    text(): Promise<string>;
+    /**
+     * 设置显示文本（对标 `PredefinedMenuItem.setText`）。
+     *
+     * @param {string} text
+     * @returns {Promise<void>}
+     */
+    setText(text: string): Promise<void>;
 }
 /**
  * @typedef {object} PredefinedMenuItemOptions
@@ -176,6 +221,20 @@ export class Submenu extends MenuItemBase {
     });
     /** @type {MenuItemBase[]} */
     _items: MenuItemBase[];
+    /** @returns {Promise<string>} 显示文本。 */
+    text(): Promise<string>;
+    /**
+     * @param {string} text
+     * @returns {Promise<void>}
+     */
+    setText(text: string): Promise<void>;
+    /** @returns {Promise<boolean>} 是否可用。 */
+    isEnabled(): Promise<boolean>;
+    /**
+     * @param {boolean} enabled
+     * @returns {Promise<void>}
+     */
+    setEnabled(enabled: boolean): Promise<void>;
     /**
      * @param {any} items 一项或多项。
      * @returns {Promise<void>}
@@ -488,9 +547,16 @@ export type PredefinedMenuItemOptions = {
     action?: ((id: string) => void) | undefined;
 };
 /**
- * 菜单与菜单项的共同基类：持有 id、文本、可用性与 action。
+ * 所有菜单类型的共同基类：只持有 id 与 action。
  *
- * @remarks 与 Tauri 的 `MenuItemBase` 对应，但**不导出**（Tauri 也没有从 menu 模块转出它）。
+ * @remarks
+ * <p>与 Tauri 的 `MenuItemBase` 对应，但**不导出**（Tauri 也没有从 menu 模块转出它）。
+ * <p><b>这里刻意只放 id 与 action，不放 text / enabled</b>：Tauri 的 `Menu` 没有
+ * `text()` / `isEnabled()`（它是个容器，不是"一项"），而 `PredefinedMenuItem` 只有
+ * `text()` / `setText()`。把这些方法放在基类上，`Menu` 与 `PredefinedMenuItem` 就会
+ * 凭空多出几个方法——那是"看起来能用、语义却不成立"的假 API（对 `Menu` 调
+ * `setEnabled()` 是什么意思？）。
+ * <p>所以文本与可用性下沉到 <see cref="MenuItem"/>，各自需要什么就在各自那层加。
  */
 declare class MenuItemBase {
     /**
@@ -510,20 +576,6 @@ declare class MenuItemBase {
     _enabled: boolean;
     /** @type {((id: string) => void) | undefined} */
     _action: ((id: string) => void) | undefined;
-    /** @returns {Promise<string>} 显示文本。 */
-    text(): Promise<string>;
-    /**
-     * @param {string} text
-     * @returns {Promise<void>}
-     */
-    setText(text: string): Promise<void>;
-    /** @returns {Promise<boolean>} 是否可用。 */
-    isEnabled(): Promise<boolean>;
-    /**
-     * @param {boolean} enabled
-     * @returns {Promise<void>}
-     */
-    setEnabled(enabled: boolean): Promise<void>;
     /**
      * 序列化成宿主认识的形状。
      *

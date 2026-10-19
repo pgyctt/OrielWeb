@@ -139,9 +139,16 @@ function toItem(value) {
 }
 
 /**
- * 菜单与菜单项的共同基类：持有 id、文本、可用性与 action。
+ * 所有菜单类型的共同基类：只持有 id 与 action。
  *
- * @remarks 与 Tauri 的 `MenuItemBase` 对应，但**不导出**（Tauri 也没有从 menu 模块转出它）。
+ * @remarks
+ * <p>与 Tauri 的 `MenuItemBase` 对应，但**不导出**（Tauri 也没有从 menu 模块转出它）。
+ * <p><b>这里刻意只放 id 与 action，不放 text / enabled</b>：Tauri 的 `Menu` 没有
+ * `text()` / `isEnabled()`（它是个容器，不是"一项"），而 `PredefinedMenuItem` 只有
+ * `text()` / `setText()`。把这些方法放在基类上，`Menu` 与 `PredefinedMenuItem` 就会
+ * 凭空多出几个方法——那是"看起来能用、语义却不成立"的假 API（对 `Menu` 调
+ * `setEnabled()` 是什么意思？）。
+ * <p>所以文本与可用性下沉到 <see cref="MenuItem"/>，各自需要什么就在各自那层加。
  */
 class MenuItemBase {
     /**
@@ -156,32 +163,6 @@ class MenuItemBase {
         this._enabled = options.enabled !== false;
         /** @type {((id: string) => void) | undefined} */
         this._action = typeof options.action === 'function' ? options.action : undefined;
-    }
-
-    /** @returns {Promise<string>} 显示文本。 */
-    async text() {
-        return this._text;
-    }
-
-    /**
-     * @param {string} text
-     * @returns {Promise<void>}
-     */
-    async setText(text) {
-        this._text = String(text);
-    }
-
-    /** @returns {Promise<boolean>} 是否可用。 */
-    async isEnabled() {
-        return this._enabled;
-    }
-
-    /**
-     * @param {boolean} enabled
-     * @returns {Promise<void>}
-     */
-    async setEnabled(enabled) {
-        this._enabled = enabled !== false;
     }
 
     /**
@@ -250,6 +231,47 @@ export class MenuItem extends MenuItemBase {
      */
     static async new(options = { text: '' }) {
         return new MenuItem(options);
+    }
+
+    /**
+     * 显示文本（对标 `MenuItem.text`）。
+     *
+     * @returns {Promise<string>}
+     * @remarks 这些方法**不在基类上**：Tauri 的 `Menu` 是个容器，没有 `text()`；
+     * `PredefinedMenuItem` 只有 `text`/`setText`。放在基类上会让它们凭空多出
+     * "看起来能用、语义却不成立"的方法（对 `Menu` 调 `setEnabled()` 是什么意思？）。
+     */
+    async text() {
+        return this._text;
+    }
+
+    /**
+     * 设置显示文本（对标 `MenuItem.setText`）。
+     *
+     * @param {string} text
+     * @returns {Promise<void>}
+     */
+    async setText(text) {
+        this._text = String(text);
+    }
+
+    /**
+     * 是否可用（对标 `MenuItem.isEnabled`）。
+     *
+     * @returns {Promise<boolean>}
+     */
+    async isEnabled() {
+        return this._enabled;
+    }
+
+    /**
+     * 设置是否可用（对标 `MenuItem.setEnabled`）。
+     *
+     * @param {boolean} enabled
+     * @returns {Promise<void>}
+     */
+    async setEnabled(enabled) {
+        this._enabled = enabled !== false;
     }
 
     /**
@@ -413,6 +435,28 @@ export class PredefinedMenuItem extends MenuItemBase {
     }
 
     /**
+     * 显示文本（对标 `PredefinedMenuItem.text`）。
+     *
+     * @returns {Promise<string>}
+     * @remarks 预定义项**只有** `text` / `setText`——没有 `isEnabled` / `setEnabled`。
+     * 这不是漏了：Tauri 那边也没有（预定义项的可用性由平台自己决定，
+     * 例如没有选区时 `Copy` 自动灰掉）。
+     */
+    async text() {
+        return this._text;
+    }
+
+    /**
+     * 设置显示文本（对标 `PredefinedMenuItem.setText`）。
+     *
+     * @param {string} text
+     * @returns {Promise<void>}
+     */
+    async setText(text) {
+        this._text = String(text);
+    }
+
+    /**
      * @override
      * @param {string} id
      * @param {Map<string, (id: string) => void>} actions
@@ -460,6 +504,37 @@ export class Submenu extends MenuItemBase {
      */
     static async new(options = { text: '' }) {
         return new Submenu(options);
+    }
+
+    // 以下四个方法与 `MenuItem` 上的是同一套语义，但**不能放在基类上**：
+    // `Menu` 与 `PredefinedMenuItem` 在 Tauri 里没有它们（前者是容器，
+    // 后者只有 text/setText）。放基类会让那两个类凭空多出方法。
+    // 抄两份而不是抽 mixin：只有两组、每段四行，抽出去的间接层比重复更难读。
+
+    /** @returns {Promise<string>} 显示文本。 */
+    async text() {
+        return this._text;
+    }
+
+    /**
+     * @param {string} text
+     * @returns {Promise<void>}
+     */
+    async setText(text) {
+        this._text = String(text);
+    }
+
+    /** @returns {Promise<boolean>} 是否可用。 */
+    async isEnabled() {
+        return this._enabled;
+    }
+
+    /**
+     * @param {boolean} enabled
+     * @returns {Promise<void>}
+     */
+    async setEnabled(enabled) {
+        this._enabled = enabled !== false;
     }
 
     /**
