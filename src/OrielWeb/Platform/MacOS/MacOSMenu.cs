@@ -216,10 +216,11 @@ internal sealed unsafe class MacOSMenu : IDisposable
         nint modes = ObjCRuntime.SendIdObj(
             ObjCRuntime.GetClassOrThrow("NSArray"), ObjCRuntime.Sel("arrayWithObject:"), trackingMode);
 
-        ObjCRuntime.SendVoidSelDoubleObj(
+        ObjCRuntime.SendVoidSelObjDoubleObj(
             _handle,
             ObjCRuntime.Sel("performSelector:withObject:afterDelay:inModes:"),
             ObjCRuntime.Sel("cancelTracking"),
+            0,
             delay.TotalSeconds,
             modes);
     }
