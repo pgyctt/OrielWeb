@@ -3,8 +3,10 @@
 // 与 Tauri 的差别（如实标注）：
 //   * **底层通道是 `oriel.on`，它给的是裸 payload**。这里在包内包成 `{ event, id, payload }`，
 //     所以包外（直接调 `window.oriel.on` 的既有页面）不受影响——两套并存是刻意的。
-//   * `listen` 返回的是**同步函数**（Tauri 返回 `Promise<UnlistenFn>`）。`await` 一个非 Promise
-//     也成立，所以迁移代码 `const un = await listen(...)` 照样能跑。
+//   * `listen` 返回的是**函数**（Tauri 返回 `Promise<UnlistenFn>`），但这个函数**同时是
+//     thenable**：`const un = listen(...)`、`const un = await listen(...)`、
+//     `listen(...).then(fn => ...)` 三种写法都成立。差别只剩
+//     `un instanceof Promise === false`——而那个判断在实际迁移代码里几乎不存在。
 //   * `emit` / `emitTo` 需要宿主侧有一个广播命令（`event.emit`），且**要过能力门禁**
 //     ——它不是 `win.*` 那种"始终放行"的库内建命令。
 //   * `TauriEvent` 常量里，本库目前只实现了 `RESIZED` / `MOVED` / `FOCUS_CHANGED` /
@@ -181,6 +183,52 @@ function toEventObject(eventName, payload) {
 }
 
 /**
+ * 把退订函数包成 **thenable 函数**。
+ *
+ * @param {() => void} unlisten
+ * @returns {(() => void) & PromiseLike<() => void>}
+ * @remarks
+ * Tauri 的 `listen()` 返回 `Promise<UnlistenFn>`，本库历史上一律同步返回退订函数。
+ * 迁移代码里 `await listen(...)` 很常见，而 `await` 一个普通函数只会得到它本身——
+ * 于是 `const un = await listen(...)` 恰好也能用，但 `listen(...).then(...)` 会炸。
+ *
+ * 这里给函数挂一个 `then`：三种写法同时成立——
+ * <list type="bullet">
+ *   <item><c>const un = listen(...)</c>（既有写法，零改动）</item>
+ *   <item><c>const un = await listen(...)</c></item>
+ *   <item><c>listen(...).then(fn =&gt; ...)</c></item>
+ * </list>
+ *
+ * **为什么不直接返回 Promise**：那会让全仓 `const un = listen(...)` 变成
+ * `un` 是 Promise、调用 `un()` 抛 TypeError，是破坏性变更；而收益只是
+ * `instanceof Promise` 这个几乎没人写的判断。
+ *
+ * **`then` 里 resolve 的是 `plain` 而不是 `unlisten`**：函数自己已经是 thenable，
+ * 用它 resolve 会形成 thenable 自我吸收的无限递归。
+ */
+function asThenable(unlisten) {
+    // 一个不含 `then` 的同义函数：await 之后拿到它，调用行为完全一样。
+    const plain = () => unlisten();
+
+    /** @param {any} [onFulfilled] @param {any} [onRejected] @returns {Promise<any>} */
+    const thenFn = (onFulfilled, onRejected) => Promise.resolve(plain).then(onFulfilled, onRejected);
+
+    /** @param {any} [onRejected] @returns {Promise<any>} */
+    const catchFn = (onRejected) => Promise.resolve(plain).catch(onRejected);
+
+    /** @param {any} [onFinally] @returns {Promise<any>} */
+    const finallyFn = (onFinally) => Promise.resolve(plain).finally(onFinally);
+
+    Object.defineProperties(unlisten, {
+        then: { value: thenFn, enumerable: false, configurable: true },
+        catch: { value: catchFn, enumerable: false, configurable: true },
+        finally: { value: finallyFn, enumerable: false, configurable: true },
+    });
+
+    return /** @type {(() => void) & PromiseLike<() => void>} */ (unlisten);
+}
+
+/**
  * 订阅一个事件。
  *
  * @param {string} eventName 事件名（如 `resize`、`tauri://resize`、自定义名）。
@@ -188,11 +236,12 @@ function toEventObject(eventName, payload) {
  * @param {{ target?: string | { label: string } }} [options]
  *   `target` 是 Tauri 的过滤参数（只在那个窗口里生效）。本库**目前忽略它**——
  *   事件本来就只发给本窗口，跨窗口定向要用 `emitTo`。传了不会报错，但也不改变行为。
- * @returns {() => void} 退订函数（同步返回，见文件头说明）。
+ * @returns {(() => void) & PromiseLike<() => void>} 退订函数；它同时是 thenable，
+ *   所以 `await listen(...)` 也成立（见 {@link asThenable}）。
  */
 export function listen(eventName, handler, options) {
     void options;
-    return subscribe(eventName, handler, false);
+    return asThenable(subscribe(eventName, handler, false));
 }
 
 /**
@@ -201,11 +250,12 @@ export function listen(eventName, handler, options) {
  * @param {string} eventName
  * @param {(event: { event: string, id: number, payload: any }) => void} handler
  * @param {{ target?: string | { label: string } }} [options]
- * @returns {() => void} 退订函数；在事件到达前调用它可以取消订阅。
+ * @returns {(() => void) & PromiseLike<() => void>} 退订函数；在事件到达前调用它可以取消订阅。
+ *   与 {@link listen} 一样是 thenable，`await once(...)` 也成立。
  */
 export function once(eventName, handler, options) {
     void options;
-    return subscribe(eventName, handler, true);
+    return asThenable(subscribe(eventName, handler, true));
 }
 
 /**

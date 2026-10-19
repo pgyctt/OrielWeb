@@ -918,7 +918,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 | 模块 | 内容 |
 |---|---|
 | `core` | `invoke` / `isTauri` / `convertFileSrc`（同步；宿主侧查 `asset.read` 的 scope） |
-| `event` | `listen` / `once` / `emit` / `emitTo` / `TauriEvent` |
+| `event` | `listen` / `once` / `emit` / `emitTo` / `TauriEvent`（`listen` 返回**函数**，同时是 thenable：`const un = listen(...)`、`await listen(...)`、`listen(...).then(fn => ...)` 三种写法都成立；差别只剩 `instanceof Promise === false`） |
 | `window` | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow` + `Window` 类（含静态方法 `Window.getFocusedWindow()`；M5 的状态查询与外观开关：`isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop` / `isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `isEnabled` / `theme`；`setEnabled` / `setMaximizable` / `setMinimizable` / `setClosable` / `setMaxSize` / `setSizeConstraints` / `requestUserAttention` / `setIcon` / `setBackgroundColor`；`onThemeChanged` / `onScaleChanged`） |
 | `path` | `sep` / `delimiter`（**同步**）+ `join` / `normalize` / `dirname` / `extname` / `basename` / `isAbsolute` / `resolve` |
 | `app` | `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`（只读元信息，**无需能力声明**）；`exit` / `show` / `hide`（**需要显式 `Allow`**，见 §4 的能力表） |

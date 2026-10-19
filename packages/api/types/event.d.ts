@@ -13,7 +13,8 @@ export function toHostEventName(eventName: string): string;
  * @param {{ target?: string | { label: string } }} [options]
  *   `target` 是 Tauri 的过滤参数（只在那个窗口里生效）。本库**目前忽略它**——
  *   事件本来就只发给本窗口，跨窗口定向要用 `emitTo`。传了不会报错，但也不改变行为。
- * @returns {() => void} 退订函数（同步返回，见文件头说明）。
+ * @returns {(() => void) & PromiseLike<() => void>} 退订函数；它同时是 thenable，
+ *   所以 `await listen(...)` 也成立（见 {@link asThenable}）。
  */
 export function listen(eventName: string, handler: (event: {
     event: string;
@@ -23,14 +24,15 @@ export function listen(eventName: string, handler: (event: {
     target?: string | {
         label: string;
     };
-}): () => void;
+}): (() => void) & PromiseLike<() => void>;
 /**
  * 订阅一个事件，收到**一次**后自动退订（对标 Tauri 的 `once`）。
  *
  * @param {string} eventName
  * @param {(event: { event: string, id: number, payload: any }) => void} handler
  * @param {{ target?: string | { label: string } }} [options]
- * @returns {() => void} 退订函数；在事件到达前调用它可以取消订阅。
+ * @returns {(() => void) & PromiseLike<() => void>} 退订函数；在事件到达前调用它可以取消订阅。
+ *   与 {@link listen} 一样是 thenable，`await once(...)` 也成立。
  */
 export function once(eventName: string, handler: (event: {
     event: string;
@@ -40,7 +42,7 @@ export function once(eventName: string, handler: (event: {
     target?: string | {
         label: string;
     };
-}): () => void;
+}): (() => void) & PromiseLike<() => void>;
 /**
  * 向**所有**窗口广播一个事件（对标 Tauri 的 `emit`）。
  *

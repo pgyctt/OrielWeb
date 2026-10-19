@@ -333,26 +333,26 @@ export class Window {
      *
      * @param {string} event 事件名（Tauri 名或宿主名都行，见 `event` 模块的映射表）。
      * @param {(event: { event: string, id: number, payload: any }) => void} handler
-     * @returns {() => void} 退订函数（**同步**返回，比 Tauri 的 Promise 更方便：
-     * `await` 一个非 Promise 值同样可用，所以迁移代码不用改）。
+     * @returns {(() => void) & PromiseLike<() => void>} 退订函数；它同时是 thenable，
+     *   所以 `await win.listen(...)` 与 `win.listen(...).then(...)` 都成立（见 `event` 模块）。
      */
     listen(event: string, handler: (event: {
         event: string;
         id: number;
         payload: any;
-    }) => void): () => void;
+    }) => void): (() => void) & PromiseLike<() => void>;
     /**
      * 订阅一次；收到第一条后自动退订。
      *
      * @param {string} event
      * @param {(event: { event: string, id: number, payload: any }) => void} handler
-     * @returns {() => void} 退订函数（在触发前调用可以取消；**同步**返回，同上）。
+     * @returns {(() => void) & PromiseLike<() => void>} 退订函数（在触发前调用可以取消；同样 thenable）。
      */
     once(event: string, handler: (event: {
         event: string;
         id: number;
         payload: any;
-    }) => void): () => void;
+    }) => void): (() => void) & PromiseLike<() => void>;
     /**
      * 广播一个事件给**所有**窗口。
      *

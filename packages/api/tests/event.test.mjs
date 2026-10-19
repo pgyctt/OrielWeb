@@ -23,6 +23,88 @@ function reset() {
     clearMocks();
 }
 
+// ---- listen 的形状：函数 + thenable（对标 Tauri 的 Promise<UnlistenFn>，零破坏） ----
+
+test('listen：返回值仍是函数，直接调用可退订（既有写法不变）', () => {
+    reset();
+    mockIPC(() => null);
+
+    const seen = [];
+    const un = listen('shape-a', (e) => seen.push(e));
+
+    assert.equal(typeof un, 'function', '必须仍是函数——全仓 `const un = listen(...)` 依赖它');
+
+    un();
+    mockEmit('shape-a', 1);
+    assert.deepEqual(seen, [], '调用后不该再收到事件');
+
+    reset();
+});
+
+test('listen：可以 await，await 之后拿到的仍是可调用的退订函数', async () => {
+    reset();
+    mockIPC(() => null);
+
+    const seen = [];
+    const un = await listen('shape-b', (e) => seen.push(e));
+
+    assert.equal(typeof un, 'function', 'await 之后必须是函数，不能是"函数包着函数"');
+
+    mockEmit('shape-b', 1);
+    assert.equal(seen.length, 1, 'await 不该影响订阅本身');
+
+    un();
+    mockEmit('shape-b', 2);
+    assert.equal(seen.length, 1, 'await 拿到的退订函数必须真的能退订');
+
+    reset();
+});
+
+test('listen：.then() 也成立（迁移代码里常见的写法）', async () => {
+    reset();
+    mockIPC(() => null);
+
+    const un = await listen('shape-c', () => {}).then((fn) => {
+        assert.equal(typeof fn, 'function');
+        return fn;
+    });
+
+    assert.equal(typeof un, 'function');
+    un();
+
+    reset();
+});
+
+test('listen：thenable 不会自我吸收（await 两次都能拿到函数）', async () => {
+    // 函数自己挂了 then，如果 then 里 resolve 的也是"带 then 的自己"，
+    // Promise 会一直吸收下去（或直接死循环）。这条钉住 resolve 的是**不带 then 的同义函数**。
+    reset();
+    mockIPC(() => null);
+
+    const un = listen('shape-d', () => {});
+    const first = await un;
+    const second = await Promise.resolve(un);
+
+    assert.equal(typeof first, 'function');
+    assert.equal(typeof second, 'function');
+
+    first();
+    second(); // 幂等：重复退订不该抛
+
+    reset();
+});
+
+test('once：同样可 await', async () => {
+    reset();
+    mockIPC(() => null);
+
+    const un = await once('shape-e', () => {});
+    assert.equal(typeof un, 'function');
+    un();
+
+    reset();
+});
+
 test('listen：收到 { event, id, payload } 形状的事件对象', () => {
     reset();
     mockIPC(() => null);
