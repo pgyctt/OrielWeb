@@ -311,6 +311,23 @@ public sealed class WebviewWindow : IOrielWindowControl
     public double ScaleFactor => Backend.ScaleFactor;
 
     /// <summary>
+    /// 本窗口所在的显示器（对标 Tauri 2 的 <c>currentMonitor()</c>）；平台报不出来时 <c>null</c>。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 由平台按"相交面积最大"判定（Windows 的 <c>MonitorFromWindow</c>、macOS 的
+    /// <c>-[NSWindow screen]</c>、Linux 的 <c>gdk_display_get_monitor_at_window</c>），
+    /// 不是"窗口中心点落在哪块屏"——窗口拖到两块屏中间时这两种判法的答案会不同，
+    /// 而用户与系统都按前者理解。
+    /// </para>
+    /// <para>
+    /// 返回值的 <see cref="OrielMonitor.Position"/> / <see cref="OrielMonitor.Size"/> 是
+    /// **物理像素**，与本窗口 <see cref="OuterPosition"/> / <see cref="OuterSize"/> 的逻辑像素不同。
+    /// </para>
+    /// </remarks>
+    public OrielMonitor? CurrentMonitor => App.MonitorBackend.MonitorFromWindow(Backend.NativeWindowHandle);
+
+    /// <summary>
     /// 当前窗口标题（对标 Tauri 2 的 <c>Window.title()</c>）。
     /// </summary>
     /// <remarks>

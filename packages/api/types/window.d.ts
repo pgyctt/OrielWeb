@@ -33,6 +33,52 @@ export function getByLabel(label: string): Promise<Window | null>;
  */
 export function getFocusedWindow(): Promise<Window | null>;
 /**
+ * 当前窗口所在的显示器（对标 Tauri 的 `currentMonitor`）。
+ *
+ * @returns {Promise<Monitor | null>} 平台报不出来时 `null`（例如窗口还没显示）。
+ * @remarks
+ * 按"相交面积最大"判定，不是"窗口中心点落在哪块屏"——两者在窗口跨屏时给出的答案不同，
+ * 而用户与系统都按前者理解。
+ *
+ * 问的永远是**发起调用的那个窗口**（Tauri 的 `currentMonitor()` 同样是无参模块函数）。
+ */
+export function currentMonitor(): Promise<Monitor | null>;
+/**
+ * 主显示器（对标 Tauri 的 `primaryMonitor`）。
+ *
+ * @returns {Promise<Monitor | null>} 平台报不出来时 `null`。
+ * @remarks
+ * 主屏同时是坐标原点：它的 `position` 通常是 `(0, 0)`，副屏在主屏左侧或上方时为负。
+ */
+export function primaryMonitor(): Promise<Monitor | null>;
+/**
+ * 所有显示器（对标 Tauri 的 `availableMonitors`）。
+ *
+ * @returns {Promise<Monitor[]>} 顺序由平台决定，**不保证主屏在前**；没有显示器时是空数组。
+ * @remarks 每次调用都重新向系统枚举，所以插拔显示器、改分辨率之后立刻可见。
+ */
+export function availableMonitors(): Promise<Monitor[]>;
+/**
+ * 包含指定点的显示器（对标 Tauri 的 `monitorFromPoint`）。
+ *
+ * @param {number} x 横坐标（物理像素，相对主屏左上角）。
+ * @param {number} y 纵坐标（物理像素，向下为正）。
+ * @returns {Promise<Monitor | null>} 点不在任何屏幕上时 `null`（不吸附到最近的屏幕）。
+ */
+export function monitorFromPoint(x: number, y: number): Promise<Monitor | null>;
+/**
+ * 光标位置（对标 Tauri 的 `cursorPosition`）。
+ *
+ * @returns {Promise<PhysicalPosition>} 物理像素，相对主屏左上角。
+ * @remarks
+ * 拿不到时返回 `(0, 0)` 而不是抛异常：这与"光标真的在原点"无法区分，但这不是一个
+ * 需要那个精度的查询——真正在意精度的调用方（拖拽、命中测试）用的是事件里的坐标。
+ *
+ * **Wayland 已知限制**：合成器不给全局光标坐标，GDK 只能报应用像素，
+ * 所以返回值在分数缩放下可能有取整误差（见 `OrielMonitor` 的说明）。
+ */
+export function cursorPosition(): Promise<PhysicalPosition>;
+/**
  * 一个窗口的句柄（对标 Tauri 2 的 `Window`）。
  *
  * @remarks
@@ -598,4 +644,27 @@ export class Window {
         payload: null;
     }) => void): Promise<() => void>;
 }
+/**
+ * 一台显示器（对标 Tauri 的 `Monitor`）。
+ */
+export type Monitor = {
+    /**
+     * 人类可读的名称；平台给不出时是 `null`。
+     */
+    name: string | null;
+    /**
+     * 左上角（物理像素，相对主屏左上角）。
+     */
+    position: PhysicalPosition;
+    /**
+     * 分辨率（物理像素）。
+     */
+    size: PhysicalSize;
+    /**
+     * 缩放比（1.0 = 100%，2.0 = Retina / 200%）。
+     */
+    scaleFactor: number;
+};
+import { PhysicalPosition } from './dpi.js';
+import { PhysicalSize } from './dpi.js';
 export { LogicalSize, LogicalPosition, PhysicalSize, PhysicalPosition } from "./dpi.js";

@@ -20,6 +20,8 @@ import { toImageBytes, bytesToBase64, assertImageFormat } from './image-bytes.js
 import {
     LogicalSize,
     LogicalPosition,
+    PhysicalSize,
+    PhysicalPosition,
     normalizeSize,
     normalizePosition,
     physicalToLogical,
@@ -1215,4 +1217,118 @@ export async function getByLabel(label) {
 export async function getFocusedWindow() {
     const label = await invoke('window.getFocused');
     return typeof label === 'string' && label !== '' ? new Window(label) : null;
+}
+
+// ---------------------------------------------------------------------------
+// 显示器（对标 Tauri 的 currentMonitor / primaryMonitor / availableMonitors /
+// monitorFromPoint / cursorPosition）
+//
+// **单位：全部是物理像素**，原点在主显示器左上角。与本模块的窗口几何不同
+// （innerSize / outerSize 是逻辑像素）——显示器要跨不同缩放的屏幕比较，
+// 只有物理像素是统一刻度。两者之间用 `monitor.scaleFactor` 换算。
+//
+// **返回的是 dpi 模块的类实例**：`monitor.size` 是 `PhysicalSize`、`monitor.position`
+// 是 `PhysicalPosition`，所以 `monitor.size.toLogical(monitor.scaleFactor)` 可用
+// （与 Tauri 完全一致）。测试里断言过这一点——退成裸对象会让迁移代码在
+// `.toLogical is not a function` 上挂掉。
+// ---------------------------------------------------------------------------
+
+/**
+ * 一台显示器（对标 Tauri 的 `Monitor`）。
+ *
+ * @typedef {object} Monitor
+ * @property {string | null} name 人类可读的名称；平台给不出时是 `null`。
+ * @property {PhysicalPosition} position 左上角（物理像素，相对主屏左上角）。
+ * @property {PhysicalSize} size 分辨率（物理像素）。
+ * @property {number} scaleFactor 缩放比（1.0 = 100%，2.0 = Retina / 200%）。
+ */
+
+/**
+ * 把宿主返回的显示器对象包成 dpi 类实例。
+ *
+ * @param {{ name: string | null, position: { x: number, y: number }, size: { width: number, height: number }, scaleFactor: number }} raw
+ * @returns {Monitor}
+ * @internal
+ */
+function toMonitor(raw) {
+    return {
+        name: raw.name ?? null,
+        position: new PhysicalPosition(raw.position.x, raw.position.y),
+        size: new PhysicalSize(raw.size.width, raw.size.height),
+        scaleFactor: raw.scaleFactor,
+    };
+}
+
+/**
+ * 宿主返回 `null` 时保持 `null`，否则包成 dpi 类实例。
+ *
+ * @param {Parameters<typeof toMonitor>[0] | null} raw
+ * @returns {Monitor | null}
+ * @internal
+ */
+function mapMonitor(raw) {
+    return raw === null || raw === undefined ? null : toMonitor(raw);
+}
+
+/**
+ * 当前窗口所在的显示器（对标 Tauri 的 `currentMonitor`）。
+ *
+ * @returns {Promise<Monitor | null>} 平台报不出来时 `null`（例如窗口还没显示）。
+ * @remarks
+ * 按"相交面积最大"判定，不是"窗口中心点落在哪块屏"——两者在窗口跨屏时给出的答案不同，
+ * 而用户与系统都按前者理解。
+ *
+ * 问的永远是**发起调用的那个窗口**（Tauri 的 `currentMonitor()` 同样是无参模块函数）。
+ */
+export async function currentMonitor() {
+    return mapMonitor(await invoke('window.currentMonitor'));
+}
+
+/**
+ * 主显示器（对标 Tauri 的 `primaryMonitor`）。
+ *
+ * @returns {Promise<Monitor | null>} 平台报不出来时 `null`。
+ * @remarks
+ * 主屏同时是坐标原点：它的 `position` 通常是 `(0, 0)`，副屏在主屏左侧或上方时为负。
+ */
+export async function primaryMonitor() {
+    return mapMonitor(await invoke('window.primaryMonitor'));
+}
+
+/**
+ * 所有显示器（对标 Tauri 的 `availableMonitors`）。
+ *
+ * @returns {Promise<Monitor[]>} 顺序由平台决定，**不保证主屏在前**；没有显示器时是空数组。
+ * @remarks 每次调用都重新向系统枚举，所以插拔显示器、改分辨率之后立刻可见。
+ */
+export async function availableMonitors() {
+    const monitors = await invoke('window.availableMonitors');
+    return (Array.isArray(monitors) ? monitors : []).map((raw) => toMonitor(raw));
+}
+
+/**
+ * 包含指定点的显示器（对标 Tauri 的 `monitorFromPoint`）。
+ *
+ * @param {number} x 横坐标（物理像素，相对主屏左上角）。
+ * @param {number} y 纵坐标（物理像素，向下为正）。
+ * @returns {Promise<Monitor | null>} 点不在任何屏幕上时 `null`（不吸附到最近的屏幕）。
+ */
+export async function monitorFromPoint(x, y) {
+    return mapMonitor(await invoke('window.monitorFromPoint', { x, y }));
+}
+
+/**
+ * 光标位置（对标 Tauri 的 `cursorPosition`）。
+ *
+ * @returns {Promise<PhysicalPosition>} 物理像素，相对主屏左上角。
+ * @remarks
+ * 拿不到时返回 `(0, 0)` 而不是抛异常：这与"光标真的在原点"无法区分，但这不是一个
+ * 需要那个精度的查询——真正在意精度的调用方（拖拽、命中测试）用的是事件里的坐标。
+ *
+ * **Wayland 已知限制**：合成器不给全局光标坐标，GDK 只能报应用像素，
+ * 所以返回值在分数缩放下可能有取整误差（见 `OrielMonitor` 的说明）。
+ */
+export async function cursorPosition() {
+    const raw = await invoke('window.cursorPosition');
+    return new PhysicalPosition(raw?.x ?? 0, raw?.y ?? 0);
 }

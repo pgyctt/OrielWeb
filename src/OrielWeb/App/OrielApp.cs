@@ -414,6 +414,42 @@ public sealed class OrielApp : IDisposable
     private static void PushTheme(WebviewWindow window, OrielTheme theme)
         => window.EmitEvent(ThemeEventName, theme == OrielTheme.Dark ? "\"dark\"" : "\"light\"");
 
+    // ------------------------------------------------------------------
+    // 显示器
+    //
+    // 这一组与窗口几何的单位不同：显示器是**物理像素**，窗口是**逻辑像素**。
+    // 理由见 OrielMonitor 的类注释（跨屏比较只有物理像素是统一刻度）。
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// 显示器后端。应用未运行（或测试没有注入假实现）时是空实现——查询返回空列表 /
+    /// <c>null</c>，不抛异常。
+    /// </summary>
+    /// <remarks>
+    /// 带 <c>set</c> 是有意的**测试缝**：正常路径由 <see cref="Run"/> 从平台后端取，
+    /// 而命令层与宿主层都只经这个属性取数据——测试注入假后端之后，两层看到的是同一份值，
+    /// 不会出现"命令测的是 A、宿主测的是 B"。
+    /// </remarks>
+    internal IMonitorBackend MonitorBackend { get; set; } = EmptyMonitorBackend.Instance;
+
+    /// <summary>当前所有显示器（物理像素；空数组表示平台报不出来或应用未运行）。</summary>
+    /// <remarks>
+    /// 每次访问都重新枚举，因此热插拔显示器、改分辨率之后立刻可见，不需要失效/刷新逻辑。
+    /// 只能在 UI 线程调用（各平台的原生枚举都有线程亲和性）。
+    /// </remarks>
+    public IReadOnlyList<OrielMonitor> AvailableMonitors => MonitorBackend.GetMonitors();
+
+    /// <summary>主显示器；平台报不出来时 <c>null</c>。</summary>
+    public OrielMonitor? PrimaryMonitor => MonitorBackend.GetPrimaryMonitor();
+
+    /// <summary>包含该点（物理像素，相对主屏左上角）的显示器；不在任何屏幕上时 <c>null</c>。</summary>
+    /// <param name="x">横坐标（物理像素）。</param>
+    /// <param name="y">纵坐标（物理像素，向下为正）。</param>
+    public OrielMonitor? GetMonitorFromPoint(double x, double y) => MonitorBackend.MonitorFromPoint(x, y);
+
+    /// <summary>光标位置（物理像素，相对主屏左上角）。</summary>
+    public OrielPosition CursorPosition => MonitorBackend.GetCursorPosition();
+
     /// <summary>
     /// 把动作切回 UI 线程执行（命令完成后的回执、跨线程 UI 更新都用它）。
     /// </summary>
@@ -1259,6 +1295,10 @@ public sealed class OrielApp : IDisposable
 
         _backend = PlatformBackendFactory.Create(_builder.UserDataFolder);
         _backend.ThemeChanged += OnThemeChanged;
+
+        // 显示器后端跟着平台后端就位。放在 ThemeChanged 之后、建窗之前：
+        // 建窗过程里有自检/启动逻辑可能问"我在哪块屏上"，那时它必须已经可用。
+        MonitorBackend = _backend.Monitors;
 
         // 托盘先于窗口创建：托盘是应用的外壳，先就绪才能让"启动即最小化到托盘"这类形态成立。
         // 与 RestoreTray 同一条路径，免得"启动时建"和"重建"两处各写一遍。

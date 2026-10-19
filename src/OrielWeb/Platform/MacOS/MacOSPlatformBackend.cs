@@ -126,6 +126,9 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
     public ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app, string id)
         => new MacOSTrayBackend(app, options, id);
 
+    /// <summary>显示器查询（见 <see cref="IMonitorBackend"/>）。无状态，每次调用都重新枚举。</summary>
+    public IMonitorBackend Monitors { get; } = new MacOSMonitorBackend();
+
     // ---- 通知 ----
 
     /// <summary>macOS 自带 osascript，因此通知总是可用（未打包运行时的唯一可行路径）。</summary>

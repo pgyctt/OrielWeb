@@ -136,11 +136,6 @@ const GAPS = {
     },
     window: {
         CloseRequestedEvent: 'close-requested 事件的类型；本库在 event 模块用 onCloseRequested 表达',
-        availableMonitors: '多显示器枚举；本库还没有显示器模型',
-        cursorPosition: '全局光标位置；本库还没有',
-        currentMonitor: '同上',
-        monitorFromPoint: '同上',
-        primaryMonitor: '同上',
         Effect: '窗口特效（macOS 的 vibrancy 等）；本库还没有',
         EffectState: '同上',
         ProgressBarStatus: '任务栏进度条状态（Windows）；本库还没有',

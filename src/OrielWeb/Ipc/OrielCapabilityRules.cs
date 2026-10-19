@@ -188,6 +188,14 @@ internal static class OrielCapabilityRules
         "window.isEnabled",
         "window.theme",
         "window.title",
+        // 显示器查询：屏幕布局与光标位置是页面**本来就能感知**的环境信息
+        // （浏览器给得出当前屏尺寸与缩放），而且自绘标题栏要按"拖到哪块屏"换配色/图标。
+        // 它们不读任何窗口内容，所以与上面那组只读查询同一姿态。
+        "window.currentMonitor",
+        "window.primaryMonitor",
+        "window.availableMonitors",
+        "window.monitorFromPoint",
+        "window.cursorPosition",
     ];
 
     /// <summary>

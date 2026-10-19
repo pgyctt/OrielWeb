@@ -414,6 +414,63 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gdk, EntryPoint = "gdk_display_get_name")]
     internal static partial nint GdkDisplayGetName(nint display);
 
+    // ---- GDK：显示器与光标（IMonitorBackend 的 Linux 实现）----
+    //
+    // 坐标单位必须说清楚：GDK3 的 monitor geometry 与 device position 都是**应用像素**
+    // （logical），X11 下由 GTK 按 scale factor 换算过、Wayland 下由合成器协商。
+    // 物理像素 = 应用像素 × gdk_monitor_get_scale_factor，与 Windows/macOS 的报告口径一致。
+
+    /// <summary>显示器数量。</summary>
+    [LibraryImport(Gdk, EntryPoint = "gdk_display_get_n_monitors")]
+    internal static partial int GdkDisplayGetNMonitors(nint display);
+
+    /// <summary>按下标取显示器（0..n-1；越界返回 NULL）。</summary>
+    [LibraryImport(Gdk, EntryPoint = "gdk_display_get_monitor")]
+    internal static partial nint GdkDisplayGetMonitor(nint display, int monitorNum);
+
+    /// <summary>主显示器；没有主屏概念的后端可能返回 NULL（GTK 文档明确允许）。</summary>
+    [LibraryImport(Gdk, EntryPoint = "gdk_display_get_primary_monitor")]
+    internal static partial nint GdkDisplayGetPrimaryMonitor(nint display);
+
+    /// <summary>包含该点的显示器（GDK 3.22+）；点不在任何屏上时返回 NULL。</summary>
+    [LibraryImport(Gdk, EntryPoint = "gdk_display_get_monitor_at_point")]
+    internal static partial nint GdkDisplayGetMonitorAtPoint(nint display, int x, int y);
+
+    /// <summary>包含该 GdkWindow 的显示器。窗口未 realize（<c>gdk_window</c> 为 NULL）时返回 NULL。</summary>
+    [LibraryImport(Gdk, EntryPoint = "gdk_display_get_monitor_at_window")]
+    internal static partial nint GdkDisplayGetMonitorAtWindow(nint display, nint gdkWindow);
+
+    /// <summary>显示器几何（应用像素）。</summary>
+    [LibraryImport(Gdk, EntryPoint = "gdk_monitor_get_geometry")]
+    internal static partial void GdkMonitorGetGeometry(nint monitor, out GdkRectangle rect);
+
+    /// <summary>显示器缩放比（整数，≥1）。</summary>
+    [LibraryImport(Gdk, EntryPoint = "gdk_monitor_get_scale_factor")]
+    internal static partial int GdkMonitorGetScaleFactor(nint monitor);
+
+    /// <summary>显示器型号名（<c>const gchar*</c>，归 GDK 所有；可能为 NULL）。</summary>
+    [LibraryImport(Gdk, EntryPoint = "gdk_monitor_get_model")]
+    internal static partial nint GdkMonitorGetModel(nint monitor);
+
+    /// <summary>是否主屏。</summary>
+    [LibraryImport(Gdk, EntryPoint = "gdk_monitor_is_primary")]
+    internal static partial int GdkMonitorIsPrimary(nint monitor);
+
+    /// <summary>默认 seat（取指针设备的入口）。</summary>
+    [LibraryImport(Gdk, EntryPoint = "gdk_display_get_default_seat")]
+    internal static partial nint GdkDisplayGetDefaultSeat(nint display);
+
+    /// <summary>seat 的指针设备。</summary>
+    [LibraryImport(Gdk, EntryPoint = "gdk_seat_get_pointer")]
+    internal static partial nint GdkSeatGetPointer(nint seat);
+
+    /// <summary>
+    /// 指针在屏幕坐标里的位置（应用像素）。<paramref name="screen"/> 是 <c>GdkScreen**</c>。
+    /// </summary>
+    /// <remarks>拿不到时 <paramref name="x"/> / <paramref name="y"/> 是 -1（GTK 的约定）。</remarks>
+    [LibraryImport(Gdk, EntryPoint = "gdk_device_get_position")]
+    internal static partial void GdkDeviceGetPosition(nint device, out nint screen, out int x, out int y);
+
     [LibraryImport(Gtk, EntryPoint = "gtk_window_resize")]
     internal static partial void GtkWindowResize(nint window, int width, int height);
 

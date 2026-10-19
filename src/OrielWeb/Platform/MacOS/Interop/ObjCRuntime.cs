@@ -59,6 +59,23 @@ internal static unsafe partial class ObjCRuntime
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial nint SendId(nint self, nint sel);
 
+    /// <summary>无参数、返回 <c>NSUInteger</c> 的调用（如 <c>-[NSArray count]</c>）。</summary>
+    /// <remarks>
+    /// 与 <see cref="SendId"/> 同一寄存器口径，但语义不同：用它而不是复用 SendId，
+    /// 是为了让调用点一眼能看出"这是长度不是对象"——返回指针当整数用是 ObjC 互操作里
+    /// 最常见的静默错误来源。
+    /// </remarks>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendNint(nint self, nint sel);
+
+    /// <summary>无参数、返回 32 位无符号整数的调用（如 <c>-[NSNumber unsignedIntValue]</c>）。</summary>
+    /// <remarks>
+    /// 不能用 <see cref="SendId"/> 代用：64 位 ABI 下返回 <c>uint</c> 的函数只保证低 32 位有效，
+    /// 按指针宽度读会把高位残留当成数值的一部分。
+    /// </remarks>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial uint SendUint(nint self, nint sel);
+
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial void SendVoid(nint self, nint sel);
 

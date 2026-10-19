@@ -252,6 +252,17 @@ internal static class Win32Constants
 
     public const int MONITOR_DEFAULTTONEAREST = 2;
 
+    /// <summary><c>MonitorFromPoint</c> 的"点不在任何屏幕上时返回 NULL"（而不是就近或主屏）。</summary>
+    public const uint MONITOR_DEFAULTTONULL = 0;
+    /// <summary><c>MonitorFromPoint</c> 的"点不在任何屏幕上时返回主屏"。</summary>
+    public const uint MONITOR_DEFAULTTOPRIMARY = 1;
+
+    /// <summary>主显示器标志（<c>MONITORINFO.dwFlags</c>）。</summary>
+    public const uint MONITORINFOF_PRIMARY = 1;
+
+    /// <summary><c>GetDpiForMonitor</c> 的"有效 DPI"（含用户缩放设置，Win8.1+）。</summary>
+    public const int MDT_EFFECTIVE_DPI = 0;
+
     public const uint OFN_HIDEREADONLY = 0x4;
     public const uint OFN_OVERWRITEPROMPT = 0x2;
     public const uint OFN_NOCHANGEDIR = 0x8;
@@ -371,6 +382,24 @@ internal struct MONITORINFO
     public RECT rcMonitor;
     public RECT rcWork;
     public uint dwFlags;
+}
+
+/// <summary>
+/// <c>MONITORINFOEXW</c>：比 <see cref="MONITORINFO"/> 多一个设备名。
+/// </summary>
+/// <remarks>
+/// 设备名是 <c>CCHDEVICENAME</c> = 32 个 UTF-16 字符（形如 <c>\\.\DISPLAY1</c>）。
+/// 用 <c>fixed</c> 而不是 <c>[MarshalAs(ByValTStr)]</c>：后者在源生成的
+/// <c>LibraryImport</c> 下不被支持，而这里的调用路径要求零封送。
+/// </remarks>
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct MONITORINFOEXW
+{
+    public uint cbSize;
+    public RECT rcMonitor;
+    public RECT rcWork;
+    public uint dwFlags;
+    public fixed char szDevice[32];
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -589,6 +618,40 @@ internal static unsafe partial class Win32
     [LibraryImport("user32", EntryPoint = "GetMonitorInfoW")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool GetMonitorInfo(nint monitor, ref MONITORINFO info);
+
+    /// <summary>同 <c>GetMonitorInfoW</c>，但取带设备名的扩展结构（判据是 <c>cbSize</c>）。</summary>
+    [LibraryImport("user32", EntryPoint = "GetMonitorInfoW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool GetMonitorInfoEx(nint monitor, ref MONITORINFOEXW info);
+
+    /// <summary>包含该点的显示器；<paramref name="flags"/> 决定"不在任何屏上"时的返回值。</summary>
+    [LibraryImport("user32")]
+    internal static partial nint MonitorFromPoint(POINT point, uint flags);
+
+    /// <summary>
+    /// 枚举显示器。回调返回 FALSE 会**终止**枚举，所以它恒返回 TRUE（见调用方）。
+    /// </summary>
+    /// <remarks>
+    /// 回调用函数指针而不是托管委托：源生成器对委托参数要么要求
+    /// <c>[MarshalAs(UnmanagedType.FunctionPtr)]</c> 的旧式封送、要么拒绝，而函数指针在
+    /// AOT 下没有额外的桩代码。与窗口过程（<c>Win32WindowHost</c> 里的
+    /// <c>[UnmanagedCallersOnly]</c> 静态方法 + 函数指针）同一套做法。
+    /// </remarks>
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool EnumDisplayMonitors(
+        nint hdc, nint clip, delegate* unmanaged<nint, nint, nint, nint, int> callback, nint data);
+
+    /// <summary>
+    /// 取显示器的有效 DPI（96 = 100%）。失败时返回非 0 的 HRESULT。
+    /// </summary>
+    /// <remarks>
+    /// 在 <c>shcore.dll</c>（Win8.1+）里。调它要求进程已声明 DPI 感知，否则返回
+    /// <c>E_ACCESSDENIED</c>——本库在启动时已经设了 <c>PER_MONITOR_AWARE_V2</c>
+    /// （见 <c>WindowsPlatformBackend.EnsureDpiAwareness</c>），所以这里能拿到每屏真值。
+    /// </remarks>
+    [LibraryImport("shcore")]
+    internal static partial int GetDpiForMonitor(nint monitor, int dpiType, out uint dpiX, out uint dpiY);
 
     [LibraryImport("user32", EntryPoint = "GetWindowLongPtrW")]
     internal static partial nint GetWindowLongPtrW(nint hwnd, int index);

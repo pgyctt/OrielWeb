@@ -12,7 +12,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Window, getCurrentWindow, getAllWindows, getByLabel, getFocusedWindow } from '../src/window.js';
+import {
+    Window,
+    getCurrentWindow,
+    getAllWindows,
+    getByLabel,
+    getFocusedWindow,
+    currentMonitor,
+    primaryMonitor,
+    availableMonitors,
+    monitorFromPoint,
+    cursorPosition,
+} from '../src/window.js';
+import { LogicalSize, PhysicalPosition, PhysicalSize } from '../src/dpi.js';
 import { clearMocks } from '../src/mocks.js';
 import { setTransportOverride } from '../src/internal.js';
 
@@ -528,6 +540,177 @@ test('onFocusChanged：一个回调覆盖 focus 与 blur 两个宿主事件', as
 
     off();
     assert.equal(raw.size, 0);
+
+    clearMocks();
+});
+
+// ---- 显示器 ----
+//
+// 这一组的重点是**形状与单位**，不是"命令名传对了"：
+//   * `position` / `size` 必须是 dpi 模块的类实例（Tauri 如此），不是裸对象——
+//     裸对象会让 `monitor.size.toLogical(scale)` 在迁移后抛 TypeError；
+//   * 键集必须**恰好**是 name / position / size / scaleFactor（Tauri 的 Monitor 就这四个），
+//     多一个 `isPrimary` 会让 deepEqual 形状断言无缘无故变红；
+//   * 单位是物理像素：150% 屏上 `size.width` 应当是 2880 而不是 1920。
+
+/** 一台 1920×1080 @1x 的主屏 + 一块 2560×1440 @2x 的副屏（副屏在主屏右侧）。 */
+const TWO_MONITORS = [
+    {
+        name: '\\\\.\\DISPLAY1',
+        position: { x: 0, y: 0 },
+        size: { width: 1920, height: 1080 },
+        scaleFactor: 1,
+    },
+    {
+        name: null,
+        position: { x: 1920, y: 0 },
+        size: { width: 2560, height: 1440 },
+        scaleFactor: 2,
+    },
+];
+
+test('availableMonitors：返回 dpi 类实例，键集与 Tauri 的 Monitor 一致', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', {
+        'window.availableMonitors': TWO_MONITORS,
+    });
+    setTransportOverride(transport);
+
+    const monitors = await availableMonitors();
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], 'window.availableMonitors');
+
+    assert.equal(monitors.length, 2);
+
+    // 键集恰好四个，顺序也按 Tauri 的 Monitor 声明（顺序不影响正确性，但钉住能防止
+    // 有人顺手加字段而不改测试）
+    assert.deepEqual(Object.keys(monitors[0]), ['name', 'position', 'size', 'scaleFactor']);
+
+    assert.ok(monitors[0].position instanceof PhysicalPosition);
+    assert.ok(monitors[0].size instanceof PhysicalSize);
+    assert.equal(monitors[0].position.type, 'Physical');
+    assert.equal(monitors[0].size.type, 'Physical');
+
+    assert.equal(monitors[0].name, '\\\\.\\DISPLAY1');
+    assert.equal(monitors[0].size.width, 1920);
+    assert.equal(monitors[0].size.height, 1080);
+    assert.equal(monitors[0].scaleFactor, 1);
+
+    // 第二块屏：name 为 null（平台给不出），2x 缩放
+    assert.equal(monitors[1].name, null);
+    assert.equal(monitors[1].position.x, 1920);
+    assert.equal(monitors[1].scaleFactor, 2);
+
+    clearMocks();
+});
+
+test('availableMonitors：size 是物理像素，toLogical 按 scaleFactor 换算', async () => {
+    clearMocks();
+    setTransportOverride(makeTransport('main', { 'window.availableMonitors': TWO_MONITORS }).transport);
+
+    const [, retina] = await availableMonitors();
+
+    // 2560 物理 / 2.0 = 1280 逻辑。这里钉的是"页面按 Tauri 的写法算出来对"：
+    // const logical = monitor.size.toLogical(monitor.scaleFactor);
+    const logical = retina.size.toLogical(retina.scaleFactor);
+    assert.ok(logical instanceof LogicalSize);
+    assert.equal(logical.width, 1280);
+    assert.equal(logical.height, 720);
+
+    clearMocks();
+});
+
+test('availableMonitors：宿主返回非数组时退化为空数组（不抛）', async () => {
+    clearMocks();
+    setTransportOverride(makeTransport('main', { 'window.availableMonitors': null }).transport);
+
+    assert.deepEqual(await availableMonitors(), []);
+
+    clearMocks();
+});
+
+test('currentMonitor：null 原样返回（不造一个假显示器）', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', { 'window.currentMonitor': null });
+    setTransportOverride(transport);
+
+    assert.equal(await currentMonitor(), null);
+    assert.deepEqual(calls, [['window.currentMonitor', undefined]]);
+
+    clearMocks();
+});
+
+test('currentMonitor：有值时与 availableMonitors 同形', async () => {
+    clearMocks();
+    setTransportOverride(
+        makeTransport('main', { 'window.currentMonitor': TWO_MONITORS[1] }).transport);
+
+    const monitor = await currentMonitor();
+    assert.ok(monitor.size instanceof PhysicalSize);
+    assert.equal(monitor.scaleFactor, 2);
+    assert.equal(monitor.position.x, 1920);
+
+    clearMocks();
+});
+
+test('primaryMonitor：走独立命令（主屏不一定是列表第一项）', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', { 'window.primaryMonitor': TWO_MONITORS[0] });
+    setTransportOverride(transport);
+
+    const monitor = await primaryMonitor();
+    assert.equal(calls[0][0], 'window.primaryMonitor');
+    assert.equal(monitor.position.x, 0);
+    assert.equal(monitor.position.y, 0);
+
+    clearMocks();
+});
+
+test('monitorFromPoint：把 x/y 作为参数发出去，返回值同样包成类实例', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', {
+        'window.monitorFromPoint': TWO_MONITORS[1],
+    });
+    setTransportOverride(transport);
+
+    const monitor = await monitorFromPoint(2000.5, 300);
+    assert.deepEqual(calls, [['window.monitorFromPoint', { x: 2000.5, y: 300 }]]);
+    assert.ok(monitor.position instanceof PhysicalPosition);
+
+    clearMocks();
+});
+
+test('monitorFromPoint：点在任何屏幕之外时是 null', async () => {
+    clearMocks();
+    setTransportOverride(makeTransport('main', { 'window.monitorFromPoint': null }).transport);
+
+    assert.equal(await monitorFromPoint(-9999, -9999), null);
+
+    clearMocks();
+});
+
+test('cursorPosition：返回 PhysicalPosition，拿不到时退到 (0,0)', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', {
+        'window.cursorPosition': { type: 'Physical', x: 640, y: 480 },
+    });
+    setTransportOverride(transport);
+
+    const position = await cursorPosition();
+    assert.equal(calls[0][0], 'window.cursorPosition');
+    assert.ok(position instanceof PhysicalPosition);
+    assert.equal(position.type, 'Physical');
+    assert.equal(position.x, 640);
+    assert.equal(position.y, 480);
+
+    clearMocks();
+
+    // 宿主返回 null（命令不可用/平台给不出）时不能抛：光标查询是尽力而为的诊断
+    setTransportOverride(makeTransport('main', { 'window.cursorPosition': null }).transport);
+    const fallback = await cursorPosition();
+    assert.equal(fallback.x, 0);
+    assert.equal(fallback.y, 0);
 
     clearMocks();
 });

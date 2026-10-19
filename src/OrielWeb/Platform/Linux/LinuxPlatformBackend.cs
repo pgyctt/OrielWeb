@@ -165,6 +165,9 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
     public ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app, string id)
         => new GtkTrayBackend(app, options, id);
 
+    /// <summary>显示器查询（见 <see cref="IMonitorBackend"/>）。无状态，每次调用都重新枚举。</summary>
+    public IMonitorBackend Monitors { get; } = new LinuxMonitorBackend();
+
     // ---- 开机自启（freedesktop 的 autostart 目录）----
 
     public bool EnableAutoStart(string id, IReadOnlyList<string>? arguments) => LinuxAutoStart.Enable(id, arguments);

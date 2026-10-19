@@ -674,6 +674,16 @@ internal interface IPlatformBackend : IDisposable
     ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app, string id);
 
     /// <summary>
+    /// 显示器与光标的查询入口。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="CreateTray"/> 同一套分层：应用级能力各自一个子后端，而不是把
+    /// 每个平台知识都堆进本接口。实现在应用运行期间保持不变，可以安全缓存引用。
+    /// 见 <see cref="IMonitorBackend"/> 里关于"为什么单独一个接口"与线程要求的说明。
+    /// </remarks>
+    IMonitorBackend Monitors { get; }
+
+    /// <summary>
     /// 本平台是否支持系统通知。用于让调用方决定"要不要退回到应用内提示"，
     /// 而不是发出一条永远不出现的通知。各平台的实际支持度见 README 平台矩阵。
     /// </summary>

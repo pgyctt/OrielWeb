@@ -919,7 +919,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 |---|---|
 | `core` | `invoke` / `isTauri` / `convertFileSrc`（同步；宿主侧查 `asset.read` 的 scope） |
 | `event` | `listen` / `once` / `emit` / `emitTo` / `TauriEvent`（`listen` 返回**函数**，同时是 thenable：`const un = listen(...)`、`await listen(...)`、`listen(...).then(fn => ...)` 三种写法都成立；差别只剩 `instanceof Promise === false`） |
-| `window` | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow` + `Window` 类（含静态方法 `Window.getFocusedWindow()`；M5 的状态查询与外观开关：`isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop` / `isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `isEnabled` / `theme`；`setEnabled` / `setMaximizable` / `setMinimizable` / `setClosable` / `setMaxSize` / `setSizeConstraints` / `requestUserAttention` / `setIcon` / `setBackgroundColor`；`onThemeChanged` / `onScaleChanged`） |
+| `window` | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow` + `Window` 类（含静态方法 `Window.getFocusedWindow()`；M5 的状态查询与外观开关：`isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop` / `isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `isEnabled` / `theme`；`setEnabled` / `setMaximizable` / `setMinimizable` / `setClosable` / `setMaxSize` / `setSizeConstraints` / `requestUserAttention` / `setIcon` / `setBackgroundColor`；`onThemeChanged` / `onScaleChanged`；显示器 `availableMonitors` / `primaryMonitor` / `currentMonitor` / `monitorFromPoint` / `cursorPosition`） |
 | `webviewWindow` | `WebviewWindow`（`extends Window`）/ `getCurrentWebviewWindow` / `getAllWebviewWindows`。**页面建窗**：`new WebviewWindow(label, options)` 后 `await w.created`，或 `await WebviewWindow.create(...)`。与 Tauri 的差别是"创建结果走 `created` 而不是 `tauri://created` 事件"（见该模块一节） |
 | `path` | `sep` / `delimiter`（**同步**）+ `join` / `normalize` / `dirname` / `extname` / `basename` / `isAbsolute` / `resolve` |
 | `app` | `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`（只读元信息，**无需能力声明**）；`exit` / `show` / `hide`（**需要显式 `Allow`**，见 §4 的能力表） |
@@ -1257,7 +1257,7 @@ Debug 构建不受影响（全放行）。
 | 组 | 命令 | 是否需要 `Allow` |
 |---|---|---|
 | 标题栏必需 | `minimize` `toggleMaximize` `toggleFullscreen` `toggleOnTop` `close` `destroy` `drag*` `pickFile` `contextMenu` | **否**（无条件放行，理由见 §4） |
-| 只读状态查询（标题栏靠它渲染按钮状态与激活配色） | `isVisible` `isMaximized` `isMinimized` `isFocused` `isFullscreen` `isAlwaysOnTop` `isDecorated` `isResizable` `isMaximizable` `isMinimizable` `isClosable` `isEnabled` `theme` `title` | **否** |
+| 只读状态查询与环境（标题栏靠它渲染按钮状态与激活配色；显示器靠它按屏换配色） | `isVisible` `isMaximized` `isMinimized` `isFocused` `isFullscreen` `isAlwaysOnTop` `isDecorated` `isResizable` `isMaximizable` `isMinimizable` `isClosable` `isEnabled` `theme` `title` `availableMonitors` `primaryMonitor` `currentMonitor` `monitorFromPoint` `cursorPosition` | **否** |
 | 其余 | `show` `hide` `focus` `maximize` `restore` `setTitle` `setResizable` `setFullscreen` `setOnTop` `setMinSize` `moveTo` `resize` `center` `scaleFactor` `innerSize` `outerSize` `innerPosition` `outerPosition` `getAll` `setCloseIntercept` `setEventForwarding` | **是**：`Allow("window.*")` 或逐条声明 |
 
 > **`window.*` 与 `win.*` 的分工**：`win.*` 是早期的库内建命令（**只能作用于发起者**、整族始终放行）；
@@ -1291,6 +1291,52 @@ await win.setTitle('改了标题');   // 之后就是普通 Window
 >
 > `window.new` 不在标题栏白名单里：新窗口跑的是应用自己的页面、共享令牌与能力配置，
 > 建窗是能力而不是元信息。
+
+**显示器（`availableMonitors` / `primaryMonitor` / `currentMonitor` / `monitorFromPoint` / `cursorPosition`，无需 `Allow`）**：
+
+```js
+import {
+    availableMonitors, primaryMonitor, currentMonitor, monitorFromPoint, cursorPosition,
+} from '@orielweb/api/window';
+
+const screens = await availableMonitors();   // [{ name, position, size, scaleFactor }, …]
+const primary = await primaryMonitor();      // 主屏（坐标原点）
+const here = await currentMonitor();         // 发起调用的那个窗口所在的屏
+const at = await monitorFromPoint(1200, 300); // 包含该点的屏，不在任何屏上时 null
+const cursor = await cursorPosition();       // PhysicalPosition
+```
+
+**单位是物理像素**（`position` / `size` / `cursorPosition` 都是）。这与本模块的窗口几何
+（`innerSize` / `outerSize` 等是**逻辑像素**）不同，是照 Tauri 的口径：
+显示器要跨不同缩放的屏幕比较，只有物理像素是统一刻度；窗口要按 CSS 尺寸布局，
+只有逻辑像素是统一刻度。两者之间用 `scaleFactor` 换算：
+
+```js
+// 副屏：2560 物理 / 2.0 = 1280 逻辑
+const logical = screens[1].size.toLogical(screens[1].scaleFactor);
+```
+
+`position` / `size` 是 `dpi` 模块的 `PhysicalPosition` / `PhysicalSize` **实例**（与 Tauri 一致），
+所以 `.toLogical()` / `.toPhysical()` 可用。`Monitor` 的键集恰好是
+`name` / `position` / `size` / `scaleFactor` 四个——没有 `isPrimary`（Tauri 也没有；主屏用
+`primaryMonitor()` 取）。
+
+**平台事实（如实标注，不假装一致）**：
+
+| 平台 | 事实 |
+|---|---|
+| Windows | `EnumDisplayMonitors` + `GetMonitorInfo` + `GetDpiForMonitor`。进程声明了 per-monitor v2，所以数值是真实像素 |
+| macOS | 主屏取 `[NSScreen mainScreen]`（与 Tauri 相同），它同时是坐标原点。名称来自 `localizedName`（10.15+，旧系统上 `name` 为 `null`） |
+| Linux | GDK 报的是**应用像素**，这里乘 `gdk_monitor_get_scale_factor` 换成物理像素。**Wayland 没有全局像素坐标系**：分数缩放下 `scaleFactor` 只能是整数（物理尺寸有取整误差），跨屏相对排列可能与 X11 不同，`monitorFromPoint` 只对落在某块屏内的点有效 |
+
+> **窗口在跨屏时的判定**：`currentMonitor()` 按**相交面积最大**算（Windows 的
+> `MonitorFromWindow`、macOS 的 `-[NSWindow screen]`、Linux 的
+> `gdk_display_get_monitor_at_window`），不是"窗口中心点落在哪块屏"。两者在窗口正好跨在
+> 两块屏中间时给出的答案不同，而用户与系统都按前者理解。
+
+> **`scaleFactor` 的用途别搞反**：它是"物理 / 逻辑"，所以逻辑 = 物理 ÷ `scaleFactor`
+> （`PhysicalSize.toLogical` 就是这个方向）。把 150% 屏上的 `innerSize()`（逻辑）当成物理去乘，
+> 窗口会大 1.5 倍——这是迁移时最容易犯的错。
 
 ### 11.3 `window.oriel` 的原始成员
 

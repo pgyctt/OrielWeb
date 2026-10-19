@@ -194,6 +194,15 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
     public ITrayBackend CreateTray(OrielTrayOptions options, OrielApp app, string id)
         => new Win32TrayBackend(app, options, id);
 
+    /// <summary>
+    /// 显示器查询（见 <see cref="IMonitorBackend"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 无状态，因此可以直接复用同一个实例——枚举发生在每次调用里，
+    /// 所以热插拔/改分辨率之后立刻就能看到新值，不需要失效逻辑。
+    /// </remarks>
+    public IMonitorBackend Monitors { get; } = new WindowsMonitorBackend();
+
     // ---- 通知 ----
 
     /// <summary>

@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 
 namespace OrielWeb.Ipc;
@@ -326,6 +327,38 @@ internal static class OrielBuiltInWindowApiCommands
                 handler = static (sender, args) => PositionOf(Resolve(sender, args).OuterPosition);
                 return true;
 
+            // ---- 显示器（对标 Tauri 的 currentMonitor / primaryMonitor / availableMonitors /
+            //      monitorFromPoint / cursorPosition）----
+            //
+            // 五条都**在标题栏白名单里**：它们读的是屏幕布局与光标位置，页面本来就能从
+            // `window.screen` / `visualViewport` 拿到同类信息（浏览器不给多个显示器的
+            // 排列，但给得出当前屏尺寸），而且自绘标题栏要做"拖到另一块屏时换配色/
+            // 换图标"就必须知道自己在哪块屏上。它们不泄露任何窗口内容。
+            //
+            // 单位与窗口几何不同：这里全是**物理像素**（与 Tauri 的 PhysicalPosition/
+            // PhysicalSize 一致）。见 OrielMonitor 的说明。
+            case "window.currentMonitor":
+                handler = static (sender, args) => MonitorOf(Resolve(sender, args).CurrentMonitor);
+                return true;
+
+            case "window.primaryMonitor":
+                handler = static (sender, _) => MonitorOf(sender.App.PrimaryMonitor);
+                return true;
+
+            case "window.availableMonitors":
+                handler = static (sender, _) => MonitorsOf(sender.App.AvailableMonitors);
+                return true;
+
+            case "window.monitorFromPoint":
+                handler = static (sender, args) => MonitorOf(sender.App.GetMonitorFromPoint(
+                    RequiredDouble(args, "x", "window.monitorFromPoint"),
+                    RequiredDouble(args, "y", "window.monitorFromPoint")));
+                return true;
+
+            case "window.cursorPosition":
+                handler = static (sender, _) => PhysicalPositionOf(sender.App.CursorPosition);
+                return true;
+
             case "window.getAll":
                 // 返回 label 列表而不是窗口对象：内建命令的返回值要能被 AOT 安全的基元序列化
                 // 直接写出，而自定义 DTO 会要求应用注册 STJ 上下文——内建命令不该要求那个。
@@ -580,6 +613,77 @@ internal static class OrielBuiltInWindowApiCommands
         => JsonDocument.Parse(
             $"{{\"type\":\"Logical\",\"x\":{OrielEventPayload.Number(position.X)}," +
             $"\"y\":{OrielEventPayload.Number(position.Y)}}}").RootElement.Clone();
+
+    /// <summary>
+    /// 物理位置 → 页面形状 <c>{ type: 'Physical', x, y }</c>。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="PositionOf"/> 分开是因为**单位不同**，而 <c>type</c> 字段正是用来
+    /// 让页面区分这一点的：Tauri 的 dpi 模块里 <c>PhysicalPosition</c> 与
+    /// <c>LogicalPosition</c> 都是 <c>{ type, x, y }</c>，算法（toLogical/toPhysical）
+    /// 靠它分支。把显示器坐标标成 Logical 会让页面在 150% 屏上把物理值当逻辑值用。
+    /// </remarks>
+    private static JsonElement PhysicalPositionOf(OrielPosition position)
+        => JsonDocument.Parse(
+            $"{{\"type\":\"Physical\",\"x\":{OrielEventPayload.Number(position.X)}," +
+            $"\"y\":{OrielEventPayload.Number(position.Y)}}}").RootElement.Clone();
+
+    /// <summary>物理尺寸 → 页面形状 <c>{ type: 'Physical', width, height }</c>。</summary>
+    private static JsonElement PhysicalSizeOf(OrielSize size)
+        => JsonDocument.Parse(
+            $"{{\"type\":\"Physical\",\"width\":{OrielEventPayload.Number(size.Width)}," +
+            $"\"height\":{OrielEventPayload.Number(size.Height)}}}").RootElement.Clone();
+
+    /// <summary>
+    /// 显示器 → 页面形状 <c>{ name, position, size, scaleFactor }</c>（Tauri 的 <c>Monitor</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// **只有这四个键**，没有 <see cref="OrielMonitor.IsPrimary"/>：Tauri 的 Monitor 就是这四个，
+    /// 多一个键会让"对比形状"的迁移测试无缘无故变红（典型写法是
+    /// <c>assert.deepEqual(Object.keys(monitor), ['name','position','size','scaleFactor'])</c>）。
+    /// 主屏要用 <c>primaryMonitor()</c> 取。
+    /// </para>
+    /// <para>
+    /// <c>name</c> 为 null 时写成 JSON null（而不是省略键）：省略会让
+    /// <c>monitor.name === null</c> 变成 <c>undefined</c>，而 Tauri 的类型是
+    /// <c>string | null</c>——<c>=== null</c> 是页面里最常见的判法。
+    /// </para>
+    /// </remarks>
+    private static JsonElement MonitorOf(OrielMonitor? monitor)
+    {
+        if (monitor is null)
+        {
+            return JsonDocument.Parse("null").RootElement.Clone();
+        }
+
+        string name = monitor.Name is null
+            ? "null"
+            : JsonText.EncodeString(monitor.Name);
+
+        return JsonDocument.Parse(
+            $"{{\"name\":{name}," +
+            $"\"position\":{PhysicalPositionOf(monitor.Position)}," +
+            $"\"size\":{PhysicalSizeOf(monitor.Size)}," +
+            $"\"scaleFactor\":{OrielEventPayload.Number(monitor.ScaleFactor)}}}").RootElement.Clone();
+    }
+
+    /// <summary>显示器数组 → <c>Monitor[]</c>。</summary>
+    private static JsonElement MonitorsOf(IReadOnlyList<OrielMonitor> monitors)
+    {
+        var json = new StringBuilder("[");
+        for (int i = 0; i < monitors.Count; i++)
+        {
+            if (i > 0)
+            {
+                json.Append(',');
+            }
+
+            json.Append(MonitorOf(monitors[i]).GetRawText());
+        }
+
+        return JsonDocument.Parse(json.Append(']').ToString()).RootElement.Clone();
+    }
 
     /// <summary>
     /// 解析命令的目标窗口：<c>label</c> 缺省时是**发起者**。
