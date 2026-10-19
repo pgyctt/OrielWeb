@@ -18,6 +18,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 /** 加载参照实现；没装时返回 null（调用方跳过）。 */
 async function tryImport(specifier) {
@@ -50,6 +52,69 @@ const MODULES = [
     { ours: '../src/opener.js', theirs: '@tauri-apps/plugin-opener', label: 'opener' },
     { ours: '../src/notification.js', theirs: '@tauri-apps/plugin-notification', label: 'notification' },
     { ours: '../src/autostart.js', theirs: '@tauri-apps/plugin-autostart', label: 'autostart' },
+];
+
+/**
+ * **参照有、我们整个模块都没有**的那些。
+ *
+ * 为什么不直接塞进 `GAPS`：`GAPS` 是按模块记"少了哪个导出"，前提是**模块已登记**。
+ * 这四个模块此前**连登记都没有**——于是"本库没有 tray/menu/webview/webviewWindow"
+ * 这件事没有任何测试盯着，只在文档里写着。名字缺失比导出缺失更彻底：
+ * 迁移代码的 `import { Tray } from '@tauri-apps/api/tray'` 会直接解析失败。
+ *
+ * 每条必须带 `batch`（对应 docs/TAURI2-ALIGNMENT-EXECUTION-PLAN 的批次），
+ * 否则这份清单会退化成"以后再说"。
+ *
+ * @type {Array<{ label: string, theirs: string, ours: string, batch: string, note: string }>}
+ */
+const PLANNED_MODULES = [
+    {
+        label: 'webviewWindow',
+        theirs: '@tauri-apps/api/webviewWindow',
+        ours: '../src/webviewWindow.js',
+        batch: 'B4',
+        note: '页面建窗。宿主侧只有 C# 的 app.CreateWindow，页面拿不到；' +
+            '本批补 WebviewWindow 的最小可用面（new/getAll/getCurrent）',
+    },
+    {
+        label: 'webview',
+        theirs: '@tauri-apps/api/webview',
+        ours: '../src/webview.js',
+        batch: 'B4',
+        note: 'webview 的独立概念。本库**窗口即 webview**，没有"一个窗口挂多个 webview"；' +
+            '只补到能让 webviewWindow 继承的最小面，不造多 webview',
+    },
+    {
+        label: 'tray',
+        theirs: '@tauri-apps/api/tray',
+        ours: '../src/tray.js',
+        batch: 'B6a',
+        note: '托盘。宿主已有 OrielTray 与桥接层 oriel.tray（含 new/getById/getAll/onEvent），' +
+            '缺的是**包内模块**：迁移代码 import 的是 @tauri-apps/api/tray',
+    },
+    {
+        label: 'menu',
+        theirs: '@tauri-apps/api/menu',
+        ours: '../src/menu.js',
+        batch: 'B6a',
+        note: '菜单模型。C# 已有 OrielMenuItem 与三平台构建器（只服务托盘/上下文菜单），' +
+            '页面侧没有模型，也没有 popup',
+    },
+];
+
+/**
+ * 常量对象的逐键比对。
+ *
+ * 导出面测试只比 `Object.keys(module)`——`TauriEvent` 少三个键、`UserAttentionType`
+ * 少一个反向映射，**在那一层完全看不出来**（对象本身是一个导出名）。
+ * 2026-10-18 审计发现的 `TauriEvent` 缺 `WINDOW_SUSPENDED`/`WINDOW_RESUMED`/`WEBVIEW_CREATED`
+ * 就是这么漏掉的：Tauri 2.x 新增常量，本库静默落后。
+ *
+ * @type {Array<{ module: string, theirs: string, name: string }>}
+ */
+const CONST_OBJECTS = [
+    { module: '../src/event.js', theirs: '@tauri-apps/api/event', name: 'TauriEvent' },
+    { module: '../src/window.js', theirs: '@tauri-apps/api/window', name: 'UserAttentionType' },
 ];
 
 /**
@@ -250,6 +315,94 @@ test('与 @tauri-apps/api 的导出面一致（差异都在清单里）', async 
     // **一次报出全部问题**而不是第一条就停：一条条改要跑十几轮，
     // 而这份清单的价值就在于"一眼看全还差什么"。
     assert.deepEqual(problems, [], `导出面对照发现 ${problems.length} 处未记录差异：\n  - ${problems.join('\n  - ')}`);
+});
+
+test('未实现模块有登记，且登记与代码状态一致', async (t) => {
+    // **这份断言的三条方向都要管**，缺一条账本就会腐化：
+    //   1. 登记了的模块不得同时出现在 MODULES 里（否则"缺口"和"已实现"并存）；
+    //   2. 每条都要有批次（否则是"以后再说"）；
+    //   3. 源文件一旦出现，就必须从 PLANNED 移进 MODULES —— 实现了却留在
+    //      "未实现"清单里，比没登记更糟：下一个人会以为它没做。
+    const problems = [];
+
+    const registered = new Set(MODULES.map((m) => m.label));
+
+    for (const planned of PLANNED_MODULES) {
+        if (registered.has(planned.label)) {
+            problems.push(
+                `${planned.label}: 同时出现在 PLANNED_MODULES 与 MODULES 里——` +
+                '实现了就从 PLANNED 移走并补进 MODULES，别两边都留。');
+        }
+
+        if (!/^B\d/.test(planned.batch ?? '')) {
+            problems.push(`${planned.label}: 没有计划批次（batch 要以 B<数字> 开头）。`);
+        }
+
+        const sourcePath = fileURLToPath(new URL(planned.ours, import.meta.url));
+        if (existsSync(sourcePath)) {
+            problems.push(
+                `${planned.label}: 登记为"未实现"，但 ${planned.ours.replace('../', '')} 已经存在。` +
+                '实现完请移进 MODULES（否则对齐账本会把已实现的东西算成缺口）。');
+        }
+    }
+
+    // 模块数不变量：四个模块都在（少一个说明有人删了条目而不是做了实现）
+    assert.equal(PLANNED_MODULES.length, 4,
+        'PLANNED_MODULES 应当登记 4 个未实现模块（tray/menu/webview/webviewWindow）');
+
+    assert.deepEqual(problems, [], `未实现模块登记有问题：\n  - ${problems.join('\n  - ')}`);
+
+    // 参照模块名写错的话，清单会指向一个不存在的包——安装时顺便验一下。
+    if ((await tryImport('@tauri-apps/api/core')) === null) {
+        t.skip('参照实现未安装——CI 会装并强制检查模块名');
+        return;
+    }
+
+    for (const planned of PLANNED_MODULES) {
+        assert.notEqual(await tryImport(planned.theirs), null,
+            `${planned.label}: 参照模块 ${planned.theirs} 加载不了，模块名可能写错了`);
+    }
+});
+
+test('常量对象的键与值都与参照实现一致', async (t) => {
+    // 导出面那一层只比"有没有这个导出名"，比不到对象内部。
+    // 这里逐个对象比键集 + 值——Tauri 加常量时我们要么跟上，要么改这条断言并说明。
+    if ((await tryImport('@tauri-apps/api/core')) === null) {
+        t.skip('参照实现未安装——CI 会装并强制检查');
+        return;
+    }
+
+    const problems = [];
+
+    for (const entry of CONST_OBJECTS) {
+        const ours = (await import(entry.module))[entry.name];
+        const theirs = (await tryImport(entry.theirs))?.[entry.name];
+
+        if (ours === undefined || theirs === undefined) {
+            problems.push(`${entry.name}: 参照或本库缺少这个常量对象，比对无法进行。`);
+            continue;
+        }
+
+        const ourKeys = new Set(Object.keys(ours));
+        const theirKeys = new Set(Object.keys(theirs));
+
+        for (const key of [...theirKeys].filter((k) => !ourKeys.has(k)).sort()) {
+            problems.push(`${entry.name}.${key}: Tauri 有、我们没有。`);
+        }
+
+        for (const key of [...ourKeys].filter((k) => !theirKeys.has(k)).sort()) {
+            problems.push(`${entry.name}.${key}: 我们独有，Tauri 没有——不要自造常量名。`);
+        }
+
+        for (const key of [...ourKeys].filter((k) => theirKeys.has(k))) {
+            if (ours[key] !== theirs[key]) {
+                problems.push(`${entry.name}.${key}: 值不一致（我们 ${JSON.stringify(ours[key])}，Tauri ${JSON.stringify(theirs[key])}）。`);
+            }
+        }
+    }
+
+    console.log(`[alignment] 逐键比对了 ${CONST_OBJECTS.length} 个常量对象`);
+    assert.deepEqual(problems, [], `常量对象比对发现 ${problems.length} 处差异：\n  - ${problems.join('\n  - ')}`);
 });
 
 /**

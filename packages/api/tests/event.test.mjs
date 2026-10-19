@@ -399,10 +399,41 @@ test('TauriEvent：与 Tauri 2 同名同值', () => {
     assert.equal(TauriEvent.WINDOW_SCALE_FACTOR_CHANGED, 'tauri://scale-change');
     assert.equal(TauriEvent.WINDOW_THEME_CHANGED, 'tauri://theme-changed');
     assert.equal(TauriEvent.WINDOW_CREATED, 'tauri://window-created');
+    assert.equal(TauriEvent.WINDOW_SUSPENDED, 'tauri://suspended');
+    assert.equal(TauriEvent.WINDOW_RESUMED, 'tauri://resumed');
+    assert.equal(TauriEvent.WEBVIEW_CREATED, 'tauri://webview-created');
     assert.equal(TauriEvent.DRAG_ENTER, 'tauri://drag-enter');
     assert.equal(TauriEvent.DRAG_OVER, 'tauri://drag-over');
     assert.equal(TauriEvent.DRAG_DROP, 'tauri://drag-drop');
     assert.equal(TauriEvent.DRAG_LEAVE, 'tauri://drag-leave');
+});
+
+test('TauriEvent：键集与参照实现完全一致（多一个少一个都算差异）', async (t) => {
+    // 上面那条只钉了"我们写的 16 个值对不对"，钉不住"Tauri 又加了第 17 个"。
+    // 这一条直接拿安装的 @tauri-apps/api 当参照：键集必须逐一相等。
+    // 没装参照实现时跳过（离线环境），CI 装了因此会强制检查。
+    let reference;
+    try {
+        reference = await import('@tauri-apps/api/event');
+    } catch {
+        t.skip('参照实现未安装（devDependencies）——CI 会装并强制检查');
+        return;
+    }
+
+    const ours = Object.keys(TauriEvent).sort();
+    const theirs = Object.keys(reference.TauriEvent).sort();
+
+    assert.deepEqual(ours, theirs,
+        `TauriEvent 键集与 @tauri-apps/api 不一致：\n` +
+        `  我们多出：${ours.filter((k) => !theirs.includes(k)).join(', ') || '（无）'}\n` +
+        `  我们缺少：${theirs.filter((k) => !ours.includes(k)).join(', ') || '（无）'}`);
+
+    assert.equal(ours.length, 16, 'Tauri 2.12 的 TauriEvent 有 16 个键');
+
+    // 值也要一致：同名不同值比"名字缺失"更隐蔽（监听会挂到不存在的事件上）。
+    for (const key of theirs) {
+        assert.equal(TauriEvent[key], reference.TauriEvent[key], `${key} 的值与 Tauri 不一致`);
+    }
 });
 
 test('TauriEvent：是冻结对象（迁移代码不该在上面写入）', () => {

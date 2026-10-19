@@ -291,6 +291,32 @@ test('truncate 带 len', async () => {
     clearMocks();
 });
 
+// ---- 返回形状 ----
+
+test('stat / lstat 的 mtime 是 number（毫秒），不是 Date', async () => {
+    // 这一条钉的是**一处真实的迁移差异**：Tauri 的 `FileInfo.mtime` 是 `Date`，
+    // 本库是毫秒时间戳。差异本身是有意的（JSON 无损），但"有意"不等于"可以静默"——
+    // 迁移代码里 `info.mtime.getTime()` 在 number 上会抛 TypeError，
+    // 而 `new Date(info.mtime)` 在 Date 上也能跑（拿到 Invalid Date? 不，是原样复制），
+    // 所以只有断言类型才能保证这条差异不被实现悄悄改掉。
+    clearMocks();
+    const stamp = 1_700_000_000_000;
+    const { transport } = makeTransport({
+        'fs.stat': { isFile: true, mtime: stamp },
+        'fs.lstat': { isFile: true, mtime: stamp },
+    });
+    setTransportOverride(transport);
+
+    const info = await stat('/a');
+    assert.equal(typeof info.mtime, 'number', 'mtime 必须是毫秒时间戳（number），不能是 Date');
+    assert.equal(info.mtime, stamp, 'mtime 必须原样透传，不做单位换算');
+
+    const linkInfo = await lstat('/a');
+    assert.equal(typeof linkInfo.mtime, 'number', 'lstat 与 stat 的时间类型必须一致');
+
+    clearMocks();
+});
+
 // ---- 失败分类 ----
 
 test('路径不在 scope 内时错误码是 path_not_allowed', async () => {

@@ -353,7 +353,13 @@ export async function emitTo(target, eventName, payload) {
  * | `WINDOW_CLOSE_REQUESTED` | ✅ 可用，但**前提是宿主开了关闭接管**（`OrielWindowOptions.InterceptClose`）——没开接管时宿主直接关闭，不会有通知 |
  * | `WINDOW_DESTROYED` | ⛔ **永远收不到**：窗口销毁时页面正在被拆掉，事件送不出去（Tauri 的 JS 侧同样如此，那个事件是给 Rust 用的）。要"即将关闭"的通知请用 `WINDOW_CLOSE_REQUESTED` |
  * | `WINDOW_SCALE_FACTOR_CHANGED` / `WINDOW_THEME_CHANGED` / `WINDOW_CREATED` | ⬜ 未实现 |
+ * | `WINDOW_SUSPENDED` / `WINDOW_RESUMED` | ⛔ 桌面端不会触发（移动端生命周期事件） |
+ * | `WEBVIEW_CREATED` | ⛔ 桌面端不会触发：本库没有"一个窗口里挂多个 webview"的概念，窗口创建即 webview 创建，用 `WINDOW_CREATED` |
  * | `DRAG_ENTER` / `DRAG_OVER` / `DRAG_DROP` / `DRAG_LEAVE` | ⛔ 不做：文件拖放走宿主 `WebviewWindow.FileDropped` 事件，不在页面事件通道上（页面拿不到文件路径，浏览器安全模型如此） |
+ *
+ * **为什么把收不到的那几个也列出来**：`TauriEvent.WINDOW_SUSPENDED` 若是 `undefined`，
+ * `listen(undefined)` 会在离原因很远的地方炸；常量在、文档标 ⛔，至少 import 处能跑、
+ * 读到名字就知道它不会来。
  */
 export const TauriEvent = Object.freeze({
     WINDOW_RESIZED: 'tauri://resize',
@@ -365,6 +371,10 @@ export const TauriEvent = Object.freeze({
     WINDOW_SCALE_FACTOR_CHANGED: 'tauri://scale-change',
     WINDOW_THEME_CHANGED: 'tauri://theme-changed',
     WINDOW_CREATED: 'tauri://window-created',
+    // 下面三个桌面端不会触发，只为"名字在"而存在（理由见上方表格）。
+    WINDOW_SUSPENDED: 'tauri://suspended',
+    WINDOW_RESUMED: 'tauri://resumed',
+    WEBVIEW_CREATED: 'tauri://webview-created',
     DRAG_ENTER: 'tauri://drag-enter',
     DRAG_OVER: 'tauri://drag-over',
     DRAG_DROP: 'tauri://drag-drop',
