@@ -157,15 +157,12 @@ const GAPS = {
     app: {
         BundleType: 'Tauri 打包器的产物类型；本库是库不是打包器，给不出（见 API.md）',
         defaultWindowIcon: '要图标资源表，本库没有',
-        exit: '会终止应用；是能力而不是元信息，本批没有放行它',
         fetchDataStoreIdentifiers: '数据存储标识符枚举；本库没有那个存储层',
         getBundleType: '同 BundleType',
-        hide: '应用级隐藏；本库目前只有窗口级',
         onBackButtonPress: '移动端返回键；桌面端没有',
         removeDataStore: '同 fetchDataStoreIdentifiers',
         setDockVisibility: 'macOS 的 Dock 显隐；本库还没有',
         setTheme: '应用级主题覆写；本库的 Theme 目前是只读的',
-        show: '同 hide',
     },
     mocks: {},
     fs: {

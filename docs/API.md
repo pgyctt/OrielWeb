@@ -523,7 +523,8 @@ window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
 | 默认拒绝 | 两条都不命中即拒绝 |
 | `win.` 前缀始终放行 | 那是无边框窗口的标题栏按钮与拖动，只操作自己那个窗口，不是"能力"；它们由库内建，自定义同名命令会被遮蔽。**应用自己的命令请避开这个前缀**。`tray.` 前缀同理 |
 | **`window.` 族只放行一组** | 它比 `win.*` 大得多（有 `window.setIcon`、`window.setSkipTaskbar` 这类真正的能力），所以**不整族放行**；只有标题栏必需的那组（`minimize` / `toggleMaximize` / `toggleFullscreen` / `toggleOnTop` / `close` / `destroy` / `drag*` / `pickFile` / `contextMenu`）与一组只读状态查询（`isVisible` / `isMaximized` / `isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop` / `isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `theme` / `title`）例外。逐条理由见 `OrielCapabilityRules.AlwaysAllowedWindowCommands` |
-| **`event.emit` 不放行** | 唯一一处"库内建但**不**始终放行"的命令。它让一个窗口的页面能驱动**另一个窗口**的行为（跨窗口指令通道），而自绘标题栏完全不依赖它——没有开后门的理由。要用必须显式 `Allow("event.emit")` 或 `Allow("event.*")`。注意它只保留了这一个**名字**，`event.` 前缀本身不保留 |
+| **`event.emit` 不放行** | 库内建但**不**始终放行的命令之一。它让一个窗口的页面能驱动**另一个窗口**的行为（跨窗口指令通道），而自绘标题栏完全不依赖它——没有开后门的理由。要用必须显式 `Allow("event.emit")` 或 `Allow("event.*")`。注意它只保留了这一个**名字**，`event.` 前缀本身不保留 |
+| **`app.exit` / `app.show` / `app.hide` 不放行** | 同族里的只读元信息（`app.getName` 等）整组放行，但这三条会改变应用状态：退出、隐藏全部窗口。它们不是"页面本该有的信息"，而是**应用得点头的能力**——页面能退出应用这件事，不该因为名字在 `app.` 族里就默认成立。要用必须显式 `Allow("app.exit")` 等（Debug 构建不受影响，全放行） |
 | 只管 `invoke` | 单向的 `postMessage` 没有命令名，由来源与令牌两层覆盖 |
 | `win.` 只保留**命令名**段 | 事件名不受限：`EmitEvent("win.state.changed", …)` 不会被拦（库不校验事件名，事件命名空间是页面自己的）。但为了与"保留前缀"的口径一致，建议避开这个段（下游反馈 2026-10-11 的 P2-3） |
 
@@ -920,7 +921,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 | `event` | `listen` / `once` / `emit` / `emitTo` / `TauriEvent` |
 | `window` | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow` + `Window` 类（含静态方法 `Window.getFocusedWindow()`；M5 的状态查询与外观开关：`isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop` / `isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `isEnabled` / `theme`；`setEnabled` / `setMaximizable` / `setMinimizable` / `setClosable` / `setMaxSize` / `setSizeConstraints` / `requestUserAttention` / `setIcon` / `setBackgroundColor`；`onThemeChanged` / `onScaleChanged`） |
 | `path` | `sep` / `delimiter`（**同步**）+ `join` / `normalize` / `dirname` / `extname` / `basename` / `isAbsolute` / `resolve` |
-| `app` | `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`（全是只读元信息，**无需能力声明**） |
+| `app` | `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`（只读元信息，**无需能力声明**）；`exit` / `show` / `hide`（**需要显式 `Allow`**，见 §4 的能力表） |
 | `fs` | `readTextFile` / `writeTextFile` / `readFile` / `writeFile` / `exists` / `size` / `readDir` / `stat` / `lstat` / `mkdir` / `remove` / `rename` / `copyFile` / `truncate`（**两道关都必过**，见下） |
 | `opener` | `openUrl` / `openPath` / `revealItemInDir` |
 | `notification` | `isPermissionGranted` / `requestPermission` / `sendNotification`（桌面子集） |
@@ -1191,7 +1192,7 @@ c.Allow("fs.writeTextFile", s => s.AllowPath("$APPDATA/reports/**").DenyPath("$A
 `EF BB BF`，后果是"写 5 个汉字得到 18 字节"，且下游的 JSON/CSV/shell 解析器
 会把首字节当内容。读这边会自己探测并去掉 BOM，所以别人写的带 BOM 文件照样能读。
 
-### `app` 模块（只读元信息）
+### `app` 模块
 
 ```js
 import { getName, getVersion, getIdentifier, getTauriVersion } from '@orielweb/api/app';
@@ -1202,8 +1203,28 @@ await getIdentifier();     // 'com.example.app'
 await getTauriVersion();   // '0.4.0'    ← **库**版本，不是 Tauri 框架版本
 ```
 
-**整组无需能力声明**：这几条读的都是宿主本来就会告诉页面的东西（页面已知自己的来源、
+**只读元信息整组无需能力声明**：这几条读的都是宿主本来就会告诉页面的东西（页面已知自己的来源、
 窗口 label、平台标识），没有一条是"应用不该知道"的信息。
+
+```js
+import { exit, show, hide } from '@orielweb/api/app';
+
+await show();        // 显示全部窗口
+await hide();        // 隐藏全部窗口
+await exit(0);       // 退出应用，进程退出码 0（省略 code 则保持原退出码）
+```
+
+**这三条需要显式 `Allow`**（`app.exit` / `app.show` / `app.hide`）：它们改变应用状态，
+不是元信息。页面能退出应用这件事应当由应用点头，而不是因为名字在 `app.` 族里就默认成立。
+Debug 构建不受影响（全放行）。
+
+> `exit()` 返回的 Promise 通常**不会 resolve**：应用在回执写回之前就退出了。
+> 别 `await` 它再做事，也别放进"失败就降级"的分支。它会走正常退出流程
+> （`Exiting` / `ExitCompleted` 照常触发）；若被看门狗强制结束，退出码用
+> `UseForceExitCode`（默认 2），**不是**这里传的值。
+>
+> `show()` / `hide()` 的语义是"显示/隐藏所有窗口"，**不是** macOS 的"取消应用隐藏"
+> （`NSApp.unhide:`）——三平台一致，不按平台分叉。
 
 值从哪来（对标 Tauri 的 `tauri.conf.json`）：
 
@@ -1224,11 +1245,11 @@ await getTauriVersion();   // '0.4.0'    ← **库**版本，不是 Tauri 框架
 > `getTauriVersion()` 的版本号判断，那一段必须重写，不能照搬。
 > 它与 `window.oriel.version` **同源**（都来自程序集版本），所以两处做能力探测不会矛盾。
 
-**本模块刻意不含**：`exit` / `show` / `hide` / `setTheme` / `setDockVisibility`
-（它们是**能力**不是元信息，要加时各自过一遍门禁姿态）、`getBundleType` / `BundleType`
-（返回的是 Tauri 打包器的产物类型，本库是库不是打包器，**给不出这个值**——编一个比不提供更糟，
-迁移代码会基于错信息分支）、`defaultWindowIcon` / `fetchDataStoreIdentifiers` /
-`removeDataStore` / `onBackButtonPress`（依赖图标资源表、数据存储、移动端返回键，暂无对应物）。
+**本模块仍然不含**：`setTheme` / `setDockVisibility`（应用级主题覆写、macOS Dock 显隐，本库还没有）、
+`getBundleType` / `BundleType`（返回的是 Tauri 打包器的产物类型，本库是库不是打包器，
+**给不出这个值**——编一个比不提供更糟，迁移代码会基于错信息分支）、`defaultWindowIcon` /
+`fetchDataStoreIdentifiers` / `removeDataStore` / `onBackButtonPress`（依赖图标资源表、
+数据存储、移动端返回键，暂无对应物）。
 
 **`window` 模块的方法是否需要能力声明**：
 

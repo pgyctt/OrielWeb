@@ -290,6 +290,12 @@ internal static class OrielCapabilityRules
     /// 会改变应用状态，它们是能力而不是元信息。Tauri 把两者放在同一个 <c>app</c> 模块里，
     /// 但门禁是按命令名判的，所以在这一点上分得开——将来加它们时各自单独判断。
     /// </para>
+    /// <para>
+    /// <b>2026-10-19 起这三条已经实现</b>（<c>app.exit</c> / <c>app.show</c> / <c>app.hide</c>），
+    /// 并且**仍然不在下面这个名单里**：页面能退出应用、能隐藏主窗口，这是需要应用点头的能力，
+    /// 不该因为"名字在 app 族里"就默认拥有。应用要放行得显式写：
+    /// <c>Allow("app.exit")</c> / <c>Allow("app.*")</c>（按需）。Debug 构建全放行，不受影响。
+    /// </para>
     /// </remarks>
     private static readonly string[] AlwaysAllowedAppCommands =
     [

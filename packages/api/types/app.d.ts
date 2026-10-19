@@ -46,3 +46,36 @@ export function getTauriVersion(): Promise<string>;
  * 删掉会让那些代码编译不过。没有谎报：桌面端本来就是 true。
  */
 export function supportsMultipleWindows(): Promise<boolean>;
+/**
+ * 退出应用（对标 Tauri 的 `exit(code?)`）。
+ *
+ * @param {number} [code] 进程退出码；省略时保持进程原有的退出码。
+ * @returns {Promise<void>}
+ * @remarks
+ * **需要能力声明**（`app.exit`）——它能终止应用，不属于"读元信息"那一类。
+ *
+ * 与 Tauri 的差别只在"怎么退"：Tauri 直接 `process::exit(code)`，本库走
+ * `Environment.ExitCode` + 正常的退出流程，所以 `Exiting` / `ExitCompleted` 这些
+ * 宿主侧事件照常触发。若退出被看门狗强制结束，用的是 `UseForceExitCode`
+ * （默认 2），**不是**这里传的值。
+ *
+ * 这个 Promise 通常**不会 resolve**：应用在回执写回之前就退出了。别 `await` 它再做事，
+ * 也不要把它放在"失败就降级"的分支里。
+ */
+export function exit(code?: number): Promise<void>;
+/**
+ * 显示全部窗口（对标 Tauri 的 `show()`）。
+ *
+ * @returns {Promise<void>}
+ * @remarks
+ * **需要能力声明**（`app.show`）。语义是"显示所有窗口"，**不是** macOS 的
+ * "取消应用隐藏"（`NSApp.unhide:`）——三平台一致，不按平台分叉。
+ */
+export function show(): Promise<void>;
+/**
+ * 隐藏全部窗口（对标 Tauri 的 `hide()`）。
+ *
+ * @returns {Promise<void>}
+ * @remarks **需要能力声明**（`app.hide`）。语义是"隐藏所有窗口"，理由同 {@link show}。
+ */
+export function hide(): Promise<void>;

@@ -3,25 +3,19 @@ using System.Text.Json;
 namespace OrielWeb.Ipc;
 
 /// <summary>
-/// 内建应用命令族（<c>app.*</c>）：对标 Tauri 2 的 <c>@tauri-apps/api/app</c> 里的**只读元信息**部分。
+/// 内建应用命令族（<c>app.*</c>）：对标 Tauri 2 的 <c>@tauri-apps/api/app</c>。
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>本族只做只读元信息</b>，不含 <c>exit</c> / <c>show</c> / <c>hide</c> / <c>setTheme</c> /
-/// <c>getBundleType</c>。理由分别是：
+/// <b>两类命令，门禁姿态不同</b>：只读元信息（<c>getName</c> / <c>getVersion</c> …）
+/// 整组始终放行；有状态的 <c>exit</c> / <c>show</c> / <c>hide</c> 会改变应用状态，
+/// **必须由应用显式 Allow**——见 <see cref="OrielCapabilityRules.AlwaysAllowedAppCommands"/>。
+/// 门禁按命令名判定，所以同族里分得开。
 /// </para>
-/// <list type="bullet">
-///   <item><description><c>exit</c> / <c>show</c> / <c>hide</c> 是**能力**（会改变应用状态），
-///     不该混进一个"读元信息"的族里顺带放行。它们各自需要单独判断门禁姿态。</description></item>
-///   <item><description><c>getBundleType</c> 与 <c>BundleType</c> 枚举**不适用**：它返回的是
-///     Tauri 打包器的产物类型（<c>nsis</c> / <c>msi</c> / <c>deb</c> / <c>appimage</c> …）。
-///     本库是库不是打包器，给不出这个值——编一个反而会让迁移代码基于错信息分支。
-///     将来若真有"打包形态"的概念再补，见 docs/TAURI2-PLAN.md。</description></item>
-/// </list>
 /// <para>
-/// <b>门禁姿态：整族始终放行。</b> 见 <see cref="OrielCapabilityRules.AlwaysAllowedAppCommands"/>——
-/// 这几条读的都是**宿主本来就会告诉页面**的东西（页面来源、窗口 label 都在它的环境里），
-/// 没有一条泄露应用不该知道的信息。
+/// <b>刻意不做的</b>：<c>getBundleType</c> 与 <c>BundleType</c> 枚举——它返回的是 Tauri
+/// 打包器的产物类型（<c>nsis</c> / <c>msi</c> / <c>deb</c> / <c>appimage</c> …）。
+/// 本库是库不是打包器，给不出这个值；编一个反而会让迁移代码基于错信息分支。
 /// </para>
 /// </remarks>
 internal static class OrielBuiltInAppCommands
@@ -64,9 +58,58 @@ internal static class OrielBuiltInAppCommands
                 handler = static (_, _) => true;
                 return true;
 
+            case "app.exit":
+                handler = static (window, args) =>
+                {
+                    int? exitCode = OptionalExitCode(args);
+
+                    // Quit 的线程相关性是硬约束（见 OrielApp.Quit 的注释）：这里统一编组，
+                    // 已在 UI 线程时 InvokeOnUiThread 会同步执行，不会多绕一圈。
+                    window.App.InvokeOnUiThread(() =>
+                    {
+                        // 退出码写进 Environment.ExitCode：进程在 Main 正常返回时按它退出。
+                        // 走看门狗强制结束时用的是 UseForceExitCode（那条路不看这里）——
+                        // 已经在 API.md 写明，免得有人以为被强杀时退出码也可控。
+                        if (exitCode is int code)
+                        {
+                            Environment.ExitCode = code;
+                        }
+
+                        window.App.Quit();
+                    });
+
+                    return null;
+                };
+                return true;
+
+            case "app.show":
+                handler = static (window, _) =>
+                {
+                    window.App.ShowAllWindows();
+                    return null;
+                };
+                return true;
+
+            case "app.hide":
+                handler = static (window, _) =>
+                {
+                    window.App.HideAllWindows();
+                    return null;
+                };
+                return true;
+
             default:
                 handler = null!;
                 return false;
         }
     }
+
+    /// <summary>读可选的退出码；缺省或不是整数时按"没给"处理（进程退出码保持原样）。</summary>
+    private static int? OptionalExitCode(JsonElement args)
+        => args.ValueKind == JsonValueKind.Object
+           && args.TryGetProperty("code", out JsonElement element)
+           && element.ValueKind == JsonValueKind.Number
+           && element.TryGetInt32(out int value)
+            ? value
+            : null;
 }

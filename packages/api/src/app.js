@@ -1,18 +1,24 @@
-// 对标 `@tauri-apps/api/app` 的**只读元信息**部分。
+// 对标 `@tauri-apps/api/app`。
 //
-// 这里刻意只提供 `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` /
-// `supportsMultipleWindows`。Tauri 的 app 模块里还有几类东西，缺失的理由各不相同：
+// 分两类：
 //
-//   * `exit` / `show` / `hide` / `setTheme` / `setDockVisibility` —— 它们是**能力**
-//     （改变应用状态），不是元信息。宿主侧同样没进"始终放行"的名单。
-//     要加的话得各自过一遍门禁姿态，不能混在一个"读信息"的模块里顺带放行。
+//   * **只读元信息**（getName / getVersion / getIdentifier / getTauriVersion /
+//     supportsMultipleWindows）——宿主侧整组始终放行。
+//   * **会改变应用状态的能力**（exit / show / hide）——宿主侧**不在** always-allowed
+//     名单里，应用必须显式 `Allow("app.exit")` 之类才放行。名字在同一个模块里，
+//     门禁姿态不同：Tauri 也是同名模块，但它没有本库这套命令级 allow/deny。
+//
+// 仍然缺失的几项，理由各不相同：
+//
+//   * `setTheme` / `setDockVisibility` —— 应用级主题覆写 / macOS Dock 显隐，本库还没有
+//     （主题目前只读；Dock 操作是 macOS 专有）。
 //   * `getBundleType` / `BundleType` —— **本库给不出这个值**。它返回的是 Tauri 打包器的
 //     产物类型（nsis / msi / deb / rpm / appimage / app）；OrielWeb 是库不是打包器。
 //     编一个值比不提供更糟：迁移代码会据此分支，而它会基于错信息分支。
 //   * `defaultWindowIcon` / `fetchDataStoreIdentifiers` / `removeDataStore` / `onBackButtonPress`
 //     —— 各自依赖图标资源表、数据存储、移动端返回键，本库暂无对应物。
 //
-// 这些都在 docs/TAURI2-PLAN.md 里记着，不是遗漏。
+// 这些都在 docs/TAURI2-ALIGNMENT-AUDIT 与对齐账本里记着，不是遗漏。
 
 import { invoke } from './core.js';
 
@@ -77,4 +83,46 @@ export function getTauriVersion() {
  */
 export function supportsMultipleWindows() {
     return invoke('app.supportsMultipleWindows');
+}
+
+/**
+ * 退出应用（对标 Tauri 的 `exit(code?)`）。
+ *
+ * @param {number} [code] 进程退出码；省略时保持进程原有的退出码。
+ * @returns {Promise<void>}
+ * @remarks
+ * **需要能力声明**（`app.exit`）——它能终止应用，不属于"读元信息"那一类。
+ *
+ * 与 Tauri 的差别只在"怎么退"：Tauri 直接 `process::exit(code)`，本库走
+ * `Environment.ExitCode` + 正常的退出流程，所以 `Exiting` / `ExitCompleted` 这些
+ * 宿主侧事件照常触发。若退出被看门狗强制结束，用的是 `UseForceExitCode`
+ * （默认 2），**不是**这里传的值。
+ *
+ * 这个 Promise 通常**不会 resolve**：应用在回执写回之前就退出了。别 `await` 它再做事，
+ * 也不要把它放在"失败就降级"的分支里。
+ */
+export function exit(code) {
+    return invoke('app.exit', code === undefined ? {} : { code });
+}
+
+/**
+ * 显示全部窗口（对标 Tauri 的 `show()`）。
+ *
+ * @returns {Promise<void>}
+ * @remarks
+ * **需要能力声明**（`app.show`）。语义是"显示所有窗口"，**不是** macOS 的
+ * "取消应用隐藏"（`NSApp.unhide:`）——三平台一致，不按平台分叉。
+ */
+export function show() {
+    return invoke('app.show');
+}
+
+/**
+ * 隐藏全部窗口（对标 Tauri 的 `hide()`）。
+ *
+ * @returns {Promise<void>}
+ * @remarks **需要能力声明**（`app.hide`）。语义是"隐藏所有窗口"，理由同 {@link show}。
+ */
+export function hide() {
+    return invoke('app.hide');
 }

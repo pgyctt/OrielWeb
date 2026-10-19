@@ -148,6 +148,45 @@ public sealed class OrielApp : IDisposable
     private readonly List<WebviewWindow> _windows = [];
 
     /// <summary>
+    /// 显示全部窗口（对标 Tauri 2 的 <c>app.show()</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// **语义是"显示所有窗口"**，不是 macOS 的"取消应用隐藏"（<c>NSApp.unhide:</c>）。
+    /// 三平台语义一致，且不引入平台分支；macOS 的 NSApp 语义等真有需求再补——
+    /// 现在补的话，另外两个平台上它只能退化成"显示所有窗口"，于是同名方法在三个平台上
+    /// 做的是两件事，而这正是本库明确避免的那类差异。
+    /// </para>
+    /// <para>
+    /// 窗口显示是 UI 线程相关的，所以内部编组到 UI 线程（已在 UI 线程时同步执行）。
+    /// 遍历用快照：<c>Show()</c> 可能触发窗口事件，事件回调里再建/关窗口会让
+    /// 直接遍历 <see cref="_windows"/> 抛"集合已修改"。
+    /// </para>
+    /// </remarks>
+    public void ShowAllWindows()
+    {
+        InvokeOnUiThread(() =>
+        {
+            foreach (WebviewWindow window in _windows.ToArray())
+            {
+                window.Show();
+            }
+        });
+    }
+
+    /// <summary>隐藏全部窗口（对标 Tauri 2 的 <c>app.hide()</c>）。理由同 <see cref="ShowAllWindows"/>。</summary>
+    public void HideAllWindows()
+    {
+        InvokeOnUiThread(() =>
+        {
+            foreach (WebviewWindow window in _windows.ToArray())
+            {
+                window.Hide();
+            }
+        });
+    }
+
+    /// <summary>
     /// 按 label 取窗口（对标 Tauri 2 的 <c>Window.getByLabel</c>）。
     /// </summary>
     /// <param name="label">窗口 label（大小写不敏感，见 <see cref="OrielWindowOptions.ValidateLabel"/>）。</param>
