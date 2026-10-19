@@ -777,6 +777,23 @@ for (const bridge of bridges) {
         await assert.rejects(promise, /超时/);
     });
 
+    test(`${label} 超时的错误带 code='timeout'（页面要能机器判别）`, async () => {
+        // 只断言文案是不够的：文案会改、会被翻译，而页面按文案分支就等于把
+        // 逻辑绑在一条人类可读的句子上。`code` 是契约。
+        // 注意桥接脚本引用不到 C# 常量，'timeout' 在这里是**独立的一份字面量**——
+        // 所以这条断言必须存在：它是防止两边漂移的唯一屏障。
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+        env.window.oriel.timeout = 10;
+
+        await assert.rejects(
+            env.window.oriel.invoke('never', {}),
+            (err) => {
+                assert.equal(err.code, 'timeout', 'error.code 必须是 timeout');
+                return true;
+            },
+        );
+    });
+
     test(`${label} 事件：oriel.on 收到宿主推送，退订后不再触发`, () => {
         const env = loadBridge(buildScript(bridge), bridge.channel);
         const seen = [];

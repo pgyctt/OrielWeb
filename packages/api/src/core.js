@@ -24,8 +24,9 @@ import { getTransport, hasTransportOverride } from './internal.js';
  * @returns {Promise<T>}
  * @throws {Error} 失败时 reject：`message` 是宿主文案；`code` 是可选的机器可判别错误码
  *   （库自己的那些见 `OrielIpcErrorCodes`，如 `not_allowed` / `unknown_command` /
- *   `missing_argument`）；`data` 是可选的附加数据。两个字段**只在宿主给了时才存在**，
- *   所以写 `if (e.code === 'not_allowed')` 就够了，不必先判 `in`。
+ *   `missing_argument` / `path_not_allowed`）；`data` 是可选的附加数据。两个字段
+ *   **只在宿主给了时才存在**，所以写 `if (e.code === 'not_allowed')` 就够了，不必先判 `in`。
+ *   `timeout`（超时）由桥接层产生，同样带 `code`——重试可能有用，值得和"参数错了"分开。
  */
 export async function invoke(cmd, args, options) {
     if (typeof cmd !== 'string' || cmd === '') {

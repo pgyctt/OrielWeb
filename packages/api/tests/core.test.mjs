@@ -274,6 +274,28 @@ test('失败时 reject 的 Error 上挂着 code 与 data', async () => {
     clearMocks();
 });
 
+test('超时的错误带着 code=timeout 穿到页面', async () => {
+    // 超时是桥接层产生的（它等不到回执，宿主那边没人能给出错误对象）。
+    // 包这一层要做的是**不要把它吞掉**：`code` 必须原样透传，
+    // 否则页面只剩"文案里有没有超时两个字"可判——而文案会改。
+    clearMocks();
+
+    const timeout = new Error('oriel.invoke 超时：命令 "slow" 在 30000ms 内没有回执');
+    timeout.code = 'timeout';
+
+    setTransportOverride({ async invoke() { throw timeout; } });
+
+    await assert.rejects(
+        () => invoke('slow'),
+        (caught) => {
+            assert.equal(caught.code, 'timeout');
+            return true;
+        },
+    );
+
+    clearMocks();
+});
+
 test('没给码时 Error 上没有 code 属性（而不是 undefined）', async () => {
     clearMocks();
 

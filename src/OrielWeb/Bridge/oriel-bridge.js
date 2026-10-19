@@ -154,7 +154,13 @@
                 const timer = timeoutMs > 0
                     ? setTimeout(() => {
                         if (pending.delete(id)) {
-                            reject(new Error('oriel.invoke 超时：命令 "' + name + '" 在 ' + timeoutMs + 'ms 内没有回执'));
+                            // `code` 必须挂上：页面要能机器判别"超时"与"命令自己失败"——
+                            // 前者重试可能有用，后者重试一万次也一样。靠文案匹配不行，
+                            // 文案会改、会被翻译。码值与 OrielIpcErrorCodes.Timeout 一致
+                            // （桥接脚本是独立注入的，引用不到 C# 常量，两边各写一份）。
+                            const err = new Error('oriel.invoke 超时：命令 "' + name + '" 在 ' + timeoutMs + 'ms 内没有回执');
+                            err.code = 'timeout';
+                            reject(err);
                         }
                     }, timeoutMs)
                     : null;

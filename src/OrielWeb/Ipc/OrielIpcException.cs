@@ -60,6 +60,27 @@ public static class OrielIpcErrorCodes
     /// </remarks>
     public const string PathNotAllowed = "path_not_allowed";
 
+    /// <summary>
+    /// 这次调用在超时时间内没有回执。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 由**桥接层**（<c>oriel-bridge.js</c>）产生，不是宿主回执里的码：超时发生时
+    /// 宿主要么还在处理、要么回执丢了，没有人能给出错误对象。
+    /// </para>
+    /// <para>
+    /// 与"命令自己失败"分开是必要的：超时的时候重试可能是对的，而
+    /// <see cref="InvalidArgument"/> 重试一万次也一样。页面要能机器判别这件事，
+    /// 不能靠匹配文案（文案会改、会翻译）。
+    /// </para>
+    /// <para>
+    /// 桥接脚本是独立注入的 JS，引用不到这里的常量——两边各有一份字面量。
+    /// 因此 <c>tests/bridge/bridge.test.mjs</c> 与 <c>packages/api/tests/core.test.mjs</c>
+    /// **同时**钉住 <c>'timeout'</c>，只钉一边会让另一边静默漂移。
+    /// </para>
+    /// </remarks>
+    public const string Timeout = "timeout";
+
     /// <summary>库内部的意外失败（**不是**应用命令自己抛的异常）。</summary>
     /// <remarks>
     /// 应用命令抛的异常不带码——那是应用的错误分类，库不该替它编。
