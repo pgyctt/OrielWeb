@@ -112,6 +112,11 @@ internal sealed unsafe class MacOSMenu : IDisposable
     /// </remarks>
     private void PopupAt(nint view, OrielPosition logical)
     {
+        if (_handle == 0 || _disposed)
+        {
+            return;
+        }
+
         double y = logical.Y;
         if (!ObjCRuntime.SendBoolRet(view, ObjCRuntime.Sel("isFlipped")))
         {
@@ -119,8 +124,11 @@ internal sealed unsafe class MacOSMenu : IDisposable
             y = ReadViewHeight(view) - logical.Y;
         }
 
+        // **这是 NSMenu 的实例方法，self 必须是菜单本身**（不是 NSMenu 类对象）。
+        // 把类对象传进来会得到 doesNotRecognizeSelector 崩溃，而栈里只看到 objc 消息转发，
+        // 完全看不出与菜单有关——这条注释就是为了省下一次那样的排查。
         _ = ObjCRuntime.SendIdObjDouble2Obj(
-            ObjCRuntime.GetClassOrThrow("NSMenu"),
+            _handle,
             ObjCRuntime.Sel("popUpMenuPositioningItem:atLocation:inView:"),
             0,
             logical.X,

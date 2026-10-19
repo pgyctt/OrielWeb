@@ -493,10 +493,16 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
             _contextMenu.Popup(_webview, position);
 
             // macOS 的弹出本来就不阻塞，"自动关闭"在这里是"到点了把它收起来"。
+            //
+            // **必须回主线程**：AppKit 的所有菜单操作都要求主线程，从后台线程发
+            // cancelTracking 会让 objc 在错误线程上走消息转发（实测崩在
+            // doesNotRecognizeSelector，而栈里看不出与菜单有关）。
             if (autoDismissAfter is { } delay)
             {
                 MacOSMenu pending = _contextMenu;
-                _ = Task.Delay(delay).ContinueWith(_ => pending.CancelTracking(), TaskScheduler.Default);
+                _ = Task.Delay(delay).ContinueWith(
+                    _ => PostToUiThread(pending.CancelTracking),
+                    TaskScheduler.Default);
             }
         }
     }
