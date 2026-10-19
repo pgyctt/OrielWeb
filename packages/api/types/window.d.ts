@@ -610,7 +610,7 @@ export class Window {
         payload: "light" | "dark";
     }) => void): Promise<() => void>;
     /**
-     * 订阅"文件被拖入本窗口"（对标 Tauri 的 `Webview.onDragDropEvent`）。
+     * 订阅"文件被拖入本窗口"（对标 Tauri 的 `onDragDropEvent`）。
      *
      * @param {(event: { event: string, id: number, payload: { type: 'drop', paths: string[] } }) => void} handler
      * @returns {Promise<() => void>}
