@@ -427,6 +427,106 @@ internal partial class Win32WindowHost : IWindowBackend
     /// </remarks>
     public void CloseContextMenu() => _ = Win32.PostMessageW(_hwnd, Win32Constants.WM_CANCELMODE, 0, 0);
 
+    // ------------------------------------------------------------------
+    // 菜单栏
+    // ------------------------------------------------------------------
+
+    /// <summary>当前挂在窗口上的菜单栏；null 表示没有。</summary>
+    private Win32Menu? _menuBar;
+
+    /// <summary>
+    /// 设置这个窗口的菜单栏。
+    /// </summary>
+    /// <param name="items">顶层项；空集合表示移除菜单栏。</param>
+    /// <remarks>
+    /// <para>
+    /// <b>换成新菜单栏时的顺序很重要</b>：必须先 <c>SetMenu(hwnd, 0)</c> 把旧的摘下来，
+    /// 再 <c>Dispose</c> 它。反过来的话窗口会持有一个已销毁的 HMENU，用户下一次点菜单栏
+    /// 就是 use-after-free（崩溃点在 user32 里，栈上看不出与本库有关）。
+    /// </para>
+    /// <para>
+    /// 装上/摘掉之后都要 <see cref="Win32.DrawMenuBar"/>：否则菜单栏区域不重画，
+    /// 表现是"设置了但看不见"或"摘掉了还留一条空白"。
+    /// </para>
+    /// </remarks>
+    public void SetWindowMenuBar(IReadOnlyList<OrielMenuItem> items)
+    {
+        DetachMenuBar();
+
+        if (items.Count == 0)
+        {
+            // 空集合 = 显式移除。不是"没设置"——页面的意图是"这个窗口不要菜单栏"。
+            _ = Win32.DrawMenuBar(_hwnd);
+            return;
+        }
+
+        Win32Menu? bar = Win32Menu.Build(items, asMenuBar: true);
+        if (bar is null)
+        {
+            _ = Win32.DrawMenuBar(_hwnd);
+            return;
+        }
+
+        _menuBar = bar;
+        _ = Win32.SetMenu(_hwnd, bar.Handle);
+        _ = Win32.DrawMenuBar(_hwnd);
+
+        // 无边框窗口要自己让出菜单栏高度（装饰窗口由 DefWindowProc 的 WM_NCCALCSIZE 让）。
+        // 不做这一步的话菜单栏会画在客户区顶上、盖住页面顶部。
+        if (_options.Frameless)
+        {
+            _ = Win32.SetWindowPos(
+                _hwnd, 0, 0, 0, 0, 0,
+                Win32Constants.SWP_NOMOVE | Win32Constants.SWP_NOSIZE |
+                Win32Constants.SWP_NOZORDER | Win32Constants.SWP_NOACTIVATE |
+                Win32Constants.SWP_FRAMECHANGED);
+        }
+    }
+
+    /// <summary>
+    /// 让这个窗口反映应用级菜单栏。
+    /// </summary>
+    /// <remarks>
+    /// Windows 的菜单栏属于窗口，所以这里就是"把这份内容装到我这个窗口上"。
+    /// "不覆盖显式设过菜单栏的窗口"那条判断在 <see cref="WebviewWindow.SetAppMenuBar"/>，
+    /// 不在后端——后端只管怎么装。
+    /// </remarks>
+    public void SetAppMenuBar(IReadOnlyList<OrielMenuItem> items) => SetWindowMenuBar(items);
+
+    /// <summary>把菜单栏从窗口上摘下来并释放；没有菜单栏时是空操作。</summary>
+    /// <remarks>
+    /// 顺序是"先摘、后放"，理由见 <see cref="SetWindowMenuBar"/> 的说明。
+    /// </remarks>
+    private void DetachMenuBar()
+    {
+        Win32Menu? bar = _menuBar;
+        if (bar is null)
+        {
+            return;
+        }
+
+        _menuBar = null;
+        if (_hwnd != 0)
+        {
+            _ = Win32.SetMenu(_hwnd, 0);
+        }
+
+        bar.Dispose();
+    }
+
+    /// <summary>菜单栏里的项被点中（由 WndProc 的 WM_COMMAND 调）。</summary>
+    private void OnMenuCommand(uint commandId)
+    {
+        OrielMenuItem? item = _menuBar?.Find(commandId);
+        if (item is null)
+        {
+            // 不是本窗口菜单栏的 id（可能是系统菜单或别的来源），照默认走。
+            return;
+        }
+
+        ActivateMenuItem(item);
+    }
+
     /// <summary>菜单项 → 行为：role 走共享解释器，自定义项上报到 <see cref="ContextMenuItemClicked"/>。</summary>
     private void ActivateMenuItem(OrielMenuItem item)
     {
@@ -867,9 +967,19 @@ internal partial class Win32WindowHost : IWindowBackend
                 // WS_EX_NOREDIRECTIONBITMAP + DirectComposition 宿主，WebView2 是合成树里的视觉
                 // 而非子窗口，因此这条消息与 WM_NCHITTEST 都能真正到达本窗口，边缘命中由下面的
                 // WM_NCHITTEST 分支显式给出。
+                //
+                // **挂了菜单栏时例外**：菜单栏画在客户区顶上，必须在这里让出它的高度，
+                // 否则菜单栏会盖住页面顶部（而且 innerSize 会把菜单栏算进客户区，
+                // 与"页面看到的是 webview 区域"这条契约冲突）。
                 if (wParam != 0)
                 {
                     // lParam 为 NCCALCSIZE_PARAMS*，其首成员已是窗口矩形；返回 0 即"客户区 = 该矩形"。
+                    if (_menuBar is not null)
+                    {
+                        var rect = (RECT*)lParam;
+                        rect->Top += Win32.GetSystemMetrics(Win32Constants.SM_CYMENU);
+                    }
+
                     return 0;
                 }
 
@@ -879,7 +989,12 @@ internal partial class Win32WindowHost : IWindowBackend
                     && windowRect.Right > windowRect.Left
                     && windowRect.Bottom > windowRect.Top)
                 {
-                    *(RECT*)lParam = windowRect;
+                    var rect = (RECT*)lParam;
+                    *rect = windowRect;
+                    if (_menuBar is not null)
+                    {
+                        rect->Top += Win32.GetSystemMetrics(Win32Constants.SM_CYMENU);
+                    }
                 }
                 return 0;
             }
@@ -1009,6 +1124,24 @@ internal partial class Win32WindowHost : IWindowBackend
                 return 0;
             }
 
+            case Win32Constants.WM_COMMAND:
+            {
+                // 菜单栏的点击走这里：wParam 低字是命令 id（AppendMenuW 分配的那个），
+                // lParam == 0 表示来自菜单或加速键。本库不注册加速键，所以 lParam == 0
+                // 就一定是菜单点击。
+                //
+                // 为什么不用 WM_MENUCOMMAND：那条要菜单建成 MNS_NOTIFYBYPOS 风格
+                // （传位置而不是 id），而本库的菜单构建是 id 驱动的（TrackPopupMenuEx
+                // 的 TPM_RETURNCMD 也回传 id）——同一条 id 映射，两条路径共用。
+                if (lParam == 0)
+                {
+                    OnMenuCommand((uint)(wParam & 0xFFFF));
+                    return 0;
+                }
+
+                break;
+            }
+
             case Win32Constants.WM_CLOSE:
                 // WM_CLOSE 是**同步消息**，而页面回执是异步 IPC——不可能在这里等页面答复
                 // （等它就是锁死 UI 线程，而回执的处理恰好也要 UI 线程）。所以判定只有三种出路：
@@ -1052,6 +1185,10 @@ internal partial class Win32WindowHost : IWindowBackend
     /// <summary>窗口销毁时的清理：先关控制器、释放合成树，再触发 Closed 与窗口计数。</summary>
     internal void OnWindowDestroyedCore()
     {
+        // 菜单栏要先摘再放（顺序见 DetachMenuBar）。放在最前：后面的清理可能抛，
+        // 而菜单栏是挂在 hwnd 上的——hwnd 即将销毁，再晚就摘不下来了。
+        DetachMenuBar();
+
         _compositionEvents?.Dispose();
         _compositionEvents = null;
 

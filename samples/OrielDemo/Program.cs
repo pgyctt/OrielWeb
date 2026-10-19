@@ -163,6 +163,9 @@ internal static class Program
         // menu：页面侧菜单模型 + menu.popup 真的弹出了原生菜单。
         // 三平台的弹出路径完全不同（Win32 / GTK / AppKit），只能真跑取证。
         var menuSelfTest = IsSelfTest(selfTest, "menu");
+        // menubar：setAsWindowMenu / setAsAppMenu 真的装上了菜单栏，且没弄坏客户区尺寸契约。
+        // B6b 是唯一动到窗口结构的一批（Linux 的 GtkBox{menubar,webview}），几何只能真跑取证。
+        var menuBarSelfTest = IsSelfTest(selfTest, "menubar");
         // api：前端包在真实页面里能不能用（ESM 加载 / 各类往返）。
         var apiSelfTest = IsSelfTest(selfTest, "api");
         // --manual-check：手动验证操作台（停在那里等人点，不自动退出）。
@@ -178,7 +181,7 @@ internal static class Program
             || schemeSelfTest || exitSelfTest || threadingSelfTest || traySelfTest || trayJsSelfTest
             || geometrySelfTest || geometryFramelessSelfTest || windowEventsSelfTest || eventSelfTest
             || closeSelfTest || windowSelfTest || windowNewSelfTest || monitorsSelfTest
-            || menuSelfTest || apiSelfTest;
+            || menuSelfTest || menuBarSelfTest || apiSelfTest;
         var manualCheck = !anySelfTest && !args.Contains("--todo");
 
         // 主题自检需要 OrielApp（主题是应用级的），所以这里显式 Build 再 Run；
@@ -477,6 +480,12 @@ internal static class Program
                     WebviewWindow created = win;
                     created.Loaded += () => MenuSelfTest.Begin(created.App, created);
                 }
+                if (menuBarSelfTest)
+                {
+                    MenuBarSelfTest.Attach(win);
+                    WebviewWindow created = win;
+                    created.Loaded += () => MenuBarSelfTest.Begin(created.App, created);
+                }
                 if (apiSelfTest)
                 {
                     // 前端包自检：订阅同样要早于导航——探针脚本在页面解析时就会跑完并回显。
@@ -579,6 +588,7 @@ internal static class Program
             || (windowNewSelfTest && WindowNewSelfTest.Failed)
             || (monitorsSelfTest && MonitorSelfTest.Failed)
             || (menuSelfTest && MenuSelfTest.Failed)
+            || (menuBarSelfTest && MenuBarSelfTest.Failed)
             || (apiSelfTest && ApiSelfTest.Failed)
             || ((traySelfTest || trayJsSelfTest) && TraySelfTest.Failed))
         {

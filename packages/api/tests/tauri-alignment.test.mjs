@@ -42,7 +42,9 @@ const MODULES = [
     { ours: '../src/window.js', theirs: '@tauri-apps/api/window', label: 'window' },
     // 页面建窗。它是 `Window` 的**子类**——方法比对要能沿原型链走（见下方 collectMethods）。
     { ours: '../src/webviewWindow.js', theirs: '@tauri-apps/api/webviewWindow', label: 'webviewWindow' },
-    // 菜单模型（B6a）。只做"弹出"那一半：菜单栏的 setAsAppMenu/setAsWindowMenu 在 B6b。
+    // 菜单（B6a 弹出 + B6b 菜单栏）。两半都做了：popup / setAsAppMenu / setAsWindowMenu。
+    // 结构性差异不是缺口：菜单树是页面侧纯数据（没有 rid），"返回上一份菜单"由页面记账，
+    // setAsWindowMenu 在 macOS 上抛 not_supported（菜单在那边是应用级的，Tauri 同）。
     { ours: '../src/menu.js', theirs: '@tauri-apps/api/menu', label: 'menu' },
     { ours: '../src/path.js', theirs: '@tauri-apps/api/path', label: 'path' },
     { ours: '../src/app.js', theirs: '@tauri-apps/api/app', label: 'app' },

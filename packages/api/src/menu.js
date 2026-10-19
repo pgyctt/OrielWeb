@@ -1,20 +1,25 @@
-// 对标 `@tauri-apps/api/menu` 的**菜单模型与弹出**部分。
+// 对标 `@tauri-apps/api/menu` 的**菜单模型、弹出与菜单栏**部分。
 //
 // 与 Tauri 的根本差别（这里必须说清楚，否则迁移时会以为"行为怪"）：
 //
 //   1. **菜单在页面侧是纯数据，不是资源句柄**。Tauri 的 Menu 在 Rust 侧有 rid，
 //      `append` / `insert` 是对那个资源的增量修改；本库没有句柄表（README 里的结构性缺口），
-//      所以这棵树完全活在 JS 里，只有 `popup()` 会把整棵树发给宿主。由此派生：
+//      所以这棵树完全活在 JS 里，只有 `popup()` 与两个 `setAs*()` 会把整棵树发给宿主。由此派生：
 //        * `new Menu()` / `append()` / `items()` 都**不发 IPC**，因此不可能"失败"；
-//        * 没有 `close()`（Tauri 的 Resource.close 用来释放 rid，这里没有 rid）；
-//        * 给 `popup()` 之后改这个菜单**不会**影响已经弹出的那个（它是快照）。
+//        * `close()` 只是"关掉在屏菜单"（本库扩展，Windows 上那个阻塞的弹出要用它），
+//          与 Tauri 的 Resource.close（释放 rid）同名不同义；
+//        * `popup()` / `setAs*()` 之后改这个菜单**不会**影响已经装上去的那份（它是快照）；
+//        * `setAsAppMenu` / `setAsWindowMenu` 返回的"上一份菜单"是**页面侧记的**
+//          （Tauri 还给你的是 Rust 资源），多页面各看各的，单窗口应用完全一致。
 //
-//   2. **`action` 回调靠事件回来**。Tauri 把回调挂在 Rust 侧的资源上；本库在弹出时给
-//      带 action 的项加一个**本次弹出专属的 id 前缀**，宿主点击后经 `menu.itemclicked`
+//   2. **`action` 回调靠事件回来**。Tauri 把回调挂在 Rust 侧的资源上；本库在装/弹时给
+//      带 action 的项加一个**本次专属的 id 前缀**，宿主点击后经 `menu.itemclicked`
 //      事件把 id 送回来，这里按前缀识别并还原原始 id。所以：
 //        * action 只对**有 id 的项**有效（没有 id 就无法路由——Tauri 那边 id 可由 Rust 生成，
 //          我们这边生成一个你也对不上任何东西）；
-//        * 事件到达前若又弹了另一个菜单，前一个菜单的 action 不再触发（一次只有一个菜单在屏上）。
+//        * **弹出**仍是一次只能有一个在屏上（换弹出会顶掉上一个的 action）；
+//        * **菜单栏不共享这个限制**——多条菜单栏（每窗口一条 + 应用菜单）的 action 并存，
+//          各按各自的令牌认领。
 //
 //   3. **图标暂不支持**：IconMenuItem 存在、可构造、可加入菜单，但 `setIcon` 抛错
 //      （图标要资源表，见 README）。菜单项会画成普通文本项。
@@ -24,6 +29,10 @@
 //      popUpMenuPositioningItem: 都会一直跟踪到用户选择或点外面），只有 **Linux 立即返回**
 //      （GTK 的菜单是异步的）。**别在 `await menu.popup()` 之后假设"用户已经选过了"**
 //      ——三个平台不一致，action 才是可靠的回传通道。
+//
+//   5. **`setAsWindowMenu` 在 macOS 上抛错**（Tauri 也是 Unsupported）：菜单在 macOS 是
+//      应用级的，没有"某个窗口的菜单栏"这回事。那边只能用 `setAsAppMenu`。
+//      迁移代码要按平台分支，或者统一走 `setAsAppMenu`。
 
 import { invoke } from './core.js';
 import { listen } from './event.js';
@@ -34,14 +43,19 @@ import { getTransport } from './internal.js';
 const ITEM_CLICKED_EVENT = 'menu.itemclicked';
 
 /**
- * 当前这次弹出的令牌与 action 表。
+ * 各份"活着的"菜单的令牌 → action 表。
  *
- * @type {{ token: string | null, actions: Map<string, (id: string) => void> }}
+ * @type {Map<string, Map<string, (id: string) => void>>}
  * @remarks
- * 模块级而不是挂在 Menu 实例上：一次只能有一个原生菜单在屏上，
- * 而点击事件不带"是哪个菜单"的信息——只能靠"最近一次弹出"来认领。
+ * <p>**这里是按令牌索引的表，不是单个令牌**。弹出菜单确实是"一次只能有一个在屏上"，
+ * 但**菜单栏是持久的**：装上去之后一直活着，而且多个窗口可以各有一条、再加上一条应用菜单
+ * ——它们的 action 必须能并存。id 前缀里已经带了令牌，所以路由本来就按令牌分得开，
+ * 唯一要改的是"只记最近一次"这个旧假设。
+ *
+ * <p>旧写法的表现（真实症状）：先 `setAsWindowMenu()` 再 `popup()`，菜单栏的 action
+ * 就再也不触发了——popup 把 clickRouting 整个换掉了。
  */
-const clickRouting = { token: null, actions: new Map() };
+const clickRouting = new Map();
 
 /**
  * 点击监听装在哪个传输层上（null 表示还没装）。
@@ -77,29 +91,61 @@ async function ensureClickListener() {
     // listen 返回的是可 await 的退订函数；这里不退订——模块级监听与页面同寿命。
     await listen(ITEM_CLICKED_EVENT, (event) => {
         const raw = event?.payload?.id;
-        if (typeof raw !== 'string' || clickRouting.token === null) {
+        if (typeof raw !== 'string') {
             return;
         }
 
-        const prefix = `${clickRouting.token}:`;
-        if (!raw.startsWith(prefix)) {
-            // 不是这次弹出的项（例如宿主自己弹的菜单），不认领。
+        // 形如 `token:originalId`。令牌是 Math.random().toString(36) 的产物，
+        // 只含字母数字，所以"第一个冒号"就是分界——原始 id 自己带冒号也不影响。
+        const sep = raw.indexOf(':');
+        if (sep < 0) {
+            // 没有前缀：宿主自己弹的菜单（不是本模块发的），不认领。
             return;
         }
 
-        const id = raw.slice(prefix.length);
-        const action = clickRouting.actions.get(id);
+        const actions = clickRouting.get(raw.slice(0, sep));
+        if (!actions) {
+            // 这份菜单已经不在了（被替换/移除），不认领。
+            return;
+        }
+
+        const action = actions.get(raw.slice(sep + 1));
         if (typeof action !== 'function') {
             return;
         }
 
         try {
-            action(id);
+            action(raw.slice(sep + 1));
         } catch (err) {
             // 一个按钮的回调出错不该把事件分发链炸掉（其它监听者还在后面）。
             console.error('[oriel] menu action 抛错:', err);
         }
     });
+}
+
+/**
+ * 登记一份菜单的 action 表；返回它的令牌。
+ *
+ * @param {Map<string, (id: string) => void>} actions
+ * @returns {string}
+ * @internal
+ */
+function registerRoute(actions) {
+    const token = Math.random().toString(36).slice(2, 10);
+    clickRouting.set(token, actions);
+    return token;
+}
+
+/**
+ * 撤掉某个令牌的 action 表（菜单被替换/移除时）。
+ *
+ * @param {string | null} token
+ * @internal
+ */
+function dropRoute(token) {
+    if (token !== null) {
+        clickRouting.delete(token);
+    }
 }
 
 /**
@@ -653,7 +699,7 @@ export class Submenu extends MenuItemBase {
     }
 
     /**
-     * @param {{ type?: string, x: number, y: number } | [number, number] | null} [at]
+     * @param {{ type?: string, x: number, y: number } | { x: number, y: number } | [number, number] | null} [at]
      * @param {{ label?: string } | null} [window]
      * @returns {Promise<void>}
      */
@@ -698,10 +744,11 @@ export class Submenu extends MenuItemBase {
 }
 
 /**
- * 菜单（对标 `Menu`）：一个菜单项的容器，可 popup。
+ * 菜单（对标 `Menu`）：一个菜单项的容器，可 popup，也可装成菜单栏。
  *
- * @remarks 在 Tauri 里它还能 `setAsAppMenu` / `setAsWindowMenu`（菜单栏）。
- * 那两条要动窗口布局，属于后续批次，本批没有。
+ * @remarks
+ * `setAsAppMenu` / `setAsWindowMenu` 装的是**整棵树的快照**：装完之后再改这个 `Menu`
+ * 不会影响已经在屏上的菜单栏，要改得再设一次（本库没有资源表，无法增量改宿主那份）。
  */
 export class Menu extends MenuItemBase {
     /**
@@ -838,32 +885,58 @@ export class Menu extends MenuItemBase {
     /**
      * 设为应用菜单栏（对标 `Menu.setAsAppMenu`）。
      *
-     * @returns {Promise<never>}
-     * @throws {Error} 未实现（B6b）。
+     * @returns {Promise<Menu | null>} 之前那份应用菜单；没有则是 `null`。
+     * @remarks
+     * <p><b>与 Tauri 的两处差别</b>：
+     * <ol>
+     *   <li>Tauri 返回的是 Rust 侧那个菜单资源（可以 `close()` 掉）。本库没有资源表，
+     *       所以返回的是**页面侧记的**上一次传进来的 `Menu`——它仍是纯数据，
+     *       `close()` 对它没有意义（本库的 Menu 也没有 close）。</li>
+     *   <li>这个"上一次"是**本页面**的视角。多个页面都调过 `setAsAppMenu` 的话，
+     *       各自只看得到自己那次之前的那份。单窗口应用完全一致。</li>
+     * </ol>
+     * <p><b>作用面比 `setAsWindowMenu` 大</b>：它会套用到所有没显式设过菜单栏的窗口
+     * （含此后新建的），所以门禁上更严——Release 构建下可能要应用显式放行
+     * `menu.setAsAppMenu`。`setAsWindowMenu` 只碰调用方那一个窗口，无条件放行。
+     * <p>macOS 上这是**唯一**能设菜单的路（菜单在 macOS 是应用级的，
+     * `setAsWindowMenu` 会抛错）。
      */
     async setAsAppMenu() {
-        throw new Error(
-            'Menu.setAsAppMenu 未实现：菜单栏属于 B6b（macOS 要 [NSApp setMainMenu:]，' +
-            'Windows/Linux 要动窗口布局）。本批只做 Menu.popup。');
+        return setAsMenuBarItems(this, 'menu.setAsAppMenu', {}, barSlots.app);
     }
 
     /**
      * 设为某个窗口的菜单栏（对标 `Menu.setAsWindowMenu`）。
      *
-     * @param {unknown} [_window]
-     * @returns {Promise<never>}
-     * @throws {Error} 未实现（B6b）。
+     * @param {{ label?: string } | null} [window] 目标窗口；省略时是**发起调用的那个窗口**。
+     * @returns {Promise<Menu | null>} 之前装在那个窗口上的菜单；没有则是 `null`。
+     * @throws {Error} **macOS 上抛**：菜单在 macOS 是应用级的，没有"某个窗口的菜单栏"这回事
+     *   （与 Tauri 的行为一致——它在 macOS 上也是 Unsupported）。
+     * @remarks
+     * 传空菜单（`items: []`）是合法的，表示"这个窗口不要菜单栏"——不是错误。
      */
-    async setAsWindowMenu(_window) {
-        throw new Error(
-            'Menu.setAsWindowMenu 未实现：菜单栏属于 B6b（Linux 要把 GtkWindow 改成 ' +
-            'GtkBox{menubar, webview}，客户区尺寸契约会变）。本批只做 Menu.popup。');
+    async setAsWindowMenu(window = null) {
+        const key = typeof window?.label === 'string' ? window.label : '';
+
+        // 按 label 分槽：省略 label（或传了没有 label 的对象）时用 '' 归到"发起调用方"那一档。
+        // 同一个窗口的两次 setAsWindowMenu 会换掉记账，不同窗口互不干扰。
+        let slot = barSlots.windows.get(key);
+        if (!slot) {
+            slot = { token: null, menu: null };
+            barSlots.windows.set(key, slot);
+        }
+
+        return setAsMenuBarItems(
+            this,
+            'menu.setAsWindowMenu',
+            { label: key === '' ? null : key },
+            slot);
     }
 
     /**
      * 弹出这个菜单（对标 `Menu.popup`）。
      *
-     * @param {{ type?: string, x: number, y: number } | null} [at]
+     * @param {{ type?: string, x: number, y: number } | { x: number, y: number } | [number, number] | null} [at]
      *   弹出位置。物理与逻辑坐标都收（`type: 'Physical' | 'Logical'`），省略时跟随鼠标。
      * @param {{ label?: string } | null} [window]
      *   弹到哪个窗口上；省略时是**发起调用的那个窗口**。
@@ -922,23 +995,97 @@ export class Menu extends MenuItemBase {
  * 把一棵菜单树发给宿主弹出。
  *
  * @param {MenuItemBase[]} items
- * @param {{ type?: string, x: number, y: number } | [number, number] | null} at
+ * @param {{ type?: string, x: number, y: number } | { x: number, y: number } | [number, number] | null} at
  *   弹出位置。与 Tauri 一样收"物理/逻辑坐标对象"，本库额外允许 `[x, y]`（`normalizePosition` 的既有约定）。
  * @param {{ label?: string } | null} window
  * @returns {Promise<void>}
  * @internal
  */
-async function popupItems(items, at, window) {
-    const token = Math.random().toString(36).slice(2, 10);
+/**
+ * 最近一次**弹出**的令牌（菜单栏不在此列）。
+ *
+ * @type {string | null}
+ * @remarks
+ * 弹出仍然是"一次只能有一个在屏上"，所以只留最近一个——这既是路由需要，
+ * 也顺带负责清理（不留就等于每次弹出都往 clickRouting 里堆一条）。
+ *
+ * <p>**不能改成"命令返回就收掉"**：Linux 的 <c>menu.popup</c> 立即返回，
+ * 点击是之后异步来的，那时收掉路由就等于 Linux 上点了没反应
+ * （Windows/macOS 的弹出是阻塞的，收回执时点击早已到达，看不出这个差别）。
+ */
+let popupToken = null;
+
+/**
+ * 菜单栏的"上一次"记账（Tauri 由 Rust 资源表还给你，本库只能页面侧记）。
+ *
+ * @type {{ app: { token: string | null, menu: any }, windows: Map<string, { token: string | null, menu: any }> }}
+ * @remarks
+ * 按**窗口 label** 分槽（应用菜单单独一个槽）。槽里同时存令牌：菜单被替换时要把
+ * 上一份的 action 表从 clickRouting 里撤掉，否则那份菜单的闭包一直被引用着。
+ */
+const barSlots = {
+    app: { token: null, menu: null },
+    windows: new Map(),
+};
+
+/**
+ * 把一棵菜单装成菜单栏，并把"上一份"还给调用方。
+ *
+ * @param {{ _items: MenuItemBase[] }} menu 要装上去的 Menu 实例。
+ * @param {string} command 命令名（menu.setAsAppMenu / menu.setAsWindowMenu）。
+ * @param {Record<string, unknown>} extraArgs 除 items 之外的命令参数。
+ * @param {{ token: string | null, menu: any }} slot 记账槽。
+ * @returns {Promise<any>} 之前装在同一位置的那份菜单；没有则是 null。
+ * @internal
+ * @remarks
+ * <b>装失败时不留半截状态</b>：macOS 上 <c>menu.setAsWindowMenu</c> 会抛
+ * <c>not_supported</c>（菜单是应用级的），此时刚登记的路由必须撤掉——否则那份菜单的
+ * action 会一直挂在表上，而它从来没装上去过。表现是"抛了错但内存一直涨"。
+ */
+async function setAsMenuBarItems(menu, command, extraArgs, slot) {
     const actions = new Map();
+    const token = registerRoute(actions);
+
+    const wire = menu._items.map((item) => item._wire(actions, token));
+
+    await ensureClickListener();
+
+    try {
+        await invoke(command, { items: wire, ...extraArgs });
+    } catch (err) {
+        dropRoute(token);
+        throw err;
+    }
+
+    // 装上去了，才把上一份的路由撤掉、并把记账换到新的一份。
+    const previous = slot.menu;
+    dropRoute(slot.token);
+    slot.token = token;
+    slot.menu = menu;
+    return previous;
+}
+
+/**
+ * 把一棵菜单树弹出来（`Menu.popup` 的实现）。
+ *
+ * @param {MenuItemBase[]} items
+ * @param {{ type?: string, x: number, y: number } | { x: number, y: number } | [number, number] | null} at
+ * @param {{ label?: string } | null} window
+ * @returns {Promise<void>}
+ * @internal
+ */
+async function popupItems(items, at, window) {
+    // 换掉上一次弹出的路由：一次只有一个弹出菜单在屏上。
+    dropRoute(popupToken);
+
+    const actions = new Map();
+    const token = registerRoute(actions);
+    popupToken = token;
 
     const wire = items.map((item) => item._wire(actions, token));
 
     // 先装监听再发命令：Windows 的弹出是阻塞的，点击可能在 invoke 返回前就发生。
     await ensureClickListener();
-
-    clickRouting.token = token;
-    clickRouting.actions = actions;
 
     await invoke('menu.popup', {
         items: wire,

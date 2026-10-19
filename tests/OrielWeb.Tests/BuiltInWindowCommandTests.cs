@@ -126,6 +126,14 @@ public sealed class BuiltInWindowCommandTests
 
         /// <summary>记录"关掉在屏菜单"（<c>menu.close</c> 用）。与 showContextMenu 分开记，两者语义相反。</summary>
         public void CloseContextMenu() => Calls.Add("closeContextMenu");
+
+        /// <summary>记下菜单栏调用（<c>menu.setAsWindowMenu</c> 的落点）。</summary>
+        public void SetWindowMenuBar(IReadOnlyList<OrielMenuItem> items)
+            => Calls.Add($"setWindowMenuBar:{items.Count}");
+
+        /// <summary>记下应用菜单调用（<c>menu.setAsAppMenu</c> 的落点）。</summary>
+        public void SetAppMenuBar(IReadOnlyList<OrielMenuItem> items)
+            => Calls.Add($"setAppMenuBar:{items.Count}");
     }
 
     private static OrielCommandDispatcher CreateDispatcher()

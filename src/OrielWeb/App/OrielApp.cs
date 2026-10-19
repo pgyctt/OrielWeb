@@ -148,6 +148,41 @@ public sealed class OrielApp : IDisposable
     private readonly List<WebviewWindow> _windows = [];
 
     /// <summary>
+    /// 应用级菜单栏的内容（<c>Menu.setAsAppMenu</c> 设的那份），null 表示没有。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 存**菜单树数据**而不是一个已建好的原生菜单：Win32 的菜单句柄一次只能挂在一个窗口上，
+    /// 而应用菜单要同时作用到多个窗口（Tauri 的语义是"没显式设过菜单栏的窗口都用它"）。
+    /// 每个窗口各自按这份数据建一份原生菜单，与本库"没有资源表"的整体姿态一致。
+    /// </para>
+    /// <para>
+    /// macOS 是唯一的例外：<c>[NSApp setMainMenu:]</c> 本来就只有一份，
+    /// 所以那边每个窗口都会重复设一次同一件事，幂等。
+    /// </para>
+    /// </remarks>
+    private IReadOnlyList<OrielMenuItem>? _appMenuBarItems;
+
+    /// <summary>
+    /// 设置应用级菜单栏并套用到所有**没有显式设过菜单栏**的窗口（含此后新建的）。
+    /// </summary>
+    /// <param name="items">应用菜单的顶层项。</param>
+    /// <remarks>
+    /// "不覆盖显式设过的窗口"这条语义与 Tauri 对齐（原文 "had one set explicitly"）。
+    /// 判断在 <see cref="WebviewWindow.SetAppMenuBar"/> 里做，这里只负责遍历。
+    /// </remarks>
+    public void SetAppMenuBar(IReadOnlyList<OrielMenuItem> items)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        _appMenuBarItems = items;
+
+        foreach (WebviewWindow window in _windows.ToArray())
+        {
+            window.SetAppMenuBar(items);
+        }
+    }
+
+    /// <summary>
     /// 显示全部窗口（对标 Tauri 2 的 <c>app.show()</c>）。
     /// </summary>
     /// <remarks>
@@ -351,6 +386,14 @@ public sealed class OrielApp : IDisposable
         // 标准项只有 role、没有 id，后端不会触发 ContextMenuItemClicked——所以页面收到
         // 的一定是它自己那棵菜单的点击。
         created.ContextMenuItemClicked += id => PushMenuItemClick(created, id);
+
+        // 新建窗口套用应用菜单（Tauri："If a window was not created with an explicit menu
+        // or had one set explicitly, this menu will be assigned to it."）。
+        // 走 SetAppMenuBar 而不是直接 Backend：那样会绕过"显式设过就别覆盖"的判断。
+        if (_appMenuBarItems is { } appMenu)
+        {
+            window.SetAppMenuBar(appMenu);
+        }
 
         // 关闭后从列表里摘掉：否则 Windows 会越用越长，而"遍历所有窗口"的应用代码
         // （例如把某个设置套用到每个窗口）会作用到已经销毁的窗口上。

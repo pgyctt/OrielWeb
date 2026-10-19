@@ -126,4 +126,21 @@ internal interface IOrielWindowControl
     /// 否则它就得依赖具体窗口类型（那是它一直在避免的事）。
     /// </remarks>
     void CloseContextMenu();
+
+    /// <summary>
+    /// 设置这个窗口的菜单栏（<c>menu.setAsWindowMenu</c> 用）。
+    /// </summary>
+    /// <param name="items">顶层项；空集合表示移除菜单栏。</param>
+    /// <remarks>
+    /// macOS 上抛 <see cref="NotSupportedException"/>（菜单在 macOS 是应用级的，见
+    /// <see cref="IWindowBackend.SetWindowMenuBar"/>）。页面侧的 <c>setAsWindowMenu</c>
+    /// 在 macOS 上也抛错，与 Tauri 一致——不是本库的缺口。
+    /// </remarks>
+    void SetWindowMenuBar(IReadOnlyList<OrielMenuItem> items);
+
+    /// <summary>
+    /// 让这个窗口反映应用级菜单栏（<c>menu.setAsAppMenu</c> 用）。
+    /// </summary>
+    /// <param name="items">应用菜单的顶层项。</param>
+    void SetAppMenuBar(IReadOnlyList<OrielMenuItem> items);
 }

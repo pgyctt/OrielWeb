@@ -333,21 +333,36 @@ internal static class OrielCapabilityRules
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>只放行 <c>menu.popup</c> 与 <c>menu.close</c></b>，不按 <c>menu.</c> 前缀整族放行：
-    /// 这一族后面还会长出 <c>setAsWindowMenu</c> / <c>setAsAppMenu</c>（改整个窗口/应用的菜单栏），
-    /// 那是与"弹一个属于本窗口的上下文菜单"完全不同的能力面。按前缀放行等于提前替它们开了后门。
+    /// <b>不按 <c>menu.</c> 前缀整族放行</b>：这一族里的命令作用面差得远，按前缀放行等于
+    /// 把作用面最大的那条一并开了。目前分成两档：
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description><b>无条件放行</b>：<c>menu.popup</c> / <c>menu.close</c> /
+    ///     <c>menu.setAsWindowMenu</c> —— 三条都只影响<b>发起调用的那个窗口</b>。</description></item>
+    ///   <item><description><b>要应用点头</b>：<c>menu.setAsAppMenu</c> —— 它作用到所有没显式
+    ///     设过菜单栏的窗口（含此后新建的），是跨窗口的。</description></item>
+    /// </list>
+    /// <para>
+    /// <b>为什么 <c>setAsWindowMenu</c> 与 <c>popup</c> 同档</b>，尽管它比弹出更"持久"：
+    /// 能力面要看"页面因此能做到什么本来做不到的事"，而不是看效果持续多久。菜单栏与弹出
+    /// 装的是**同一份东西**（同一套 <c>OrielMenuItem</c>、同一个解析器、同样的 role），
+    /// 页面给弹出菜单塞一个 <c>Quit</c> role 与给菜单栏塞一个是等价的——所以持久与否
+    /// 不构成新的能力，只是把已有的能力摆在那里更久。
     /// </para>
     /// <para>
-    /// 为什么这两条可以无条件放行：它们只影响**发起调用的那个窗口**，内容也由页面自己给，
-    /// 与既有的 <c>window.contextMenu</c>（弹库内建的标准编辑菜单）同一姿态——
-    /// 能弹/关菜单的页面并不能因此多做到任何它本来做不到的事。
-    /// <c>menu.close</c> 更是纯减法（只可能关掉菜单，不可能弹出或改内容）。
+    /// <b>为什么 <c>setAsAppMenu</c> 单独一档</b>：它是唯一一条**越过调用方窗口**的命令。
+    /// 一个不受信任的页面装上应用菜单，等于在别的窗口顶部放了一条看起来像宿主自己的菜单栏
+    /// （"文件 → 退出"点下去可能是别的事）。这与 <c>app.exit</c> / <c>app.show</c> 同一类
+    /// ——见 <see cref="AlwaysAllowedAppCommands"/> 的说明：改变应用状态、作用面超出自己
+    /// 窗口的能力，要应用显式点头。要放行得写 <c>Allow("menu.setAsAppMenu")</c>；
+    /// Debug 构建全放行，不受影响。
     /// </para>
     /// </remarks>
     internal static readonly string[] AlwaysAllowedMenuCommands =
     [
         "menu.popup",
         "menu.close",
+        "menu.setAsWindowMenu",
     ];
 
     /// <summary>判断某个 <c>menu.*</c> 命令是否属于"始终放行"的那几条。</summary>

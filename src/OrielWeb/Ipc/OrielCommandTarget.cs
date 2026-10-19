@@ -37,8 +37,50 @@ internal static class OrielCommandTarget
     /// （<c>menu.*</c>）不必依赖 <see cref="WebviewWindow"/>——那会让它们的解析逻辑
     /// 在单测里够不着（假窗口实现不了具体类）。
     /// </remarks>
+    /// <summary>
+    /// 解析命令的目标窗口（命令层用的窄接口版本）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>目标就是发起者自己时直接返回它，不查窗口表</b>。两个理由：
+    /// </para>
+    /// <list type="number">
+    ///   <item><description>省一次查表，且避免"窗口刚被关掉、已从表里摘了"时
+    ///     报 <c>target_not_found</c>——一个已经不存在的窗口不会发命令。</description></item>
+    ///   <item><description>让 <c>menu.*</c> 的解析逻辑在单测里够得着：假窗口注册不进
+    ///     <see cref="OrielApp"/> 的窗口表（<c>AttachWindow</c> 要真实后端），
+    ///     查表这条路对测试是死的。B6a 就是因为这条，把 <c>menu.popup</c> 的正向路径
+    ///     整个让给了真机自检。</description></item>
+    /// </list>
+    /// <para>
+    /// 显式给了<b>别的</b> label 时仍走查表：那是在寻址另一个窗口，必须验它真的在。
+    /// </para>
+    /// </remarks>
     internal static IOrielWindowControl ResolveControl(IOrielWindowControl sender, JsonElement args)
-        => ResolveWindow(sender, args);
+    {
+        string? label = OptionalText(args, "label");
+        string? ownLabel = sender.Label;
+
+        if (label is null || (ownLabel is not null && string.Equals(label, ownLabel, StringComparison.Ordinal)))
+        {
+            if (ownLabel is null)
+            {
+                throw new OrielIpcException(
+                    "无法确定发起命令的窗口：窗口后端尚未就位。请在页面加载完成后再调用。")
+                {
+                    Code = OrielIpcErrorCodes.NoSourceWindow,
+                };
+            }
+
+            return sender;
+        }
+
+        return sender.App.GetWindow(label) ?? throw new OrielIpcException(
+            $"找不到 label 为「{label}」的窗口：它可能已被关闭，或 label 拼错了。")
+        {
+            Code = OrielIpcErrorCodes.TargetNotFound,
+        };
+    }
 
     private static WebviewWindow ResolveWindow(IOrielWindowControl sender, JsonElement args)
     {

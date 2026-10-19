@@ -3,25 +3,28 @@ using System.Text.Json;
 namespace OrielWeb.Ipc;
 
 /// <summary>
-/// 内建菜单命令族（<c>menu.*</c>）：对标 Tauri 2 的 <c>@tauri-apps/api/menu</c> 里**弹出**那一半。
+/// 内建菜单命令族（<c>menu.*</c>）：对标 Tauri 2 的 <c>@tauri-apps/api/menu</c>。
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>本族是一条"无状态"通道</b>：页面每次把整棵菜单树发过来，宿主按它构建原生菜单并弹出。
+/// <b>本族是一条"无状态"通道</b>：页面每次把整棵菜单树发过来，宿主按它构建原生菜单并装上/弹出。
 /// Tauri 的做法相反——菜单在 Rust 侧是资源（rid），页面只持有句柄，<c>append</c>/<c>insert</c>
 /// 都是对那个资源的增量修改。本库没有资源表（README 里"没有句柄表"那条结构性缺口），
-/// 所以只能整棵发。**代价**是每次 popup 的载荷随菜单大小增长；**收益**是没有句柄泄漏、
+/// 所以只能整棵发。<b>代价</b>是每次调用的载荷随菜单大小增长；<b>收益</b>是没有句柄泄漏、
 /// 没有"句柄对应的原生对象在别的窗口上"这类跨窗口错用。
 /// </para>
 /// <para>
-/// 由此派生的两处调用形状差异（写进 API.md，不留给使用者猜）：
+/// 由此派生的三处调用形状差异（写进 API.md，不留给使用者猜）：
 /// </para>
 /// <list type="bullet">
 ///   <item><description>菜单对象在页面侧是**纯数据**：<c>new Menu()</c>、<c>append</c>、
-///     <c>items()</c> 都在本地完成，不发 IPC；
-///     只有 <c>popup()</c> 会到宿主。</description></item>
+///     <c>items()</c> 都在本地完成，不发 IPC；只有 <c>popup()</c> 与两个 <c>setAs*</c>
+///     会到宿主。</description></item>
 ///   <item><description>菜单项的 <c>action</c> 回调通过 <c>menu.itemclicked</c> 事件回到页面，
 ///     而不是 Tauri 那种"回调挂在资源上"。见 <see cref="OrielApp.MenuItemClickedEventName"/>。</description></item>
+///   <item><description><c>setAsAppMenu</c> / <c>setAsWindowMenu</c> 的**返回值是页面侧记的**：
+///     Tauri 返回"之前那份菜单"（一个资源），本库没有资源可还，所以由页面模块自己记上一次装的是谁。
+///     宿主侧这两条命令的回执是 <c>null</c>。</description></item>
 /// </list>
 /// </remarks>
 internal static class OrielBuiltInMenuCommands
@@ -59,8 +62,83 @@ internal static class OrielBuiltInMenuCommands
             return true;
         }
 
+        if (string.Equals(name, "menu.setAsWindowMenu", StringComparison.Ordinal))
+        {
+            handler = static (sender, args) => SetAsWindowMenu(sender, args);
+            return true;
+        }
+
+        if (string.Equals(name, "menu.setAsAppMenu", StringComparison.Ordinal))
+        {
+            handler = static (sender, args) => SetAsAppMenu(sender, args);
+            return true;
+        }
+
         handler = null!;
         return false;
+    }
+
+    /// <summary>
+    /// 设为某个窗口的菜单栏（对标 <c>Menu.setAsWindowMenu</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>macOS 上会抛</b>：<c>not_supported</c>。菜单在 macOS 是应用级的，没有"某个窗口的菜单栏"
+    /// 这回事——Tauri 的文档明说 "macOS: Unsupported"，这里是照它的语义走，不是本库的缺口。
+    /// 页面侧的 <c>setAsWindowMenu</c> 因此在三个平台上**不是都能跑**，迁移代码要按平台分支。
+    /// </para>
+    /// <para>
+    /// 空菜单是合法输入（表示"这个窗口不要菜单栏"），所以**不**像 <see cref="Popup"/> 那样
+    /// 空就早返回——空在这里是有语义的。
+    /// </para>
+    /// </remarks>
+    private static object? SetAsWindowMenu(IOrielWindowControl sender, JsonElement args)
+    {
+        int count = 0;
+        IReadOnlyList<OrielMenuItem> items = ParseItems(RequiredArray(args, "items"), depth: 1, ref count);
+
+        IOrielWindowControl target = OrielCommandTarget.ResolveControl(sender, args);
+
+        try
+        {
+            target.SetWindowMenuBar(items);
+        }
+        catch (NotSupportedException)
+        {
+            // macOS：菜单是应用级的。把 .NET 的异常翻译成页面能理解的 IPC 错误——
+            // 页面拿到一个原始的 NotSupportedException 消息会不知道该不该重试。
+            throw new OrielIpcException(
+                "本平台没有「某个窗口的菜单栏」：菜单在 macOS 是应用级的，请改用 Menu.setAsAppMenu。")
+            {
+                Code = OrielIpcErrorCodes.NotSupported,
+            };
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 设为应用级菜单栏（对标 <c>Menu.setAsAppMenu</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="SetAsWindowMenu"/> 的区别是**作用面**：这一条会套用到所有没有显式设过
+    /// 菜单栏的窗口（含此后新建的），而不是只碰调用方那一个。也正因如此它在门禁上更严——
+    /// 见 <c>OrielCapabilityRules</c> 里对这两条命令的分别处理。
+    /// </remarks>
+    private static object? SetAsAppMenu(IOrielWindowControl sender, JsonElement args)
+    {
+        int count = 0;
+        IReadOnlyList<OrielMenuItem> items = ParseItems(RequiredArray(args, "items"), depth: 1, ref count);
+
+        // 不看 label：应用菜单是应用级的，从哪个窗口发起都一样。
+        //
+        // **发起者先装一次**，再交给 App 广播。生产环境里发起者本来就在 App 的窗口表里
+        // （会再装一次，幂等——都是"按这棵树重建原生菜单"），多这一次是为了让"发起者
+        // 自己有没有装上"这件事**可观测**：假窗口注册不进 App 的窗口表（AttachWindow
+        // 要真实后端），只靠广播的话单测只能验到"没报错"，验不到"真的装了"。
+        sender.SetAppMenuBar(items);
+        sender.App.SetAppMenuBar(items);
+        return null;
     }
 
     /// <summary>弹出一个页面定义的菜单。</summary>

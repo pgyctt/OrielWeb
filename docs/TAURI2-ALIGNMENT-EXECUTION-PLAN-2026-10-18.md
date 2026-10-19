@@ -443,7 +443,7 @@ pwsh tools/verify-windows.ps1 -Stages selftest   # 含 windownew
 | B4 | ✅ 完成（2026-10-19） | `b993aa1` + `fecd7d6`：`window.new`、`@orielweb/api/webviewWindow`、`--selftest windownew`（三平台 PASS） |
 | B5 | ✅ 完成（2026-10-19） | `5c3c17c`：`IMonitorBackend` + 三平台 `*MonitorBackend`、5 个 `window.*` 命令、`--selftest monitors`（Windows 实测 PASS，Linux/macOS 走 CI） |
 | B6a | ✅ 完成（2026-10-19） | `@orielweb/api/menu`（8 个导出，`NativeIcon` 56 键逐键对齐）、`menu.popup` / `menu.close`、三平台按坐标弹出、`--selftest menu` |
-| B6b | 待开始（可裁剪） | Linux 要做窗口布局改造，建议最后做或不做 |
+| B6b | ✅ 完成（2026-10-19，三平台全做含 Linux） | `menu.setAsAppMenu` / `menu.setAsWindowMenu`、三平台菜单栏落点、`GtkBox{menubar,webview}` 布局改造、`--selftest menubar`（含客户区几何断言） |
 | B7 | 待开始 | 需要 2–3 个真实 Tauri 应用做迁移演练 |
 
 > **B4 的一处实现细节值得记住**：Tauri 用 `once('tauri://created')` 通知建窗结果，
@@ -507,6 +507,31 @@ pwsh tools/verify-windows.ps1 -Stages selftest   # 含 windownew
 >    这条对后续批次有用：**"阻塞式原生 UI + 程序化取消"是三个平台各有一套的东西**，
 >    不存在一份能照抄的实现。而且它们的失败形态都很隐蔽（超时、静默不触发），
 >    只能靠真机自检取证——这正是 `--selftest menu` 存在的理由。
+>
+> **B6b 有三处值得记住的教训**：
+>
+> 1. **"菜单栏"在三个平台是三种完全不同的对象，不只是"画在哪"的区别**：
+>    Windows 是**非客户区**的一部分（`SetMenu` 后 `GetClientRect` 自动排除它）；
+>    macOS 根本**不在窗口里**（`[NSApp setMainMenu:]`，屏幕顶部）；
+>    Linux 是**窗口里的一个部件**（`GtkMenuBar`），必须与 webview 并排放进 `GtkBox`。
+>    由此派生：**只有 Linux 真的动了窗口结构**，而它偏偏是客户区契约最脆弱的那一个
+>    （`WindowSizeSemanticsTests` 直接受影响）。
+>
+> 2. **`clickRouting` 的"只记最近一次"是个定时炸弹**。B6a 引入它时弹出确实一次只能有一个
+>    在屏上，但菜单栏是**持久**的、而且可以多条并存（每窗口一条 + 应用菜单）。
+>    原写法的症状是"先 `setAsWindowMenu()` 再 `popup()`，菜单栏就再也不响应了"。
+>    已改成按令牌索引的表。教训是：**一个"当前"的隐式假设，会在下一批需求里变成 bug**
+>    ——写"只有一个是活的"时要同时写清"什么条件下会变成多个"。
+>
+> 3. **`ResolveControl` 查窗口表这条路在单测里是死的**（`AttachWindow` 要真实后端），
+>    于是 `menu.*` 的正向路径一直只能靠真机自检验。B6b 顺手改掉了：目标是发起者自己时
+>    直接返回 `sender`，不查表。这既是省一次查表，也让解析逻辑在单测里够得着。
+>    B6a 当时把正向路径整个让给自检，是个**可修而没修**的妥协——遇到第二次就该修了。
+>
+> 4. **客户区契约的回归只能靠几何自检**。`Resize(800, 600)` 拿到 `600 - 菜单栏高` 这类偏差，
+>    单测（纯换算函数）看不出来，肉眼也容易当成页面自己的问题。`--selftest menubar` 因此
+>    把重点放在**内高变化**上（装上变小、拆掉复原），而不是"菜单画出来没有"。
+>    未覆盖的：**原生点击 → 事件**那一段要真人点一下，CI 上做不到，如实留作人工项。
 
 ---
 

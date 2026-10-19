@@ -37,6 +37,16 @@ internal static class Win32Constants
     public const uint WM_CONTEXTMENU = 0x007B;
 
     /// <summary>
+    /// 菜单项被选中（也用于加速键与按钮通知，靠 lParam 区分来源）。
+    /// </summary>
+    /// <remarks>
+    /// wParam 低字是菜单项的命令 id（就是 <c>AppendMenuW</c> 传的那个 itemId），
+    /// 高字对菜单项是 0。<b>lParam 为 0 表示来自菜单或加速键</b>；来自控件时是控件句柄。
+    /// 本库不注册加速键，所以 lParam == 0 就是菜单点击。
+    /// </remarks>
+    public const uint WM_COMMAND = 0x0111;
+
+    /// <summary>
     /// 取消当前的模态状态（菜单跟踪、拖拽、滚动条拖动）。
     /// </summary>
     /// <remarks>
@@ -154,6 +164,9 @@ internal static class Win32Constants
     /// <summary>系统窗口边框厚度（不含内边距）；需配合 GetSystemMetricsForDpi 使用。</summary>
     public const int SM_CXSIZEFRAME = 32;
     public const int SM_CYSIZEFRAME = 33;
+
+    /// <summary>菜单栏高度（无边框窗口挂菜单栏时要在 <c>WM_NCCALCSIZE</c> 里让出这么多）。</summary>
+    public const int SM_CYMENU = 15;
     public const int SM_CXPADDEDBORDER = 92;
 
     public const uint WS_OVERLAPPEDWINDOW = 0x00CF0000;
@@ -992,6 +1005,24 @@ internal static unsafe partial class Win32
 
     [LibraryImport("user32")]
     internal static partial nint CreatePopupMenu();
+
+    /// <summary>
+    /// 创建**菜单栏**（与 <see cref="CreatePopupMenu"/> 的区别只在根：菜单栏是横排的顶层条，
+    /// 弹出菜单是竖排的浮动列表）。子菜单两者都是 <c>CreatePopupMenu</c>。
+    /// </summary>
+    [LibraryImport("user32")]
+    internal static partial nint CreateMenu();
+
+    /// <summary>
+    /// 把菜单栏挂到窗口上；<paramref name="menu"/> 传 0 表示摘掉。
+    /// </summary>
+    /// <remarks>
+    /// 挂上之后客户区会**矮一个菜单栏**（<c>SM_CYMENU</c>）。装饰窗口由 <c>DefWindowProc</c>
+    /// 在 <c>WM_NCCALCSIZE</c> 里自动让出来；无边框窗口要本库自己让（见 Win32WindowHost）。
+    /// </remarks>
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool SetMenu(nint hwnd, nint menu);
 
     /// <summary>追加菜单项。<paramref name="itemId"/> 是 WM_COMMAND/TrackPopupMenu 回传的标识；
     /// 子菜单用 <c>MF_POPUP</c> 时该参数收子菜单句柄。</summary>

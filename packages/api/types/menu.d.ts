@@ -306,12 +306,15 @@ export class Submenu extends MenuItemBase {
      */
     setIcon(_icon: unknown): Promise<never>;
     /**
-     * @param {{ type?: string, x: number, y: number } | [number, number] | null} [at]
+     * @param {{ type?: string, x: number, y: number } | { x: number, y: number } | [number, number] | null} [at]
      * @param {{ label?: string } | null} [window]
      * @returns {Promise<void>}
      */
     popup(at?: {
         type?: string;
+        x: number;
+        y: number;
+    } | {
         x: number;
         y: number;
     } | [number, number] | null, window?: {
@@ -333,10 +336,11 @@ export class Submenu extends MenuItemBase {
     } | null): Promise<void>;
 }
 /**
- * 菜单（对标 `Menu`）：一个菜单项的容器，可 popup。
+ * 菜单（对标 `Menu`）：一个菜单项的容器，可 popup，也可装成菜单栏。
  *
- * @remarks 在 Tauri 里它还能 `setAsAppMenu` / `setAsWindowMenu`（菜单栏）。
- * 那两条要动窗口布局，属于后续批次，本批没有。
+ * @remarks
+ * `setAsAppMenu` / `setAsWindowMenu` 装的是**整棵树的快照**：装完之后再改这个 `Menu`
+ * 不会影响已经在屏上的菜单栏，要改得再设一次（本库没有资源表，无法增量改宿主那份）。
  */
 export class Menu extends MenuItemBase {
     /**
@@ -416,22 +420,40 @@ export class Menu extends MenuItemBase {
     /**
      * 设为应用菜单栏（对标 `Menu.setAsAppMenu`）。
      *
-     * @returns {Promise<never>}
-     * @throws {Error} 未实现（B6b）。
+     * @returns {Promise<Menu | null>} 之前那份应用菜单；没有则是 `null`。
+     * @remarks
+     * <p><b>与 Tauri 的两处差别</b>：
+     * <ol>
+     *   <li>Tauri 返回的是 Rust 侧那个菜单资源（可以 `close()` 掉）。本库没有资源表，
+     *       所以返回的是**页面侧记的**上一次传进来的 `Menu`——它仍是纯数据，
+     *       `close()` 对它没有意义（本库的 Menu 也没有 close）。</li>
+     *   <li>这个"上一次"是**本页面**的视角。多个页面都调过 `setAsAppMenu` 的话，
+     *       各自只看得到自己那次之前的那份。单窗口应用完全一致。</li>
+     * </ol>
+     * <p><b>作用面比 `setAsWindowMenu` 大</b>：它会套用到所有没显式设过菜单栏的窗口
+     * （含此后新建的），所以门禁上更严——Release 构建下可能要应用显式放行
+     * `menu.setAsAppMenu`。`setAsWindowMenu` 只碰调用方那一个窗口，无条件放行。
+     * <p>macOS 上这是**唯一**能设菜单的路（菜单在 macOS 是应用级的，
+     * `setAsWindowMenu` 会抛错）。
      */
-    setAsAppMenu(): Promise<never>;
+    setAsAppMenu(): Promise<Menu | null>;
     /**
      * 设为某个窗口的菜单栏（对标 `Menu.setAsWindowMenu`）。
      *
-     * @param {unknown} [_window]
-     * @returns {Promise<never>}
-     * @throws {Error} 未实现（B6b）。
+     * @param {{ label?: string } | null} [window] 目标窗口；省略时是**发起调用的那个窗口**。
+     * @returns {Promise<Menu | null>} 之前装在那个窗口上的菜单；没有则是 `null`。
+     * @throws {Error} **macOS 上抛**：菜单在 macOS 是应用级的，没有"某个窗口的菜单栏"这回事
+     *   （与 Tauri 的行为一致——它在 macOS 上也是 Unsupported）。
+     * @remarks
+     * 传空菜单（`items: []`）是合法的，表示"这个窗口不要菜单栏"——不是错误。
      */
-    setAsWindowMenu(_window?: unknown): Promise<never>;
+    setAsWindowMenu(window?: {
+        label?: string;
+    } | null): Promise<Menu | null>;
     /**
      * 弹出这个菜单（对标 `Menu.popup`）。
      *
-     * @param {{ type?: string, x: number, y: number } | null} [at]
+     * @param {{ type?: string, x: number, y: number } | { x: number, y: number } | [number, number] | null} [at]
      *   弹出位置。物理与逻辑坐标都收（`type: 'Physical' | 'Logical'`），省略时跟随鼠标。
      * @param {{ label?: string } | null} [window]
      *   弹到哪个窗口上；省略时是**发起调用的那个窗口**。
@@ -448,7 +470,10 @@ export class Menu extends MenuItemBase {
         type?: string;
         x: number;
         y: number;
-    } | null, window?: {
+    } | {
+        x: number;
+        y: number;
+    } | [number, number] | null, window?: {
         label?: string;
     } | null): Promise<void>;
     /**

@@ -220,6 +220,60 @@ public sealed class WebviewWindow : IOrielWindowControl
     public void CloseContextMenu() => Backend.CloseContextMenu();
 
     /// <summary>
+    /// 这个窗口是否**显式**设过菜单栏。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 用来实现 Tauri 的 "had one set explicitly" 语义：<see cref="SetAppMenuBar"/> 只覆盖
+    /// **没有**显式设过菜单栏的窗口。没有这个标志的话，应用菜单会把页面自己给某个窗口定的
+    /// 菜单栏悄悄换掉，而页面没有任何办法发现这件事。
+    /// </para>
+    /// <para>
+    /// 移除菜单栏（传空集合）也算"设过"：调用方的意图是"这个窗口不要菜单栏"，
+    /// 而不是"回到应用默认"。
+    /// </para>
+    /// </remarks>
+    public bool HasExplicitMenuBar { get; private set; }
+
+    /// <summary>
+    /// 设置这个窗口的菜单栏（页面侧 <c>Menu.setAsWindowMenu</c>）。
+    /// </summary>
+    /// <param name="items">顶层项；空集合表示移除菜单栏。</param>
+    /// <exception cref="NotSupportedException">
+    /// macOS：菜单在 macOS 是应用级的，没有"某个窗口的菜单栏"这回事（与 Tauri 一致）。
+    /// </exception>
+    /// <remarks>
+    /// 菜单栏占客户区高度——页面看到的 <c>innerSize</c> 会比整窗矮一个菜单栏，
+    /// 见 <see cref="IWindowBackend.SetWindowMenuBar"/> 里的说明。
+    /// </remarks>
+    public void SetWindowMenuBar(IReadOnlyList<OrielMenuItem> items)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        HasExplicitMenuBar = true;
+        Backend.SetWindowMenuBar(items);
+    }
+
+    /// <summary>
+    /// 让这个窗口反映应用级菜单栏（页面侧 <c>Menu.setAsAppMenu</c>）。
+    /// </summary>
+    /// <param name="items">应用菜单的顶层项。</param>
+    /// <remarks>
+    /// 已经用 <see cref="SetWindowMenuBar"/> 显式设过菜单栏的窗口**不被覆盖**——
+    /// 这个判断在这里做而不是在后端：后端只知道"怎么装"，不知道"该不该装"。
+    /// </remarks>
+    public void SetAppMenuBar(IReadOnlyList<OrielMenuItem> items)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+
+        if (HasExplicitMenuBar)
+        {
+            return;
+        }
+
+        Backend.SetAppMenuBar(items);
+    }
+
+    /// <summary>
     /// 渲染引擎**内建**右键菜单的策略，可随时改（**下次右键**即生效，无需重建窗口）。
     /// 初始值来自 <see cref="OrielWindowOptions.ContextMenuPolicy"/>，默认
     /// <see cref="OrielContextMenuPolicy.Editing"/>。

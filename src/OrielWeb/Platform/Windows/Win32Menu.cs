@@ -25,15 +25,27 @@ internal sealed unsafe class Win32Menu : IDisposable
 
     private Win32Menu(nint handle) => _handle = handle;
 
-    /// <summary>构建一份菜单；<paramref name="items"/> 为空时返回 null（调用方按"没有菜单"处理）。</summary>
-    internal static Win32Menu? Build(IReadOnlyList<OrielMenuItem> items)
+    /// <summary>
+    /// 构建一份菜单；<paramref name="items"/> 为空时返回 null（调用方按"没有菜单"处理）。
+    /// </summary>
+    /// <param name="items">顶层项。</param>
+    /// <param name="asMenuBar">
+    /// <c>true</c> 建成**菜单栏**（根是 <c>CreateMenu</c>，配 <c>SetMenu</c> 挂到窗口上）；
+    /// <c>false</c>（默认）建成弹出菜单（根是 <c>CreatePopupMenu</c>，配 <c>TrackPopupMenuEx</c>）。
+    /// </param>
+    /// <remarks>
+    /// 两种形态**只差根**：顶层以下完全一样（子菜单都是 <c>CreatePopupMenu</c>，
+    /// 项的 id 分配、role 文案、加速键显示、勾选/禁用标志全都共用）。
+    /// 这正是"菜单构建只有一套"那条注释的落点——不要为菜单栏复制一份 AppendAll。
+    /// </remarks>
+    internal static Win32Menu? Build(IReadOnlyList<OrielMenuItem> items, bool asMenuBar = false)
     {
         if (items.Count == 0)
         {
             return null;
         }
 
-        nint handle = Win32.CreatePopupMenu();
+        nint handle = asMenuBar ? Win32.CreateMenu() : Win32.CreatePopupMenu();
         if (handle == 0)
         {
             return null;
@@ -45,8 +57,22 @@ internal sealed unsafe class Win32Menu : IDisposable
     }
 
     /// <summary>按命令 id 找回菜单项（<see cref="Popup"/> 用它把 <c>TrackPopupMenuEx</c> 的返回值还原成项）。</summary>
+    /// <remarks>
+    /// 菜单栏也用它：菜单栏的点击走 <c>WM_COMMAND</c>，wParam 低字就是这里的命令 id。
+    /// 两个 <see cref="Win32Menu"/> 实例各有各的 id 空间，所以菜单栏与同时存在的弹出菜单
+    /// 不会撞 id。
+    /// </remarks>
     internal OrielMenuItem? Find(uint commandId)
         => _targets.TryGetValue(commandId, out OrielMenuItem? item) ? item : null;
+
+    /// <summary>
+    /// 原生菜单句柄（<c>SetMenu</c> 挂菜单栏时要用；弹出菜单用不到它）。
+    /// </summary>
+    /// <remarks>
+    /// 菜单栏挂上窗口之后，<b>销毁前必须先 <c>SetMenu(hwnd, 0)</c> 摘下来</b>——否则窗口
+    /// 持有一个已释放的句柄，用户下次点菜单栏就是 use-after-free。
+    /// </remarks>
+    internal nint Handle => _handle;
 
     /// <summary>
     /// 弹出并跟踪，返回用户选中的项（取消或选到不可选项时为 null）。

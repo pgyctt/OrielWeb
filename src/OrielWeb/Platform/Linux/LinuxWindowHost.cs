@@ -40,6 +40,16 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     private bool WindowAlive => _gtkWindow != 0;
     private nint _webview;
 
+    /// <summary>
+    /// 窗口的根布局：<c>GtkBox{menubar?, webview}</c>。
+    /// </summary>
+    /// <remarks>
+    /// 即使没有菜单栏也走这个盒（不直接 <c>gtk_container_add(window, webview)</c>）：
+    /// 结构固定成一种，"加/去菜单栏"就只是往盒里插/摘一个部件，不必在两条布局路径之间
+    /// 来回搬家。搬家要重挂 webview，那会把页面状态一起弄丢。
+    /// </remarks>
+    private nint _rootBox;
+
     /// <summary>运行期设过的窗口底色（<c>setBackgroundColor</c>）；<c>null</c> 表示没设过，用于回落创建期选项。</summary>
     private uint? _runtimeBackgroundArgb;
     private nint _userContentManager;
@@ -466,6 +476,101 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     /// <summary>收起正在显示的上下文菜单（<c>gtk_menu_popdown</c>）；没有在显示时是空操作。</summary>
     public void CloseContextMenu() => _contextMenu?.Popdown();
 
+    // ------------------------------------------------------------------
+    // 菜单栏
+    // ------------------------------------------------------------------
+
+    /// <summary>当前挂在窗口上的菜单栏；null 表示没有。</summary>
+    private GtkMenu? _menuBar;
+
+    /// <summary>
+    /// 设置这个窗口的菜单栏（Linux 的菜单栏属于窗口，所以这条与 <see cref="SetAppMenuBar"/> 同义）。
+    /// </summary>
+    /// <param name="items">顶层项；空集合表示移除菜单栏。</param>
+    /// <remarks>
+    /// <para>
+    /// <b>布局是 <c>GtkBox{menubar, webview}</c></b>：GTK 的菜单栏是窗口里的一个部件
+    /// （与 Windows 的非客户区菜单栏、macOS 的屏幕顶部菜单都不同），所以它必须与 webview
+    /// 并排放在一个纵向盒里。这是本批唯一动到窗口结构的地方，也是客户区契约要重验的原因。
+    /// </para>
+    /// <para>
+    /// <b>换菜单栏时的顺序</b>：先从盒里摘掉旧的、放掉它，再装新的。
+    /// <c>gtk_box_pack_start</c> 是按调用顺序从起始端排开的，而 webview 已经在 0 号位了，
+    /// 所以新菜单栏要用 <c>gtk_box_reorder_child(box, menubar, 0)</c> 挪到最上面——
+    /// 不挪的话菜单栏会排到 webview **下面**，表现是"设置了但看不见"。
+    /// </para>
+    /// </remarks>
+    public void SetWindowMenuBar(IReadOnlyList<OrielMenuItem> items)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+
+        DetachMenuBar();
+
+        if (items.Count == 0 || _rootBox == 0)
+        {
+            return;
+        }
+
+        GtkMenu? bar = GtkMenu.BuildMenuBar(items, item => ActivateMenuItem(item));
+        if (bar is null)
+        {
+            return;
+        }
+
+        _menuBar = bar;
+
+        // 菜单栏不占弹性空间（expand=false）：它要的是"刚好一行"，剩下的全归 webview。
+        GtkNative.GtkBoxPackStart(_rootBox, bar.Handle, expand: false, fill: false, padding: 0);
+        GtkNative.GtkBoxReorderChild(_rootBox, bar.Handle, 0);
+        GtkNative.GtkWidgetShowAll(bar.Handle);
+
+        // 菜单栏高度变了，最小尺寸的换算也要跟着重算（见 ApplyMinSizeRequest）。
+        ApplyMinSizeRequest();
+    }
+
+    /// <summary>
+    /// 让这个窗口反映应用级菜单栏。
+    /// </summary>
+    /// <remarks>
+    /// Linux 的菜单栏属于窗口，与 <see cref="SetWindowMenuBar"/> 完全同义。
+    /// "不覆盖显式设过菜单栏的窗口"那条判断在 <see cref="WebviewWindow.SetAppMenuBar"/>。
+    /// </remarks>
+    public void SetAppMenuBar(IReadOnlyList<OrielMenuItem> items) => SetWindowMenuBar(items);
+
+    /// <summary>把菜单栏从布局盒里摘掉并释放；没有菜单栏时是空操作。</summary>
+    private void DetachMenuBar()
+    {
+        GtkMenu? bar = _menuBar;
+        if (bar is null)
+        {
+            return;
+        }
+
+        _menuBar = null;
+
+        // 先摘再放：不摘的话盒还持着引用，部件不会真正销毁（泄漏）；
+        // 反过来（先放再摘）则是盒拿着一个已销毁的 widget，下次布局分配就崩。
+        if (_rootBox != 0)
+        {
+            GtkNative.GtkContainerRemove(_rootBox, bar.Handle);
+        }
+
+        bar.Dispose();
+
+        // 菜单栏没了，最小尺寸的换算跟着重算。
+        ApplyMinSizeRequest();
+    }
+
+    /// <summary>菜单栏高度（布局盒里那一条的分配高度）；没有菜单栏时是 0。</summary>
+    /// <remarks>
+    /// <see cref="Resize"/> 要用它把"页面要的客户区"补回"窗口要的总高"——
+    /// 不补的话调一次 <c>Resize(800, 600)</c>，webview 只拿到 600 - 菜单栏高。
+    /// </remarks>
+    private int MenuBarHeight
+        => _menuBar is null || _menuBar.Handle == 0
+            ? 0
+            : GtkNative.GtkWidgetGetAllocatedHeight(_menuBar.Handle);
+
     private void ActivateMenuItem(OrielMenuItem item)
     {
         if (item.Role is { Length: > 0 } role)
@@ -644,7 +749,7 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
 
         if (_minWidth > 0 || _minHeight > 0)
         {
-            GtkNative.GtkWidgetSetSizeRequest(_gtkWindow, Math.Max(_minWidth, 1), Math.Max(_minHeight, 1));
+            ApplyMinSizeRequest();
         }
 
         // oriel:// 的注册必须是"任何 webview 创建之前"——这里就是那一刻（本文件唯一建 view 的地方）。
@@ -698,7 +803,26 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
             0);
         GtkNative.WebkitUserContentManagerAddScript(_userContentManager, userScript);
 
-        GtkNative.GtkContainerAdd(_gtkWindow, _webview);
+        // 根布局：GtkBox{menubar?, webview}。**没有菜单栏时也走这个盒**——结构固定成一种，
+        // 加/去菜单栏就只是往盒里插/摘一个部件，不必在两条布局路径之间来回搬家
+        // （搬家要重挂 webview，会把页面状态一起弄丢）。
+        //
+        // gtk_box_new 给的是 floating 引用，gtk_container_add 会 sink——盒由窗口持有，
+        // 窗口销毁时一起走，这里不需要单独 unref。
+        _rootBox = GtkNative.GtkBoxNew(GtkNative.GtkOrientationVertical, spacing: 0);
+        if (_rootBox != 0)
+        {
+            GtkNative.GtkBoxPackStart(_rootBox, _webview, expand: true, fill: true, padding: 0);
+            GtkNative.GtkContainerAdd(_gtkWindow, _rootBox);
+        }
+        else
+        {
+            // 建盒失败是极罕见的分配失败；退化成旧布局（webview 直装窗口）。
+            // 菜单栏会因此装不上（SetWindowMenuBar 判 _rootBox == 0 直接跳过），
+            // 但窗口本身还能用——一个能用的窗口比一个空窗口好。
+            OrielDiagnostics.Report("[OrielWeb] GtkBox 创建失败，退化为 webview 直装窗口（菜单栏将不可用）。");
+            GtkNative.GtkContainerAdd(_gtkWindow, _webview);
+        }
 
         // 窗口图标：X11 下写入 _NET_WM_ICON（可用 xprop 验证）；Wayland 下由合成器决定，通常忽略。
         if (!string.IsNullOrEmpty(_options.Icon))
@@ -855,6 +979,13 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         // host 的闭包，不释放的话上面的注册表清理白做——整棵 host 对象树跟着菜单漏掉。
         _contextMenu?.Dispose();
         _contextMenu = null;
+
+        // 菜单栏同理（GCHandle + 我们那一份引用）。这里**不再 gtk_container_remove**：
+        // 布局盒正随窗口一起销毁，摘已经没意义；unref 是安全的——我们还持着一份引用，
+        // 所以对象不会在摘之前被 finalize。
+        _menuBar?.Dispose();
+        _menuBar = null;
+        _rootBox = 0;
 
         // 页面回环随文档一起消失：挂起的 ExecuteScriptAsync 在这里立刻失败，
         // 而不是让调用方的 await 永不返回。
@@ -1014,8 +1145,16 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
 
     /// <summary>客户区尺寸（逻辑像素）；见 <see cref="IWindowBackend.InnerSize"/>。</summary>
     /// <remarks>
-    /// <c>gtk_window_get_size</c> 给的是**客户区**（不含 WM 装饰）——GTK 拿不到装饰尺寸，
-    /// 这也是 <see cref="WebviewWindow.Resize"/> 在 Linux 上本就是客户区语义的原因。
+    /// <para>
+    /// 读的是**webview 的分配尺寸**，不是 <c>gtk_window_get_size</c>。两者在没有菜单栏时相等，
+    /// 但挂上菜单栏之后窗口的客户区包含菜单栏那一条，而页面的视口只在 webview 里——
+    /// 读窗口尺寸会把菜单栏算进 <c>innerSize</c>，与"innerSize 是页面看到的区域"这条契约冲突。
+    /// </para>
+    /// <para>
+    /// 选 webview 而不是窗口还有一个理由：<b>与 Windows 对齐</b>。Windows 上
+    /// <c>GetClientRect</c> 在挂菜单栏后自动排除菜单栏，读到的正是 webview 那块。
+    /// 两个平台用同一个口径，迁移代码不用按平台分支。
+    /// </para>
     /// </remarks>
     public OrielSize InnerSize
     {
@@ -1026,7 +1165,8 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
                 return default;
             }
 
-            GtkNative.GtkWindowGetSize(_gtkWindow, out int width, out int height);
+            int width = GtkNative.GtkWidgetGetAllocatedWidth(_webview);
+            int height = GtkNative.GtkWidgetGetAllocatedHeight(_webview);
             double scale = CurrentScaleFactor();
             return new OrielSize(width / scale, height / scale);
         }
@@ -1631,8 +1771,34 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     {
         _minWidth = width;
         _minHeight = height;
-        if (!WindowAlive) { return; }
-        GtkNative.GtkWidgetSetSizeRequest(_gtkWindow, Math.Max(width, 0), Math.Max(height, 0));
+        ApplyMinSizeRequest();
+    }
+
+    /// <summary>
+    /// 把 <see cref="_minWidth"/> / <see cref="_minHeight"/>（**页面**要的下限）写成窗口的 size request。
+    /// </summary>
+    /// <remarks>
+    /// 要补回菜单栏高度：这两个字段的语义是"webview 最小能缩到多少"，而
+    /// <c>gtk_widget_set_size_request</c> 约束的是**窗口内容区**（含菜单栏）。
+    /// 不补的话挂了菜单栏的窗口最小尺寸会退化成"页面最少能缩到 min - 菜单栏"，
+    /// 与 Windows 的 <c>WM_GETMINMAXINFO</c> 换算不一致。
+    /// <para>
+    /// 0 表示"这一维不设下限"（GTK 的 <c>set_size_request</c> 也是这个约定），
+    /// 所以这里用 <c>Math.Max(..., 0)</c> 而不是 <c>..., 1</c>——后者会把
+    /// "没设最小宽度"变成"最小宽度 1"。
+    /// </para>
+    /// </remarks>
+    private void ApplyMinSizeRequest()
+    {
+        if (!WindowAlive)
+        {
+            return;
+        }
+
+        GtkNative.GtkWidgetSetSizeRequest(
+            _gtkWindow,
+            Math.Max(_minWidth, 0),
+            Math.Max(_minHeight, 0) + MenuBarHeight);
     }
 
     public void MoveTo(int x, int y)
@@ -1644,7 +1810,11 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     public void Resize(int width, int height)
     {
         if (!WindowAlive) { return; }
-        GtkNative.GtkWindowResize(_gtkWindow, width, height);
+
+        // 页面要的是 **webview** 的尺寸，而 gtk_window_resize 吃的是**整个窗口内容区**
+        // （含菜单栏）。不补回菜单栏高度的话，Resize(800, 600) 会让 webview 只拿到
+        // 600 - 菜单栏高，页面少一行——而这正是"客户区尺寸契约"要防的那类偏差。
+        GtkNative.GtkWindowResize(_gtkWindow, width, height + MenuBarHeight);
     }
 
     public void Center()

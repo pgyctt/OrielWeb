@@ -524,7 +524,55 @@ internal interface IWindowBackend
     /// </remarks>
     void CloseContextMenu();
 
+    /// <summary>
+    /// 设置**这个窗口**的菜单栏（页面侧 <c>Menu.setAsWindowMenu</c>）。
+    /// </summary>
+    /// <param name="items">菜单栏的顶层项；空集合表示**移除**菜单栏。</param>
+    /// <exception cref="NotSupportedException">
+    /// macOS：菜单在 macOS 是应用级的，没有"某个窗口的菜单栏"这回事。
+    /// 页面侧 <c>setAsWindowMenu</c> 在 macOS 上抛错，与 Tauri 的行为一致。
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// 与 <see cref="ShowContextMenu"/> 的区别是**寿命**：弹出是一次性的，菜单栏装上之后一直
+    /// 在那儿，直到被替换或移除。这也意味着它比弹出更"重"——它改变窗口的外观与可用命令面。
+    /// </para>
+    /// <para>
+    /// <b>菜单栏占不占客户区</b>：占。三平台都把菜单栏画在客户区之上，页面看到的
+    /// <c>innerSize</c> 会比整窗矮一个菜单栏的高度（Windows 装饰窗口由 DefWindowProc 自动处理；
+    /// 无边框窗口要宿主自己在 <c>WM_NCCALCSIZE</c> 里让出来；GTK 要重排成
+    /// <c>GtkBox{menubar, webview}</c>）。这一点直接影响客户区尺寸契约，见 API.md。
+    /// </para>
+    /// </remarks>
+    void SetWindowMenuBar(IReadOnlyList<OrielMenuItem> items);
+
+    /// <summary>
+    /// 让这个窗口反映**应用级**菜单栏（页面侧 <c>Menu.setAsAppMenu</c>）。
+    /// </summary>
+    /// <param name="items">应用菜单的顶层项；空集合表示移除。</param>
+    /// <remarks>
+    /// <para>
+    /// 为什么放在窗口后端上而不是一个 app 级接口：三平台的落点形状完全不同，而它们都已经
+    /// 有窗口宿主这个抓手——
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description><b>macOS</b>：菜单是应用级的（<c>[NSApp setMainMenu:]</c>），
+    ///     从哪个窗口调都一样，重复调是幂等的。</description></item>
+    ///   <item><description><b>Windows / Linux</b>：菜单栏属于窗口，所以这个方法的语义是
+    ///     "**把这一份内容装到我这个窗口上**"，同时由 <see cref="OrielApp"/> 记作新建窗口的默认值。</description></item>
+    /// </list>
+    /// <para>
+    /// 已经用 <see cref="SetWindowMenuBar"/> 显式设过菜单栏的窗口**不被覆盖**（Tauri 的语义
+    /// "had one set explicitly"），由调用方（<c>OrielApp</c>）负责判断，后端不重复记账。
+    /// </para>
+    /// </remarks>
+    void SetAppMenuBar(IReadOnlyList<OrielMenuItem> items);
+
     /// <summary>上下文菜单里的自定义项被点击，参数是该项的 <see cref="OrielMenuItem.Id"/>。</summary>
+    /// <remarks>
+    /// 菜单栏的自定义项点击也走这条（它们同样只有 id、同样要回到页面的
+    /// <c>menu.itemclicked</c>）。名字里的 "ContextMenu" 是历史遗留——它比菜单栏早一批出现。
+    /// </remarks>
     event Action<string>? ContextMenuItemClicked;
 
     /// <summary>

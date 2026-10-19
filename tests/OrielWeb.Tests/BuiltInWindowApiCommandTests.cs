@@ -346,6 +346,12 @@ public sealed class BuiltInWindowApiCommandTests
 
         public void CloseContextMenu() => Calls.Add("closeContextMenu");
 
+        /// <summary>记下菜单栏调用（<c>menu.setAsWindowMenu</c> 的落点）。</summary>
+        public void SetWindowMenuBar(IReadOnlyList<OrielMenuItem> items) => Calls.Add("setWindowMenuBar");
+
+        /// <summary>记下应用菜单调用（<c>menu.setAsAppMenu</c> 的落点）。</summary>
+        public void SetAppMenuBar(IReadOnlyList<OrielMenuItem> items) => Calls.Add("setAppMenuBar");
+
         // 下面四个是 IOrielWindowControl 为 dialog.* 加的新成员。
         // 本文件测的是 window.*，不调它们，所以只记录、不回值。
 

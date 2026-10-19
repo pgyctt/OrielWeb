@@ -163,8 +163,9 @@ internal sealed class OrielIpcGuard
             return true;
         }
 
-        // menu.* 里目前只有 popup 放行（逐条理由见 IsAlwaysAllowedMenuCommand）。
-        // 不整族放行的理由：后面会长出"把菜单设为窗口/应用菜单栏"，那是另一个能力面。
+        // menu.* 里只放行"只影响调用方自己窗口"的那几条（逐条理由见 IsAlwaysAllowedMenuCommand）。
+        // 不整族放行的理由：setAsAppMenu 跨窗口（套用到所有没显式设过菜单栏的窗口），
+        // 那是另一个能力面，要应用显式点头。
         if (OrielCapabilityRules.IsAlwaysAllowedMenuCommand(commandName))
         {
             denialReason = null;

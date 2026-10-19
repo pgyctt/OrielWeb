@@ -323,9 +323,9 @@ internal sealed class OrielCommandDispatcher
             return;
         }
 
-        // 内建菜单命令族（menu.*）：页面把整棵菜单树发过来，宿主弹一次。
-        // 无状态（没有资源表），因此不存在"句柄在哪"的问题；能走到这里说明
-        // menu.popup 已在白名单里（见 OrielCapabilityRules.IsAlwaysAllowedMenuCommand）。
+        // 内建菜单命令族（menu.*）：页面把整棵菜单树发过来，宿主弹一次 / 装成菜单栏。
+        // 无状态（没有资源表），因此不存在"句柄在哪"的问题；能走到这里说明命令已过
+        // OrielIpcGuard 的门禁（menu.setAsAppMenu 不在无条件放行名单里，要应用点头）。
         if (OrielBuiltInMenuCommands.TryGet(name, out var menuBuiltIn))
         {
             if (window is null)

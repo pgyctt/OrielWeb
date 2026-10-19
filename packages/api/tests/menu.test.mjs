@@ -346,15 +346,101 @@ test('setIcon 抛错而不是静默成功', async () => {
     await assert.rejects(() => submenu.setIcon(NativeIcon.Folder), /没有菜单图标的资源通道/);
 });
 
-test('菜单栏三件套在 B6b 之前必须抛错', async () => {
-    const menu = await Menu.new({ items: [] });
+test('setAsAppMenu / setAsWindowMenu 发整棵树并返回上一份', async () => {
+    const { calls } = installTransport();
 
-    await assert.rejects(() => menu.setAsAppMenu(), /B6b/);
-    await assert.rejects(() => menu.setAsWindowMenu(), /B6b/);
+    const first = await Menu.new({ items: [{ id: 'a', text: 'A' }] });
+    const second = await Menu.new({ items: [{ id: 'b', text: 'B' }, { id: 'c', text: 'C' }] });
 
+    // 第一次装：没有上一份
+    assert.equal(await first.setAsAppMenu(), null);
+    assert.equal(calls[0][0], 'menu.setAsAppMenu');
+    assert.deepEqual(calls[0][1].items.map((i) => i.id), ['a']);
+
+    // 第二次装：上一份是 first
+    assert.equal(await second.setAsAppMenu(), first);
+    assert.deepEqual(calls[1][1].items.map((i) => i.id), ['b', 'c']);
+
+    // setAsWindowMenu 走另一条命令，且带 label
+    const winMenu = await Menu.new({ items: [{ id: 'w', text: 'W' }] });
+    assert.equal(await winMenu.setAsWindowMenu({ label: 'settings' }), null);
+    assert.equal(calls[2][0], 'menu.setAsWindowMenu');
+    assert.equal(calls[2][1].label, 'settings');
+});
+
+test('菜单栏的 action 在被替换后不再触发，新的照常触发', async () => {
+    const { calls, emit } = installTransport();
+
+    const hits = [];
+    const first = await Menu.new({ items: [{ id: 'old', text: 'Old', action: (id) => hits.push(id) }] });
+    const second = await Menu.new({ items: [{ id: 'new', text: 'New', action: (id) => hits.push(id) }] });
+
+    await first.setAsAppMenu();
+    await second.setAsAppMenu();
+
+    // 线上跑的 id 是 `令牌:原始id`。令牌各次不同，从命令载荷里读出来就是当时那份的。
+    const oldWiredId = calls[0][1].items[0].id;
+    const newWiredId = calls[1][1].items[0].id;
+    assert.notEqual(oldWiredId, newWiredId, '两次装上要用不同的令牌，否则会互相串味');
+
+    // 路由表按令牌分开记，但旧那份已被撤掉——所以 old 认领不到，new 能。
+    //
+    // 这条钉的是一个真实回归：clickRouting 原先是"只记最近一次弹出"的单槽，
+    // 菜单栏一进来就互相顶掉。症状是"先设菜单栏再弹个菜单，菜单栏就再也不响应了"。
+    emit('menu.itemclicked', { id: oldWiredId });
+    emit('menu.itemclicked', { id: newWiredId });
+
+    assert.deepEqual(hits, ['new'], '旧那份不该再响应，新的必须响应');
+});
+
+test('装失败不碰已装好的那份，也不给失败那份留路由', async () => {
+    // 直接装一个会抛的传输层：installTransport 的 responses 只能给返回值，抛不了。
+    let failing = false;
+    const wired = [];
+    /** @type {Map<string, (payload: any) => void>} */
+    const emitter = new Map();
+    setTransportOverride({
+        label: 'main',
+        async invoke(name, args) {
+            if (failing) {
+                throw new Error('not_supported: macOS 没有窗口菜单栏');
+            }
+            wired.push(args.items[0].id);
+            return null;
+        },
+        on(name, handler) {
+            emitter.set(name, handler);
+            return () => emitter.delete(name);
+        },
+    });
+
+    const hits = [];
+    const keeper = await Menu.new({ items: [{ id: 'keep', text: 'Keep', action: (id) => hits.push(id) }] });
+    const doomed = await Menu.new({ items: [{ id: 'doomed', text: 'Doomed', action: (id) => hits.push(id) }] });
+
+    await keeper.setAsAppMenu();
+    const keeperWiredId = wired[0];
+
+    // 第二次装失败（macOS 的 setAsWindowMenu 就是这样）
+    failing = true;
+    await assert.rejects(() => doomed.setAsWindowMenu(), /not_supported/);
+
+    // **已经装好的那份必须还活着**——失败不该把它的路由一起撤掉。
+    // 这正是"装失败时不留半截状态"的另一面：要么整份换上去，要么什么都不动。
+    //
+    // 注意事件形状：传输层的 `on` 处理器会把 payload 包成 { event, payload }，
+    // 所以这里传的是裸 { id }，不是 { payload: { id } }。
+    failing = false;
+    emitter.get('menu.itemclicked')?.({ id: keeperWiredId });
+    assert.deepEqual(hits, ['keep'], '失败的安装不该影响已经装好的那份');
+});
+
+test('macOS 专属的两个 Submenu 入口仍然抛错', async () => {
+    // 与 setAsWindowMenu 不同：这两个是 macOS 特有的 NSApp 菜单挂载点，
+    // 本库没有对应物（不做 NSApp 的 services/help 菜单），且 Tauri 也没有这两个名字。
     const submenu = await Submenu.new({ text: 'Sub' });
-    await assert.rejects(() => submenu.setAsWindowsMenuForNSApp(), /B6b/);
-    await assert.rejects(() => submenu.setAsHelpMenuForNSApp(), /B6b/);
+    await assert.rejects(() => submenu.setAsWindowsMenuForNSApp(), /未实现|B6b|没有/);
+    await assert.rejects(() => submenu.setAsHelpMenuForNSApp(), /未实现|B6b|没有/);
 });
 
 test('没有资源表：菜单类不提供 rid', async () => {

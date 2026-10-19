@@ -57,6 +57,27 @@ public sealed class BuiltInMenuCommandTests
 
         public void CloseContextMenu() => Calls.Add("closeContextMenu");
 
+        /// <summary>记下菜单栏调用（<c>menu.setAsWindowMenu</c> 的落点）。</summary>
+        /// <remarks>
+        /// <see cref="ThrowOnSetWindowMenuBar"/> 为 true 时抛 <see cref="NotSupportedException"/>，
+        /// 模拟 macOS（菜单在那边是应用级的，没有"某个窗口的菜单栏"这回事）。
+        /// </remarks>
+        public void SetWindowMenuBar(IReadOnlyList<OrielMenuItem> items)
+        {
+            if (ThrowOnSetWindowMenuBar)
+            {
+                throw new NotSupportedException("macOS 没有「某个窗口的菜单栏」");
+            }
+
+            Calls.Add($"setWindowMenuBar:{items.Count}");
+        }
+
+        /// <summary>让 <see cref="SetWindowMenuBar"/> 抛平台不支持（模拟 macOS）。</summary>
+        public bool ThrowOnSetWindowMenuBar { get; set; }
+
+        /// <summary>记下应用菜单调用（<c>menu.setAsAppMenu</c> 的落点）。</summary>
+        public void SetAppMenuBar(IReadOnlyList<OrielMenuItem> items) => Calls.Add($"setAppMenuBar:{items.Count}");
+
         // ---- 以下成员本组用例不用，但接口要求实现 ----
 
         public void Minimize() { }
@@ -124,16 +145,38 @@ public sealed class BuiltInMenuCommandTests
     [Theory]
     [InlineData("menu.popup")]
     [InlineData("menu.close")]
-    public void MenuCommands_AreAlwaysAllowed(string command)
+    [InlineData("menu.setAsWindowMenu")]
+    public void MenuCommands_AffectingOnlyTheCallingWindow_AreAlwaysAllowed(string command)
     {
         Assert.True(
             OrielCapabilityRules.IsAlwaysAllowedMenuCommand(command),
-            $"'{command}' 应当在白名单里——页面弹自己的上下文菜单不该要求额外授权。");
+            $"'{command}' 应当在白名单里——它只影响发起调用的那个窗口，内容也由页面自己给。");
 
-        // 不是靠"整族前缀"进来的：这一族后面会长出改菜单栏的命令，那是另一个能力面。
-        Assert.False(OrielCapabilityRules.IsAlwaysAllowedMenuCommand("menu.setAsAppMenu"));
-        Assert.False(OrielCapabilityRules.IsAlwaysAllowedMenuCommand("menu.setAsWindowMenu"));
+        // 不是靠"整族前缀"进来的：menu.new 之类的模型命令不在名单里。
         Assert.False(OrielCapabilityRules.IsAlwaysAllowedMenuCommand("menu.new"));
+    }
+
+    /// <summary>
+    /// <c>menu.setAsAppMenu</c> **不**在无条件放行名单里。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 它是 menu 族里唯一一条**越过调用方窗口**的命令：套用到所有没显式设过菜单栏的窗口
+    /// （含此后新建的）。一个不受信任的页面装上应用菜单，等于在别的窗口顶部放了一条
+    /// 看起来像宿主自己的菜单栏——这与 <c>app.exit</c> / <c>app.show</c> 同一类，
+    /// 要应用显式点头。
+    /// </para>
+    /// <para>
+    /// 这条测试<b>刻意与上面那条分开</b>：它们是两种不同的姿态，合并成一条 Theory
+    /// 会让"哪几条放行、哪几条不放行"这个区分在失败信息里糊成一团。
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void SetAsAppMenu_IsNotAlwaysAllowed()
+    {
+        Assert.False(
+            OrielCapabilityRules.IsAlwaysAllowedMenuCommand("menu.setAsAppMenu"),
+            "menu.setAsAppMenu 跨窗口，必须走能力校验——放行它等于让页面替别的窗口定菜单栏。");
     }
 
     [Fact]
@@ -238,6 +281,113 @@ public sealed class BuiltInMenuCommandTests
             dispatcher, "menu.popup", new { items = Array.Empty<object>() }, window: window);
 
         Assert.False(reply.RootElement.TryGetProperty("error", out _));
+    }
+
+    // ---- 菜单栏（setAsWindowMenu / setAsAppMenu）----
+
+    [Fact]
+    public async Task SetAsWindowMenu_ParsesItemsAndInstallsOnTarget()
+    {
+        var (dispatcher, window) = Create();
+
+        var (reply, _) = await TestHarness.DispatchAsync(
+            dispatcher, "menu.setAsWindowMenu",
+            new { items = new object[] { new { id = "a", text = "Alpha" } } },
+            window: window);
+
+        Assert.False(reply.RootElement.TryGetProperty("error", out _));
+        Assert.Contains("setWindowMenuBar:1", window.Calls);
+    }
+
+    [Fact]
+    public async Task SetAsAppMenu_InstallsAsAppMenu()
+    {
+        // **必须显式放行**：menu.setAsAppMenu 不在无条件白名单里（它跨窗口）。
+        // 这条测试顺带验的就是"放行之后真的能走通"——只测"被拒"会漏掉放行路径本身。
+        var window = new RecordingWindow();
+        var guard = new OrielIpcGuard(
+            new OrielCapabilityOptions().Allow("menu.setAsAppMenu"),
+            isDebugBuild: false,
+            "app.oriel");
+        var dispatcher = new OrielCommandDispatcher([], null, guard);
+
+        var (reply, _) = await TestHarness.DispatchAsync(
+            dispatcher, "menu.setAsAppMenu",
+            new { items = new object[] { new { id = "a", text = "Alpha" } } },
+            window: window);
+
+        Assert.False(reply.RootElement.TryGetProperty("error", out _));
+        Assert.Contains("setAppMenuBar:1", window.Calls);
+    }
+
+    /// <summary>
+    /// 没放行时 <c>menu.setAsAppMenu</c> 必须被拒——这条与上面那条是同一个姿态的两面。
+    /// </summary>
+    [Fact]
+    public async Task SetAsAppMenu_WithoutCapability_IsRejected()
+    {
+        var (dispatcher, window) = Create(); // 零能力声明
+
+        var (reply, _) = await TestHarness.DispatchAsync(
+            dispatcher, "menu.setAsAppMenu",
+            new { items = new object[] { new { id = "a", text = "Alpha" } } },
+            window: window);
+
+        Assert.True(
+            reply.RootElement.TryGetProperty("error", out _),
+            "零能力声明下 setAsAppMenu 必须被拒——它跨窗口，不该默认拥有");
+    }
+
+    /// <summary>
+    /// 空菜单对菜单栏是**合法输入**（表示"这个窗口不要菜单栏"），与 popup 不同。
+    /// </summary>
+    /// <remarks>
+    /// 两者的空语义相反，这条测试就是来钉住这个差异的：<c>menu.popup</c> 的空是 no-op，
+    /// <c>menu.setAsWindowMenu</c> 的空是**卸掉**。合并处理会让页面没法移除菜单栏。
+    /// </remarks>
+    [Fact]
+    public async Task SetAsWindowMenu_WithEmptyItems_RemovesMenuBarNotError()
+    {
+        var (dispatcher, window) = Create();
+
+        var (reply, _) = await TestHarness.DispatchAsync(
+            dispatcher, "menu.setAsWindowMenu", new { items = Array.Empty<object>() }, window: window);
+
+        Assert.False(reply.RootElement.TryGetProperty("error", out _));
+        Assert.Contains("setWindowMenuBar:0", window.Calls);
+    }
+
+    [Fact]
+    public async Task SetAsWindowMenu_RejectsNonArrayItems()
+    {
+        var (dispatcher, window) = Create();
+
+        var (reply, _) = await TestHarness.DispatchAsync(
+            dispatcher, "menu.setAsWindowMenu", new { items = "not-an-array" }, window: window);
+
+        Assert.Equal(
+            OrielIpcErrorCodes.InvalidArgument,
+            reply.RootElement.GetProperty("code").GetString());
+    }
+
+    /// <summary>macOS 上 <c>setAsWindowMenu</c> 会被翻译成 <c>not_supported</c> 而不是裸异常。</summary>
+    [Fact]
+    public async Task SetAsWindowMenu_PlatformUnsupported_ReportsNotSupported()
+    {
+        // 假窗口抛 NotSupportedException 来模拟 macOS：那边菜单是应用级的，
+        // "某个窗口的菜单栏"这个概念不存在。
+        var window = new RecordingWindow { ThrowOnSetWindowMenuBar = true };
+        var guard = new OrielIpcGuard(new OrielCapabilityOptions(), isDebugBuild: false, "app.oriel");
+        var dispatcher = new OrielCommandDispatcher([], null, guard);
+
+        var (reply, _) = await TestHarness.DispatchAsync(
+            dispatcher, "menu.setAsWindowMenu",
+            new { items = new object[] { new { id = "a", text = "Alpha" } } },
+            window: window);
+
+        Assert.Equal(
+            OrielIpcErrorCodes.NotSupported,
+            reply.RootElement.GetProperty("code").GetString());
     }
 
     [Fact]

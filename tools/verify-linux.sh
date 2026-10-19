@@ -300,7 +300,7 @@ run_mode() {
 }
 
 section "自检：机器断言（结论行判定）"
-for mode in nav ipc capability multiwindow scheme threading tray tray-js geometry geometry-frameless windowevents event close window windownew monitors menu api; do
+for mode in nav ipc capability multiwindow scheme threading tray tray-js geometry geometry-frameless windowevents event close window windownew monitors menu menubar api; do
     case "$mode" in
         threading) pattern='^THREADING-SELFTEST: ' ;;
         tray)      pattern='^TRAY-SELFTEST: ' ;;
@@ -314,6 +314,7 @@ for mode in nav ipc capability multiwindow scheme threading tray tray-js geometr
         windownew) pattern='^WINDOWNEW-SELFTEST: ' ;;
         monitors)  pattern='^MONITORS-SELFTEST: ' ;;
         menu)      pattern='^MENU-SELFTEST: ' ;;
+        menubar)   pattern='^MENUBAR-SELFTEST: ' ;;
         api)       pattern='^API-SELFTEST: ' ;;
         *)         pattern='^(NAV|IPC|CAPABILITY|MULTIWINDOW|SCHEME)-SELFTEST: ' ;;
     esac

@@ -48,6 +48,44 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gtk, EntryPoint = "gtk_container_add")]
     internal static partial void GtkContainerAdd(nint container, nint widget);
 
+    /// <summary>把子部件从容器里摘掉（引用计数随之减一；部件自身由我们那次 unref 收尾）。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_container_remove")]
+    internal static partial void GtkContainerRemove(nint container, nint widget);
+
+    // ---- 布局盒与菜单栏 ----
+
+    /// <summary>纵向布局（菜单栏在上、webview 在下）。</summary>
+    public const int GtkOrientationVertical = 1;
+
+    /// <summary>
+    /// 建一个布局盒。加菜单栏时窗口不能直接装 webview 了，要改用
+    /// <c>GtkBox{menubar, webview}</c>——GTK 的菜单栏是**窗口里的一个部件**，
+    /// 与 Windows（菜单栏在非客户区）/ macOS（菜单在屏幕顶部）的模型不同。
+    /// </summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_box_new")]
+    internal static partial nint GtkBoxNew(int orientation, int spacing);
+
+    /// <summary>
+    /// 把子部件装到盒的"起始"端。
+    /// </summary>
+    /// <remarks>
+    /// 多个 <c>pack_start</c> 按**调用顺序**从起始端排开（纵向盒就是从上到下）。
+    /// 所以后加的菜单栏要用 <see cref="GtkBoxReorderChild"/> 挪到 0 号位，
+    /// 否则它会排到 webview **下面**去。
+    /// </remarks>
+    [LibraryImport(Gtk, EntryPoint = "gtk_box_pack_start")]
+    internal static partial void GtkBoxPackStart(
+        nint box, nint child, [MarshalAs(UnmanagedType.Bool)] bool expand,
+        [MarshalAs(UnmanagedType.Bool)] bool fill, uint padding);
+
+    /// <summary>把子部件挪到盒内的第 <paramref name="position"/> 个位置（0 = 起始端）。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_box_reorder_child")]
+    internal static partial void GtkBoxReorderChild(nint box, nint child, int position);
+
+    /// <summary>建一个菜单栏（横排的顶层条；子项用 <c>gtk_menu_item_set_submenu</c> 挂下拉）。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_menu_bar_new")]
+    internal static partial nint GtkMenuBarNew();
+
     [LibraryImport(Gtk, EntryPoint = "gtk_widget_show_all")]
     internal static partial void GtkWidgetShowAll(nint widget);
 

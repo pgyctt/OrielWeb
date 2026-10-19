@@ -34,7 +34,9 @@ internal sealed unsafe class GtkMenu : IDisposable
 
     internal bool IsEmpty => _handle == 0;
 
-    /// <summary>构建菜单；<paramref name="items"/> 为空时返回 null。</summary>
+    /// <summary>
+    /// 构建菜单；<paramref name="items"/> 为空时返回 null。
+    /// </summary>
     internal static GtkMenu? Build(IReadOnlyList<OrielMenuItem> items, Action<OrielMenuItem> onActivate)
     {
         if (items.Count == 0)
@@ -43,15 +45,47 @@ internal sealed unsafe class GtkMenu : IDisposable
         }
 
         nint handle = GtkNative.GtkMenuNew();
+        return BuildCore(handle, items, onActivate);
+    }
+
+    /// <summary>
+    /// 构建**菜单栏**（横排的顶层条，装进窗口的布局盒里）。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="Build"/> 只差根：<c>gtk_menu_bar_new</c> 对 <c>gtk_menu_new</c>。
+    /// 两者都是 <c>GtkMenuShell</c>，所以下面的 <c>AppendAll</c>（以及子菜单、分隔线、
+    /// 勾选、禁用、加速键显示）完全共用——不要为菜单栏复制一份。
+    /// </remarks>
+    internal static GtkMenu? BuildMenuBar(IReadOnlyList<OrielMenuItem> items, Action<OrielMenuItem> onActivate)
+    {
+        if (items.Count == 0)
+        {
+            return null;
+        }
+
+        nint handle = GtkNative.GtkMenuBarNew();
+        return BuildCore(handle, items, onActivate);
+    }
+
+    /// <summary>建好根之后的公共装配（引用、子项、显示）。</summary>
+    /// <remarks>
+    /// <paramref name="handle"/> 为 0（原生创建失败）时返回 null，调用方按"没有菜单"处理。
+    /// </remarks>
+    private static GtkMenu? BuildCore(nint handle, IReadOnlyList<OrielMenuItem> items, Action<OrielMenuItem> onActivate)
+    {
         if (handle == 0)
         {
             return null;
         }
 
-        // gtk_menu_new() 给的是 floating 引用（GtkWidget 都继承 GInitiallyUnowned）。
+        // gtk_menu_new() / gtk_menu_bar_new() 给的是 floating 引用（GtkWidget 都继承 GInitiallyUnowned）。
         // 顶层菜单没有父容器替我们 sink，所以在这里取走它，Dispose 里的 unref 才是配对的。
         // 不 sink 就直接 unref 会打乱引用计数：GTK 报 "A floating object was finalized"，
         // 连续弹几次菜单就可能把同一个对象销毁两次。子菜单不在此列——set_submenu 会 sink。
+        //
+        // **菜单栏例外**：它会被 pack 进布局盒，那一步会 sink。两重 sink 不会重复计数
+        // （g_object_ref_sink 对已 sink 的对象只做一次 ref），所以这里照常 sink 是安全的；
+        // Dispose 时的 unref 与它配对，盒那边的引用由 gtk_container_remove 收。
         GtkNative.GObjectRefSink(handle);
 
         var menu = new GtkMenu(handle);
