@@ -112,11 +112,23 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
             "{0} 的参数 {1} 带 {2}：IPC 参数按值从页面传入，不支持回写。",
             Category, DiagnosticSeverity.Error, isEnabledByDefault: true);
 
-        /// <summary>win 保留前缀：内建窗口命令先于应用路由，应用同名命令注册成功但永不可达。</summary>
+        /// <summary>win 保留前缀：内建窗口命令先于应用路由，应用同名命令永远不可达。</summary>
+        /// <remarks>
+        /// <para>
+        /// **Error 而不是 Warning**：这条诊断描述的是"命令注册成功但永远不会被调用"——
+        /// 一个永远不会执行的分支。Warning 的症状是"我明明写了这个命令，页面说找不到"，
+        /// 而根因在另一条命令上；升级为构建失败后，代价是改个前缀，收益是这类排障消失。
+        /// 与同族 101–105 的严重级也因此一致。
+        /// </para>
+        /// <para>
+        /// 没有任何"合法例外"：应用**不需要**覆盖内建窗口命令——需要不同行为时应当
+        /// 换一个前缀（如 <c>app.minimize</c>），而不是与内建抢同一个名字。
+        /// </para>
+        /// </remarks>
         public static readonly DiagnosticDescriptor ReservedPrefix = new(
             "ORIELWEB106", "命令名落在保留前缀 win",
             "命令「{0}」以保留前缀 win 开头：内建窗口命令先于应用路由，它注册成功但永不可达，请换个前缀",
-            Category, DiagnosticSeverity.Warning, isEnabledByDefault: true);
+            Category, DiagnosticSeverity.Error, isEnabledByDefault: true);
 
         /// <summary>
         /// event.emit 是库内建：@orielweb/api/event 的 emit / emitTo 依赖它，

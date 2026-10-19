@@ -158,12 +158,12 @@ public sealed class GeneratorDiagnosticsTests
         Assert.Equal("ORIELWEB105", Assert.Single(diagnostics).Id);
     }
 
-    // ---- ORIELWEB106：win. 保留前缀（Warning：不阻断构建，但必须让人看见） ----
+    // ---- ORIELWEB106：win. 保留前缀（Error：构建期拦下，不再靠运行期排障） ----
 
     [Fact]
-    public void ReservedWinPrefix_IsWarnedButStillGenerates()
+    public void ReservedWinPrefix_IsAnErrorButStillGenerates()
     {
-        var diagnostics = OrielDiagnostics("""
+        var (all, sources) = Compile("""
             public static class Commands
             {
                 [OrielWeb.Ipc.OrielCommand("win.custom")]
@@ -171,9 +171,17 @@ public sealed class GeneratorDiagnosticsTests
             }
             """);
 
-        var warning = Assert.Single(diagnostics);
-        Assert.Equal("ORIELWEB106", warning.Id);
-        Assert.Equal(DiagnosticSeverity.Warning, warning.Severity);
+        var error = Assert.Single(all.Where(d => d.Id.StartsWith("ORIELWEB", StringComparison.Ordinal)));
+        Assert.Equal("ORIELWEB106", error.Id);
+
+        // **Error 而不是 Warning**：这条描述的是"注册成功但永远不会被调用"——
+        // 一个永远不会执行的分支，没有合法的使用场景。Warning 时它的症状是
+        // "我明明写了这个命令，页面说找不到"，而根因在另一条命令上，极难归因。
+        Assert.Equal(DiagnosticSeverity.Error, error.Severity);
+
+        // 仍然生成路由：诊断不该把生成器打成"什么都不产出"，
+        // 否则同一个编译里会再冒出十几条"找不到路由"的次生错误。
+        Assert.Contains("win.custom", string.Join('\n', sources.Select((s) => s.SourceText.ToString())));
     }
 
     // ---- ORIELWEB107：event.emit 与库内建命令重合 ----

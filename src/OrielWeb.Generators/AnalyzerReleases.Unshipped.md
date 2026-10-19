@@ -9,5 +9,5 @@ ORIELWEB102 | OrielWeb | Error | 命令名冲突（同程序集内同名 [OrielC
 ORIELWEB103 | OrielWeb | Error | 命令方法不可访问（生成的路由无法调用）
 ORIELWEB104 | OrielWeb | Error | 命令宿主不能是泛型类型
 ORIELWEB105 | OrielWeb | Error | 命令参数不支持 ref/out
-ORIELWEB106 | OrielWeb | Warning | 命令名落在保留前缀 win.（会被内建命令静默遮蔽）
+ORIELWEB106 | OrielWeb | Error | 命令名落在保留前缀 win.（会被内建命令静默遮蔽），构建期报错
 ORIELWEB107 | OrielWeb | Warning | 命令名与库内建的 event.emit 重合（会被内建事件命令静默遮蔽）

@@ -274,17 +274,22 @@ public sealed class BuiltInWindowCommandTests
 }
 
 /// <summary>
-/// 应用自定义的 <c>win.minimize</c>——用来验证内建优先。
+/// 应用自定义的 <c>win.minimize</c>——用来验证"内建优先"这条**运行期**行为。
 /// </summary>
 /// <remarks>
-/// 它能注册成功是有意的：注册表只查"路由之间是否重名"，不知道内建命令的存在
-/// （内建是一个 switch，不在路由里）。所以重名不会在启动时炸掉，而是**静默被遮蔽**——
-/// 这正是文档要写明 <c>win.</c> 是保留前缀的原因，也是这条用例存在的意义。
+/// <para>
+/// 生成器对 <c>win.</c> 前缀报 ORIELWEB106（Error 级，2026-10-19 起），
+/// 所以正常情况下**没有任何应用能写出这个类**。这个类靠 <c>#pragma warning disable</c>
+/// 显式压制，唯一目的是保留"内建压过路由"的回归覆盖——诊断本身另有
+/// <see cref="GeneratorDiagnosticsTests"/> 钉住。
+/// </para>
+/// <para>
+/// 压制是刻意的、局部的，而且一旦内建表与路由的相对优先级变了，这里的用例会红。
+/// </para>
 /// </remarks>
 public sealed partial class ShadowWindowCommands
 {
-    // 故意落在保留前缀：本用例验证的就是"被内建静默遮蔽"这一行为。
-    // 生成器会对 win. 前缀发 ORIELWEB106 警告（评审 P3：遮蔽不该无人知晓）——这里是有意的。
+    // 故意落在保留前缀：本用例验证的就是"内建优先"这一行为（诊断已在别处覆盖）。
 #pragma warning disable ORIELWEB106
     [OrielCommand("win.minimize")]
 #pragma warning restore ORIELWEB106
