@@ -54,12 +54,15 @@ internal sealed unsafe class MacOSMenu : IDisposable
     internal nint Handle => _handle;
 
     /// <summary>
-    /// 在给定视图里弹出（异步：返回后用户才可能选择）。
+    /// 在给定视图里弹出（**阻塞**：跟踪到用户选择或点外面才返回）。
     /// 因此调用方要让菜单对象活到选择发生——不能弹出后立刻释放。
     /// </summary>
     /// <param name="view">弹出的基准视图（webview）。</param>
     /// <param name="position">
     /// 指定位置（逻辑像素，**相对视图左上角、y 向下**）；<c>null</c> 表示跟随当前鼠标事件。
+    /// </param>
+    /// <param name="autoDismissAfter">
+    /// 自动取消跟踪的延时；<c>null</c> 表示等用户选择。
     /// </param>
     /// <remarks>
     /// 两条路径用的是**不同的 AppKit 入口**，不能合并：
@@ -70,11 +73,18 @@ internal sealed unsafe class MacOSMenu : IDisposable
     ///     位置是**视图坐标**（若非 flipped 视图则原点在左下）。</description></item>
     /// </list>
     /// </remarks>
-    internal void Popup(nint view, OrielPosition? position = null)
+    internal void Popup(nint view, OrielPosition? position = null, TimeSpan? autoDismissAfter = null)
     {
         if (_handle == 0 || _disposed)
         {
             return;
+        }
+
+        // **必须在弹出之前排好**：下面两个调用都会阻塞主线程直到菜单关掉，
+        // 那时再排定时器已经晚了（代码根本走不到下一行）。
+        if (autoDismissAfter is { } delay)
+        {
+            ScheduleCancel(delay);
         }
 
         if (position is { } logical)
@@ -158,7 +168,7 @@ internal sealed unsafe class MacOSMenu : IDisposable
     /// <summary>取消正在跟踪的菜单（<c>cancelTracking</c>）；没有在跟踪时是空操作。</summary>
     /// <remarks>
     /// <c>NSMenu</c> 的 <c>cancelTracking</c> 会结束当前的事件跟踪循环，效果与用户按 Esc 相同。
-    /// 必须在主线程调用（AppKit 的全部菜单操作都要求主线程）。
+    /// <b>必须在主线程调用</b>（AppKit 的全部菜单操作都要求主线程）。
     /// </remarks>
     internal void CancelTracking()
     {
@@ -168,6 +178,50 @@ internal sealed unsafe class MacOSMenu : IDisposable
         }
 
         ObjCRuntime.SendVoid(_handle, ObjCRuntime.Sel("cancelTracking"));
+    }
+
+    /// <summary>
+    /// 安排"若干毫秒后取消跟踪"——**在主线程上、且在事件跟踪模式下**。
+    /// </summary>
+    /// <param name="delay">延时。</param>
+    /// <remarks>
+    /// <para>
+    /// 为什么不能直接用后台线程调 <see cref="CancelTracking"/>：AppKit 的菜单操作要求主线程，
+    /// 从别的线程发消息是未定义行为（实测崩在 <c>doesNotRecognizeSelector</c>，
+    /// 栈里完全看不出与菜单有关）。
+    /// </para>
+    /// <para>
+    /// 为什么不能把动作投回主线程：<c>popUpMenuPositioningItem:</c> 阻塞时主线程正跑在
+    /// <b>NSEventTrackingRunLoopMode</b> 里，而 <c>PostToUiThread</c>（<c>performSelectorOnMainThread</c>）
+    /// 注册在 default mode——菜单关掉之前它永远不会执行，于是成了死锁。
+    /// </para>
+    /// <para>
+    /// 所以用 <c>performSelector:withObject:afterDelay:inModes:</c>，把
+    /// <c>NSEventTrackingRunLoopMode</c> 显式列进去：跟踪循环会泵这个 mode，
+    /// 定时器到点就在主线程上执行，此时菜单还活着、可以取消。
+    /// </para>
+    /// <para>
+    /// 必须在**弹出之前**调用（跟踪一开始，主线程就回不来了）。
+    /// </para>
+    /// </remarks>
+    internal void ScheduleCancel(TimeSpan delay)
+    {
+        if (_handle == 0 || _disposed)
+        {
+            return;
+        }
+
+        // NSEventTrackingRunLoopMode 是 NSString 常量，值就是它的名字。
+        nint trackingMode = ObjCRuntime.MakeNSString("NSEventTrackingRunLoopMode");
+        nint modes = ObjCRuntime.SendIdObj(
+            ObjCRuntime.GetClassOrThrow("NSArray"), ObjCRuntime.Sel("arrayWithObject:"), trackingMode);
+
+        ObjCRuntime.SendVoidSelDoubleObj(
+            _handle,
+            ObjCRuntime.Sel("performSelector:withObject:afterDelay:inModes:"),
+            ObjCRuntime.Sel("cancelTracking"),
+            delay.TotalSeconds,
+            modes);
     }
 
     public void Dispose()

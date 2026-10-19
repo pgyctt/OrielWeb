@@ -490,22 +490,11 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         _contextMenu = MacOSMenu.Build(items, ActivateMenuItem);
         if (_contextMenu is not null && _webview != 0)
         {
-            _contextMenu.Popup(_webview, position);
-
-            // macOS 的弹出**也是阻塞的**：`popUpMenuPositioningItem:atLocation:inView:`
-            // 直到用户选择或点外面才返回（Apple 文档没写这件事，实测如此）。
-            //
-            // 所以自动关闭**必须从后台线程直接调 `cancelTracking`**，不能投回主线程：
-            // 主线程此刻正卡在菜单的跟踪循环里，任何投递到 default run loop mode 的动作
-            // （包括 PostToUiThread）都要等菜单关掉才执行——那就成了死锁。
-            // `cancelTracking` 只是给事件循环设一个"取消"标志，从别的线程调用是安全的。
-            if (autoDismissAfter is { } delay)
-            {
-                MacOSMenu pending = _contextMenu;
-                _ = Task.Delay(delay).ContinueWith(
-                    _ => pending.CancelTracking(),
-                    TaskScheduler.Default);
-            }
+            // 自动关闭交给 MacOSMenu：它要在**弹出之前**用
+            // `performSelector:afterDelay:inModes:` 把定时器排进 NSEventTrackingRunLoopMode。
+            // 在这里用 Task.Delay 不行——弹出会阻塞主线程直到菜单关掉，
+            // 而投回主线程的动作注册在 default mode，等不到。
+            _contextMenu.Popup(_webview, position, autoDismissAfter);
         }
     }
 

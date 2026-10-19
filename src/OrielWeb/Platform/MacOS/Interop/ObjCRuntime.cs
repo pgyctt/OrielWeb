@@ -181,6 +181,18 @@ internal static unsafe partial class ObjCRuntime
     internal static partial nint SendIdObjDouble2Obj(nint self, nint sel, nint obj, double a, double b, nint tail);
 
     /// <summary>
+    /// <c>SEL</c> + 一个对象 + 一个 double + 再一个对象的调用
+    /// （如 <c>performSelector:withObject:afterDelay:inModes:</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 第一个参数是 <c>SEL</c>（要执行的 selector）而不是对象——槽位顺序是
+    /// <c>self, _cmd, SEL, id, double, NSArray*</c>。写成"两个对象在前"会让延迟被当成指针，
+    /// 表现是定时器立刻触发或永不触发（取决于那个 double 被当成什么地址）。
+    /// </remarks>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial void SendVoidSelDoubleObj(nint self, nint sel, nint targetSel, double delay, nint tail);
+
+    /// <summary>
     /// 四个 double（NSRect）+ 一个整数 + 两个对象参数的调用
     /// （如 <c>NSTrackingArea initWithRect:options:owner:userInfo:</c>）。
     /// </summary>

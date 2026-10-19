@@ -439,7 +439,8 @@ export class Menu extends MenuItemBase {
      * @remarks
      * <p><b>与 Tauri 的完成时机不同，这是本库的已知差异</b>：Tauri 的文档说"菜单一显示就
      * resolve"，本库 <b>Windows 上会等到用户选完或取消</b>（`TrackPopupMenuEx` 自带模态
-     * 消息循环），macOS / Linux 立即 resolve。所以：<b>别在 `await menu.popup()` 之后
+     * 消息循环）与 **macOS**（AppKit 的 `popUpMenuPositioningItem:` 同样跟踪到用户选择），
+     * 只有 **Linux 立即 resolve**（GTK 的菜单是异步的）。所以：<b>别在 `await menu.popup()` 之后
      * 假设"用户已经选过了"</b>，可靠的完成信号是各项的 `action`。
      * <p>把整棵菜单树一次性发给宿主，之后改这个菜单<b>不影响</b>已经弹出的那个（它是快照）。
      */

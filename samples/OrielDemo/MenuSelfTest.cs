@@ -124,6 +124,10 @@ internal static class MenuSelfTest
                 try {
                     const { Menu } = await import(vendor + '/menu.js');
 
+                    // await 是安全的：宿主会在 300ms 后自己取消跟踪
+                    // （ORIELWEB_MENU_AUTODISMISS_MS，见 Begin）。三平台都靠这条——
+                    // Windows 投 WM_CANCELMODE，macOS 用事件跟踪模式下的定时器。
+
                     // ① 普通三项菜单（含一条分隔线与一个勾选项）
                     const simple = await Menu.new({
                         items: [
@@ -133,8 +137,6 @@ internal static class MenuSelfTest
                             { id: 'c', text: 'Gamma', enabled: false },
                         ],
                     });
-                    // await 是安全的：宿主会在 300ms 后自己把菜单关掉（见 Begin 里的
-                    // ORIELWEB_MENU_AUTODISMISS_MS），所以 Windows 上这个 await 不会挂住。
                     await simple.popup({ x: 40, y: 40 });
                     post({ step: 'popup' });
 
