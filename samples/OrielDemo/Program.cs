@@ -217,6 +217,18 @@ internal static class Program
                     c.Allow("window.new");
                 }
 
+                if (menuBarSelfTest)
+                {
+                    // **应用菜单栏是能力**，与 event.emit / window.new 同一档：
+                    // menu.setAsAppMenu 是 menu 族里唯一越过调用方窗口的命令
+                    // （套用到所有没显式设过菜单栏的窗口，含新建的），所以它刻意不在
+                    // "始终放行"名单里——页面能替别的窗口定菜单栏，那是跨窗口能力。
+                    //
+                    // 对照：menu.setAsWindowMenu 只碰调用方自己那一个窗口，无条件放行，
+                    // 这里不需要声明。
+                    c.Allow("menu.setAsAppMenu");
+                }
+
                 if (windowSelfTest || apiSelfTest)
                 {
                     // **刻意逐条声明而不是 Allow("window.*")**：window 自检要同时验
