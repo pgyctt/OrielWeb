@@ -436,15 +436,27 @@ pwsh tools/verify-windows.ps1 -Stages selftest   # 含 windownew
 
 | 批次 | 状态 | 证据 |
 |---|---|---|
-| B0 | 待开始 | — |
-| B1 | 待开始 | — |
-| B2 | 待开始 | — |
-| B3 | 待开始（等 D-1） | — |
-| B4 | 待开始 | — |
-| B5 | 待开始 | — |
-| B6a | 待开始 | — |
-| B6b | 待开始（可裁剪） | — |
-| B7 | 待开始 | — |
+| B0 | ✅ 完成（2026-10-19） | `d4cb4bd`：PLANNED_MODULES 登记 4→3、常量逐键比对、`TauriEvent` 补齐 16 键、`fs.stat.mtime` 类型断言 |
+| B1 | ✅ 完成（2026-10-19） | `675c4c2`（baseDir 14 条）/ `8a110ed`（timeout 码两侧钉住）/ `0e4a92c`（ORIELWEB106 → Error） |
+| B2 | ✅ 完成（2026-10-19） | `1e5ab23`：`app.exit/show/hide` + 门禁姿态测试；三条仍不在 always-allowed 名单 |
+| B3 | ✅ 完成（2026-10-19，按 D-1 选 A） | `12a046c`：thenable 函数，三种写法并存；`instanceof Promise` 是唯一差别 |
+| B4 | ✅ 完成（2026-10-19） | `b993aa1` + `fecd7d6`：`window.new`、`@orielweb/api/webviewWindow`、`--selftest windownew`（三平台 PASS） |
+| B5 | 待开始 | 需要三个平台后端各写一套显示器枚举 |
+| B6a | 待开始 | 菜单模型 + popup，复用既有三平台构建器 |
+| B6b | 待开始（可裁剪） | Linux 要做窗口布局改造，建议最后做或不做 |
+| B7 | 待开始 | 需要 2–3 个真实 Tauri 应用做迁移演练 |
+
+> **B4 的一处实现细节值得记住**：Tauri 用 `once('tauri://created')` 通知建窗结果，
+> 本库没有这条页面事件（`WEBVIEW_CREATED` 在桌面端不会触发），所以改成构造即发起、
+> 结果在 `created`（Promise）上。这是本计划范围内唯一一处**必须改调用点**的迁移差异，
+> 已写进 `webviewWindow.js` 的 JSDoc 与 `docs/API.md`。
+>
+> **对齐账本在 B4 暴露过一次真实问题**：方法比对原先只看类的 own property，
+> `WebviewWindow extends Window` 不重抄父类方法，于是八十多个继承来的方法会被误报成缺失。
+> 已改为沿原型链收集；同时发现 webview 级独有的六个方法——
+> `position`/`size`/`setAutoResize`/`reparent` 属于"本库没有 webview 层"的结构性差异（记入
+> `METHOD_DIVERGENCES`），`setZoom`/`clearAllBrowsingData` 属于跨平台一致的待做项（记入 B 组并标批次）。
+> B 组"必须为空"的断言随之改成"必须写明批次"。——**账本自己也会腐化，这正是它该被测试的原因**。
 
 ---
 
