@@ -480,12 +480,33 @@ pwsh tools/verify-windows.ps1 -Stages selftest   # 含 windownew
 >
 > 3. **`menu.close` 不是锦上添花，是必需品**。Windows 的 `TrackPopupMenuEx` 自带模态循环，
 >    `popup()` 在用户选择前不返回，UI 线程被占着时页面上的按钮点不到。Tauri 那边菜单是 Rust
->    资源、可以在别的线程上结束它；本库没有资源表，只能显式给一条命令。**没有它，无交互的自检
->    也跑不完**（这正是自检脚本里必须 `setTimeout` 调 `close` 的原因）。
+>    资源、可以在别的线程上结束它；本库没有资源表，只能显式给一条命令。
+>    <br>但**自检不能靠它**：`menu.close` 也是一条 IPC 消息，要排进同一套消息泵，而泵此刻正被
+>    阻塞的弹出占着——实测这条回路不可靠。自检改用**宿主侧自动关闭**
+>    （`ORIELWEB_MENU_AUTODISMISS_MS` → 三平台各自的取消机制），完全不依赖页面。
+>    这个分工值得记住：**`menu.close` 给应用用（用户点了页面上的按钮），自动关闭给测试用**。
 >
 > 4. **账本的 `METHOD_DIVERGENCES` 是按方法名索引的扁平表**，一个名字只能有一条理由。
 >    `close` 恰好落在两种不同情形上（menu 有、Image 没有），登记之后 `Image` 缺 `close`
 >    这件事就被静默掩盖了。已补一条与扁平表无关的独立断言钉住 `Image`。
+>
+> 5. **"三平台弹出时机"这件事，文档写的和实际的不一样**。原先按"macOS 异步、Windows 阻塞"
+>    写进 API.md，实测 **macOS 也是阻塞的**（`popUpMenuPositioningItem:atLocation:inView:`
+>    一直跟踪到用户选择，Apple 文档没写）。现在文档与三处注释统一为
+>    **Windows + macOS 阻塞、只有 Linux 异步**。这是迁移者最容易踩的一处语义差异
+>    （"`await popup()` 之后用户已经选过了"在三个平台都不成立）。
+>
+> 6. **"关掉一个阻塞的菜单"在三个平台需要三种完全不同的机制**，而且每一种都踩过坑：
+>
+>    | 平台 | 手段 | 踩过的坑 |
+>    |---|---|---|
+>    | Windows | `PostMessage(WM_CANCELMODE)` | `EndMenu` **无效**——它只结束 `StartMenu`/`EndMenu` 那套经典协议，`TrackPopupMenuEx` 用的是自己创建的模态循环 |
+>    | macOS | `performSelector:afterDelay:inModes:` + `NSEventTrackingRunLoopMode` | ① 从后台线程调 `cancelTracking` 会崩（AppKit 要求主线程）；② 投回主线程走的是 **default mode**，而跟踪时主线程跑在 **eventTracking mode**，等不到；③ `objc_msgSend` 的槽位漏了 `withObject:` 那个 id，double 落进整数寄存器 |
+>    | Linux | `gtk_menu_popdown`（回 GTK 主循环） | 该函数不是线程安全的，必须编组 |
+>
+>    这条对后续批次有用：**"阻塞式原生 UI + 程序化取消"是三个平台各有一套的东西**，
+>    不存在一份能照抄的实现。而且它们的失败形态都很隐蔽（超时、静默不触发），
+>    只能靠真机自检取证——这正是 `--selftest menu` 存在的理由。
 
 ---
 
