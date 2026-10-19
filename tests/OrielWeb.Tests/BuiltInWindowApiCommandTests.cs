@@ -268,7 +268,7 @@ public sealed class BuiltInWindowApiCommandTests
         Assert.Equal("not_allowed", reply.RootElement.GetProperty("code").GetString());
 
         // 一个窗口都不该被建出来（未授权时连尝试都不该发生）
-        Assert.Equal(0, window.App.Windows.Count);
+        Assert.Empty(window.App.Windows);
     }
 
     [Fact]
@@ -281,7 +281,7 @@ public sealed class BuiltInWindowApiCommandTests
 
         Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
         Assert.Contains("label", reply.RootElement.GetProperty("error").GetString());
-        Assert.Equal(0, window.App.Windows.Count);
+        Assert.Empty(window.App.Windows);
     }
 
     [Fact]
