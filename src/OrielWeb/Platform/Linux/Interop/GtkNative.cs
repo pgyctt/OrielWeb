@@ -86,6 +86,18 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gtk, EntryPoint = "gtk_menu_bar_new")]
     internal static partial nint GtkMenuBarNew();
 
+    /// <summary>
+    /// 取部件的期望高度（最小 / 自然）。
+    /// </summary>
+    /// <remarks>
+    /// 比 <c>gtk_widget_get_allocated_height</c> **早**可用：分配要等一次布局走完，
+    /// 而"往布局盒里塞一个菜单栏"之后我们马上就要按菜单栏高度换算最小尺寸/Resize，
+    /// 那时分配还没发生、allocated 恒为 0。菜单栏是 <c>expand=false</c> 装进去的，
+    /// 它的实际高度就等于自然高度，所以用这个是准的。
+    /// </remarks>
+    [LibraryImport(Gtk, EntryPoint = "gtk_widget_get_preferred_height")]
+    internal static partial void GtkWidgetGetPreferredHeight(nint widget, out int minimumHeight, out int naturalHeight);
+
     [LibraryImport(Gtk, EntryPoint = "gtk_widget_show_all")]
     internal static partial void GtkWidgetShowAll(nint widget);
 

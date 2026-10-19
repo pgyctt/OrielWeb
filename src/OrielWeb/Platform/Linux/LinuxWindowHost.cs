@@ -561,15 +561,32 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         ApplyMinSizeRequest();
     }
 
-    /// <summary>菜单栏高度（布局盒里那一条的分配高度）；没有菜单栏时是 0。</summary>
+    /// <summary>菜单栏高度（布局盒里那一条的高度）；没有菜单栏时是 0。</summary>
     /// <remarks>
-    /// <see cref="Resize"/> 要用它把"页面要的客户区"补回"窗口要的总高"——
-    /// 不补的话调一次 <c>Resize(800, 600)</c>，webview 只拿到 600 - 菜单栏高。
+    /// <para>
+    /// <see cref="Resize"/> 与 <see cref="ApplyMinSizeRequest"/> 要用它把"页面要的客户区"
+    /// 补回"窗口要的总高"——不补的话调一次 <c>Resize(800, 600)</c>，webview 只拿到
+    /// 600 - 菜单栏高。
+    /// </para>
+    /// <para>
+    /// <b>读期望高度而不是分配高度</b>：分配要等一次布局走完，而我们是"刚塞进盒就要换算"
+    /// （<c>SetWindowMenuBar</c> 里装完立刻重算最小尺寸），那时分配还没发生、读出来恒为 0。
+    /// 菜单栏是 <c>expand=false</c> 装进去的，实际高度就等于自然高度，所以期望高度是准的。
+    /// </para>
     /// </remarks>
     private int MenuBarHeight
-        => _menuBar is null || _menuBar.Handle == 0
-            ? 0
-            : GtkNative.GtkWidgetGetAllocatedHeight(_menuBar.Handle);
+    {
+        get
+        {
+            if (_menuBar is null || _menuBar.Handle == 0)
+            {
+                return 0;
+            }
+
+            GtkNative.GtkWidgetGetPreferredHeight(_menuBar.Handle, out _, out int natural);
+            return natural > 0 ? natural : 0;
+        }
+    }
 
     private void ActivateMenuItem(OrielMenuItem item)
     {

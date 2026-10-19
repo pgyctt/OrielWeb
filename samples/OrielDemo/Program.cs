@@ -52,7 +52,7 @@ internal static class Program
     /// <c>--selftest</c> 认得的名字。加一个自检只需在这里加名字 + 在 Main 里加一行判定。
     /// </summary>
     private static readonly string[] SelfTestNames =
-        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowevents", "event", "close", "window", "windownew", "monitors", "menu", "api"];
+        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowevents", "event", "close", "window", "windownew", "monitors", "menu", "menubar", "api"];
 
     /// <summary>本次请求的自检名字是否就是 <paramref name="name"/>（忽略大小写与首尾空白）。</summary>
     private static bool IsSelfTest(string? requested, string name)
