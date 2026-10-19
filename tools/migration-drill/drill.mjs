@@ -305,8 +305,26 @@ function rewrite(app, result) {
     const src = path.join(APPS_DIR, app.slug);
     const dst = path.join(MIGRATED_DIR, app.slug);
 
-    fs.rmSync(dst, { recursive: true, force: true });
-    fs.cpSync(src, dst, { recursive: true });
+    // **不做递归删除**。两个理由：
+    //   1. 删 200 多个文件在带安全删除垫片的环境里会被直接拒掉（B7 第二次跑就撞上了），
+    //      工具因此变成"只能跑一次"；
+    //   2. 覆盖本身已经足够——`cpSync(force)` 会把改过的文件盖回去。
+    // 残留的风险是"改了 SHA 但旧文件还在"，那会让结论不可信；所以用标记文件显式拦住，
+    // 而不是靠删除。宁可报错让人手动清，也不要静默给出混合了两版源码的结果。
+    const marker = path.join(dst, '.drill-sha');
+    const rel = path.relative(ROOT, dst).split(path.sep).join('/');
+    if (fs.existsSync(marker)) {
+        const recorded = fs.readFileSync(marker, 'utf8').trim();
+        if (recorded !== app.sha) {
+            throw new Error(
+                `${rel} 是 ${recorded.slice(0, 8)} 的旧产物，与清单里的 ${app.sha.slice(0, 8)} 不一致。` +
+                `请先删除该目录再重跑（残留文件会让结论混合两版源码）。`);
+        }
+    }
+
+    fs.mkdirSync(dst, { recursive: true });
+    fs.cpSync(src, dst, { recursive: true, force: true });
+    fs.writeFileSync(marker, app.sha);
 
     const replaceable = new Map();
     for (const item of result.imports) {
