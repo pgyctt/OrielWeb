@@ -920,6 +920,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 | `core` | `invoke` / `isTauri` / `convertFileSrc`（同步；宿主侧查 `asset.read` 的 scope） |
 | `event` | `listen` / `once` / `emit` / `emitTo` / `TauriEvent`（`listen` 返回**函数**，同时是 thenable：`const un = listen(...)`、`await listen(...)`、`listen(...).then(fn => ...)` 三种写法都成立；差别只剩 `instanceof Promise === false`） |
 | `window` | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow` + `Window` 类（含静态方法 `Window.getFocusedWindow()`；M5 的状态查询与外观开关：`isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop` / `isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `isEnabled` / `theme`；`setEnabled` / `setMaximizable` / `setMinimizable` / `setClosable` / `setMaxSize` / `setSizeConstraints` / `requestUserAttention` / `setIcon` / `setBackgroundColor`；`onThemeChanged` / `onScaleChanged`） |
+| `webviewWindow` | `WebviewWindow`（`extends Window`）/ `getCurrentWebviewWindow` / `getAllWebviewWindows`。**页面建窗**：`new WebviewWindow(label, options)` 后 `await w.created`，或 `await WebviewWindow.create(...)`。与 Tauri 的差别是"创建结果走 `created` 而不是 `tauri://created` 事件"（见该模块一节） |
 | `path` | `sep` / `delimiter`（**同步**）+ `join` / `normalize` / `dirname` / `extname` / `basename` / `isAbsolute` / `resolve` |
 | `app` | `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`（只读元信息，**无需能力声明**）；`exit` / `show` / `hide`（**需要显式 `Allow`**，见 §4 的能力表） |
 | `fs` | `readTextFile` / `writeTextFile` / `readFile` / `writeFile` / `exists` / `size` / `readDir` / `stat` / `lstat` / `mkdir` / `remove` / `rename` / `copyFile` / `truncate`（**两道关都必过**，见下） |
@@ -1262,6 +1263,34 @@ Debug 构建不受影响（全放行）。
 > **`window.*` 与 `win.*` 的分工**：`win.*` 是早期的库内建命令（**只能作用于发起者**、整族始终放行）；
 > `window.*` 是为对齐 Tauri 2 建的族（**可按 `label` 寻址**、只有上面那两组无条件放行）。
 > 两族并存、旧的冻结，是不破坏既有应用的唯一路径。
+
+**页面建窗（`window.new`，需要 `Allow("window.new")`）**：
+
+```js
+import { WebviewWindow } from '@orielweb/api/webviewWindow';
+
+// 推荐：一步完成"建窗 + 等结果"
+const win = await WebviewWindow.create('settings', {
+    title: '设置', width: 640, height: 480, url: 'https://app.oriel/settings.html',
+});
+
+// 或与 Tauri 同形的写法：构造即发起创建，结果在 created 上
+const w2 = new WebviewWindow('about', { url: 'https://app.oriel/about.html' });
+await w2.created;
+
+await win.setTitle('改了标题');   // 之后就是普通 Window
+```
+
+支持的选项只有 `label` / `title` / `url` / `width` / `height` / `resizable` / `frameless`——
+其余（特效、图标、父子窗口…）依赖本库还没有的能力，**传了也不会生效**，所以干脆不认。
+
+> **与 Tauri 唯一一处调用形状差异**：Tauri 的 `new WebviewWindow(...)` 之后用
+> `once('tauri://created')` / `once('tauri://error')` 等结果；本库没有这两个页面事件
+> （`WEBVIEW_CREATED` 在桌面端不会触发），改成 `await w.created`。
+> 迁移时这一处**必须改**——写在这里，而不是让它静默不触发。
+>
+> `window.new` 不在标题栏白名单里：新窗口跑的是应用自己的页面、共享令牌与能力配置，
+> 建窗是能力而不是元信息。
 
 ### 11.3 `window.oriel` 的原始成员
 

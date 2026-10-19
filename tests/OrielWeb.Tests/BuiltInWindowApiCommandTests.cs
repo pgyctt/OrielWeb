@@ -245,6 +245,59 @@ public sealed class BuiltInWindowApiCommandTests
         Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
     }
 
+    // ---- window.new：页面建窗 ----
+
+    [Fact]
+    public async Task WindowNew_IsNotInTheTitleBarAllowList()
+    {
+        // 建窗是真正的能力：新窗口跑的是应用自己的页面，共享令牌与能力配置。
+        // 它绝不能因为"属于 window. 族"就被顺带放行。
+        Assert.False(OrielCapabilityRules.IsAlwaysAllowedWindowCommand("window.new"));
+    }
+
+    [Fact]
+    public async Task WindowNew_WithoutCapability_IsRejected()
+    {
+        // 只放行标题栏那组，不含 window.new
+        (var dispatcher, var window) = Create("window.minimize", "window.close");
+
+        (JsonDocument reply, _) = await TestHarness.DispatchAsync(
+            dispatcher, "window.new", new { label = "child" }, window: window);
+
+        Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal("not_allowed", reply.RootElement.GetProperty("code").GetString());
+
+        // 一个窗口都不该被建出来（未授权时连尝试都不该发生）
+        Assert.Equal(0, window.App.Windows.Count);
+    }
+
+    [Fact]
+    public async Task WindowNew_MissingLabel_IsRejectedBeforeCreating()
+    {
+        (var dispatcher, var window) = Create("window.new");
+
+        (JsonDocument reply, _) = await TestHarness.DispatchAsync(
+            dispatcher, "window.new", null, window: window);
+
+        Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Contains("label", reply.RootElement.GetProperty("error").GetString());
+        Assert.Equal(0, window.App.Windows.Count);
+    }
+
+    [Fact]
+    public async Task WindowNew_WithCapability_ReachesImplementation()
+    {
+        // 门禁放行后走到 `CreateWindow` 的前置检查：应用未 Run 时它明确拒绝，
+        // 而不是静默返回一个"没建出来的窗口"。
+        (var dispatcher, var window) = Create("window.new");
+
+        (JsonDocument reply, _) = await TestHarness.DispatchAsync(
+            dispatcher, "window.new", new { label = "child", width = 320, height = 240 }, window: window);
+
+        Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Contains("Run()", reply.RootElement.GetProperty("error").GetString());
+    }
+
     /// <summary>
     /// 记录调用的假窗口，与 <see cref="BuiltInWindowCommandTests.FakeWindow"/> 同源。
     /// </summary>

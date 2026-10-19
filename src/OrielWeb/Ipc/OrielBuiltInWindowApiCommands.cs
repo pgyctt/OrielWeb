@@ -343,6 +343,15 @@ internal static class OrielBuiltInWindowApiCommands
                 handler = static (sender, args) => Mutate(Resolve(sender, args).Show);
                 return true;
 
+            case "window.new":
+                // 页面建窗。它不是"操作某个已存在的窗口"，所以**不**走 Resolve：
+                // 目标窗口是这里新建出来的。
+                //
+                // 门禁：不在 AlwaysAllowedWindowCommands 里——建窗是真正的能力
+                // （新窗口会跑应用自己的页面、共享应用的令牌与能力），必须显式 Allow。
+                handler = static (sender, args) => CreateWindow(sender, args);
+                return true;
+
             case "window.hide":
                 handler = static (sender, args) => Mutate(Resolve(sender, args).Hide);
                 return true;
@@ -738,6 +747,64 @@ internal static class OrielBuiltInWindowApiCommands
     {
         action();
         return null;
+    }
+
+    /// <summary>
+    /// 建一个新窗口（<c>window.new</c>），返回它的 label。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>线程</b>：<see cref="OrielApp.CreateWindow"/> 要求 UI 线程且刻意不自动编组
+    /// （它的返回值是同步的窗口对象）。命令处理通常在 UI 线程上（三平台的 web 消息回调都在主线程），
+    /// 但不保证——所以这里显式判断并编组，异常原样往上抛给页面。
+    /// </para>
+    /// <para>
+    /// <b>为什么只暴露这几个选项</b>：Tauri 的 `WebviewWindowOptions` 有几十项，其中大半
+    /// 依赖本库还没有的能力（特效、图标、父子窗口…）。这里给的是"能开一个可用的窗口"的最小集，
+    /// 其余以后按需加——加一个不生效的选项，比不给它更容易误导。
+    /// </para>
+    /// </remarks>
+    private static string CreateWindow(IOrielWindowControl sender, JsonElement args)
+    {
+        string label = RequiredText(args, "label", "window.new");
+        string? title = OptionalText(args, "title");
+        string? url = OptionalString(args, "url");
+        int? width = OptionalInt(args, "width");
+        int? height = OptionalInt(args, "height");
+        bool? resizable = OptionalBool(args, "resizable");
+        bool? frameless = OptionalBool(args, "frameless");
+
+        OrielApp app = sender.App;
+        WebviewWindow? created = null;
+
+        void CreateOnUiThread()
+        {
+            created = app.CreateWindow(options =>
+            {
+                options.WithLabel(label);
+                if (title is not null) { options.WithTitle(title); }
+                if (url is not null) { options.WithUrl(url); }
+                if (width is int w) { options.Width = w; }
+                if (height is int h) { options.Height = h; }
+                if (resizable is bool r) { options.Resizable = r; }
+                if (frameless is bool f) { options.Frameless = f; }
+            });
+        }
+
+        if (app.IsOnUiThread)
+        {
+            CreateOnUiThread();
+        }
+        else
+        {
+            // InvokeOnUiThread 会等 UI 线程执行完并把异常原样抛回来——
+            // "label 重复"这类错误因此能变成页面侧的一条 reject，而不是静默失败。
+            app.InvokeOnUiThread(CreateOnUiThread);
+        }
+
+        // Label 是 `string?`（窗口后端尚未挂上时可为 null），但刚建出来的窗口一定有；
+        // 回退到入参而不是 null，免得页面拿到一个"成功了但没有 label"的返回。
+        return created!.Label ?? label;
     }
 
     private static string RequiredText(JsonElement args, string property, string commandName)

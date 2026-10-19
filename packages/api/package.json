@@ -69,6 +69,10 @@
       "types": "./types/window.d.ts",
       "default": "./src/window.js"
     },
+    "./webviewWindow": {
+      "types": "./types/webviewWindow.d.ts",
+      "default": "./src/webviewWindow.js"
+    },
     "./mocks": {
       "types": "./types/mocks.d.ts",
       "default": "./src/mocks.js"

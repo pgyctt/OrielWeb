@@ -40,6 +40,8 @@ const MODULES = [
     { ours: '../src/event.js', theirs: '@tauri-apps/api/event', label: 'event' },
     { ours: '../src/dpi.js', theirs: '@tauri-apps/api/dpi', label: 'dpi' },
     { ours: '../src/window.js', theirs: '@tauri-apps/api/window', label: 'window' },
+    // 页面建窗。它是 `Window` 的**子类**——方法比对要能沿原型链走（见下方 collectMethods）。
+    { ours: '../src/webviewWindow.js', theirs: '@tauri-apps/api/webviewWindow', label: 'webviewWindow' },
     { ours: '../src/path.js', theirs: '@tauri-apps/api/path', label: 'path' },
     { ours: '../src/app.js', theirs: '@tauri-apps/api/app', label: 'app' },
     { ours: '../src/mocks.js', theirs: '@tauri-apps/api/mocks', label: 'mocks' },
@@ -69,20 +71,12 @@ const MODULES = [
  */
 const PLANNED_MODULES = [
     {
-        label: 'webviewWindow',
-        theirs: '@tauri-apps/api/webviewWindow',
-        ours: '../src/webviewWindow.js',
-        batch: 'B4',
-        note: '页面建窗。宿主侧只有 C# 的 app.CreateWindow，页面拿不到；' +
-            '本批补 WebviewWindow 的最小可用面（new/getAll/getCurrent）',
-    },
-    {
         label: 'webview',
         theirs: '@tauri-apps/api/webview',
         ours: '../src/webview.js',
         batch: 'B4',
         note: 'webview 的独立概念。本库**窗口即 webview**，没有"一个窗口挂多个 webview"；' +
-            '只补到能让 webviewWindow 继承的最小面，不造多 webview',
+            'WebviewWindow 已经作为 Window 的子类提供，但独立的 Webview 类与 getAllWebviews 不造',
     },
     {
         label: 'tray',
@@ -343,9 +337,9 @@ test('未实现模块有登记，且登记与代码状态一致', async (t) => {
         }
     }
 
-    // 模块数不变量：四个模块都在（少一个说明有人删了条目而不是做了实现）
-    assert.equal(PLANNED_MODULES.length, 4,
-        'PLANNED_MODULES 应当登记 4 个未实现模块（tray/menu/webview/webviewWindow）');
+    // 模块数不变量：三个模块仍在计划里（少一个说明有人删了条目而不是做了实现）
+    assert.equal(PLANNED_MODULES.length, 3,
+        'PLANNED_MODULES 应当登记 3 个未实现模块（tray/menu/webview）');
 
     assert.deepEqual(problems, [], `未实现模块登记有问题：\n  - ${problems.join('\n  - ')}`);
 
@@ -440,6 +434,24 @@ const METHOD_DIVERGENCES = {
 
     sceneIdentifier:
         'iOS 专有（当前 UIScene 的标识符）。理由同 `activityName`。',
+
+    // ---- WebviewWindow 独有（Tauri 的 WebviewWindow = Webview + Window，本库窗口即 webview）----
+
+    position:
+        '**结构性差异**：Tauri 的 `WebviewWindow` 继承 `Webview`，"位置"指的是 webview 在**窗口内**的偏移。' +
+        '本库**窗口即 webview**（一个窗口一个 webview，铺满客户区），没有"窗口内偏移"这个概念。' +
+        '窗口本身的位置是 `outerPosition` / `setPosition`，那两个都有。',
+
+    size:
+        '同上：`WebviewWindow.size` 是 webview 在窗口内的尺寸，本库没有这一层；' +
+        '窗口尺寸用 `innerSize` / `outerSize` / `setSize`。',
+
+    setAutoResize:
+        '同上：控制"窗口尺寸变化时 webview 是否跟着变"。本库的 webview 是窗口的一部分，' +
+        '永远跟着变——没有可关的开关，给一个空方法只会让人以为关掉能省性能。',
+
+    reparent:
+        '同上：把 webview 移到另一个窗口。本库没有"webview 可从窗口脱离"的模型。',
 };
 
 /**
@@ -515,13 +527,15 @@ const METHOD_GAP_GROUPS = [
         methods: ['window.Window#setTheme'],
     },
     {
-        reason: '【B·跨平台一致·待做】本组是空的：方针下可做的项已经全部实现，'
-            + '剩下的都在 A 组（方针排除）。'
-            + '（`onScaleChanged` 已完成——三平台各自检测 `scale.changed`：Windows `WM_DPICHANGED`、'
-            + 'Linux GDK 的 `notify::scale-factor`、macOS 用三个 `NSWindowDelegate` 回调：'
-            + '`windowDidResize:` / `windowDidMove:` 覆盖跨屏拖动，'
-            + '`windowDidChangeBackingProperties:` 覆盖"只改系统缩放而窗口不动"。）',
-        methods: [],
+        reason: '【B·跨平台一致·待做】webview 级能力，三平台都支持，只是没排到：' +
+            '`setZoom`（WebView2 的 ZoomFactor / WebKitGTK 的 zoom_level / WKWebView 的 pageZoom）与 ' +
+            '`clearAllBrowsingData`（清缓存与站点数据，三家都有对应 API）。' +
+            '两者都落在 `WebviewWindow` 上（Tauri 把它们放在 Webview 侧），B4 只做了建窗最小面，' +
+            '留到后续批次。',
+        methods: [
+            'webviewWindow.WebviewWindow#setZoom',
+            'webviewWindow.WebviewWindow#clearAllBrowsingData',
+        ],
     },
 ];
 
@@ -543,15 +557,22 @@ test('待做清单的每一项都标了 A/B 归属（方针：跨平台不一致
         `这些组没标 A/B 归属（reason 要以【A· 或【B· 开头）：\n  - ${offenders.join('\n  - ')}`);
 });
 
-test('方针下可做的组（B 组）现在是空的——剩下的都在 A 组（方针排除）', () => {
-    const doable = METHOD_GAP_GROUPS
-        .filter((group) => group.reason.startsWith('【B·'))
-        .flatMap((group) => group.methods);
+test('B 组（方针下可做）必须写明批次——不许无声地留在"以后再说"', () => {
+    // 这条原先是"B 组必须为空"（0.3.6 时可做的都做完了）。B4 起会合法地往 B 组加项，
+    // 所以判据改成"每条都要有批次"：**往 B 组加东西是允许的，但不写清什么时候做不允许**——
+    // 否则这份清单会慢慢变回"没人敢信的历史文档"。
+    const groups = METHOD_GAP_GROUPS.filter((group) => group.reason.startsWith('【B·'));
 
-    // 钉住当前结论：方针下可做的项**已经全部实现**。
-    // 哪天要重新在 A 组里开工，必须先改这条断言并说明方针变了——而不是悄悄往里加实现。
-    assert.deepEqual(doable, [],
-        'B 组（跨平台一致、方针下可做）应当为空：可做的都实现了');
+    for (const group of groups) {
+        if (group.methods.length === 0) {
+            continue;
+        }
+
+        assert.match(
+            group.reason,
+            /\bB\d/,
+            `B 组「${group.methods[0]}…」没有写批次（reason 里要出现 B0–B9 之类的批次号）`);
+    }
 
     // 反面：A 组必须非空且明确标为"方针不做"，否则这份清单就退化成"什么都没做"
     const excluded = METHOD_GAP_GROUPS
@@ -565,6 +586,28 @@ test('同名类的方法也对得上（我们缺的都在 METHOD_DIVERGENCES 里
         t.skip('参照实现未安装——CI 会装并强制检查');
         return;
     }
+
+    /**
+     * 收集一个类**含原型链**的方法名。
+     *
+     * @param {any} cls
+     * @returns {Set<string>}
+     * @remarks 必须走原型链：`WebviewWindow extends Window` 不重抄父类方法，
+     * 只看 own property 会把八十多个继承来的方法全报成"缺失"。
+     */
+    const collectMethods = (cls) => {
+        const methods = new Set();
+        let proto = cls.prototype;
+        while (proto && proto !== Object.prototype) {
+            for (const name of Object.getOwnPropertyNames(proto)) {
+                if (name !== 'constructor') {
+                    methods.add(name);
+                }
+            }
+            proto = Object.getPrototypeOf(proto);
+        }
+        return methods;
+    };
 
     /** @type {string[]} */
     const problems = [];
@@ -594,8 +637,7 @@ test('同名类的方法也对得上（我们缺的都在 METHOD_DIVERGENCES 里
 
             compared++;
 
-            const ourMethods = new Set(
-                Object.getOwnPropertyNames(ourClass.prototype).filter((m) => m !== 'constructor'));
+            const ourMethods = collectMethods(ourClass);
 
             for (const method of Object.getOwnPropertyNames(theirClass.prototype)) {
                 if (method === 'constructor' || ourMethods.has(method)) {
@@ -603,7 +645,17 @@ test('同名类的方法也对得上（我们缺的都在 METHOD_DIVERGENCES 里
                 }
 
                 // 有意的分歧，或"还没实现但已记录"
-                if (method in METHOD_DIVERGENCES || `${module.label}.${name}#${method}` in METHOD_GAPS) {
+                if (method in METHOD_DIVERGENCES) {
+                    continue;
+                }
+
+                if (`${module.label}.${name}#${method}` in METHOD_GAPS) {
+                    continue;
+                }
+
+                // 子类继承自 Window：同一批方法在 `window.Window` 下已经分类过，
+                // 不必在子类名下再抄一份。
+                if (name === 'WebviewWindow' && `window.Window#${method}` in METHOD_GAPS) {
                     continue;
                 }
 
