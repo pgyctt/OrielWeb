@@ -441,7 +441,7 @@ pwsh tools/verify-windows.ps1 -Stages selftest   # 含 windownew
 | B2 | ✅ 完成（2026-10-19） | `1e5ab23`：`app.exit/show/hide` + 门禁姿态测试；三条仍不在 always-allowed 名单 |
 | B3 | ✅ 完成（2026-10-19，按 D-1 选 A） | `12a046c`：thenable 函数，三种写法并存；`instanceof Promise` 是唯一差别 |
 | B4 | ✅ 完成（2026-10-19） | `b993aa1` + `fecd7d6`：`window.new`、`@orielweb/api/webviewWindow`、`--selftest windownew`（三平台 PASS） |
-| B5 | 待开始 | 需要三个平台后端各写一套显示器枚举 |
+| B5 | ✅ 完成（2026-10-19） | `5c3c17c`：`IMonitorBackend` + 三平台 `*MonitorBackend`、5 个 `window.*` 命令、`--selftest monitors`（Windows 实测 PASS，Linux/macOS 走 CI） |
 | B6a | 待开始 | 菜单模型 + popup，复用既有三平台构建器 |
 | B6b | 待开始（可裁剪） | Linux 要做窗口布局改造，建议最后做或不做 |
 | B7 | 待开始 | 需要 2–3 个真实 Tauri 应用做迁移演练 |
@@ -457,6 +457,14 @@ pwsh tools/verify-windows.ps1 -Stages selftest   # 含 windownew
 > `position`/`size`/`setAutoResize`/`reparent` 属于"本库没有 webview 层"的结构性差异（记入
 > `METHOD_DIVERGENCES`），`setZoom`/`clearAllBrowsingData` 属于跨平台一致的待做项（记入 B 组并标批次）。
 > B 组"必须为空"的断言随之改成"必须写明批次"。——**账本自己也会腐化，这正是它该被测试的原因**。
+>
+> **B5 改变了后端的分层方式（按"每平台一个子后端"）**：计划里原本是往
+> `IPlatformBackend` 加两个成员，实际改成新建 `IMonitorBackend` + 三个
+> `*MonitorBackend.cs`。理由是 `IPlatformBackend` 已经 742 行、混了六件事，
+> 而显示器是与它们互不相干的一整块平台知识（三套枚举 API、三套坐标系、三套缩放语义）。
+> 分开之后每个文件只讲一件事，与 `ITrayBackend` 同一套分层；`OrielApp` 只多一行
+> `MonitorBackend = _backend.Monitors`。**后续批次若要再加应用级能力，沿用这个形状**
+> ——先问"这是一个新的子后端，还是现有子后端的一个成员"，不要往主接口上继续堆。
 
 ---
 

@@ -113,7 +113,20 @@ internal sealed class LinuxMonitorBackend : IMonitorBackend
             }
         }
 
-        return monitor == 0 ? null : Describe(monitor);
+        if (monitor == 0)
+        {
+            return null;
+        }
+
+        // GDK 在 X11 上会把屏幕外的点**吸附**到最近的显示器（负坐标按 0 处理），
+        // 于是 (-100000,-100000) 也会返回第一块屏。Windows 的 MONITOR_DEFAULTTONULL
+        // 与 macOS 的包含判定都不这样——为了让三平台同义，这里再按"点是否真的落在
+        // 该显示器的矩形内"复核一次，不在就返回 null。
+        //
+        // 这一条是 --selftest monitors 在 CI 上抓到的（Linux 红、Windows 绿）：
+        // 读代码看不出 GDK 会吸附，只有真机跑一遍才知道。
+        OrielMonitor? described = Describe(monitor);
+        return described is not null && Contains(described, x, y) ? described : null;
     }
 
     public OrielMonitor? MonitorFromWindow(nint nativeWindowHandle)
@@ -164,6 +177,11 @@ internal sealed class LinuxMonitorBackend : IMonitorBackend
         double scale = MonitorFromPoint(x, y)?.ScaleFactor ?? 1.0;
         return new OrielPosition(Math.Round(x * scale), Math.Round(y * scale));
     }
+
+    /// <summary>显示器几何（应用像素）是否包含该点（物理像素）。</summary>
+    private static bool Contains(OrielMonitor monitor, double x, double y)
+        => x >= monitor.Position.X && x < monitor.Position.X + monitor.Size.Width &&
+           y >= monitor.Position.Y && y < monitor.Position.Y + monitor.Size.Height;
 
     /// <summary>把一个 <c>GdkMonitor*</c> 读成 <see cref="OrielMonitor"/>。</summary>
     private static OrielMonitor? Describe(nint monitor)
