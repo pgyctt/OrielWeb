@@ -1119,6 +1119,28 @@ export class Window {
     }
 
     /**
+     * 订阅"文件被拖入本窗口"（对标 Tauri 的 `onDragDropEvent`）。
+     *
+     * @param {(event: { event: string, id: number, payload: { type: 'drop', paths: string[] } }) => void} handler
+     * @returns {Promise<() => void>}
+     * @remarks
+     * **只有 `drop` 一种**：宿主只在用户松手那一刻收到原生回调（三个平台都是 OS 级投放人手一个
+     * 回调），所以 `payload.type` 恒为 `'drop'`，`enter` / `over` / `leave` 永远不会来。
+     * 靠 `over` 做"拖到此处高亮"的代码在本库上不会亮——这是本批**有意不假装**的那部分。
+     *
+     * **payload 里没有 `position`**（Tauri 有，物理像素）。读它会得到 `undefined`：
+     * 宁可当场露出来，也不要给一个 0 让人误以为"拖到了左上角"。
+     *
+     * 在 Tauri 里 `Window` 与 `Webview` **都有**这个方法（`Window` 那份是把四种事件名
+     * 归一成同一个回调）；本库没有 webview 层（窗口即 webview），所以只在 `Window` 上。
+     * 迁移时 `getCurrentWebview().onDragDropEvent(...)` 改成
+     * `getCurrentWindow().onDragDropEvent(...)` 即可。
+     */
+    onDragDropEvent(handler) {
+        return listenAsync(TauriEvent.DRAG_DROP, handler);
+    }
+
+    /**
      * 订阅窗口所在显示器的缩放比变化（对标 Tauri 的 `onScaleChanged`）。
      *
      * @param {(event: { event: string, id: number, payload: { scaleFactor: number, size: { width: number, height: number } } }) => void} handler

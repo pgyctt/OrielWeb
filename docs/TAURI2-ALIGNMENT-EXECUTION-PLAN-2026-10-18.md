@@ -55,6 +55,7 @@
 | **B6a** | 菜单模型 + `Menu.popup`（不做菜单栏） | 中高 | C# 菜单模型 + 前端模块 | 无 | ✅ |
 | **B6b** | 应用菜单栏（三平台各自的挂载点） | 高 | 三平台窗口宿主（Linux 要改布局） | B6a | ✅ |
 | **B7** | 真实 Tauri 应用迁移演练 | 中 | 演练工装 + 卡点清单（无 API 改动） | B0–B4 | — |
+| **B8** | 页面事件面：文件拖放（`onDragDropEvent`） | 中 | `OrielApp` 事件推送 + `window.js` 方法 + 映射表 | B7 | ✅ |
 
 **推荐顺序（单人）**：`B0 → B1 → B2 → B3 → B4 → B5 → B6a → B6b → B7`
 **双人并行**：A 线 `B0 → B1 → B3 → B5`；B 线 `B2 → B4`；汇合后 `B6a → B6b`。
@@ -371,6 +372,37 @@ pwsh tools/verify-windows.ps1 -Stages selftest   # 含 windownew
 
 ---
 
+### B8 · 页面事件面：文件拖放
+
+**来源**：B7 的第一优先级卡点（pier-dock 用 `getCurrentWebview().onDragDropEvent(...)`
+接"把 .exe 拖到 dock 上固定"）。宿主其实**早就有数据**——`IPlatformBackend.FileDropped`
+→ `WebviewWindow.FileDropped`——只是到 C# 对象模型为止，没接到页面上。
+
+**做**：`OrielApp` 在建窗处订阅 `FileDropped`，编成 `{"type":"drop","paths":[...]}` 推
+`drag.drop`；JS 侧 `Window.onDragDropEvent(handler)`，`event.js` 的映射表把
+`tauri://drag-drop` 翻成 `drag.drop`。
+
+**范围决策（这一批最重要的是"不做什么"）**：
+
+* **只发 `drop`**。三个平台的原生投放（`WM_DROPFILES` / `drag-data-received` /
+  `performDragOperation:`）都只在**松手那一刻**回调一次；要 enter/over/leave，
+  Windows 得改用 COM 的 `IDropTarget`，另两个平台各加一套坐标系换算。**发四个里的一个，
+  好过发四个里三个假的**——尤其是 `over`，应用会拿它做"拖到此高亮"，假事件等于让 UI 永不亮。
+* **payload 不带 `position`**（Tauri 有，物理像素）。三个后端都在"解析出路径"那一步
+  把坐标丢了。不给字段的话调用方读 `position.x` 得到 `undefined` 并当场发现；
+  给 0 会被当成"拖到了左上角"——一个看起来成功的错误。
+
+**顺带纠正的一处旧记录**：`event.js` 里 `DRAG_*` 原写着"不做：页面拿不到文件路径
+（浏览器安全模型如此）"。**那个前提只对 HTML5 拖放成立**——本库走 OS 级投放，路径一直在
+宿主手里。这条记录的教训与 B6a 的 `NativeIcon` 同一类：**凭印象写下的"不可能"，
+会把一个可做的能力锁在门外的清单里**。
+
+**验收**：C# 6 条（payload 形状、保序、空数组不是 null、引号/反斜杠转义、"确实没有
+position"、宿主事件名）；JS 2 条（订阅的是宿主名而页面看到的是 Tauri 名、
+另外三个 DRAG_* 确实没有宿主对应物）。原生投放与 `FileDropped` 同一条路径，仍属人工项。
+
+---
+
 ## 3. 每批的统一验收
 
 任何批次合入前必须全绿：
@@ -446,6 +478,7 @@ pwsh tools/verify-windows.ps1 -Stages selftest   # 含 windownew
 | B6a | ✅ 完成（2026-10-19） | `@orielweb/api/menu`（8 个导出，`NativeIcon` 56 键逐键对齐）、`menu.popup` / `menu.close`、三平台按坐标弹出、`--selftest menu` |
 | B6b | ✅ 完成（2026-10-19，三平台全做含 Linux） | `menu.setAsAppMenu` / `menu.setAsWindowMenu`、三平台菜单栏落点、`GtkBox{menubar,webview}` 布局改造、`--selftest menubar`（含客户区几何断言） |
 | B7 | ✅ 完成（2026-10-19） | 3 个真实应用（228 个源文件、16 个模块、24 个符号）机械迁移：`tools/migration-drill/` + `docs/MIGRATION-FINDINGS.md`（含命令名映射表与按频率排序的卡点） |
+| B8 | ✅ 完成（2026-10-20） | `drag.drop` → 页面 `tauri://drag-drop`；`Window.onDragDropEvent`；C# 6 条 + JS 2 条单测。只发 `drop`、不带 `position`（理由见 §2 B8） |
 
 > **B4 的一处实现细节值得记住**：Tauri 用 `once('tauri://created')` 通知建窗结果，
 > 本库没有这条页面事件（`WEBVIEW_CREATED` 在桌面端不会触发），所以改成构造即发起、
@@ -577,7 +610,7 @@ B7 迁移演练         ← 停止按名字对账，让真实卡点决定下一�
 B7 跑完之后的结论（2026-10-19，证据见 `docs/MIGRATION-FINDINGS.md`）：
 
 ```
-B8 页面事件面   ← 拖放事件（宿主已有 FileDropped，只缺"变成页面事件"这一层）
+B8 页面事件面   ← 拖放事件（宿主已有 FileDropped，只缺"变成页面事件"这一层）  ✅ 完成
 B9 Channel 取舍 ← 先决策"由库提供 / event+requestId 官方配方 / 不支持"，不是先动手
 不做            ← plugin-updater、clipboard.writeImage、onBackButtonPress
                   （前两项是整块生态能力；第三项是桌面库不该有的移动端 API）

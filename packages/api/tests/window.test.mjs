@@ -27,6 +27,7 @@ import {
 import { LogicalSize, PhysicalPosition, PhysicalSize } from '../src/dpi.js';
 import { clearMocks } from '../src/mocks.js';
 import { setTransportOverride } from '../src/internal.js';
+import { TauriEvent, toHostEventName } from '../src/event.js';
 
 /**
  * 最小的传输层工厂：记录调用并给返回值。
@@ -542,6 +543,57 @@ test('onFocusChanged：一个回调覆盖 focus 与 blur 两个宿主事件', as
     assert.equal(raw.size, 0);
 
     clearMocks();
+});
+
+// ---- 文件拖放（B8）----
+//
+// 这一组的重点是**两层名字不要混**：宿主侧叫 `drag.drop`（本库命名法），
+// 页面侧看到的仍是 Tauri 的 `tauri://drag-drop`。混了的症状是"订阅了但永远收不到"，
+// 而它不会报错——正是 B7 里那类"编译器看不见"的问题。
+
+test('onDragDropEvent：订阅宿主的 drag.drop，payload 原样交给回调', async () => {
+    clearMocks();
+
+    /** @type {Map<string, (payload: unknown) => void>} */
+    const raw = new Map();
+    setTransportOverride({
+        label: 'main',
+        async invoke() { return null; },
+        on(name, listener) {
+            raw.set(name, listener);
+            return () => raw.delete(name);
+        },
+    });
+
+    /** @type {Array<{ event: string, payload: any }>} */
+    const seen = [];
+    const off = await new Window('main').onDragDropEvent((e) => seen.push(e));
+
+    assert.ok(raw.has('drag.drop'), '应当订阅宿主侧的 drag.drop');
+    assert.ok(!raw.has(TauriEvent.DRAG_DROP), '不该拿 Tauri 名去订阅宿主（宿主不认这个名字）');
+
+    raw.get('drag.drop')?.({ type: 'drop', paths: ['/a', '/b'] });
+
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].event, TauriEvent.DRAG_DROP, '页面读 e.event 应当拿到 Tauri 名');
+    assert.deepEqual(seen[0].payload, { type: 'drop', paths: ['/a', '/b'] });
+
+    off();
+    assert.equal(raw.size, 0);
+
+    clearMocks();
+});
+
+test('TauriEvent.DRAG_DROP 有宿主对应物，另外三个没有', () => {
+    // 映射表漏一条 = 页面订阅了一个宿主永远不推的名字。这条把"漏了"变成红的。
+    assert.equal(toHostEventName(TauriEvent.DRAG_DROP), 'drag.drop');
+
+    // enter / over / leave 故意没有宿主对应物：宿主三平台都只在松手那一刻回调一次。
+    // 这里断言"确实没有"，是为了让"以后补上"必须同时改映射表、文档与这里——
+    // 而不是某一处悄悄变了、其余地方还按旧假设跑。
+    for (const name of [TauriEvent.DRAG_ENTER, TauriEvent.DRAG_OVER, TauriEvent.DRAG_LEAVE]) {
+        assert.equal(toHostEventName(name), name, `${name} 不该有宿主对应物`);
+    }
 });
 
 // ---- 显示器 ----

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Xunit;
 
 namespace OrielWeb.Tests;
@@ -115,4 +116,69 @@ public sealed class FileDropTests
     [Fact]
     public void BatchAllRejectedGivesEmpty()
         => Assert.Empty(OrielFileDropSupport.UrisToPaths(["http://a", "ftp://b"]));
+
+    // ------------------------------------------------------------------
+    // 推到页面的 payload（B8）
+    //
+    // 这一段与上面的 URI 解析是两件事：上面回答"拖进来的是什么路径"，这里回答
+    // "那条路径怎么变成页面的事件载荷"。它值得单独测，因为**手写 JSON 的转义错了
+    // 不会在 C# 侧报错**——页面那边 `JSON.parse` 才炸，而且炸在很远的地方。
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void PayloadEventNameIsHostSide()
+    {
+        // 宿主侧用本库的命名法（`drag.drop`），页面侧看到的是 Tauri 的
+        // `tauri://drag-drop`——翻译在 event.js 的 HOST_EVENT_MAP 里。
+        // 两边各存一份字面量，这条钉住 C# 这一份，window.test.mjs 钉住 JS 那一份。
+        Assert.Equal("drag.drop", OrielApp.DragDropEventName);
+    }
+
+    [Fact]
+    public void PayloadSinglePath()
+    {
+        using var doc = JsonDocument.Parse(OrielApp.DragDropPayloadJson(["/home/x/a.txt"]));
+        Assert.Equal("drop", doc.RootElement.GetProperty("type").GetString());
+        Assert.Equal("/home/x/a.txt", doc.RootElement.GetProperty("paths")[0].GetString());
+    }
+
+    [Fact]
+    public void PayloadKeepsOrderAndCount()
+    {
+        using var doc = JsonDocument.Parse(OrielApp.DragDropPayloadJson(["/a", "/b", "/c"]));
+        string[] paths = doc.RootElement.GetProperty("paths")
+            .EnumerateArray().Select(e => e.GetString()!).ToArray();
+
+        Assert.Equal(["/a", "/b", "/c"], paths);
+    }
+
+    [Fact]
+    public void PayloadEmptyListIsEmptyArrayNotNull()
+    {
+        // `paths: null` 会让页面侧 `.map()` 当场抛；空数组才是"拖进来 0 个"的正确形状。
+        Assert.Equal("{\"type\":\"drop\",\"paths\":[]}", OrielApp.DragDropPayloadJson([]));
+    }
+
+    [Fact]
+    public void PayloadEscapesQuotesAndBackslashes()
+    {
+        // Windows 路径本身就带反斜杠；文件名里带引号也合法（POSIX 上）。
+        // 手写 JSON 最容易在这里出错：漏转义 → 页面 JSON.parse 失败。
+        const string tricky = "C:\\tmp\\a\"b\\报告.txt";
+
+        using var doc = JsonDocument.Parse(OrielApp.DragDropPayloadJson([tricky]));
+        Assert.Equal(tricky, doc.RootElement.GetProperty("paths")[0].GetString());
+    }
+
+    [Fact]
+    public void PayloadHasNoPositionField()
+    {
+        // Tauri 的 payload 有 position（物理像素）。本库**有意不给**：三个后端在
+        // "解析出路径"那一步就把坐标丢了，补它要给两个平台各写一次坐标系换算。
+        // 不给字段的话页面读 `position.x` 得到 undefined 并当场发现；给 0 会被
+        // 当成"拖到了左上角"——一个看起来成功的错误。
+        // 这条断言的作用是：将来补上 position 时，必须同时改这里和文档，不能悄悄改。
+        using var doc = JsonDocument.Parse(OrielApp.DragDropPayloadJson(["/a"]));
+        Assert.False(doc.RootElement.TryGetProperty("position", out _));
+    }
 }

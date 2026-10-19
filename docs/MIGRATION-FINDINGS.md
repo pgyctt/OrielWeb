@@ -89,7 +89,7 @@ node tools/migration-drill/drill.mjs --app lumos     # 只跑一个
 | 1 | `__TAURI_INTERNALS__` 环境探测 | **3/3 应用**，5 处（应用代码） | **否** | 语义差异 | 换成 `isTauri()` | 0（改调用点） |
 | 2 | 测试夹具 mock 线格式 | random-frame：32 处 `plugin:x\|y` + 34 处全局桩 | **否** | 命名/线格式 | 改用 `mockIPC()`，命令名照 §4 换 | 0（改测试） |
 | 3 | `Channel`（core） | 1 应用，1 处，但那是整条流式链路 | 是 | 缺能力 | 用 `event` + 自建 requestId 拼 | **高** |
-| 4 | 页面拖放事件（`api/webview.onDragDropEvent`） | 1 应用 | 是 | 缺能力 | 暂无可替代 | **中** |
+| 4 | 页面拖放事件（`api/webview.onDragDropEvent`） | 1 应用 | 是 | 缺能力 | 改成 `getCurrentWindow().onDragDropEvent(...)`（**B8 已补**，但仍只有 `drop`） | 0（改调用点） |
 | 5 | `plugin-updater` | 1 应用 | 是 | 缺能力 | 删除更新功能或自建 | **高** |
 | 6 | `plugin-process.relaunch` | 1 应用 | 是 | 缺能力 | 暂时只能 `exit` 后手动重开 | 中 |
 | 7 | `clipboard.writeImage` | 1 应用 | 是 | 缺能力 | 关掉"复制图片"按钮 | 中 |
@@ -115,8 +115,14 @@ node tools/migration-drill/drill.mjs --app lumos     # 只跑一个
 
 **#4 拖放。** pier-dock 用 `getCurrentWebview().onDragDropEvent(...)` 接"把 .exe/.lnk 拖到 dock
 上固定"。宿主侧其实**已经有数据**（`IPlatformBackend.FileDropped` → `WebviewWindow.FileDropped`），
-缺的是把它变成页面事件。注意 Tauri 的这一族有 `enter/over/drop/leave` 四种，
-而本库三平台的原生路径都只有 drop 时刻——补齐时**必须写清楚少了哪三种**，不能假装齐全。
+缺的只是把它变成页面事件。
+
+**已在 B8 补上**，迁移改法是一行：`getCurrentWebview().onDragDropEvent(...)` →
+`getCurrentWindow().onDragDropEvent(...)`。补的时候只做 `drop` 一种——三平台的原生投放
+都在松手那一刻回调一次，`enter/over/leave` 要么改用 COM 的 `IDropTarget`、要么各平台再写
+一套坐标换算；payload 也不带 `position`（宁可 `undefined` 也不要一个会被当成"左上角"的 0）。
+这两处差异写进了 `docs/API.md` §9.1 与 `TauriEvent` 的状态表——**补一半要写在明面上，
+否则它就退化成下一轮的 #1 类静默差异**。
 
 **#5–#7** 都是整块能力，本批只确认了"真实应用的确在这么用"，不低估它们的成本。
 
@@ -159,11 +165,11 @@ node tools/migration-drill/drill.mjs --app lumos     # 只跑一个
 
 按证据排，不按名字排：
 
-1. **B8：页面事件面**（建议下一批）
-   * `Window.onDragDropEvent` + `tauri://drag-drop` 事件——宿主已有数据，只缺事件通路，
+1. **B8：页面事件面**（✅ 2026-10-20 完成）
+   * `Window.onDragDropEvent` + `tauri://drag-drop` 事件——宿主早已有数据，只缺事件通路，
      是本清单里**性价比最高**的一项；
-   * 同一批把"只有 drop、没有 enter/over/leave"写进 API.md 和账本，而不是留一句
-     "以后补"。
+   * 同一批把"只有 drop、没有 enter/over/leave""payload 没有 position"写进了
+     `docs/API.md` §9.1、`event.js` 的状态表与两处单测，而不是留一句"以后补"。
 2. **B9：`Channel` 的取舍**（需要先决策，不是先动手）
    * 三条路：①协议加一路带 id 的推送；②只支持"命令内多次回推"的受限形态；
      ③明确不支持，把 `event + requestId` 写成官方迁移配方。

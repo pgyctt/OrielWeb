@@ -10,8 +10,8 @@
 //   * `emit` / `emitTo` 需要宿主侧有一个广播命令（`event.emit`），且**要过能力门禁**
 //     ——它不是 `win.*` 那种"始终放行"的库内建命令。
 //   * `TauriEvent` 常量里，本库目前只实现了 `RESIZED` / `MOVED` / `FOCUS_CHANGED` /
-//     `CLOSE_REQUESTED` / `DESTROYED` 的一部分（见 §状态）。**没有 `DRAG_*`**（文件拖放走
-//     `FileDropped` 宿主事件，不在页面事件通道上）。
+//     `CLOSE_REQUESTED` / `DESTROYED` 的一部分（见 §状态）。`DRAG_*` 里**只有
+//     `DRAG_DROP` 会来**，其余三个不会——理由见下表。
 
 import { invoke } from './core.js';
 import { getTransport } from './internal.js';
@@ -50,6 +50,10 @@ const HOST_EVENT_MAP = Object.freeze({
     'tauri://theme-changed': { host: 'theme.changed' },
     // 缩放变化：与 resize/move/focus 同类，需要 forwarding（页面订阅了宿主才推）。
     'tauri://scale-change': { host: 'scale.changed', forwarding: 'scale' },
+    // 文件拖放（B8）：宿主在 OS 投放完成时推一次，低频，不需要 forwarding。
+    // **只有 drop** —— enter/over/leave 三个名字在表里没有宿主对应物，永远不会来
+    // （见下方 TauriEvent 状态表）。
+    'tauri://drag-drop': { host: 'drag.drop' },
 });
 
 /**
@@ -405,7 +409,13 @@ export async function emitTo(target, eventName, payload) {
  * | `WINDOW_SCALE_FACTOR_CHANGED` / `WINDOW_THEME_CHANGED` / `WINDOW_CREATED` | ⬜ 未实现 |
  * | `WINDOW_SUSPENDED` / `WINDOW_RESUMED` | ⛔ 桌面端不会触发（移动端生命周期事件） |
  * | `WEBVIEW_CREATED` | ⛔ 桌面端不会触发：本库没有"一个窗口里挂多个 webview"的概念，窗口创建即 webview 创建，用 `WINDOW_CREATED` |
- * | `DRAG_ENTER` / `DRAG_OVER` / `DRAG_DROP` / `DRAG_LEAVE` | ⛔ 不做：文件拖放走宿主 `WebviewWindow.FileDropped` 事件，不在页面事件通道上（页面拿不到文件路径，浏览器安全模型如此） |
+ * | `DRAG_DROP` | ✅ 可用，但**只有 drop**：三个平台都是 OS 级投放（松手那一刻才回调），payload 里也没有 `position`。见 `Window.onDragDropEvent` |
+ * | `DRAG_ENTER` / `DRAG_OVER` / `DRAG_LEAVE` | ⛔ 不会触发：拖动过程中的事件各平台要另加一套机制（Windows 得用 COM 的 `IDropTarget`），本库没做。**别用 `over` 做"拖到此处高亮"——它永远不亮** |
+ *
+ * > 这一行此前记的是"不做：页面拿不到文件路径（浏览器安全模型如此）"。**那个前提只对
+ * > HTML5 拖放成立**：本库走的是 OS 级投放，路径一直在宿主手里（`FileDropped`）。
+ * > B7 演练里 pier-dock 正是用 `onDragDropEvent` 接"把 .exe 拖到 dock 上固定"，
+ * > 于是补齐了 `drop`。剩下的三个仍然没做，原因是原生路径只给一次回调。
  *
  * **为什么把收不到的那几个也列出来**：`TauriEvent.WINDOW_SUSPENDED` 若是 `undefined`，
  * `listen(undefined)` 会在离原因很远的地方炸；常量在、文档标 ⛔，至少 import 处能跑、

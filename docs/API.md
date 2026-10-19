@@ -860,6 +860,33 @@ window.FileDropped += e => Console.WriteLine(string.Join(", ", e.Paths));
 URI → 本地路径的解析（百分号编码含非 ASCII、`+` 不等于空格、Windows 盘符、`localhost` 与远程主机、批量保序）
 有 23 个单测；**"真的把文件拖进去"只能在真机上人眼验证**（无头环境造不出 XDND/OLE 会话）。
 
+### 9.1 页面侧：`onDragDropEvent`
+
+```js
+import { getCurrentWindow } from '@orielweb/api/window';
+
+const un = await getCurrentWindow().onDragDropEvent(({ payload }) => {
+    if (payload.type !== 'drop') return;   // 本库只有这一种；这么写与 Tauri 的迁移代码一致
+    console.log(payload.paths);            // 本地路径（与 C# 的 FileDropped 是同一份数据）
+});
+```
+
+宿主在 OS 投放完成时推一次 `drag.drop`；页面看到的仍是 Tauri 的名字 `tauri://drag-drop`（`TauriEvent.DRAG_DROP`）。
+
+**与 Tauri 的两处差异，且都会静默生效**：
+
+| 项 | Tauri | 本库 |
+|---|---|---|
+| 事件类型 | `enter` / `over` / `drop` / `leave` | **只有 `drop`**。三平台的原生投放都只在松手那一刻回调一次；靠 `over` 做的"拖到此处高亮"在本库上**不会亮** |
+| payload | 含 `position`（物理像素） | **没有 `position`**。读它得到 `undefined`——有意为之：给一个 0 会被当成"拖到了左上角" |
+
+方法位置：Tauri 的 `Window` 与 `Webview` 上都有（`Window` 那份是转发）；本库没有 webview 层，
+只在 `Window` 上。迁移时 `getCurrentWebview().onDragDropEvent(...)` 改成
+`getCurrentWindow().onDragDropEvent(...)` 即可。
+
+覆盖率说明：C# 侧钉住 payload 形状与 JSON 转义（6 条单测），JS 侧钉住"Tauri 名 → 宿主名"的映射与回调
+（2 条）。**原生投放那一段与上面的 `FileDropped` 是同一条路径**，仍然只能真机验证。
+
 ## 10. 内建右键菜单
 
 ```csharp
@@ -1001,7 +1028,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 |---|---|
 | `core` | `invoke` / `isTauri` / `convertFileSrc`（同步；宿主侧查 `asset.read` 的 scope） |
 | `event` | `listen` / `once` / `emit` / `emitTo` / `TauriEvent`（`listen` 返回**函数**，同时是 thenable：`const un = listen(...)`、`await listen(...)`、`listen(...).then(fn => ...)` 三种写法都成立；差别只剩 `instanceof Promise === false`） |
-| `window` | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow` + `Window` 类（含静态方法 `Window.getFocusedWindow()`；M5 的状态查询与外观开关：`isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop` / `isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `isEnabled` / `theme`；`setEnabled` / `setMaximizable` / `setMinimizable` / `setClosable` / `setMaxSize` / `setSizeConstraints` / `requestUserAttention` / `setIcon` / `setBackgroundColor`；`onThemeChanged` / `onScaleChanged`；显示器 `availableMonitors` / `primaryMonitor` / `currentMonitor` / `monitorFromPoint` / `cursorPosition`） |
+| `window` | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow` + `Window` 类（含静态方法 `Window.getFocusedWindow()`；M5 的状态查询与外观开关：`isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop` / `isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `isEnabled` / `theme`；`setEnabled` / `setMaximizable` / `setMinimizable` / `setClosable` / `setMaxSize` / `setSizeConstraints` / `requestUserAttention` / `setIcon` / `setBackgroundColor`；`onThemeChanged` / `onScaleChanged` / `onDragDropEvent`；显示器 `availableMonitors` / `primaryMonitor` / `currentMonitor` / `monitorFromPoint` / `cursorPosition`） |
 | `webviewWindow` | `WebviewWindow`（`extends Window`）/ `getCurrentWebviewWindow` / `getAllWebviewWindows`。**页面建窗**：`new WebviewWindow(label, options)` 后 `await w.created`，或 `await WebviewWindow.create(...)`。与 Tauri 的差别是"创建结果走 `created` 而不是 `tauri://created` 事件"（见该模块一节） |
 | `path` | `sep` / `delimiter`（**同步**）+ `join` / `normalize` / `dirname` / `extname` / `basename` / `isAbsolute` / `resolve` |
 | `app` | `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`（只读元信息，**无需能力声明**）；`exit` / `show` / `hide`（**需要显式 `Allow`**，见 §4 的能力表） |

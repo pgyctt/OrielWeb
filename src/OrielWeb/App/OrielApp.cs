@@ -387,6 +387,11 @@ public sealed class OrielApp : IDisposable
         // 的一定是它自己那棵菜单的点击。
         created.ContextMenuItemClicked += id => PushMenuItemClick(created, id);
 
+        // 文件被拖入窗口 → 推给页面（事件名见 DragDropEventName）。
+        // 与菜单点击同一套理由：订阅只发生一次，放在建窗处，一个窗口恰好一条。
+        // 数据早就有了（三个后端的 OS 级投放都会触发 FileDropped），此前只到 C# 对象模型为止。
+        created.FileDropped += args => PushDragDrop(created, args.Paths);
+
         // 新建窗口套用应用菜单（Tauri："If a window was not created with an explicit menu
         // or had one set explicitly, this menu will be assigned to it."）。
         // 走 SetAppMenuBar 而不是直接 Backend：那样会绕过"显式设过就别覆盖"的判断。
@@ -493,6 +498,75 @@ public sealed class OrielApp : IDisposable
         {
             // 窗口已销毁：页面已经不在，没人接这条事件。
         }
+    }
+
+    /// <summary>
+    /// 宿主侧"文件被拖入窗口"的事件名：<c>drag.drop</c>。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 宿主事件名沿用本库自己的命名法（`theme.changed` / `menu.itemclicked` 同一套），
+    /// 页面看到的是 Tauri 的名字 <c>tauri://drag-drop</c>——由 <c>event.js</c> 的
+    /// <c>HOST_EVENT_MAP</c> 翻译。这样页面侧不用为迁移改名字，宿主侧也不必出现一个
+    /// 属于别的库协议的字符串。
+    /// </para>
+    /// <para>
+    /// <b>只发 <c>drop</c>，不发 <c>enter</c> / <c>over</c> / <c>leave</c>。</b>
+    /// 这不是遗漏：三个平台走的都是 OS 级投放（Windows 的 <c>WM_DROPFILES</c>、GTK 的
+    /// <c>drag-data-received</c>、AppKit 的 <c>performDragOperation:</c>），它们只在
+    /// <b>松手那一刻</b>回调一次。要在拖动过程中持续汇报，Windows 得改用 COM 的
+    /// <c>IDropTarget</c>，另两个平台也要各加一套坐标系换算——那是另一批的事。
+    /// 现在发四个里的一个，好过发四个里三个假的。
+    /// </para>
+    /// </remarks>
+    internal const string DragDropEventName = "drag.drop";
+
+    /// <summary>把"文件被拖入"推给窗口的页面。</summary>
+    /// <remarks>
+    /// 与 <see cref="PushMenuItemClick"/> 同一姿态：拖放是用户动作的尾巴，
+    /// 窗口正在销毁时 <see cref="WebviewWindow.EmitEvent"/> 会抛，静默丢弃即可。
+    /// </remarks>
+    private static void PushDragDrop(WebviewWindow window, IReadOnlyList<string> paths)
+    {
+        try
+        {
+            window.EmitEvent(DragDropEventName, DragDropPayloadJson(paths));
+        }
+        catch (InvalidOperationException)
+        {
+            // 窗口已销毁：页面已经不在，没人接这条事件。
+        }
+    }
+
+    /// <summary>拖放事件的 payload：<c>{"type":"drop","paths":[...]}</c>。</summary>
+    /// <remarks>
+    /// <b>没有 <c>position</c></b>，而 Tauri 的 payload 有（物理像素、相对 webview 左上角）。
+    /// 三个后端目前都在"解析出路径"这一步就把坐标丢了：macOS 的 trampoline 手里有
+    /// <c>draggingLocation</c>、GTK 的信号参数里有 x/y，补它要给两个平台各写一次坐标系换算。
+    /// <b>不给字段比给一个 0 好</b>：调用方读 <c>position.x</c> 会拿到 <c>undefined</c>
+    /// 并当场发现，而 0 会被当成"拖到了左上角"——那是一个看起来成功的错误。
+    ///
+    /// <para>
+    /// 手写 JSON 而不是 STJ 序列化：与托盘事件同一套做法，为的是走 Native AOT 时
+    /// 不需要为这个内部形状再注册一个 <c>JsonTypeInfo</c>。
+    /// </para>
+    /// </remarks>
+    internal static string DragDropPayloadJson(IReadOnlyList<string> paths)
+    {
+        var builder = new System.Text.StringBuilder(64);
+        builder.Append("{\"type\":\"drop\",\"paths\":[");
+        for (int i = 0; i < paths.Count; i++)
+        {
+            if (i > 0)
+            {
+                builder.Append(',');
+            }
+
+            builder.Append(JsonText.EncodeString(paths[i]));
+        }
+
+        builder.Append("]}");
+        return builder.ToString();
     }
 
     // ------------------------------------------------------------------
