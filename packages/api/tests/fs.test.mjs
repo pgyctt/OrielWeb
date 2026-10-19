@@ -291,6 +291,79 @@ test('truncate 带 len', async () => {
     clearMocks();
 });
 
+// ---- baseDir 必须显式失败 ----
+
+test('14 个函数都拒绝 baseDir（不能静默按进程 CWD 解析）', async () => {
+    // 参数表的**位置**是重点：每个函数的 options 位置不同，照印象写测试会漏掉
+    // `truncate` 那种"第 2 参是 len、第 3 参才是 options"的签名。
+    const cases = [
+        ['readTextFile', (o) => readTextFile('/a', o)],
+        ['writeTextFile', (o) => writeTextFile('/a', 'x', o)],
+        ['readFile', (o) => readFile('/a', o)],
+        ['writeFile', (o) => writeFile('/a', [1], o)],
+        ['exists', (o) => exists('/a', o)],
+        ['size', (o) => size('/a', o)],
+        ['readDir', (o) => readDir('/a', o)],
+        ['stat', (o) => stat('/a', o)],
+        ['lstat', (o) => lstat('/a', o)],
+        ['mkdir', (o) => mkdir('/a', o)],
+        ['remove', (o) => remove('/a', o)],
+        ['rename', (o) => rename('/a', '/b', o)],
+        ['copyFile', (o) => copyFile('/a', '/b', o)],
+        ['truncate', (o) => truncate('/a', 4, o)],
+    ];
+
+    assert.equal(cases.length, 14, 'Tauri 的 fs 有 14 个带 options 的函数');
+
+    for (const [name, call] of cases) {
+        clearMocks();
+        const { calls, transport } = makeTransport();
+        setTransportOverride(transport);
+
+        await assert.rejects(
+            () => call({ baseDir: 1 }),
+            (err) => {
+                assert.match(err.message, /baseDir/, `${name}: 报错里必须出现 baseDir，否则调用方不知道改哪里`);
+                return true;
+            },
+            `${name} 收到 baseDir 时必须 reject`,
+        );
+
+        // **一个命令都不该发出去**：静默忽略的表现是"命令成功但文件不对"，
+        // 这里断言连 invoke 都没发生，才算真的挡住了。
+        assert.deepEqual(calls, [], `${name}: 拒绝时不该发命令`);
+    }
+
+    clearMocks();
+});
+
+test('baseDir 被拒但 recursive 照旧可用（逐键判，不是一刀切）', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport();
+    setTransportOverride(transport);
+
+    await mkdir('/a', { recursive: true });
+    await remove('/a', { recursive: true });
+    await rename('/a', '/b');
+    await truncate('/a', 4);
+
+    assert.deepEqual(calls.map((c) => c[0]), ['fs.mkdir', 'fs.remove', 'fs.rename', 'fs.truncate']);
+    assert.deepEqual(calls[0][1], { path: '/a', recursive: true });
+
+    clearMocks();
+});
+
+test('未知选项也拒绝（防止把 dir 之类的拼写错误当没写）', async () => {
+    clearMocks();
+    const { transport } = makeTransport();
+    setTransportOverride(transport);
+
+    await assert.rejects(() => readTextFile('/a', { dir: 'x' }), /不支持的选项/);
+    await assert.rejects(() => mkdir('/a', { recusive: true }), /不支持的选项/);
+
+    clearMocks();
+});
+
 // ---- 返回形状 ----
 
 test('stat / lstat 的 mtime 是 number（毫秒），不是 Date', async () => {
