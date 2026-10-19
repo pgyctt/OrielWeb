@@ -1,0 +1,26 @@
+{
+  "note": "B7 迁移演练的取样清单。每个应用固定到 commit SHA——迁移结论必须可复现，否则下一个人拿到的是「某人某天看到的景象」。选样覆盖计划要求的三类：单窗口工具、多窗口/停靠应用、用 fs 与对话框的应用。",
+  "apps": [
+    {
+      "slug": "random-frame",
+      "repo": "amokrzycki/random-frame",
+      "sha": "686613be26183e785edff57493a0c0ed8cfb684b",
+      "covers": "单窗口工具；用 dialog / fs / clipboard / opener / updater / process（插件面最宽）",
+      "tauri": "2.12.1"
+    },
+    {
+      "slug": "pier-dock",
+      "repo": "pier-dock/pier-dock",
+      "sha": "2eb10f3454c87686021757f0e394e207c2fa9fa7",
+      "covers": "多窗口/停靠；用 menu / webview / webviewWindow / mocks / autostart / opener",
+      "tauri": "2.1.0"
+    },
+    {
+      "slug": "lumos",
+      "repo": "DaiYiqq/lumos",
+      "sha": "7887793eb164af1956f839cc74f72df1d3ee195f",
+      "covers": "对话框 + 长任务流；用 core 的 Channel（流式回传，本库没有对应物）",
+      "tauri": "2.12.4"
+    }
+  ]
+}

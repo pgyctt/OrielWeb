@@ -24,6 +24,13 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>, options?:
  * 带去另一条没有测试覆盖的路。
  *
  * @returns {boolean}
+ * @remarks
+ * <b>迁移时用这个函数替换 `__TAURI_INTERNALS__` 探测</b>。
+ *
+ * B7 的迁移演练里 3 个真实应用全都在做环境判断（`"__TAURI_INTERNALS__" in window`，
+ * 有的还进一步探 `transformCallback` 决定要不要 `listen`）。本库**不提供**这个标记，
+ * 漏改的后果不是报错而是**静默走进浏览器降级分支**：假数据、被禁用的按钮、
+ * 没注册的监听——编译器一句话都不会说。所以这条规则写在这里，而不是只写进文档。
  */
 export function isTauri(): boolean;
 /**

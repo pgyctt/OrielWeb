@@ -54,7 +54,7 @@
 | **B5** | 显示器模型（5 个导出） | 中 | 三平台后端 + 新命令 + `window.js` | 无 | ✅ |
 | **B6a** | 菜单模型 + `Menu.popup`（不做菜单栏） | 中高 | C# 菜单模型 + 前端模块 | 无 | ✅ |
 | **B6b** | 应用菜单栏（三平台各自的挂载点） | 高 | 三平台窗口宿主（Linux 要改布局） | B6a | ✅ |
-| **B7** | 真实 Tauri 应用迁移演练 | 中 | 无代码改动，产出卡点清单 | B0–B4 | — |
+| **B7** | 真实 Tauri 应用迁移演练 | 中 | 演练工装 + 卡点清单（无 API 改动） | B0–B4 | — |
 
 **推荐顺序（单人）**：`B0 → B1 → B2 → B3 → B4 → B5 → B6a → B6b → B7`
 **双人并行**：A 线 `B0 → B1 → B3 → B5`；B 线 `B2 → B4`；汇合后 `B6a → B6b`。
@@ -71,7 +71,8 @@
 | B5 | 1 | 5 | ~15 条 + 1 个自检 | 中 |
 | B6a | 2 | 4 | ~12 条 + 1 个自检 | 中高 |
 | B6b | 0 | 6 | ~9 条 + 3 个自检 | 高 |
-| **合计** | **~6** | **~35** | **~100 条** | — |
+| B7 | 3 | 4 | 0 条（产出 `docs/MIGRATION-FINDINGS.md` + 演练工装） | 中 |
+| **合计** | **~9** | **~39** | **~100 条** | — |
 
 > 这个量级说明：**B0–B2 是"一个下午能落三批"的规模**，B4/B6b 才是真正吃时间的两块。
 > 如果只能做三批，就做 B0 + B1 + B2——它们解决"差异看不见 + 迁移静默出错 + 页面不能退出"，性价比最高。
@@ -444,7 +445,7 @@ pwsh tools/verify-windows.ps1 -Stages selftest   # 含 windownew
 | B5 | ✅ 完成（2026-10-19） | `5c3c17c`：`IMonitorBackend` + 三平台 `*MonitorBackend`、5 个 `window.*` 命令、`--selftest monitors`（Windows 实测 PASS，Linux/macOS 走 CI） |
 | B6a | ✅ 完成（2026-10-19） | `@orielweb/api/menu`（8 个导出，`NativeIcon` 56 键逐键对齐）、`menu.popup` / `menu.close`、三平台按坐标弹出、`--selftest menu` |
 | B6b | ✅ 完成（2026-10-19，三平台全做含 Linux） | `menu.setAsAppMenu` / `menu.setAsWindowMenu`、三平台菜单栏落点、`GtkBox{menubar,webview}` 布局改造、`--selftest menubar`（含客户区几何断言） |
-| B7 | 待开始 | 需要 2–3 个真实 Tauri 应用做迁移演练 |
+| B7 | ✅ 完成（2026-10-19） | 3 个真实应用（228 个源文件、16 个模块、24 个符号）机械迁移：`tools/migration-drill/` + `docs/MIGRATION-FINDINGS.md`（含命令名映射表与按频率排序的卡点） |
 
 > **B4 的一处实现细节值得记住**：Tauri 用 `once('tauri://created')` 通知建窗结果，
 > 本库没有这条页面事件（`WEBVIEW_CREATED` 在桌面端不会触发），所以改成构造即发起、
@@ -532,6 +533,31 @@ pwsh tools/verify-windows.ps1 -Stages selftest   # 含 windownew
 >    单测（纯换算函数）看不出来，肉眼也容易当成页面自己的问题。`--selftest menubar` 因此
 >    把重点放在**内高变化**上（装上变小、拆掉复原），而不是"菜单画出来没有"。
 >    未覆盖的：**原生点击 → 事件**那一段要真人点一下，CI 上做不到，如实留作人工项。
+>
+> **B7 改变了"优先级怎么定"这件事本身**（详细结论见 `docs/MIGRATION-FINDINGS.md`）：
+>
+> 1. **账本给出的是错误的粒度**。演练里 `Channel` / `onBackButtonPress` / `writeImage`
+>    在账本上都是"缺 1 个符号"，实际成本从 **0 行（删掉 Android 分支）到改 IPC 协议**。
+>    下一轮的计划必须带"迁移改法"这一列，否则会按符号个数分配预算。
+>
+> 2. **编译器看不见的差异比缺能力更危险**。3/3 个应用都用
+>    `"__TAURI_INTERNALS__" in window` 做环境探测——本库没有这个标记也不该有。漏改的后果
+>    不是报错，而是**静默走进浏览器降级分支**（假数据、被禁用的按钮、没注册的监听）。
+>    另一同类：random-frame 的测试直接按 Tauri 的线格式桩 `plugin:fs|write_file`（32 处），
+>    迁移后这些测试会全红。
+>
+> 3. **先做符号检查再做 tsc**。真实应用缺 `node_modules` 时 tsc 先吐几千条"找不到 react"，
+>    而符号检查不依赖任何外部包。更关键的是 tsc 的**过滤规则**：按"这行出现过某个导入名"
+>    过滤会把 4 条真信号埋进 50 多条噪音——必须按**诊断位置的符号解析到哪个文件**判定。
+>    这与 B0 那条"先让差异可见"是同一件事的另一面：**过滤器的失败形态是让真信号消失**。
+>
+> 4. **"缺 API"里混着"该删代码"**。`onBackButtonPress` 的两处调用都在 Android 分支里——
+>    判断标准是"目标平台有没有这个概念"，不是"Tauri 有没有这个导出"。给桌面库塞一个
+>    永不触发的空实现，只是把"你根本没有返回键"藏起来。
+>
+> 5. **菜单这一次反过来证明了价值**：三个应用里 `Menu.new({ items: [{ id, text, action }] })`
+>    的调用形状与本库**零差异**（pier-dock 3 个文件）。B6a/B6b 按真实用法对齐的判断，
+>    在演练里得到了独立确认。
 
 ---
 
@@ -546,4 +572,13 @@ B4 页面建窗         ← 多窗口应用的门槛
 B5 显示器           ← 多屏体验的门槛
 B6 菜单             ← 先 popup，菜单栏按平台拆（Linux 最后/可不做）
 B7 迁移演练         ← 停止按名字对账，让真实卡点决定下一步
+```
+
+B7 跑完之后的结论（2026-10-19，证据见 `docs/MIGRATION-FINDINGS.md`）：
+
+```
+B8 页面事件面   ← 拖放事件（宿主已有 FileDropped，只缺"变成页面事件"这一层）
+B9 Channel 取舍 ← 先决策"由库提供 / event+requestId 官方配方 / 不支持"，不是先动手
+不做            ← plugin-updater、clipboard.writeImage、onBackButtonPress
+                  （前两项是整块生态能力；第三项是桌面库不该有的移动端 API）
 ```

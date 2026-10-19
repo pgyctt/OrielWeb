@@ -78,3 +78,7 @@ publish/
 # 参照实现的源码树不该进仓库：一致性测试只用 npm 包（见 packages/api/tests/tauri-alignment.test.mjs）。
 tauri-project/
 
+
+# B7 迁移演练的取样源码与改写产物（可随时由 tools/migration-drill 重新下载生成）。
+# 第三方应用源码不入库：只保留固定 SHA 的清单与结论（docs/MIGRATION-FINDINGS.md）。
+/.drill/

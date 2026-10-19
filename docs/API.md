@@ -966,9 +966,19 @@ Tauri 那边回到创建 `Menu` 的那个 JS 上下文——单窗口应用两�
 
 它等价于 Tauri 的 `__TAURI_INTERNALS__`：能用，但**不是公开 API**。新代码请用 `@orielweb/api/*`。
 
+> **名字不同，这一点会静默咬人**：`window.oriel` 不是 `__TAURI_INTERNALS__` 的别名。
+> 从 Tauri 迁过来的代码里那种 `"__TAURI_INTERNALS__" in window` 环境探测，迁移后**恒为
+> `false`**——不报错，只是让应用走进浏览器降级分支（假数据、被禁用的按钮、没注册的监听）。
+> 请一律换成 `isTauri()`（`@orielweb/api/core`）。B7 演练的 3 个真实应用全都在做这种探测，
+> 见 [MIGRATION-FINDINGS](./MIGRATION-FINDINGS.md)。
+
 ### 11.2 `@orielweb/api`（推荐）
 
-模块名与 `@tauri-apps/api` 一一对应，迁移 = 换 import 前缀。当前已提供 `core` / `event` / `window` / `dpi` / `mocks` / `path` / `app` / `fs` / `opener` / `notification` / `autostart` / `clipboard` / `dialog` / `image` / `menu`（15 个）。
+模块名与 `@tauri-apps/api` 一一对应，迁移 = 换 import 前缀。当前已提供 `core` / `event` / `window` / `dpi` / `mocks` / `path` / `app` / `fs` / `opener` / `notification` / `autostart` / `clipboard` / `dialog` / `image` / `menu` / `webviewWindow`（16 个）。
+
+> 真正要换的不只是 import：**`invoke('plugin:fs|write_file')` 这类命令名、测试夹具里的线格式、
+> `__TAURI_INTERNALS__` 探测**都要跟着换。对照表与真实卡点清单见
+> [MIGRATION-FINDINGS](./MIGRATION-FINDINGS.md)（由 3 个真实 Tauri 2 应用的迁移演练产出）。
 
 ```js
 import { getCurrentWindow } from '@orielweb/api/window';
