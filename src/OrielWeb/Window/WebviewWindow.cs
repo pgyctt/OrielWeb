@@ -176,6 +176,23 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// <see cref="ShowContextMenu(IReadOnlyList{OrielMenuItem})"/> 是 0.1 起的公开 API。
     /// </remarks>
     public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items, OrielPosition? position)
+        => ShowContextMenu(items, position, null);
+
+    /// <summary>
+    /// 在指定位置弹出，并可选地在若干毫秒后**自动关闭**。
+    /// </summary>
+    /// <param name="items">菜单树。</param>
+    /// <param name="position">弹出位置（逻辑像素）；<c>null</c> 表示鼠标位置。</param>
+    /// <param name="autoDismissAfter">
+    /// 自动关闭延时；<c>null</c> 表示等用户选择。
+    /// </param>
+    /// <remarks>
+    /// 这个重载主要为**无交互的自检与自动化测试**存在：Windows 的弹出会阻塞到用户选择，
+    /// 而 CI 上没有人点，没有自动关闭就会一直挂着。
+    /// 应用代码通常不需要它——用户点菜单外面就取消了。
+    /// </remarks>
+    public void ShowContextMenu(
+        IReadOnlyList<OrielMenuItem> items, OrielPosition? position, TimeSpan? autoDismissAfter)
     {
         ArgumentNullException.ThrowIfNull(items);
         if (items.Count == 0)
@@ -183,7 +200,7 @@ public sealed class WebviewWindow : IOrielWindowControl
             return;
         }
 
-        Backend.ShowContextMenu(items, position);
+        Backend.ShowContextMenu(items, position, autoDismissAfter);
     }
 
     /// <summary>

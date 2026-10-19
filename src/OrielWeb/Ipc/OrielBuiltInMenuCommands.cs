@@ -87,8 +87,31 @@ internal static class OrielBuiltInMenuCommands
         }
 
         IOrielWindowControl target = OrielCommandTarget.ResolveControl(sender, args);
-        target.ShowContextMenu(items, position?.ToLogical(target));
+        target.ShowContextMenu(items, position?.ToLogical(target), AutoDismissDelay);
         return null;
+    }
+
+    /// <summary>
+    /// 无交互环境下的自动关闭延时（从环境变量读，默认关闭）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>为什么不走页面 API</b>：这是给自检与自动化测试用的，不是应用功能。
+    /// 加进 <c>menu.popup</c> 的参数会让它成为公开契约的一部分，而它解决的是一个
+    /// 纯测试问题（CI 上没有人点菜单，Windows 的阻塞弹出会一直挂着）。
+    /// </para>
+    /// <para>
+    /// 环境变量名带 <c>ORIELWEB_</c> 前缀，与其他内部开关同族。
+    /// 值是毫秒；解析失败或非正数一律当作"不自动关闭"——配置写错不该让菜单行为变怪。
+    /// </para>
+    /// </remarks>
+    private static TimeSpan? AutoDismissDelay
+    {
+        get
+        {
+            string? raw = Environment.GetEnvironmentVariable("ORIELWEB_MENU_AUTODISMISS_MS");
+            return int.TryParse(raw, out int ms) && ms > 0 ? TimeSpan.FromMilliseconds(ms) : null;
+        }
     }
 
     /// <summary>

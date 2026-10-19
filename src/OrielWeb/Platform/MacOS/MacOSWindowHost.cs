@@ -483,13 +483,21 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     /// <paramref name="position"/> 为 null 时位置由当前 <c>NSEvent</c> 决定；
     /// 没有当前事件时 <see cref="MacOSMenu.Popup"/> 会明确跳过并记日志，而不是弹到随机位置。
     /// </remarks>
-    public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items, OrielPosition? position)
+    public void ShowContextMenu(
+        IReadOnlyList<OrielMenuItem> items, OrielPosition? position, TimeSpan? autoDismissAfter = null)
     {
         _contextMenu?.Dispose();
         _contextMenu = MacOSMenu.Build(items, ActivateMenuItem);
         if (_contextMenu is not null && _webview != 0)
         {
             _contextMenu.Popup(_webview, position);
+
+            // macOS 的弹出本来就不阻塞，"自动关闭"在这里是"到点了把它收起来"。
+            if (autoDismissAfter is { } delay)
+            {
+                MacOSMenu pending = _contextMenu;
+                _ = Task.Delay(delay).ContinueWith(_ => pending.CancelTracking(), TaskScheduler.Default);
+            }
         }
     }
 

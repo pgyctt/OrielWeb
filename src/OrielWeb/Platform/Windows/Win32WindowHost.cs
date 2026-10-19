@@ -375,7 +375,8 @@ internal partial class Win32WindowHost : IWindowBackend
     /// 每次调用都新建并销毁原生菜单：上下文菜单的内容通常随调用点而变（点在不同对象上），
     /// 缓存它反而要额外判断"内容变了没有"。
     /// </remarks>
-    public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items, OrielPosition? position)
+    public void ShowContextMenu(
+        IReadOnlyList<OrielMenuItem> items, OrielPosition? position, TimeSpan? autoDismissAfter = null)
     {
         using Win32Menu? menu = Win32Menu.Build(items);
         if (menu is null)
@@ -400,7 +401,7 @@ internal partial class Win32WindowHost : IWindowBackend
             }
         }
 
-        OrielMenuItem? item = menu.Popup(_hwnd, screenPoint);
+        OrielMenuItem? item = menu.Popup(_hwnd, screenPoint, autoDismissAfter);
         if (item is not null)
         {
             ActivateMenuItem(item);
@@ -408,20 +409,23 @@ internal partial class Win32WindowHost : IWindowBackend
     }
 
     /// <summary>
-    /// 结束正在跟踪的菜单（<c>EndMenu</c>，等价于用户按 Esc）。
+    /// 结束正在跟踪的菜单（投递 <c>WM_CANCELMODE</c> 给菜单属主窗口）。
     /// </summary>
     /// <remarks>
     /// <para>
-    /// 必须在 UI 线程上调用——Win32 的菜单跟踪是**线程局部**的，<c>EndMenu</c> 只结束
-    /// 调用线程自己的模态循环。调用方（<c>menu.close</c> 命令）已经从 IPC 回到 UI 线程，
-    /// 所以这里不再二次编组。
+    /// <b>为什么不用 <c>EndMenu</c></b>：那个只结束"当前线程的菜单循环"，而本库的菜单走
+    /// <c>TrackPopupMenuEx</c>——它用的是**自己创建的**模态循环，<c>EndMenu</c> 对它无效
+    /// （实测：菜单照样挂着，自检 60 秒超时）。<c>WM_CANCELMODE</c> 会走进那个循环的取消路径。
     /// </para>
     /// <para>
-    /// 没有菜单在跟踪时返回 false 是正常情形（页面可能重复调 <c>menu.close</c>），
-    /// 不记日志、不抛错。
+    /// 用 <c>PostMessage</c> 而不是 <c>SendMessage</c>：<c>SendMessage</c> 要等目标窗口处理完
+    /// 才返回，而目标窗口此刻正阻塞在菜单循环里——同步发送会把自己也堵住。
+    /// </para>
+    /// <para>
+    /// 没有菜单在跟踪时这条消息是空操作，不报错（页面可能重复调 <c>menu.close</c>）。
     /// </para>
     /// </remarks>
-    public void CloseContextMenu() => _ = Win32.EndMenu();
+    public void CloseContextMenu() => _ = Win32.PostMessageW(_hwnd, Win32Constants.WM_CANCELMODE, 0, 0);
 
     /// <summary>菜单项 → 行为：role 走共享解释器，自定义项上报到 <see cref="ContextMenuItemClicked"/>。</summary>
     private void ActivateMenuItem(OrielMenuItem item)

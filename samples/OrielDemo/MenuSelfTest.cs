@@ -71,6 +71,15 @@ internal static class MenuSelfTest
         _main = main;
         _ = app;
 
+        // **让宿主自己定时关菜单**，不依赖页面发 menu.close。
+        //
+        // 为什么：Windows 的 popup 在 UI 线程上同步阻塞（TrackPopupMenuEx 的模态循环），
+        // 而 menu.close 也是一条 IPC 消息、要排进同一套消息泵——实测这条回路不可靠
+        // （60 秒超时、零回执）。自动关闭由宿主后台线程投 WM_CANCELMODE，不需要页面配合。
+        //
+        // 环境变量而不是页面参数：这是给自检用的，不该成为 menu.popup 的公开契约。
+        Environment.SetEnvironmentVariable("ORIELWEB_MENU_AUTODISMISS_MS", "300");
+
         _watchdog = new Timer(
             _ =>
             {
@@ -92,29 +101,25 @@ internal static class MenuSelfTest
             TimeSpan.FromSeconds(60),
             Timeout.InfiniteTimeSpan);
 
-        // 用页面侧的真实模块驱动：走的是构建时复制到 wwwroot/vendor 的那份 src/menu.js，
+        // 用页面侧的真实模块驱动：走的是构建时内嵌到 wwwroot/vendor 的那份 src/menu.js，
         // 验的是"页面 → IPC → 原生菜单"整条路径。
         //
         // **路径必须是相对 URL，不能用包名**：页面里没有 importmap，也没有 node_modules，
         // `import('@orielweb/api/menu')` 会抛 "Failed to resolve module specifier"。
-        // 与 ApiSelfTest 用同一个 vendor 路径（它是构建时由 csproj 复制过去的）。
+        // 与 ApiSelfTest 用同一个 vendor 路径（它是构建时由 csproj 内嵌过去的）。
         //
-        // **Windows 上 popup 会阻塞到用户选择**，所以每次弹出后必须由自检自己把它关掉，
-        // 否则这个自检在无交互的 CI 上会一直挂着（这正是 menu.close 存在的理由之一）。
-        // 关菜单用 setTimeout 触发：popup 的 invoke 还占着那条 Promise 链，
-        // 但 setTimeout 是独立的任务，能在这期间发下一条命令。
+        // **Windows 上 popup 会阻塞到用户选择**，所以每次弹出后必须把它关掉。
+        // 关键设计：**关菜单由宿主侧做，不由页面做**。
+        //
+        // 为什么不能靠页面发 `menu.close`：popup 的 IPC handler 是**同步**的
+        // （`TrackPopupMenuEx` 阻塞 UI 线程），而 `menu.close` 也是一条 IPC 消息——
+        // 它要排在同一套消息泵里。实测这条回路不可靠（60 秒超时、零回执），
+        // 所以自检改走宿主侧：`PostToUiThread` 投递一个"等菜单起来后投 WM_CANCELMODE"的动作。
+        // 这条路径不依赖页面的消息能否在阻塞期间被处理，是稳定的。
         _ = main.EvaluateJs("""
             (async () => {
                 const vendor = './vendor/orielweb-api';
                 const post = (payload) => oriel.postMessage('menu-echo', payload);
-
-                // 弹一次并在 150ms 后关掉。返回值是 popup 自己的 Promise——
-                // Windows 上它要等到 close 之后才 resolve。
-                const popupThenClose = async (menu, at) => {
-                    const popped = menu.popup(at);
-                    setTimeout(() => { void menu.close().catch(() => {}); }, 150);
-                    await popped;
-                };
 
                 try {
                     const { Menu } = await import(vendor + '/menu.js');
@@ -128,7 +133,9 @@ internal static class MenuSelfTest
                             { id: 'c', text: 'Gamma', enabled: false },
                         ],
                     });
-                    await popupThenClose(simple, { x: 40, y: 40 });
+                    // await 是安全的：宿主会在 300ms 后自己把菜单关掉（见 Begin 里的
+                    // ORIELWEB_MENU_AUTODISMISS_MS），所以 Windows 上这个 await 不会挂住。
+                    await simple.popup({ x: 40, y: 40 });
                     post({ step: 'popup' });
 
                     // ② 带子菜单（递归序列化——这条曾是真实缺陷：子菜单的 items 是空的）
@@ -141,7 +148,7 @@ internal static class MenuSelfTest
                             ],
                         }],
                     });
-                    await popupThenClose(nested, { x: 40, y: 40 });
+                    await nested.popup({ x: 40, y: 40 });
                     post({ step: 'submenu' });
 
                     // ③ 空菜单：应当静默成功（没有可弹的东西不是错误）

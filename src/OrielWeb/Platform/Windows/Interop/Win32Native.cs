@@ -37,6 +37,16 @@ internal static class Win32Constants
     public const uint WM_CONTEXTMENU = 0x007B;
 
     /// <summary>
+    /// 取消当前的模态状态（菜单跟踪、拖拽、滚动条拖动）。
+    /// </summary>
+    /// <remarks>
+    /// 这是**关掉 <c>TrackPopupMenuEx</c> 弹出的菜单**的可靠方式：那个函数用的是自己创建的
+    /// 模态循环，<c>EndMenu</c> 对它无效，而 <c>WM_CANCELMODE</c> 会走进它的取消路径。
+    /// 投递给**菜单的属主窗口**（就是弹出时传的那个 hwnd）。
+    /// </remarks>
+    public const uint WM_CANCELMODE = 0x001F;
+
+    /// <summary>
     /// 窗口被移到不同 DPI 的显示器（或 DPI 设置变了）时收到。
     /// </summary>
     /// <remarks>
@@ -671,11 +681,13 @@ internal static unsafe partial class Win32
     internal static partial bool SetForegroundWindow(nint hwnd);
 
     /// <summary>
-    /// 结束调用线程上正在进行的菜单模态循环（等价于用户按 Esc）。
+    /// 结束调用线程上正在进行的**经典**菜单循环（<c>TrackPopupMenu</c> 之前那套
+    /// <c>StartMenu</c>/<c>EndMenu</c> 协议）。
     /// </summary>
     /// <remarks>
-    /// 必须在**拥有那个菜单的线程**上调用（Win32 的菜单跟踪是线程局部的）。
-    /// 返回 false 表示该线程上没有菜单在跟踪——空操作，不是错误。
+    /// <b>本库不用它</b>：所有菜单都走 <c>TrackPopupMenuEx</c>，那个函数用的是自己创建的
+    /// 模态循环，只认 <see cref="Win32Constants.WM_CANCELMODE"/>。这里保留声明只是为了
+    /// 让下一个人不必重新查一遍"为什么 EndMenu 关不掉菜单"——答案就是这条注释。
     /// </remarks>
     [LibraryImport("user32")]
     [return: MarshalAs(UnmanagedType.Bool)]

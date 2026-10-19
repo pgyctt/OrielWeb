@@ -30,6 +30,8 @@ public sealed class BuiltInMenuCommandTests
 
         public List<OrielPosition?> Positions { get; } = [];
 
+        public List<TimeSpan?> AutoDismisses { get; } = [];
+
         public OrielApp App { get; set; } = Oriel.CreateBuilder().Build();
 
         public bool IsVisible => true;
@@ -45,10 +47,12 @@ public sealed class BuiltInMenuCommandTests
             Positions.Add(null);
         }
 
-        public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items, OrielPosition? position)
+        public void ShowContextMenu(
+            IReadOnlyList<OrielMenuItem> items, OrielPosition? position, TimeSpan? autoDismissAfter = null)
         {
             Menus.Add(items);
             Positions.Add(position);
+            AutoDismisses.Add(autoDismissAfter);
         }
 
         public void CloseContextMenu() => Calls.Add("closeContextMenu");
@@ -234,6 +238,46 @@ public sealed class BuiltInMenuCommandTests
             dispatcher, "menu.popup", new { items = Array.Empty<object>() }, window: window);
 
         Assert.False(reply.RootElement.TryGetProperty("error", out _));
+    }
+
+    [Fact]
+    public async Task Popup_ReadsAutoDismissFromEnvironment()
+    {
+        // 自动关闭是给无交互自检用的：Windows 的弹出会阻塞到用户选择，CI 上没人点，
+        // 没有它自检就挂到看门狗超时。它**刻意不走页面 API**——那是测试设施，不是应用功能。
+        //
+        // 这里只能验到"环境变量被读到了"，真正的关闭动作（PostMessage WM_CANCELMODE）
+        // 由 --selftest menu 在真机上取证。
+        string? original = Environment.GetEnvironmentVariable("ORIELWEB_MENU_AUTODISMISS_MS");
+        try
+        {
+            Environment.SetEnvironmentVariable("ORIELWEB_MENU_AUTODISMISS_MS", "250");
+            Assert.Equal(TimeSpan.FromMilliseconds(250), ReadAutoDismiss());
+
+            // 非法值一律当作"不自动关闭"：配置写错不该让菜单行为变怪。
+            Environment.SetEnvironmentVariable("ORIELWEB_MENU_AUTODISMISS_MS", "abc");
+            Assert.Null(ReadAutoDismiss());
+
+            Environment.SetEnvironmentVariable("ORIELWEB_MENU_AUTODISMISS_MS", "-5");
+            Assert.Null(ReadAutoDismiss());
+
+            Environment.SetEnvironmentVariable("ORIELWEB_MENU_AUTODISMISS_MS", null);
+            Assert.Null(ReadAutoDismiss());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("ORIELWEB_MENU_AUTODISMISS_MS", original);
+        }
+    }
+
+    /// <summary>读命令层私有的自动关闭延时（纯环境变量解析，用反射即可）。</summary>
+    private static TimeSpan? ReadAutoDismiss()
+    {
+        System.Reflection.PropertyInfo property = typeof(OrielBuiltInMenuCommands).GetProperty(
+            "AutoDismissDelay",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+
+        return (TimeSpan?)property.GetValue(null);
     }
 
     // ---- menu.close ----

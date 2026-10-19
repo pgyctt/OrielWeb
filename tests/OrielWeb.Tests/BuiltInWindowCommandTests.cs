@@ -120,8 +120,9 @@ public sealed class BuiltInWindowCommandTests
         public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items) => Calls.Add($"showContextMenu:{items.Count}");
 
         /// <summary>带位置的弹出（<c>menu.popup</c> 用）：把位置一起记下来，便于断言换算。</summary>
-        public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items, OrielPosition? position)
-            => Calls.Add($"showContextMenuAt:{items.Count}:{position?.X},{position?.Y}");
+        public void ShowContextMenu(
+            IReadOnlyList<OrielMenuItem> items, OrielPosition? position, TimeSpan? autoDismissAfter = null)
+            => Calls.Add($"showContextMenuAt:{items.Count}:{position?.X},{position?.Y}:{autoDismissAfter?.TotalMilliseconds}");
 
         /// <summary>记录"关掉在屏菜单"（<c>menu.close</c> 用）。与 showContextMenu 分开记，两者语义相反。</summary>
         public void CloseContextMenu() => Calls.Add("closeContextMenu");

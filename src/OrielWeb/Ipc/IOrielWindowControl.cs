@@ -107,12 +107,16 @@ internal interface IOrielWindowControl
     /// <param name="position">
     /// 弹出位置（**逻辑像素**，相对窗口客户区左上角）；<c>null</c> 表示鼠标位置。
     /// </param>
+    /// <param name="autoDismissAfter">
+    /// 自动关闭延时；<c>null</c> 表示等用户选择。
+    /// </param>
     /// <remarks>
     /// 放在接口上而不是让命令层直接摸 <see cref="WebviewWindow"/> 的重载：命令层只认这个窄接口，
     /// 否则它就得依赖具体窗口类型——那是它一直在避免的事，也会让"菜单树解析"这段逻辑
     /// 在单测里完全够不着（假窗口实现不了 <see cref="WebviewWindow"/> 的额外重载）。
     /// </remarks>
-    void ShowContextMenu(IReadOnlyList<OrielMenuItem> items, OrielPosition? position);
+    void ShowContextMenu(
+        IReadOnlyList<OrielMenuItem> items, OrielPosition? position, TimeSpan? autoDismissAfter = null);
 
     /// <summary>
     /// 关掉当前正在显示的上下文菜单（<c>menu.close</c> 用）。

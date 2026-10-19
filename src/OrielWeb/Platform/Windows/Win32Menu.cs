@@ -58,7 +58,18 @@ internal sealed unsafe class Win32Menu : IDisposable
     /// 调用方负责把逻辑像素换算成屏幕物理坐标——客户端坐标与屏幕坐标之间还差一个
     /// <c>ClientToScreen</c>，那一步需要窗口句柄，属于窗口宿主的职责（见 <c>Win32WindowHost</c>）。
     /// </param>
-    internal OrielMenuItem? Popup(nint ownerHwnd, POINT? screenPoint = null)
+    /// <param name="autoDismissAfter">
+    /// 自动关闭的延时；<c>null</c>（默认）表示等用户选择。
+    /// </param>
+    /// <remarks>
+    /// <b>为什么需要自动关闭</b>：<c>TrackPopupMenuEx</c> 阻塞调用线程直到用户选择，
+    /// 而调用线程就是 UI 线程。无交互的自检（CI）里没有人点，于是它会一直挂着。
+    /// 靠页面发 <c>menu.close</c> 解决不了：那也是一条 IPC 消息，要排进同一套消息泵，
+    /// 而泵此刻正被这个函数占着——实测这条回路不可靠（60 秒超时、零回执）。
+    /// 所以由**宿主自己**起一个后台线程，延时后投 <c>WM_CANCELMODE</c>。
+    /// </remarks>
+    internal OrielMenuItem? Popup(
+        nint ownerHwnd, POINT? screenPoint = null, TimeSpan? autoDismissAfter = null)
     {
         if (_handle == 0)
         {
@@ -70,6 +81,18 @@ internal sealed unsafe class Win32Menu : IDisposable
         // 两处经典 workaround，缺了会出"点菜单外面不消失"或"菜单立刻被关掉"：
         // 弹出前把宿主窗口置前台；跟踪结束后补一条 WM_NULL 收尾消息队列。
         _ = Win32.SetForegroundWindow(ownerHwnd);
+
+        // 自动关闭：后台线程只负责"到点了投一条消息"，不碰任何 UI 对象。
+        // PostMessage 是线程安全的，且不需要 UI 线程配合——这正是它能穿透
+        // TrackPopupMenuEx 那个阻塞的原因。
+        if (autoDismissAfter is { } delay)
+        {
+            nint target = ownerHwnd;
+            _ = Task.Delay(delay).ContinueWith(
+                _ => Win32.PostMessageW(target, Win32Constants.WM_CANCELMODE, 0, 0),
+                TaskScheduler.Default);
+        }
+
         uint command = Win32.TrackPopupMenuEx(
             _handle,
             Win32Constants.TPM_RIGHTBUTTON | Win32Constants.TPM_RETURNCMD,

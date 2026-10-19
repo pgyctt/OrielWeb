@@ -499,7 +499,12 @@ internal interface IWindowBackend
     /// 页面侧 <c>menu.popup(at)</c> 的物理坐标在进入这里之前已由命令层换算成逻辑像素——
     /// 后端只认一种单位，免得三平台各自再判一次。
     /// </param>
-    void ShowContextMenu(IReadOnlyList<OrielMenuItem> items, OrielPosition? position);
+    /// <param name="autoDismissAfter">
+    /// 自动关闭延时；<c>null</c>（默认）表示等用户选择。
+    /// 无交互的自检（CI）靠它才能在没人点的情况下跑完——见 Windows 实现里的说明。
+    /// </param>
+    void ShowContextMenu(
+        IReadOnlyList<OrielMenuItem> items, OrielPosition? position, TimeSpan? autoDismissAfter = null);
 
     /// <summary>
     /// 关掉当前正在显示的上下文菜单（没有菜单在屏上时是空操作）。

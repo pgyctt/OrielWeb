@@ -340,7 +340,8 @@ public sealed class BuiltInWindowApiCommandTests
 
         public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items) => Calls.Add("showContextMenu");
 
-        public void ShowContextMenu(IReadOnlyList<OrielMenuItem> items, OrielPosition? position)
+        public void ShowContextMenu(
+            IReadOnlyList<OrielMenuItem> items, OrielPosition? position, TimeSpan? autoDismissAfter = null)
             => Calls.Add("showContextMenuAt");
 
         public void CloseContextMenu() => Calls.Add("closeContextMenu");
