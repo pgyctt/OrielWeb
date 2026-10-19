@@ -92,8 +92,12 @@ internal static class MenuSelfTest
             TimeSpan.FromSeconds(60),
             Timeout.InfiniteTimeSpan);
 
-        // 用页面侧的真实模块驱动：`import('@orielweb/api/menu')` 走的是打包后的
-        // src/menu.js，验的是"页面 → IPC → 原生菜单"整条路径。
+        // 用页面侧的真实模块驱动：走的是构建时复制到 wwwroot/vendor 的那份 src/menu.js，
+        // 验的是"页面 → IPC → 原生菜单"整条路径。
+        //
+        // **路径必须是相对 URL，不能用包名**：页面里没有 importmap，也没有 node_modules，
+        // `import('@orielweb/api/menu')` 会抛 "Failed to resolve module specifier"。
+        // 与 ApiSelfTest 用同一个 vendor 路径（它是构建时由 csproj 复制过去的）。
         //
         // **Windows 上 popup 会阻塞到用户选择**，所以每次弹出后必须由自检自己把它关掉，
         // 否则这个自检在无交互的 CI 上会一直挂着（这正是 menu.close 存在的理由之一）。
@@ -101,6 +105,7 @@ internal static class MenuSelfTest
         // 但 setTimeout 是独立的任务，能在这期间发下一条命令。
         _ = main.EvaluateJs("""
             (async () => {
+                const vendor = './vendor/orielweb-api';
                 const post = (payload) => oriel.postMessage('menu-echo', payload);
 
                 // 弹一次并在 150ms 后关掉。返回值是 popup 自己的 Promise——
@@ -112,7 +117,7 @@ internal static class MenuSelfTest
                 };
 
                 try {
-                    const { Menu } = await import('@orielweb/api/menu');
+                    const { Menu } = await import(vendor + '/menu.js');
 
                     // ① 普通三项菜单（含一条分隔线与一个勾选项）
                     const simple = await Menu.new({

@@ -892,6 +892,28 @@ export class Menu extends MenuItemBase {
             label: typeof window?.label === 'string' ? window.label : null,
         });
     }
+
+    /**
+     * @override
+     * @param {string} id
+     * @param {Map<string, (id: string) => void>} actions
+     * @param {string} token
+     * @returns {object}
+     * @remarks
+     * **`Menu` 被当成菜单项传进来时按子菜单序列化**。Tauri 的类型签名不允许这样
+     * （`MenuOptions.items` 里没有 `Menu`），但运行期拦不住——而继承来的默认实现会把它
+     * 序列化成 `kind: 'item'` 且**丢掉整棵子项**，表现是"子菜单弹出来是空的"。
+     * 与其静默丢内容，不如按它实际的结构（一个装项的容器）序列化成子菜单。
+     */
+    _wireCore(id, actions, token) {
+        return {
+            kind: 'submenu',
+            id,
+            text: this._text,
+            enabled: this._enabled,
+            items: this._items.map((item) => item._wire(actions, token)),
+        };
+    }
 }
 
 /**

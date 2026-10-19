@@ -157,6 +157,21 @@ test('传实例与传选项对象等价', async () => {
     assert.deepEqual(calls[0][1].items.map((i) => i.id), ['a', 'b']);
 });
 
+test('把 Menu 当项传入时按子菜单序列化（不丢子项）', async () => {
+    // Tauri 的类型签名不允许把 Menu 放进 items，但运行期拦不住。
+    // 继承来的默认 `_wireCore` 会把它序列化成 `kind: 'item'` 并**丢掉整棵子项**——
+    // 表现是"子菜单弹出来是空的"，而且不报错。宁可按它实际的结构序列化。
+    const { calls } = installTransport();
+    const inner = await Menu.new({ items: [{ id: 'x', text: 'X' }] });
+    const outer = await Menu.new({ items: [inner] });
+
+    await outer.popup();
+
+    const wired = calls[0][1].items[0];
+    assert.equal(wired.kind, 'submenu');
+    assert.deepEqual(wired.items.map((i) => i.id), ['x']);
+});
+
 // ---------------------------------------------------------------------------
 // 2. action 路由
 // ---------------------------------------------------------------------------
