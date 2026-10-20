@@ -7,6 +7,24 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
+## Unreleased
+
+### 新增
+
+- **webview 级能力（B16）：`window.setZoom` / `window.clearAllBrowsingData`**，
+  落在 `@orielweb/api/webviewWindow` 的 `WebviewWindow` 上（Tauri 把它们放在 `Webview`
+  侧，本库窗口即 webview）。三平台都是**真实现**、语义一致：
+  `setZoom(1.0)` = 100%（WebView2 的 `ZoomFactor` / `WKWebView.pageZoom` /
+  `webkit_web_view_set_zoom_level`——改的是布局视口，`100vw`、媒体查询、
+  `devicePixelRatio` 跟着变）；`clearAllBrowsingData()` 清本应用自己的全部浏览数据
+  （缓存、Cookie、localStorage、IndexedDB、Service Worker）。**返回时清除已发起，
+  不是已清完**（三平台的原生 API 都是异步的，完成回调只进诊断日志）——紧随其后的
+  读取看到旧数据属于这个已知窗口。两个命令都**不在标题栏白名单**，要显式
+  `Allow("window.setZoom")` / `Allow("window.clearAllBrowsingData")`——后者销毁登录态，
+  不该被一个被注入的页面随手调用。Windows 的清除要求运行时支持
+  `ICoreWebView2Profile2`（1.0.1108+，2022 年的版本）；老运行时会失败但**进诊断日志**，
+  不会静默消失。
+
 ## 0.4.1 - 2026-10-20
 
 ### 变更（BREAKING）

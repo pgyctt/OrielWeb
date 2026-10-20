@@ -568,6 +568,25 @@ public sealed class WebviewWindow : IOrielWindowControl
     private OrielTheme? _themeOverride;
 
     /// <summary>
+    /// 设置这个窗口的缩放倍率（对标 Tauri 2 的 <c>Webview.setZoom</c>）。
+    /// </summary>
+    /// <remarks><c>1.0</c> = 100%。三平台语义一致，见 <see cref="IWindowBackend.SetZoom"/>。
+    /// 有效性（有限正数）由 <c>window.setZoom</c> 命令层校验。</remarks>
+    public void SetZoom(double scale) => Backend.SetZoom(scale);
+
+    /// <summary>
+    /// 清除本应用 profile 的全部浏览数据（对标 Tauri 2 的
+    /// <c>Webview.clearAllBrowsingData</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 返回时清除已**发起**（三平台的原生 API 都是异步的，完成只进诊断日志），
+    /// 见 <see cref="IWindowBackend.ClearAllBrowsingData"/>。
+    /// 需要能力声明（<c>window.clearAllBrowsingData</c>）——它销毁登录态与本地存储，
+    /// 不该被一个被注入的页面随手调用。
+    /// </remarks>
+    public void ClearAllBrowsingData() => Backend.ClearAllBrowsingData();
+
+    /// <summary>
     /// 只读的覆写值（<see cref="IOrielWindowControl"/> 需要，但公开 API 上不给 setter——
     /// 外部只能经 <see cref="ThemeOverride"/> 改，那是有意的）。
     /// </summary>

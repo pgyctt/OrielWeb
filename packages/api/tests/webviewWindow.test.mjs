@@ -142,3 +142,68 @@ test('getAllWebviewWindows 映射 window.getAll 的结果，不建窗', async ()
 
     clearMocks();
 });
+
+// ---- B16：webview 级真实现 ----
+
+test('setZoom 发 window.setZoom（带 label），1.0 = 100%', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport();
+    setTransportOverride(transport);
+
+    const window = getCurrentWebviewWindow();
+    await window.setZoom(1.5);
+
+    assert.deepEqual(calls, [['window.setZoom', { label: 'main', value: 1.5 }]]);
+
+    clearMocks();
+});
+
+test('setZoom 对非法值在页面侧就拒（0、负数、非有限、类型错）', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport();
+    setTransportOverride(transport);
+
+    const window = getCurrentWebviewWindow();
+
+    for (const bad of [0, -1, NaN, Infinity, -Infinity, '1.5', null]) {
+        await assert.rejects(
+            () => window.setZoom(/** @type {any} */ (bad)),
+            TypeError,
+            `scale=${String(bad)} 应当抛 TypeError`);
+    }
+
+    assert.deepEqual(calls, [], '参数错时不该发出任何命令');
+
+    clearMocks();
+});
+
+test('clearAllBrowsingData 发 window.clearAllBrowsingData（带 label）', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport();
+    setTransportOverride(transport);
+
+    const window = getCurrentWebviewWindow();
+    await window.clearAllBrowsingData();
+
+    assert.deepEqual(calls, [['window.clearAllBrowsingData', { label: 'main' }]]);
+
+    clearMocks();
+});
+
+test('setZoom / clearAllBrowsingData 作用于实例自己的 label，不是发起者', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({ 'window.getAll': ['main', 'settings'] }, 'main');
+    setTransportOverride(transport);
+
+    // 从列表包装一个"别人的窗口"（label=settings，发起者是 main）
+    const [other] = await getAllWebviewWindows().then((ws) => ws.filter((w) => w.label === 'settings'));
+    await other.setZoom(2);
+    await other.clearAllBrowsingData();
+
+    assert.deepEqual(
+        calls.filter(([name]) => name !== 'window.getAll').map(([name, args]) => [name, args.label]),
+        [['window.setZoom', 'settings'], ['window.clearAllBrowsingData', 'settings']],
+        'label 取实例的，不取发起窗口的');
+
+    clearMocks();
+});

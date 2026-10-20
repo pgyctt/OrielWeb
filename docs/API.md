@@ -1429,6 +1429,24 @@ await win.setTitle('改了标题');   // 之后就是普通 Window
 > `window.new` 不在标题栏白名单里：新窗口跑的是应用自己的页面、共享令牌与能力配置，
 > 建窗是能力而不是元信息。
 
+**webview 级能力（B16，落在 `WebviewWindow` 上；Tauri 放在 `Webview` 侧）**：
+
+```js
+await win.setZoom(1.5);          // 150%；1.0 = 100%。需要 Allow("window.setZoom")
+await win.clearAllBrowsingData(); // 清全部浏览数据。需要 Allow("window.clearAllBrowsingData")
+```
+
+- **`setZoom(scale)`**：缩放倍率必须是有限正数（页面侧就拦）。三平台语义一致——
+  Windows 是 WebView2 的 `ZoomFactor`、macOS 是 `WKWebView.pageZoom`、
+  Linux 是 `webkit_web_view_set_zoom_level`。改的是**布局视口**（与浏览器
+  Ctrl+滚轮同一机制），不是 CSS transform：`100vw`、媒体查询、`devicePixelRatio`
+  都会跟着变。Windows 引擎内部只接受 0.02–10.0，越界值被引擎钳制。
+- **`clearAllBrowsingData()`**：清掉本应用自己的全部浏览数据（缓存、Cookie、
+  localStorage、IndexedDB、Service Worker……），不涉及其他应用。
+  **返回时清除已发起，不是已清完**——三平台的原生 API 都是异步的，而本库的命令是
+  同步契约；紧随其后的读取看到旧数据（理论上可能）属于这个已知窗口。
+  清除会销毁登录态与本地存储，**务必显式声明能力**，不要放进任何宽泛的通配里。
+
 **显示器（`availableMonitors` / `primaryMonitor` / `currentMonitor` / `monitorFromPoint` / `cursorPosition`，无需 `Allow`）**：
 
 ```js

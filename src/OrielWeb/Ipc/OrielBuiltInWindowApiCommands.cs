@@ -321,6 +321,43 @@ internal static class OrielBuiltInWindowApiCommands
                 };
                 return true;
 
+            case "window.setZoom":
+                // 对标 Tauri 的 Webview.setZoom：1.0 = 100%。落点见 IWindowBackend.SetZoom。
+                //
+                // 有效性在这里拦（不是传给引擎让它钳）：scale <= 0 或 NaN/∞ 是调用方的 bug，
+                // 而"传了 0 得到某个莫名缩放"远不如当场报错好查。上界不做库级钳制——
+                // Windows 引擎有 0.02–10.0 的接受范围并按 ZoomFactorChanged 回报实际值，
+                // 库替引擎猜边界只会猜错。
+                handler = static (sender, args) =>
+                {
+                    double scale = RequiredDouble(args, "value", "window.setZoom");
+                    if (!double.IsFinite(scale) || scale <= 0)
+                    {
+                        throw new OrielIpcException(
+                            $"window.setZoom: value 必须是有限正数（1.0 = 100%），实际是 {scale}。")
+                        {
+                            Code = OrielIpcErrorCodes.InvalidArgument,
+                        };
+                    }
+
+                    Mutate(() => Resolve(sender, args).SetZoom(scale));
+                    return null;
+                };
+                return true;
+
+            case "window.clearAllBrowsingData":
+                // 对标 Tauri 的 Webview.clearAllBrowsingData：清本应用 profile 的
+                // 全部浏览数据（缓存、Cookie、localStorage、IndexedDB、Service Worker……）。
+                //
+                // 不进标题栏白名单（它销毁登录态），需要显式 Allow。返回时清除已发起
+                // 而不是已清完（三平台的原生 API 都是异步的），见 IWindowBackend.ClearAllBrowsingData。
+                handler = static (sender, args) =>
+                {
+                    Mutate(() => Resolve(sender, args).ClearAllBrowsingData());
+                    return null;
+                };
+                return true;
+
             case "window.scaleFactor":
                 // 页面用它把 PhysicalSize 换算成逻辑尺寸（Tauri 的 setSize 两种都收）。
                 // 取窗口所在显示器的值——窗口拖到另一块不同缩放的显示器后它会变。

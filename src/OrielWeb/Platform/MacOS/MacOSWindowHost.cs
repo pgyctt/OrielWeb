@@ -401,6 +401,60 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         }
     }
 
+    /// <summary>设置缩放倍率（见 <see cref="IWindowBackend.SetZoom"/>）。</summary>
+    /// <remarks>
+    /// 落点是 <c>WKWebView.pageZoom</c>（1.0 = 100%，macOS 10.14+），与 WebView2 的
+    /// ZoomFactor、WebKitGTK 的 zoom_level 语义一致。必须在主线程调——命令层本来就在。
+    /// </remarks>
+    public void SetZoom(double scale)
+    {
+        if (_webview == 0)
+        {
+            return;
+        }
+
+        ObjCRuntime.SendVoidDouble(_webview, ObjCRuntime.Sel("setPageZoom:"), scale);
+    }
+
+    /// <summary>清除全部浏览数据（见 <see cref="IWindowBackend.ClearAllBrowsingData"/>）。</summary>
+    /// <remarks>
+    /// <para>
+    /// 落点是 <c>[WKWebsiteDataStore.defaultDataStore removeDataOfTypes:
+    /// allWebsiteDataTypes modifiedSince:[NSDate distantPast] completionHandler:nil]</c>：
+    /// 默认（持久）数据存储里的全部类型、全部时间的数据。
+    /// </para>
+    /// <para>
+    /// completionHandler 传 nil 与本文件 <c>evaluateJavaScript:completionHandler:</c>
+    /// 的既有做法同一姿态（三处都在传 0）：完成通知拿不到，清除照常执行。
+    /// 该 API 本身自 macOS 10.13 起可用，无版本顾虑。
+    /// </para>
+    /// </remarks>
+    public void ClearAllBrowsingData()
+    {
+        if (_webview == 0)
+        {
+            return;
+        }
+
+        nint storeType = ObjCRuntime.GetClassOrThrow("WKWebsiteDataStore");
+        nint store = ObjCRuntime.SendId(storeType, ObjCRuntime.Sel("defaultDataStore"));
+        nint types = ObjCRuntime.SendId(storeType, ObjCRuntime.Sel("allWebsiteDataTypes"));
+        nint distantPast = ObjCRuntime.SendId(
+            ObjCRuntime.GetClassOrThrow("NSDate"), ObjCRuntime.Sel("distantPast"));
+        if (store == 0 || types == 0 || distantPast == 0)
+        {
+            // 类或对象没拿到（理论上不会——都是 Foundation/WebKit 的稳定 API）。
+            // 静默返回会不可观测，走诊断通道。
+            OrielDiagnostics.Report("[OrielWeb] clearAllBrowsingData：WKWebsiteDataStore 对象获取失败，未清除。");
+            return;
+        }
+
+        ObjCRuntime.SendVoidObjObjObj(
+            store,
+            ObjCRuntime.Sel("removeDataOfTypes:modifiedSince:completionHandler:"),
+            types, distantPast, 0);
+    }
+
     /// <summary>设置最大尺寸（见 <see cref="IWindowBackend.SetMaxSize"/>）。</summary>
     /// <remarks>
     /// <c>setContentMaxSize:</c> 收 <c>NSSize</c>。<b>传 0 表示不限制</b>——

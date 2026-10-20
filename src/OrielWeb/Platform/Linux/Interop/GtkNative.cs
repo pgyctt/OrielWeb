@@ -822,6 +822,31 @@ internal static unsafe partial class GtkNative
     [LibraryImport(WebKit, EntryPoint = "webkit_web_view_evaluate_javascript", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void WebkitWebViewEvaluateJavaScript(nint webview, string script, nint length, nint worldName, nint sourceUri, nint cancellable, nint callback, nint userData);
 
+    // ---- 缩放与浏览数据（B16：window.setZoom / window.clearAllBrowsingData）----
+
+    /// <summary>
+    /// 设置页面布局视口的缩放倍率（1.0 = 100%）。与 WebView2 的 ZoomFactor、
+    /// WKWebView 的 pageZoom 语义一致——改的是布局视口，不是 CSS transform。
+    /// </summary>
+    [LibraryImport(WebKit, EntryPoint = "webkit_web_view_set_zoom_level")]
+    internal static partial void WebkitWebViewSetZoomLevel(nint webview, double zoomLevel);
+
+    /// <summary>
+    /// 取 webview 的网站数据管理器（共享缓存/Cookie/localStorage 的宿主对象）。
+    /// 自 WebKitGTK 2.16 起可用；本库要求 4.1 API 集（2.40+），无兼容性问题。
+    /// </summary>
+    [LibraryImport(WebKit, EntryPoint = "webkit_web_view_get_website_data_manager")]
+    internal static partial nint WebkitWebViewGetWebsiteDataManager(nint webview);
+
+    /// <summary>
+    /// 异步清除指定类型的网站数据。<c>timeSpan = 0</c> 表示**全部时间**（清光），
+    /// <c>callback</c> 可为 NULL（GLib 允许——清除照常执行，只是拿不到完成通知；
+    /// 本库的命令层是同步契约，这里发起后立刻返回，见 IWindowBackend.ClearAllBrowsingData 的说明）。
+    /// </summary>
+    [LibraryImport(WebKit, EntryPoint = "webkit_website_data_manager_clear")]
+    internal static partial void WebkitWebsiteDataManagerClear(
+        nint manager, uint types, long timeSpan, nint cancellable, nint callback, nint userData);
+
     /// <summary>
     /// 设置"内核就绪前的底色"（见 <c>OrielWindowOptions.BackgroundColor</c>）。
     /// </summary>

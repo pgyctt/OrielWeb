@@ -528,17 +528,10 @@ const METHOD_GAP_GROUPS = [
             'window.Window#setProgressBar', 'window.Window#setOverlayIcon',
         ],
     },
-    {
-        reason: '【B·跨平台一致·待做】webview 级能力，三平台都支持，只是没排到：' +
-            '`setZoom`（WebView2 的 ZoomFactor / WebKitGTK 的 zoom_level / WKWebView 的 pageZoom）与 ' +
-            '`clearAllBrowsingData`（清缓存与站点数据，三家都有对应 API）。' +
-            '两者都落在 `WebviewWindow` 上（Tauri 把它们放在 Webview 侧），B4 只做了建窗最小面，' +
-            '留到后续批次。',
-        methods: [
-            'webviewWindow.WebviewWindow#setZoom',
-            'webviewWindow.WebviewWindow#clearAllBrowsingData',
-        ],
-    },
+    // 【B·跨平台一致·B16 已完成】webviewWindow.WebviewWindow#setZoom 与
+    // #clearAllBrowsingData 已实现（WebView2 ZoomFactor+Profile.ClearBrowsingDataAsync /
+    // WKWebView pageZoom+WKWebsiteDataStore / WebKitGTK zoom_level+website_data_manager_clear），
+    // 从待做清单划掉——清单过期会被反向断言拦下。
 ];
 
 /** 展开成"方法 → 原因"的扁平表，供断言用。 */

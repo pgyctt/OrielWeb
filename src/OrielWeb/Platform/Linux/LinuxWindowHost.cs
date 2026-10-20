@@ -375,6 +375,57 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         _backend.SetApplicationTheme(theme);
     }
 
+    /// <summary>设置缩放倍率（见 <see cref="IWindowBackend.SetZoom"/>）。</summary>
+    /// <remarks>
+    /// 落点是 <c>webkit_web_view_set_zoom_level</c>（1.0 = 100%），与 WebView2 的
+    /// ZoomFactor、WKWebView 的 pageZoom 语义一致，无平台差异要登记。
+    /// 必须在 GTK 主线程调——命令层本来就在主线程上执行。
+    /// </remarks>
+    public void SetZoom(double scale)
+    {
+        if (!WindowAlive || _webview == 0)
+        {
+            return;
+        }
+
+        GtkNative.WebkitWebViewSetZoomLevel(_webview, scale);
+    }
+
+    /// <summary>清除全部浏览数据（见 <see cref="IWindowBackend.ClearAllBrowsingData"/>）。</summary>
+    /// <remarks>
+    /// <para>
+    /// 落点是 <c>webkit_website_data_manager_clear(ALL, 0, NULL callback)</c>：
+    /// 管理器从 webview 上取（2.16+），<c>timeSpan = 0</c> 表示清全部时间的数据。
+    /// </para>
+    /// <para>
+    /// 数据类型的位值**显式列出**而不是用 <c>WEBKIT_WEBSITE_DATA_ALL</c> 常量：
+    /// 那个组合常量自 2.40 才有、位值随版本增加，显式列出我们想清的十二类
+    /// （2.16–4.1 的全部成员）在所有支持版本上语义一致。
+    /// 清除是异步 GTask，callback 传 NULL（GLib 允许）——发起后立刻返回，
+    /// 完成通知拿不到，见接口上的说明。
+    /// </para>
+    /// </remarks>
+    public void ClearAllBrowsingData()
+    {
+        if (!WindowAlive || _webview == 0)
+        {
+            return;
+        }
+
+        nint manager = GtkNative.WebkitWebViewGetWebsiteDataManager(_webview);
+        if (manager == 0)
+        {
+            return;
+        }
+
+        GtkNative.WebkitWebsiteDataManagerClear(manager, WebkitWebsiteDataAll, 0, 0, 0, 0);
+    }
+
+    /// <summary>
+    /// <c>WebKitWebsiteDataTypes</c> 的全部 12 类（MEMORY_CACHE 到 PLUGIN_DATA，2.16 定义全集）按位或。
+    /// </summary>
+    private const uint WebkitWebsiteDataAll = 0xFFF;
+
     /// <summary>设置最大尺寸（见 <see cref="IWindowBackend.SetMaxSize"/>）。</summary>
     /// <remarks>
     /// <para>

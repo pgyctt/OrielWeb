@@ -148,6 +148,54 @@ export class WebviewWindow extends Window {
         warnCompat('WebviewWindow.reparent 是补壳：本库的 webview 属于它的窗口，不能移动。');
         return Promise.resolve();
     }
+
+    // ---- webview 级能力（B16）----
+    //
+    // 这两个是**真实现**（不是补壳）：三平台都有对应物，且语义一致——
+    // Tauri 把它们放在 `Webview` 类上，本库窗口即 webview，落在 `WebviewWindow`。
+
+    /**
+     * 设置缩放倍率（对标 Tauri 的 `Webview.setZoom`）。
+     *
+     * @param {number} scale 缩放倍率，`1.0` = 100%。必须是有限正数。
+     * @returns {Promise<void>}
+     * @remarks
+     * 三平台落点语义一致：Windows 是 WebView2 的 `ZoomFactor`、macOS 是
+     * `WKWebView.pageZoom`、Linux 是 `webkit_web_view_set_zoom_level`。
+     * 改的是**布局视口**（与浏览器 Ctrl+滚轮同一机制），不是 CSS transform——
+     * `100vw`、媒体查询、`devicePixelRatio` 都会跟着变。
+     *
+     * Windows 的引擎内部只接受 0.02–10.0，越界值会被引擎钳制（并以
+     * `ZoomFactorChanged` 回报实际值）；本库不做二次钳制。
+     *
+     * **需要能力声明**（`window.setZoom`）。
+     */
+    async setZoom(scale) {
+        if (typeof scale !== 'number' || !Number.isFinite(scale) || scale <= 0) {
+            throw new TypeError('setZoom: scale 必须是有限正数（1.0 = 100%）。');
+        }
+
+        await invoke('window.setZoom', { label: this.label, value: scale });
+    }
+
+    /**
+     * 清除全部浏览数据（对标 Tauri 的 `Webview.clearAllBrowsingData`）：
+     * 缓存、Cookie、localStorage、IndexedDB、Service Worker……
+     *
+     * @returns {Promise<void>}
+     * @remarks
+     * 三平台清的都是**本应用自己的**数据存储（Windows 是 profile 目录、
+     * macOS 是 `WKWebsiteDataStore.default`、Linux 是 `WebKitWebsiteDataManager`），
+     * 不涉及其他应用。
+     *
+     * **返回时清除已发起，不是已清完**：三平台的原生 API 都是异步的，
+     * 而本库的命令是同步契约——紧随其后的读取看到旧数据（理论上可能）
+     * 属于这个已知窗口。清除会**销毁登录态与本地存储**，所以
+     * **需要能力声明**（`window.clearAllBrowsingData`）——不该被一个被注入的页面随手调用。
+     */
+    async clearAllBrowsingData() {
+        await invoke('window.clearAllBrowsingData', { label: this.label });
+    }
 }
 
 /**

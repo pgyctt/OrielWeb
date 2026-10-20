@@ -2542,6 +2542,71 @@ internal partial class Win32WindowHost : IWindowBackend
         _maxHeight = height;
     }
 
+    /// <summary>设置缩放倍率（见 <see cref="IWindowBackend.SetZoom"/>）。</summary>
+    /// <remarks>
+    /// <para>
+    /// 落点是 <c>ICoreWebView2Controller.ZoomFactor</c>（1.0 = 100%）。必须从 UI 线程调——
+    /// 命令层本来就在 UI 线程上执行，这里不再自行派发。
+    /// </para>
+    /// <para>
+    /// WebView2 装配完成之前（<c>_controller</c> 为 null）没有可缩放的引擎，
+    /// 此时没有页面可缩放，直接跳过——与 <see cref="SetTheme"/> 对 <c>_hwnd == 0</c>
+    /// 的处理同一姿态。
+    /// </para>
+    /// </remarks>
+    public void SetZoom(double scale)
+    {
+        if (_controller is null)
+        {
+            return;
+        }
+
+        _controller.ZoomFactor = scale;
+    }
+
+    /// <summary>清除全部浏览数据（见 <see cref="IWindowBackend.ClearAllBrowsingData"/>）。</summary>
+    /// <remarks>
+    /// <para>
+    /// 落点是 <c>ICoreWebView2Profile.ClearBrowsingDataAsync(All)</c>
+    /// （WebView2Aot 的 <c>ClearBrowsingDataAllAsync</c> 扩展）——清的是
+    /// <c>WithAppInfo</c> 决定的那份 profile 目录，不涉及其他应用。
+    /// </para>
+    /// <para>
+    /// 该 API 要求 WebView2 运行时支持 <c>ICoreWebView2Profile2</c>（运行时 1.0.1108+，
+    /// 2022 年的版本）：老运行时会抛 COM 异常，**进诊断日志**而不是静默消失——
+    /// "调了没生效"必须可观测。
+    /// </para>
+    /// </remarks>
+    public void ClearAllBrowsingData()
+    {
+        if (_webView is null)
+        {
+            return;
+        }
+
+        // Profile 是 WebView2Aot 的扩展属性（IComObject<ICoreWebView2> → IComObject<ICoreWebView2Profile>?）。
+        IComObject<ICoreWebView2Profile>? profile = _webView.Profile;
+        if (profile is null)
+        {
+            OrielDiagnostics.Report("[OrielWeb] clearAllBrowsingData：拿不到 ICoreWebView2Profile，未清除。");
+            return;
+        }
+
+        _ = ClearBrowsingDataSafeAsync(profile);
+    }
+
+    private static async Task ClearBrowsingDataSafeAsync(IComObject<ICoreWebView2Profile> profile)
+    {
+        try
+        {
+            await profile.ClearBrowsingDataAllAsync().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            OrielDiagnostics.Report($"[OrielWeb] clearAllBrowsingData 失败（运行时可能不支持 Profile2）：{ex.Message}");
+        }
+    }
+
     /// <summary>请求用户注意（见 <see cref="IWindowBackend.RequestUserAttention"/>）。</summary>
     /// <remarks>
     /// 用 <c>FlashWindowEx</c> 闪任务栏按钮：

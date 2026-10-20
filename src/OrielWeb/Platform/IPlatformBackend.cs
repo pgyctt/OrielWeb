@@ -199,6 +199,51 @@ internal interface IWindowBackend
     void SetTheme(OrielTheme? theme);
 
     /// <summary>
+    /// 设置这个窗口的缩放倍率（<c>1.0</c> = 100%），对标 Tauri 2 的
+    /// <c>Webview.setZoom</c>。三平台落点：<b>Windows</b> 是
+    /// <c>ICoreWebView2Controller.ZoomFactor</c>、<b>macOS</b> 是
+    /// <c>WKWebView.pageZoom</c>、<b>Linux</b> 是 <c>webkit_web_view_set_zoom_level</c>
+    /// ——三者语义一致（页面布局视口的缩放倍率），没有平台差异要登记。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 与浏览器 Ctrl+滚轮的缩放是**同一个东西**（改的是布局视口宽度，
+    /// 不是 CSS transform），所以 <c>100vw</c>、媒体查询、设备像素比都会跟着变。
+    /// </para>
+    /// <para>
+    /// 有效性约束：<c>scale</c> 必须是有限正数，由**命令层**校验（在到达这里之前）。
+    /// Windows 的 ZoomFactor 引擎内部另有 0.02–10.0 的接受范围，越界值会被引擎钳制
+    /// 并通过 <c>ZoomFactorChanged</c> 事件回报实际值；本层不做二次钳制——
+    /// "给 20 得到 10"是引擎的事实，库替用户猜会猜错。
+    /// </para>
+    /// </remarks>
+    void SetZoom(double scale);
+
+    /// <summary>
+    /// 清除这个窗口所属 profile 的**全部**浏览数据（缓存、Cookie、localStorage、
+    /// IndexedDB、Service Worker……），对标 Tauri 2 的 <c>Webview.clearAllBrowsingData</c>。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 三平台落点：<b>Windows</b> 是
+    /// <c>ICoreWebView2Profile.ClearBrowsingDataAsync(All)</c>、<b>macOS</b> 是
+    /// <c>WKWebsiteDataStore.removeData(ofTypes: allWebsiteDataTypes,
+    /// modifiedSince: distantPast)</c>、<b>Linux</b> 是
+    /// <c>webkit_website_data_manager_clear(ALL, timespan: 0)</c>。
+    /// 三家清的都是**本应用自己的**数据目录/数据存储——不涉及其他应用，也没有
+    /// 跨窗口的歧义（本库一个窗口一个 profile 的默认布局下，清的就是应用数据）。
+    /// </para>
+    /// <para>
+    /// **完成时机是"已发起"而不是"已清完"**：三家的清除 API 都是异步的
+    /// （WebView2 返回 <c>IAsyncAction</c>、WebKitGTK 是 GTask、macOS 要 completionHandler 块），
+    /// 而本库的命令层是同步契约——这里发起清除后立刻返回，完成回调只进诊断日志。
+    /// 页面在紧随其后的读取里看到旧数据（理论上可能）属于这个已知窗口，
+    /// 文档已写明。macOS 的 completionHandler 传 nil（与 evaluateJavaScript 同一姿态）。
+    /// </para>
+    /// </remarks>
+    void ClearAllBrowsingData();
+
+    /// <summary>
     /// 设置窗口的最大尺寸（逻辑像素）。传 0 表示不限制。
     /// </summary>
     /// <remarks>

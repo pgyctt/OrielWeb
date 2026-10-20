@@ -86,6 +86,8 @@ public sealed class BuiltInWindowApiCommandTests
     [InlineData("window.setCloseIntercept")]
     [InlineData("window.setEventForwarding")]
     [InlineData("window.setTheme")]
+    [InlineData("window.setZoom")]
+    [InlineData("window.clearAllBrowsingData")]
     public void OtherWindowCommands_AreNotAlwaysAllowed(string command)
     {
         // 这些才是"能力"：改标题、改尺寸、枚举窗口、改别的窗口的转发开关……
@@ -193,6 +195,57 @@ public sealed class BuiltInWindowApiCommandTests
 
         Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
         Assert.Contains("未知的 value", reply.RootElement.GetProperty("error").GetString());
+    }
+
+    // ---- B16：webview 级能力（setZoom / clearAllBrowsingData）----
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task SetZoom_RejectsNonPositiveOrNonFinite(double value)
+    {
+        // 缩放倍率是有限正数。这个校验在 Resolve 之前（参数层），
+        // 所以 FakeWindow 没注册进 app.Windows 也不影响断言。
+        // （NaN/±∞ 走不到这里——标准 JSON 序列化在测试装具层就拒了；
+        // 页面侧的对应拦截在 webviewWindow.test.mjs 里钉着，命令层的
+        // IsFinite 检查是给"宿主直接收到原始 JSON"那条路兜底的。）
+        (var dispatcher, var window) = Create("window.setZoom");
+
+        (JsonDocument reply, _) = await TestHarness.DispatchAsync(
+            dispatcher, "window.setZoom", new { value }, window: window);
+
+        Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Contains("有限正数", reply.RootElement.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task SetZoom_AcceptsPositiveValue()
+    {
+        // 1.5 是合法值：错误不该是参数校验或权限拒绝
+        // （FakeWindow 不在 app.Windows 里，会在 Resolve 处失败——那是另一回事）。
+        (var dispatcher, var window) = Create("window.setZoom");
+
+        (JsonDocument reply, _) = await TestHarness.DispatchAsync(
+            dispatcher, "window.setZoom", new { value = 1.5 }, window: window);
+
+        string error = reply.RootElement.GetProperty("error").GetString() ?? string.Empty;
+        Assert.DoesNotContain("有限正数", error);
+        Assert.DoesNotContain("Allow 名单", error);
+    }
+
+    [Fact]
+    public async Task ClearAllBrowsingData_PassesTheCapabilityGate()
+    {
+        // 门禁必须放行显式声明的命令。真窗口上的行为由 --selftest 取证，
+        // 这里钉的是"声明了 window.clearAllBrowsingData 就不再被门禁拦"。
+        (var dispatcher, var window) = Create("window.clearAllBrowsingData");
+
+        (JsonDocument reply, _) = await TestHarness.DispatchAsync(
+            dispatcher, "window.clearAllBrowsingData", null, window: window);
+
+        string error = reply.RootElement.GetProperty("error").GetString() ?? string.Empty;
+        Assert.DoesNotContain("Allow 名单", error);
+        Assert.DoesNotContain("Deny 名单", error);
     }
 
     [Fact]
