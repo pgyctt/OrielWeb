@@ -62,7 +62,15 @@ public sealed class ShellPolicyTests
     [Fact]
     public void UsablePath_AcceptsExistingFileAndDirectory()
     {
-        string file = Path.GetTempFileName();
+        // 不用 Path.GetTempFileName()：它是遗留 API，在临时目录里文件数接近 65535 时会直接抛，
+        // 而且内部靠"生成 → 创建 → 撞名重试"实现，失败时的异常（拒绝访问/已存在）指向的是
+        // 临时目录的状态，而不是被测代码。这台机器上它就抛过一次（本文件第 65 行），
+        // 表现成"路径校验有 bug"，查下去却是环境。
+        // 自己拼一个唯一名是最小依赖的做法：唯一性由 Guid 保证，不需要 API 帮忙试错。
+        string file = Path.Combine(
+            Path.GetTempPath(),
+            "oriel-usable-" + Guid.NewGuid().ToString("N") + ".tmp");
+        File.WriteAllText(file, string.Empty);
         try
         {
             Assert.True(OrielShellPolicy.IsUsablePath(file));
