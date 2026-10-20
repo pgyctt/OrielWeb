@@ -85,9 +85,6 @@ internal partial class Win32WindowHost : IWindowBackend
     /// </remarks>
     private Win32DropTarget? _dropTarget;
 
-    /// <summary>本次拖动会话收到的 <c>over</c> 条数（只在诊断里汇报，用于验证"边拖边汇报"真的在工作）。</summary>
-    private int _dragOverCount;
-
     // DirectComposition 合成树。窗口用 WS_EX_NOREDIRECTIONBITMAP 创建，没有系统绘制的表面，
     // 内容完全由这棵树提供；WebView2 作为其中一个视觉（RootVisualTarget），因此它不再是子窗口。
     private DCompDevice? _dcompDevice;
@@ -225,6 +222,7 @@ internal partial class Win32WindowHost : IWindowBackend
     event Action<OrielMessageReceivedEventArgs>? IWindowBackend.MessageReceived { add => MessageReceived += value; remove => MessageReceived -= value; }
     event Action<string>? IWindowBackend.ContextMenuItemClicked { add => ContextMenuItemClicked += value; remove => ContextMenuItemClicked -= value; }
     event Action<OrielFileDropEventArgs>? IWindowBackend.FileDropped { add => FileDropped += value; remove => FileDropped -= value; }
+    event Action<OrielDragEventArgs>? IWindowBackend.DragDrop { add => DragDrop += value; remove => DragDrop -= value; }
 
     public bool IsMaximized => Win32.IsZoomed(_hwnd);
 
@@ -246,6 +244,7 @@ internal partial class Win32WindowHost : IWindowBackend
 
     private event Action<string>? ContextMenuItemClicked;
     private event Action<OrielFileDropEventArgs>? FileDropped;
+    private event Action<OrielDragEventArgs>? DragDrop;
 
     /// <summary>渲染引擎内建右键菜单的策略；见 <see cref="OrielContextMenuPolicy"/>。</summary>
     public OrielContextMenuPolicy ContextMenuPolicy { get; set; }
@@ -359,41 +358,23 @@ internal partial class Win32WindowHost : IWindowBackend
         }
     }
 
-    /// <summary>OLE 拖放事件 → 现有 <see cref="FileDropped"/> 链路（drop）或诊断通道（其余）。</summary>
-    /// <remarks>
-    /// <b>enter/over/leave 暂时只落诊断，不推页面</b>：页面事件面要与 macOS/Linux 同批上线，
-    /// 否则会变成"只在 Windows 上收到 enter"的平台分裂（B10 计划里写明了不许这样）。
-    /// 这一版先把"能不能收到"这件事验证掉。
-    /// </remarks>
+    /// <summary>OLE 拖放事件 → 页面事件管道（<see cref="DragDrop"/>）+ B8 的 <see cref="FileDropped"/>。</summary>
     private void OnDragEvent(Win32DragEvent e)
     {
-        switch (e.Kind)
+        OrielDragEventType type = e.Kind switch
         {
-            case Win32DragKind.Enter:
-                _dragOverCount = 0;
-                OrielDiagnostics.Report($"[OrielWeb] drag.enter x={e.X} y={e.Y} files={e.Paths.Count}");
-                return;
+            Win32DragKind.Enter => OrielDragEventType.Enter,
+            Win32DragKind.Over => OrielDragEventType.Over,
+            Win32DragKind.Leave => OrielDragEventType.Leave,
+            _ => OrielDragEventType.Drop,
+        };
 
-            case Win32DragKind.Over:
-                // over 每秒可达几十条，逐条打会把日志冲掉；用计数在 leave/drop 时一并汇报，
-                // 既能证明它真的在来，又不淹没别的信息。
-                _dragOverCount++;
-                return;
+        DragDrop?.Invoke(new OrielDragEventArgs(type, e.Paths, e.X, e.Y));
 
-            case Win32DragKind.Leave:
-                OrielDiagnostics.Report($"[OrielWeb] drag.leave（本次收到 {_dragOverCount} 条 over）");
-                return;
-
-            case Win32DragKind.Drop:
-                OrielDiagnostics.Report(
-                    $"[OrielWeb] drag.drop x={e.X} y={e.Y} files={e.Paths.Count}（本次收到 {_dragOverCount} 条 over）");
-                if (e.Paths.Count > 0)
-                {
-                    // B8 的页面链路（drag.drop → tauri://drag-drop）因此完全不变
-                    FileDropped?.Invoke(new OrielFileDropEventArgs(e.Paths));
-                }
-
-                return;
+        if (e.Kind == Win32DragKind.Drop && e.Paths.Count > 0)
+        {
+            // B8 已发布的公开事件：页面链路（drag.drop → tauri://drag-drop）因此完全不变
+            FileDropped?.Invoke(new OrielFileDropEventArgs(e.Paths));
         }
     }
 
@@ -405,7 +386,7 @@ internal partial class Win32WindowHost : IWindowBackend
     /// 少一次就会得到一个截断的路径（或用固定大小缓冲区去猜）。HDROP 的生命周期由我们负责，
     /// 所以放在 <c>finally</c> 里释放——中途抛异常也不能漏。
     /// </remarks>
-    private void HandleFileDrop(nint hDrop)
+    private void HandleFileDrop(nint hDrop, nint lParam)
     {
         if (hDrop == 0)
         {
@@ -417,10 +398,26 @@ internal partial class Win32WindowHost : IWindowBackend
             // 解析交给 Win32FileDropReader：OLE 的 drop 分支读的是同一种 HDROP，
             // 两处各写一份"取长度读两次"迟早会有一处写错，而错法是"路径被截断"。
             List<string> paths = Win32FileDropReader.Read(hDrop);
-            if (paths.Count > 0)
+            if (paths.Count == 0)
             {
-                FileDropped?.Invoke(new OrielFileDropEventArgs(paths));
+                return;
             }
+
+            // lParam 是**屏幕**坐标（WM_DROPFILES 文档如此），换成客户区才与 OLE 那条路同口径
+            int screenX = (short)(lParam & 0xFFFF);
+            int screenY = (short)((lParam >> 16) & 0xFFFF);
+            int x = 0;
+            int y = 0;
+            var origin = new POINT(0, 0);
+            if (Win32.ClientToScreen(_hwnd, ref origin))
+            {
+                x = screenX - origin.X;
+                y = screenY - origin.Y;
+            }
+
+            // 降级路径（OLE 注册失败时）也要把 drop 送到同一条页面事件管道
+            DragDrop?.Invoke(new OrielDragEventArgs(OrielDragEventType.Drop, paths, x, y));
+            FileDropped?.Invoke(new OrielFileDropEventArgs(paths));
         }
         finally
         {
@@ -1223,7 +1220,7 @@ internal partial class Win32WindowHost : IWindowBackend
                 return 0;
 
             case Win32Constants.WM_DROPFILES:
-                HandleFileDrop((nint)wParam);
+                HandleFileDrop((nint)wParam, (nint)lParam);
                 return 0;
 
             case Win32Constants.WM_DPICHANGED:

@@ -584,8 +584,21 @@ internal interface IWindowBackend
     /// </remarks>
     OrielContextMenuPolicy ContextMenuPolicy { get; set; }
 
-    /// <summary>外部文件被拖进窗口。</summary>
+    /// <summary>外部文件被拖进窗口（只有"松手那一刻"，对标 B8）。</summary>
+    /// <remarks>
+    /// 保留它是因为 B8 已经发布：应用可能直接订阅了它。<see cref="DragDrop"/> 是同一件事的
+    /// 完整版本（四种阶段 + 坐标），新代码应当用后者。
+    /// </remarks>
     event Action<OrielFileDropEventArgs>? FileDropped;
+
+    /// <summary>
+    /// 拖放的四个阶段（enter / over / drop / leave），带客户区物理像素坐标。
+    /// </summary>
+    /// <remarks>
+    /// 平台能提供多少就报多少——**不允许"为了整齐"补假事件**：三平台都实现了四种才一起开
+    /// 页面事件面（见 B10 的计划），所以走到页面时四种都是真的。
+    /// </remarks>
+    event Action<OrielDragEventArgs>? DragDrop;
 
     Task<string> ExecuteScriptAsync(string script);
     void PostMessageAsJson(string json);

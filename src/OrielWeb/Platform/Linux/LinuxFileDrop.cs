@@ -24,6 +24,16 @@ internal sealed partial class LinuxWindowHost
         remove => FileDropped -= value;
     }
 
+    // B10 第二批：本平台目前只上报 drop（见 OnFilesDropped）。enter/over/leave 要 GTK 的
+    // drag-motion / drag-leave 信号，并把 widget 逻辑像素乘 scaleFactor 换成物理像素；
+    // 与页面事件面同批上线——只在 Windows 收到 enter 的平台分裂比三平台都没有更难查。
+    event Action<OrielDragEventArgs>? IWindowBackend.DragDrop
+    {
+        // 故意空实现：本平台还没有触发点（见上面的待办）
+        add { }
+        remove { }
+    }
+
     /// <summary>把 webview 注册为文件拖放目标（在 Create 里、webview 建好之后调用）。</summary>
     private static void EnableFileDrop(nint webview)
     {

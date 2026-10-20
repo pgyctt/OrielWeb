@@ -284,6 +284,16 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     event Action<OrielMessageReceivedEventArgs>? IWindowBackend.MessageReceived { add => MessageReceived += value; remove => MessageReceived -= value; }
     event Action<string>? IWindowBackend.ContextMenuItemClicked { add => ContextMenuItemClicked += value; remove => ContextMenuItemClicked -= value; }
     event Action<OrielFileDropEventArgs>? IWindowBackend.FileDropped { add => FileDropped += value; remove => FileDropped -= value; }
+    // B10 第二批：本平台目前只上报 drop（见 OnFilesDropped）。enter/over/leave 要各自的坐标系换算
+    // （macOS 左下原点 + backingScaleFactor、GTK 逻辑像素 + scaleFactor），与页面事件面同批上线——
+    // 只在 Windows 收到 enter 的平台分裂比三平台都没有更难查。
+    event Action<OrielDragEventArgs>? IWindowBackend.DragDrop
+    {
+        // 故意空实现：本平台还没有触发点（见上面的待办）。写成"转发到一个从不触发的私有事件"
+        // 只会换来一条 CS0067 和"看起来实现了"的错觉。
+        add { }
+        remove { }
+    }
 
     public bool IsMaximized => ObjCRuntime.SendBoolRet(_nsWindow, ObjCRuntime.Sel("isZoomed"));
 
