@@ -9,6 +9,7 @@
 // 与 app.js 一样吃前端包（相对路径 import 的理由见那边的文件头）。
 import { invoke } from "./vendor/orielweb-api/core.js";
 import { listen } from "./vendor/orielweb-api/event.js";
+import { getCurrentWindow } from "./vendor/orielweb-api/window.js";
 
 const logEl = document.getElementById("log");
 
@@ -24,6 +25,32 @@ function log(text, kind) {
     logEl.append(li);
     logEl.scrollTop = logEl.scrollHeight;
 }
+
+// 拖放（B10）：四个阶段都推回来。
+// over 每秒可达几十条，逐条写日志会把别的东西冲掉，所以只打印 enter / drop / leave，
+// over 用计数在 drop 与 leave 时一并汇报——"边拖边汇报真的在工作"这件事仍然可见。
+let dragOverCount = 0;
+getCurrentWindow().onDragDropEvent(({ payload }) => {
+    switch (payload.type) {
+        case "enter":
+            dragOverCount = 0;
+            log(`拖放 enter：${payload.paths.length} 项，位置 (${payload.position.x}, ${payload.position.y})`, "evt");
+            break;
+        case "over":
+            dragOverCount += 1;
+            break;
+        case "drop":
+            log(
+                `拖放 drop：${payload.paths.join(", ") || "（空）"}，位置 ` +
+                `(${payload.position.x}, ${payload.position.y})，期间 ${dragOverCount} 条 over`,
+                "evt",
+            );
+            break;
+        case "leave":
+            log(`拖放 leave（期间 ${dragOverCount} 条 over）`, "evt");
+            break;
+    }
+});
 
 // 宿主 → 页面：托管侧的事件都经这一条通道推过来。
 // payload 在 e.payload 里（包把宿主事件包成 { event, id, payload }）。
