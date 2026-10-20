@@ -7,10 +7,41 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
-## Unreleased
+## 0.4.1 - 2026-10-20
+
+### 变更（BREAKING）
+
+- **几何线格式改成 Tauri 2 形状（B14）**：`LogicalSize`/`PhysicalSize`/`LogicalPosition`/
+  `PhysicalPosition`/`Size`/`Position` 的 `toJSON()` 与宿主返回值现在都是**外部标记**
+  （`{ Logical: { x, y } }`），不再是旧的内联 tag（`{ type: 'Logical', x, y }`）。
+  **读兼容一个版本**：`normalizeSize`/`normalizePosition` 与宿主的 `menu.popup` 位置参数
+  两种形状都认；0.6.0 删旧形状读取。页面代码零改动（形状只在线格式上，类实例照常使用）；
+  自己解析这些 JSON 的代码要看一眼。迁移代码里依赖 Tauri 2 序列化形状的部分从此零差异。
 
 ### 新增
 
+- **`@orielweb/api/tray`（B12）**：`TrayIcon` 类（静态 `new`/`getById`/`removeById` + 实例
+  `setIcon`/`setMenu`/`setTooltip`/`setTitle`/`setVisible`/`setIconAsTemplate`/`setIconWithAsTemplate`/
+  `setMenuOnLeftClick`/`setShowMenuOnLeftClick`/`setTempDirPath`/`close`），形状与 Tauri 2 一致。
+  迁移代码 `import { TrayIcon } from '@tauri-apps/api/tray'` 改前缀即可。与 Tauri 的差别如实登记：
+  `rid` 是补壳（返回 `id`，本库没有资源表）、`setTempDirPath` 是补壳（本库不落盘图标）、
+  `setMenuOnLeftClick` 只在 Windows 生效（非 Windows 抛 `not_supported`）。补壳在 `UseDebug()`
+  下有警告日志——**补壳必须可观测**，否则"调用不报错但什么都没发生"是最难查的一类问题。
+- **`tray.setIcon` 的 JsImage 三形态**：与 `window.setIcon` 同一套（路径 / PNG·ICO 字节 / 裸 RGBA），
+  参数校验先于目标查找——参数错不会再被"托盘不存在"掩盖。
+- **托盘菜单项点击回传**：`CreateTray` 补上了 `MenuItemClicked → menu.itemclicked` 的接线
+  （此前事件定义了但没接，症状是"托盘菜单点了没反应"）。带 `action` 的菜单项经 token 前缀认领。
+- **`tray.setMenuOnLeftClick`**：运行期开关"左键点击弹出菜单"（`setShowMenuOnLeftClick` 同义）。
+- **类型与形状补齐（B13）**：`dpi.Size`/`dpi.Position`（联合包装类，含 `toLogical`/`toPhysical`）、
+  `window.CloseRequestedEvent`（`preventDefault` 记录意图）、`Effect`/`EffectState`/`ProgressBarStatus`
+  （常量与 Tauri 逐键同值，方法在 B22 落地）、`BaseDirectory`（23 键含反向映射，值与 Tauri 逐键同值）。
+- **`fs` 的 `baseDir` 选项受支持（B13）**：语义与 Tauri 一致——相对路径按 `BaseDirectory` 解析到
+  对应目录、绝对路径不参与。此前是显式拒绝（B1 的"静默失败"修复）；现在有了枚举，拒绝的理由消失。
+- **结构性补壳（B14，迁移零删改）**：`Image.close()`（无资源可释放，no-op）、`Menu 系列.rid`
+  （返回页面侧 id）、`Channel.cleanupCallback()`（`close()` 的同名别名）、`WebviewWindow` 的
+  `position`/`size`（真值：`(0,0)` / 客户区尺寸）与 `setAutoResize`/`reparent`（no-op）。
+  **补壳必须可观测**：`UseDebug()` 下这些调用会打警告日志——"调用不报错但什么都没发生"
+  是最难查的一类问题。这推翻了 B6a 的"宁可当场炸"判断，理由记录在决策文档 §5。
 - **拖放补齐四个阶段（`onDragDropEvent` 的 `enter` / `over` / `leave` + `position`）**：
   0.4.0 只发 `drop`，因为那时三个平台都只有"松手那一刻"的原生回调。现在 Windows 换成了 COM 的
   `IDropTarget`（`WM_DROPFILES` 保留为降级路径）、macOS 补了 `draggingUpdated:` / `draggingExited:`、
@@ -20,6 +51,22 @@
   与 Tauri 的 GTK 实现一致。见 `docs/API.md` §9.1。
 - **`IWindowBackend.DragDrop`**（C# 侧宿主事件）：四阶段 + 坐标。`FileDropped` 保持不变
   （0.4.0 已发布），drop 时两者都触发；库内部只订阅 `DragDrop`，避免页面收到两条 drop。
+- **主题覆写（B15）**：`window.setTheme(theme?)` 与 `app.setTheme(theme?)`（`'light'` / `'dark'` /
+  `null` = 跟随系统），对标 Tauri 2 的 `Window.setTheme` / `App.setTheme`。**三级模型**：
+  窗口覆写 > 应用覆写 > 系统主题；`window.theme()` 按"这个窗口显示成什么"回答。
+  **平台落点不同（是平台事实，不是实现偷懒）**：Windows 只改标题栏/边框（DWM 深色标题栏 +
+  UxTheme 非客户区重绘，客户区颜色仍由 CSS 决定）、macOS 改 `NSWindow.appearance`（按窗口）、
+  **Linux 落到应用级**（GTK 没有"按窗口选主题"的入口，`window.setTheme` 与 `app.setTheme`
+  落到同一个地方、按调用次序后者赢）。`window.theme` / `app.setTheme` 都不在
+  always-allowed 名单里，要显式 `Allow("window.setTheme")` / `Allow("app.setTheme")`。
+
+### 修复
+
+- **托盘菜单线格式与 `menu.*` 统一**：此前 `tray.setMenu` 有自己的 `type`/`label` 解析，
+  与 `menu.*` 的 `kind`/`text` 并存——两套格式是静默漂移的温床。现在 tray 复用同一个解析器
+  （`OrielBuiltInMenuCommands.ParseMenuItems`），页面侧 `@orielweb/api/tray` 直接吃 `menu.js` 的 wire 输出。
+- **`tray.event` 不再被桥接层吞掉**：此前它只进 `oriel.tray.onEvent`，通用 `on('tray.event')`
+  收不到；现在两路都分发，`@orielweb/api/tray` 的 `onEvent` 才有通路。
 
 ### 工具与文档
 
