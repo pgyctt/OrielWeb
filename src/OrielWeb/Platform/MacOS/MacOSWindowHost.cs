@@ -1292,6 +1292,15 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     /// </summary>
     private void PushEventOnUi(string name, string jsonValue)
     {
+        // **必须切回 UI 线程**：事件可能从任意线程发出（B9 的通道结束事件就来自
+        // ConfigureAwait(false) 之后的线程池线程）。WebKit 的求值调用在 UI 线程之外
+        // 行为未定义——不能因为"这次碰巧能跑"就省掉这一步。回执通道一直有这条守卫。
+        if (!IsOnUiThread())
+        {
+            PostToUiThread(() => PushEventOnUi(name, jsonValue));
+            return;
+        }
+
         if (_webview == 0 || !_pageReady)
         {
             return;

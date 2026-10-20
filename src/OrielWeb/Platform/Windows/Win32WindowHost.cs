@@ -1714,6 +1714,17 @@ internal partial class Win32WindowHost : IWindowBackend
     /// </summary>
     private void PushEventOnUi(string name, string jsonValue)
     {
+        // **必须切回 UI 线程**：WebView2 的 COM 绑定在 STA，`PostWebMessageAsJson` 在别的线程上
+        // 会抛，而下面的 catch 只报告不抛——事件就静默消失了。回执通道（UiThreadReplySink）
+        // 一直有这条守卫，事件通道此前没有：直到 B9 的通道结束事件从
+        // `ConfigureAwait(false)` 之后的线程池线程发出，才暴露出来（症状是"数据事件全到、
+        // 结束事件永远不来"，且只有 Windows 复现——另两个平台的 evaluateJavaScript 接受跨线程调用）。
+        if (!IsOnUiThread())
+        {
+            PostToUiThread(() => PushEventOnUi(name, jsonValue));
+            return;
+        }
+
         PostMessageOnUi(
             $"{{\"__oriel\":\"event\",\"name\":{JsonText.EncodeString(name)},\"value\":{jsonValue}}}");
     }
