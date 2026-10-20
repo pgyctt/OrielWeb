@@ -494,6 +494,23 @@ position"、宿主事件名）；JS 2 条（订阅的是宿主名而页面看到
 **真正的 enter/over/leave 必须人工拖一次**，写进人工项——无头环境造不出 OLE/XDND 会话，
 这一点与 B8 一致，不假装能自动化。
 
+**三平台的起点不一样，成本差一个数量级**（2026-10-20 摸底，不是估算）：
+
+| 平台 | 现状 | 要补什么 | 相对成本 |
+|---|---|---|---|
+| macOS | `MacOSObjCClasses.cs` 已注册 `draggingEntered:` 与 `performDragOperation:`，`registerForDraggedTypes:` 已在用 | 加 `draggingUpdated:` / `draggingExited:` 两个方法 + 回调 | 1 |
+| Linux | `LinuxSignalHandlers.cs` 已接 `drag-data-received` | 接 `drag-motion` / `drag-leave` 两个信号 | 1.5 |
+| Windows | 只有 `WM_DROPFILES` + `DragQueryFileW`（`Win32WindowHost.cs:1164` / `:317`），**没有任何 OLE 拖放** | `OleInitialize` + `RegisterDragDrop` + 手写 `IDropTarget`（`DragEnter`/`DragOver`/`DragLeave`/`Drop`），effect 必须回 `DROPEFFECT_COPY` | 5 |
+
+**所以一个 tempting 的错误做法是"先做 macOS/Linux，Windows 以后补"**——不行。
+页面拿不到 `enter`/`over` 的后果是"拖到此处高亮"永远不亮，而那是这条事件的主要用途；
+只在两个平台亮、在 Windows 静默不亮，比三个平台都不亮更难查（用户会以为是自己代码写错了）。
+**三平台必须同一批上，Windows 是这批的主体工作量。**
+
+另一个已确认的事实：Windows 上 `AllowExternalDrop` 是被**关掉**的（`Win32WindowHost.cs:1321`），
+所以页面连 HTML5 的 `dataTransfer.files` 都拿不到。这个选择是对的（否则会出现
+"有的平台给 `File` 对象、有的平台给路径"），B10 不要为了"先让页面有点东西"打开它。
+
 ---
 
 ### B11 · 演练工装升级为门禁：从"能编译"到"能启动"
