@@ -356,7 +356,10 @@ internal sealed class OrielCommandDispatcher
         try
         {
             object? target = route.Router.RequiresTarget ? ResolveTarget(route.Router.TargetType!) : null;
-            var result = await route.Router.InvokeAsync(route.Index, target, args, _jsonContext).ConfigureAwait(false);
+            // 通道的推送能力：绑定到发起这次调用的那个窗口。没有来源窗口时传 null，
+            // 让接受 OrielChannel 参数的命令以 no_source_window 失败（而不是推给"当前窗口"）。
+            OrielEventSink? pushSink = window is null ? null : window.EmitEvent;
+            var result = await route.Router.InvokeAsync(route.Index, target, args, _jsonContext, pushSink).ConfigureAwait(false);
             TimeSpan elapsed = Stopwatch.GetElapsedTime(startedAt);
             ReplyOk(sink, id, result);
             Invoked?.Invoke(new OrielCommandInvokedEventArgs(name, elapsed, true, documentUrl));

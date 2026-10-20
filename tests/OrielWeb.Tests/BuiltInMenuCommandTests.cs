@@ -57,6 +57,9 @@ public sealed class BuiltInMenuCommandTests
 
         public void CloseContextMenu() => Calls.Add("closeContextMenu");
 
+        /// <summary>记下推给页面的事件（通道/拖放等宿主推送的落点）。</summary>
+        public void EmitEvent(string name, string jsonPayload) => Calls.Add($"emitEvent:{name}:{jsonPayload}");
+
         /// <summary>记下菜单栏调用（<c>menu.setAsWindowMenu</c> 的落点）。</summary>
         /// <remarks>
         /// <see cref="ThrowOnSetWindowMenuBar"/> 为 true 时抛 <see cref="NotSupportedException"/>，

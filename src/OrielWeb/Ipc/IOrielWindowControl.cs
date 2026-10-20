@@ -119,6 +119,16 @@ internal interface IOrielWindowControl
         IReadOnlyList<OrielMenuItem> items, OrielPosition? position, TimeSpan? autoDismissAfter = null);
 
     /// <summary>
+    /// 向本窗口的页面推送一条事件（payload 已是 JSON 文本）。
+    /// </summary>
+    /// <remarks>
+    /// 通道（<see cref="OrielChannel"/>）要用它：命令执行到一半时把增量推给页面，
+    /// 而命令手里只有这个窄接口。与 <see cref="WebviewWindow.EmitEvent(string, string)"/>
+    /// 是同一个方法——<see cref="WebviewWindow"/> 上的公开成员直接满足这个声明。
+    /// </remarks>
+    void EmitEvent(string name, string jsonPayload);
+
+    /// <summary>
     /// 关掉当前正在显示的上下文菜单（<c>menu.close</c> 用）。
     /// </summary>
     /// <remarks>

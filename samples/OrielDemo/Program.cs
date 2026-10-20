@@ -52,7 +52,7 @@ internal static class Program
     /// <c>--selftest</c> 认得的名字。加一个自检只需在这里加名字 + 在 Main 里加一行判定。
     /// </summary>
     private static readonly string[] SelfTestNames =
-        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowevents", "event", "close", "window", "windownew", "monitors", "menu", "menubar", "api"];
+        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowevents", "event", "close", "window", "windownew", "monitors", "menu", "menubar", "api", "channel"];
 
     /// <summary>本次请求的自检名字是否就是 <paramref name="name"/>（忽略大小写与首尾空白）。</summary>
     private static bool IsSelfTest(string? requested, string name)
@@ -168,6 +168,9 @@ internal static class Program
         var menuBarSelfTest = IsSelfTest(selfTest, "menubar");
         // api：前端包在真实页面里能不能用（ESM 加载 / 各类往返）。
         var apiSelfTest = IsSelfTest(selfTest, "api");
+        // channel：流式回传（Channel）整条链——参数序列化 + 宿主逐条推送 + 命令结束后自动关闭。
+        // 两段只有真跑看得见：桥接层怎么序列化 Channel、宿主推的事件名页面认不认。
+        var channelSelfTest = IsSelfTest(selfTest, "channel");
         // --manual-check：手动验证操作台（停在那里等人点，不自动退出）。
         // 与 --selftest shell 的分工：那个是给 CI 的无人断言，这个是给人看的——
         // 每项做成按钮，托管侧的回调（托盘菜单项、通知点击、快捷键、拖放）回显到页面。
@@ -181,7 +184,7 @@ internal static class Program
             || schemeSelfTest || exitSelfTest || threadingSelfTest || traySelfTest || trayJsSelfTest
             || geometrySelfTest || geometryFramelessSelfTest || windowEventsSelfTest || eventSelfTest
             || closeSelfTest || windowSelfTest || windowNewSelfTest || monitorsSelfTest
-            || menuSelfTest || menuBarSelfTest || apiSelfTest;
+            || menuSelfTest || menuBarSelfTest || apiSelfTest || channelSelfTest;
         var manualCheck = !anySelfTest && !args.Contains("--todo");
 
         // 主题自检需要 OrielApp（主题是应用级的），所以这里显式 Build 再 Run；
@@ -197,6 +200,8 @@ internal static class Program
             .WithAppInfo(name: "OrielWeb 示例", identifier: "com.orielweb.demo")
             .AddCommands<TodoCommands>()
             .AddCommands<ManualCommands>()
+            // 通道自检的两个演示命令。能力上默认不放行（只有跑 channel 自检时才 Allow）。
+            .AddCommands<ChannelSelfTest>()
             // 能力模型：声明页面真正会调用的命令（都写在这里的用途是当示范——Release 下
             // 不声明的话一律拒绝，见 README「能力模型」）。win.* 是库保留前缀，始终放行，不必列。
             //
@@ -215,6 +220,14 @@ internal static class Program
                 {
                     // 建窗是能力而不是元信息：不声明时页面调不动（Release 语义）。
                     c.Allow("window.new");
+                }
+
+                if (channelSelfTest)
+                {
+                    // 通道自检的命令（channel.stream / channel.streamFail）。
+                    // 与 menu.setAsAppMenu 同一档：只在对应自检跑的时候放行，
+                    // 保持"新命令族默认不放行"这条示范。
+                    c.Allow("channel.*");
                 }
 
                 if (menuBarSelfTest)
@@ -498,6 +511,12 @@ internal static class Program
                     WebviewWindow created = win;
                     created.Loaded += () => MenuBarSelfTest.Begin(created.App, created);
                 }
+                if (channelSelfTest)
+                {
+                    ChannelSelfTest.Attach(win);
+                    WebviewWindow created = win;
+                    created.Loaded += () => ChannelSelfTest.Begin(created.App, created);
+                }
                 if (apiSelfTest)
                 {
                     // 前端包自检：订阅同样要早于导航——探针脚本在页面解析时就会跑完并回显。
@@ -602,6 +621,7 @@ internal static class Program
             || (menuSelfTest && MenuSelfTest.Failed)
             || (menuBarSelfTest && MenuBarSelfTest.Failed)
             || (apiSelfTest && ApiSelfTest.Failed)
+            || (channelSelfTest && ChannelSelfTest.Failed)
             || ((traySelfTest || trayJsSelfTest) && TraySelfTest.Failed))
         {
             Environment.ExitCode = 1;

@@ -116,7 +116,6 @@ const CONST_OBJECTS = [
  */
 const GAPS = {
     core: {
-        Channel: '流式回传通道，需要句柄与消息泵；本库的 IPC 是一次性请求-回执',
         PluginListener: '插件监听器的句柄类；本库没有插件体系',
         Resource: '资源句柄表；本库没有句柄模型（fs 那边同一条理由）',
         SERIALIZE_TO_IPC_FN: 'Tauri 内部序列化协议的钩子，本库没有对应物',
@@ -409,13 +408,10 @@ const METHOD_DIVERGENCES = {
         '迁移代码里的 `await image.close()` 会抛 `TypeError`（不是静默跳过）——' +
         '宁可当场炸，也不要让人带着错误的心智模型继续写。' +
         '（注意与 `menu` 的 `close` 不同：那个是真的有活干——关掉在屏的菜单。）',
-    onDragDropEvent:
-        '**有意不做**：文件拖放走宿主 `WebviewWindow.FileDropped` 事件，不在页面事件通道上。' +
-        '这不是省事——浏览器安全模型决定了**页面拿不到文件路径**（Tauri 能给出路径，' +
-        '靠的是它自己那套拖放通道 + IPC 白名单）。本库给路径的地方只有宿主侧 ' +
-        '`FileDropped` 回调，页面要拿路径得由应用显式转发。' +
-        '既然页面通道上根本不可能有路径数据，' +
-        '造一个"形状像 Tauri 但没有 paths"的事件只会误导迁移代码。',
+    cleanupCallback:
+        '**等价物的名字不同**：Tauri 的 `Channel.cleanupCallback()` 注销 `transformCallback` 注册的回调；' +
+        '本库没有全局回调表，对应能力是公开的 `Channel.close()`（退订两个事件监听、幂等）。' +
+        '因此这里**不做**同名方法——给一个 `cleanupCallback()` 别名只会让"关通道"这件事有两个名字。',
     __TAURI_TO_IPC_KEY__:
         'Tauri 2 的序列化钩子：类把值编成 `{ Logical: { x, y } }`（外部标记枚举）。' +
         '本库的线格式是 `{ type: "Logical", x, y }`（Tauri 1 的形状），宿主只认后者。' +
@@ -568,6 +564,15 @@ const METHOD_GAPS = Object.fromEntries(
  * @type {Record<string, string>}
  */
 const METHOD_EXTRAS = {
+    'core.Channel#close':
+        '**本库扩展**：显式关闭通道（退订两条监听、幂等）。Tauri 的等价物是内部的 ' +
+        '`cleanupCallback()`，由 Rust 侧在通道 drop 时触发，页面代码调不到。' +
+        '本库没有 Rust 侧的 drop 时机可用（命令返回后宿主会发结束事件，页面收到就自动关），' +
+        '但**手动关**仍有意义：提前不要了、命令还要继续跑的场景。',
+    'core.Channel#closed':
+        '**本库扩展**：只读状态。Tauri 那边"关没关"是私有的（回调从表里删掉就完了），' +
+        '页面没有可查的值。给一个只读标志是纯加法，让"我是不是已经关了"不必靠猜。',
+
     'menu.Menu#close':
         '**本库扩展**：关掉当前正在显示的菜单（等价于用户按 Esc）。' +
         'Tauri 的 `Menu.close()` 来自 `Resource`，释放的是 Rust 侧资源表那条记录——' +

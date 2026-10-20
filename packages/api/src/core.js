@@ -9,7 +9,8 @@
 //     形状由应用自己定；本库统一成 Error 是因为那是最不容易写错的形态。
 //   * **有默认 30 秒超时**（Tauri 没有）。长任务必须显式放宽，否则会被静默超时；
 //     也可以逐次调用给 `options.timeout`。
-//   * **没有 Channel / Resource / transformCallback**：本库无流式回传与句柄表。
+//   * **没有 Resource / transformCallback**：本库无句柄表（菜单树、图标都是"每次整棵发"）。
+//     流式回传有 `Channel`，但它的实现是"一个字符串参数 + 两条事件"，不是回调注册表。
 
 import { getTransport, hasTransportOverride } from './internal.js';
 
@@ -134,4 +135,138 @@ export function convertFileSrc(filePath, protocol) {
     }
 
     return transport.convertFileSrc(filePath);
+}
+
+// ---------------------------------------------------------------------------
+// 流式回传（Channel）
+// ---------------------------------------------------------------------------
+
+/** 通道 id 计数。页面内唯一即可——宿主只会把它原样回推给**同一个窗口**。 */
+let nextChannelId = 1;
+
+/**
+ * 命令执行期间接收宿主推送的通道（对标 Tauri 的 `Channel`）。
+ *
+ * @remarks
+ * <b>解决的是"一次请求只能有一个回执"这个限制</b>：普通命令的返回值只能有一个，
+ * 而流式场景（模型逐字输出、批量导入进度）要在命令返回**之前**多次推送。
+ *
+ * <b>用法</b>与 Tauri 一致：构造 → 挂 `onmessage`（或直接传给构造函数）→ 作为 `invoke` 的
+ * 一个参数发出去。
+ *
+ * ```js
+ * import { Channel, invoke } from '@orielweb/api/core';
+ *
+ * const channel = new Channel((line) => console.log(line));
+ * await invoke('chat.stream', { question, channel });
+ * // 命令返回后通道自动关闭：宿主在命令结束时发一条结束事件，这里收到就退订。
+ * ```
+ *
+ * <b>线格式</b>：`toJSON()` 把实例变成一个 `__ORIEL_CHANNEL__:<id>` 字符串。所以它
+ * 只是"一个长得像字符串的参数"——桥接脚本与三个平台后端都不认识通道这个概念，
+ * 也就不存在"某个平台没实现"的问题。
+ *
+ * <b>与 Tauri 的差别</b>：Tauri 用 `transformCallback` 把回调登记进
+ * `__TAURI_INTERNALS__.callbacks`（全局回调表）；本库没有那张表，改用两个事件名
+ * （`oriel://channel/<id>` 与 `oriel://channel-end/<id>`）。差别对调用方不可见，
+ * 但**顺序保证也同样没有**：多线程推送时到达顺序以宿主投递为准。
+ */
+export class Channel {
+    /**
+     * @param {(message: any) => void} [onmessage] 收到一条增量时调用；之后也可以改 `onmessage`。
+     */
+    constructor(onmessage) {
+        /** 通道 id（页面内唯一）。宿主回推时原样带上。 */
+        this.id = nextChannelId++;
+
+        /** @type {(message: any) => void} */
+        this._onmessage = typeof onmessage === 'function' ? onmessage : () => {};
+
+        /** @type {boolean} */
+        this._closed = false;
+
+        /** @type {Array<() => void>} */
+        this._offs = [];
+
+        const transport = getTransport();
+        if (typeof transport.on !== 'function') {
+            throw new Error('Channel: 当前传输层没有 on()，无法接收增量。');
+        }
+
+        // **构造即订阅**：调用方通常在 `invoke` 之前构造 Channel，而宿主在命令执行期间
+        // 随时可能推第一条——等 `invoke` 的 promise 落地再订阅就已经漏了。
+        this._offs.push(transport.on(`oriel://channel/${this.id}`, (payload) => this._deliver(payload)));
+        this._offs.push(transport.on(`oriel://channel-end/${this.id}`, () => this.close()));
+    }
+
+    /** @param {(message: any) => void} handler */
+    set onmessage(handler) {
+        this._onmessage = typeof handler === 'function' ? handler : () => {};
+    }
+
+    /** @returns {(message: any) => void} */
+    get onmessage() {
+        return this._onmessage;
+    }
+
+    /** 是否已关闭（命令返回后为 `true`）。 */
+    get closed() {
+        return this._closed;
+    }
+
+    /**
+     * 退订并停止接收。
+     *
+     * @remarks 一般不用手动调：宿主在命令结束时（正常返回、抛异常、参数绑定失败都算）
+     * 会发一条结束事件，构造函数里为它挂的监听会自动调到这里。幂等。
+     * 手动调只用于"提前不要了，但命令还要继续跑"。
+     */
+    close() {
+        if (this._closed) {
+            return;
+        }
+
+        this._closed = true;
+        for (const off of this._offs.splice(0)) {
+            try {
+                off();
+            } catch {
+                // 退订失败不影响"已经关了"这个事实
+            }
+        }
+    }
+
+    /**
+     * 序列化成宿主认识的字符串形态。
+     *
+     * @returns {string}
+     * @remarks Tauri 也是这么做的（`__CHANNEL__:<id>`）。走 `toJSON` 而不是给
+     * `invoke` 加一层专门处理，是因为桥接层用 `JSON.stringify` 发参数——那样通道
+     * 在宿主眼里就是一个普通字符串参数，不需要任何新协议。
+     */
+    toJSON() {
+        return `__ORIEL_CHANNEL__:${this.id}`;
+    }
+
+    /**
+     * 投递一条增量给回调。
+     *
+     * @param {unknown} payload
+     * @private
+     */
+    _deliver(payload) {
+        if (this._closed) {
+            return;
+        }
+
+        try {
+            this._onmessage(payload);
+        } catch (err) {
+            // 一个回调抛错不该让后面的增量全部丢失（事件分发链上还有别的监听者）。
+            // 异步重抛：错误仍然以"未捕获异常"的形式出现，而不是被静默吞掉。
+            queueMicrotask(() => {
+                throw err;
+            });
+        }
+    }
 }

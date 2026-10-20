@@ -73,7 +73,7 @@ namespace OrielWeb.Tests
         public Type? TargetType => null;
         public bool RequiresTarget => false;
         public int Route(string name) => name == "dup.same" ? 0 : -1;
-        public ValueTask<object?> InvokeAsync(int index, object? target, JsonElement args, JsonSerializerContext? jsonContext) => ValueTask.FromResult<object?>(null);
+        public ValueTask<object?> InvokeAsync(int index, object? target, JsonElement args, JsonSerializerContext? jsonContext, OrielEventSink? sink) => ValueTask.FromResult<object?>(null);
     }
 
     /// <summary>伪路由：与 <see cref="DuplicateRouterA"/> 注册同名命令。</summary>
@@ -83,6 +83,6 @@ namespace OrielWeb.Tests
         public Type? TargetType => null;
         public bool RequiresTarget => false;
         public int Route(string name) => name == "dup.same" ? 0 : -1;
-        public ValueTask<object?> InvokeAsync(int index, object? target, JsonElement args, JsonSerializerContext? jsonContext) => ValueTask.FromResult<object?>(null);
+        public ValueTask<object?> InvokeAsync(int index, object? target, JsonElement args, JsonSerializerContext? jsonContext, OrielEventSink? sink) => ValueTask.FromResult<object?>(null);
     }
 }

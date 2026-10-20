@@ -67,3 +67,74 @@ export function isTauri(): boolean;
  * </para>
  */
 export function convertFileSrc(filePath: string, protocol?: string): string;
+/**
+ * 命令执行期间接收宿主推送的通道（对标 Tauri 的 `Channel`）。
+ *
+ * @remarks
+ * <b>解决的是"一次请求只能有一个回执"这个限制</b>：普通命令的返回值只能有一个，
+ * 而流式场景（模型逐字输出、批量导入进度）要在命令返回**之前**多次推送。
+ *
+ * <b>用法</b>与 Tauri 一致：构造 → 挂 `onmessage`（或直接传给构造函数）→ 作为 `invoke` 的
+ * 一个参数发出去。
+ *
+ * ```js
+ * import { Channel, invoke } from '@orielweb/api/core';
+ *
+ * const channel = new Channel((line) => console.log(line));
+ * await invoke('chat.stream', { question, channel });
+ * // 命令返回后通道自动关闭：宿主在命令结束时发一条结束事件，这里收到就退订。
+ * ```
+ *
+ * <b>线格式</b>：`toJSON()` 把实例变成一个 `__ORIEL_CHANNEL__:<id>` 字符串。所以它
+ * 只是"一个长得像字符串的参数"——桥接脚本与三个平台后端都不认识通道这个概念，
+ * 也就不存在"某个平台没实现"的问题。
+ *
+ * <b>与 Tauri 的差别</b>：Tauri 用 `transformCallback` 把回调登记进
+ * `__TAURI_INTERNALS__.callbacks`（全局回调表）；本库没有那张表，改用两个事件名
+ * （`oriel://channel/<id>` 与 `oriel://channel-end/<id>`）。差别对调用方不可见，
+ * 但**顺序保证也同样没有**：多线程推送时到达顺序以宿主投递为准。
+ */
+export class Channel {
+    /**
+     * @param {(message: any) => void} [onmessage] 收到一条增量时调用；之后也可以改 `onmessage`。
+     */
+    constructor(onmessage?: (message: any) => void);
+    /** 通道 id（页面内唯一）。宿主回推时原样带上。 */
+    id: number;
+    /** @type {(message: any) => void} */
+    _onmessage: (message: any) => void;
+    /** @type {boolean} */
+    _closed: boolean;
+    /** @type {Array<() => void>} */
+    _offs: Array<() => void>;
+    /** @param {(message: any) => void} handler */
+    set onmessage(handler: (message: any) => void);
+    /** @returns {(message: any) => void} */
+    get onmessage(): (message: any) => void;
+    /** 是否已关闭（命令返回后为 `true`）。 */
+    get closed(): boolean;
+    /**
+     * 退订并停止接收。
+     *
+     * @remarks 一般不用手动调：宿主在命令结束时（正常返回、抛异常、参数绑定失败都算）
+     * 会发一条结束事件，构造函数里为它挂的监听会自动调到这里。幂等。
+     * 手动调只用于"提前不要了，但命令还要继续跑"。
+     */
+    close(): void;
+    /**
+     * 序列化成宿主认识的字符串形态。
+     *
+     * @returns {string}
+     * @remarks Tauri 也是这么做的（`__CHANNEL__:<id>`）。走 `toJSON` 而不是给
+     * `invoke` 加一层专门处理，是因为桥接层用 `JSON.stringify` 发参数——那样通道
+     * 在宿主眼里就是一个普通字符串参数，不需要任何新协议。
+     */
+    toJSON(): string;
+    /**
+     * 投递一条增量给回调。
+     *
+     * @param {unknown} payload
+     * @private
+     */
+    private _deliver;
+}

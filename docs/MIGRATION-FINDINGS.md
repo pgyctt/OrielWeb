@@ -12,6 +12,10 @@
 按名字对账只能告诉我们"缺 Channel"，它无法告诉我们"Channel 这条链要重写"与
 "onBackButtonPress 删掉两行 Android 分支"的成本差十倍。这就是 B7 存在的理由。
 
+> **后续进展**：§3 的 #3（`Channel`）与 #4（拖放）已分别在 **B9 / B8** 补上，
+> 对应条目已改写成"迁移改法"。这份清单保留原始取证与频率，不因为做掉了就删——它是
+> 下一轮排序的依据。
+
 ## 1. 取样与方法
 
 ### 1.1 取样（固定到 commit，结论可复现）
@@ -88,7 +92,7 @@ node tools/migration-drill/drill.mjs --app lumos     # 只跑一个
 |---|---|---|---|---|---|---|
 | 1 | `__TAURI_INTERNALS__` 环境探测 | **3/3 应用**，5 处（应用代码） | **否** | 语义差异 | 换成 `isTauri()` | 0（改调用点） |
 | 2 | 测试夹具 mock 线格式 | random-frame：32 处 `plugin:x\|y` + 34 处全局桩 | **否** | 命名/线格式 | 改用 `mockIPC()`，命令名照 §4 换 | 0（改测试） |
-| 3 | `Channel`（core） | 1 应用，1 处，但那是整条流式链路 | 是 | 缺能力 | 用 `event` + 自建 requestId 拼 | **高** |
+| 3 | `Channel`（core） | 1 应用，1 处，但那是整条流式链路 | 否（**B9 已补**） | 缺能力 | 已实现，import 改前缀即可 | 0 |
 | 4 | 页面拖放事件（`api/webview.onDragDropEvent`） | 1 应用 | 是 | 缺能力 | 改成 `getCurrentWindow().onDragDropEvent(...)`（**B8 已补**，但仍只有 `drop`） | 0（改调用点） |
 | 5 | `plugin-updater` | 1 应用 | 是 | 缺能力 | 删除更新功能或自建 | **高** |
 | 6 | `plugin-process.relaunch` | 1 应用 | 是 | 缺能力 | 暂时只能 `exit` 后手动重开 | 中 |
@@ -110,8 +114,13 @@ node tools/migration-drill/drill.mjs --app lumos     # 只跑一个
 必然成本；改法是换成本库的 `mockIPC()`，并把命令名按 §4 换掉。
 
 **#3 Channel。** 唯一被真实用到的流式通道：`new Channel<ChatEvent>()` → `channel.onmessage = cb`
-→ 作为 `invoke` 参数发出去，宿主按 id 回推。本库的 IPC 没有"调用自带回流通道"这个概念，
-补齐要动协议（每条命令的 response 之外再来一路带 id 的推送）。**这是本批最贵的一项。**
+→ 作为 `invoke` 参数发出去，宿主按 id 回推。
+
+**已在 B9 补上**，迁移改法仍然只是 import 改前缀（构造与用法与 Tauri 一致）。补的时候没有动协议：
+线格式是把实例序列化成一个字符串参数（`toJSON`），宿主→页面复用现成的事件通道。
+两处与 Tauri 不同、需要迁移者知道：C# 侧参数是**非泛型** `OrielChannel`（`Send(value)` 走与命令
+返回值同一套序列化）；页面侧**不保证重排**（Tauri 带 index 重排，本库靠宿主投递顺序）。
+见 `docs/API.md` §11.3。
 
 **#4 拖放。** pier-dock 用 `getCurrentWebview().onDragDropEvent(...)` 接"把 .exe/.lnk 拖到 dock
 上固定"。宿主侧其实**已经有数据**（`IPlatformBackend.FileDropped` → `WebviewWindow.FileDropped`），
@@ -170,10 +179,14 @@ node tools/migration-drill/drill.mjs --app lumos     # 只跑一个
      是本清单里**性价比最高**的一项；
    * 同一批把"只有 drop、没有 enter/over/leave""payload 没有 position"写进了
      `docs/API.md` §9.1、`event.js` 的状态表与两处单测，而不是留一句"以后补"。
-2. **B9：`Channel` 的取舍**（需要先决策，不是先动手）
-   * 三条路：①协议加一路带 id 的推送；②只支持"命令内多次回推"的受限形态；
+2. **B9：`Channel` 的取舍**（✅ 2026-10-20 完成，选了"真实现"）
+   * 三条路当时是：①协议加一路带 id 的推送；②只支持"命令内多次回推"的受限形态；
      ③明确不支持，把 `event + requestId` 写成官方迁移配方。
-   * 演练只证明"有一个真实应用依赖它"，没有证明"必须由库提供"——先决策再评估成本。
+   * 最终走了 ① 的**低成本形态**：线格式只是一个字符串参数（`toJSON`），宿主→页面复用
+     现成事件通道，因此**没动 IPC 协议、没动桥接脚本、没动三个平台后端**。
+     代价是宿主侧要多一个生成器分支（`OrielChannel` 参数的绑定 + `finally` 关闭）。
+   * 结论：这条最贵的缺口，实际成本低于预算——**因为找到了"协议已有能力"的接法**。
+     下次评估"要动协议"的缺口时，先问一遍"现有通道能不能承载它"。
 3. **不做**：`plugin-updater`（整块生态能力）、`clipboard.writeImage`（三平台原生剪贴板）、
    `onBackButtonPress`（桌面库不该有）。这三项写进账本的"明确不做"档，附理由。
 

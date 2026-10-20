@@ -31,5 +31,15 @@ public interface IOrielCommandRouter
     /// 应用注册的 STJ 源生成上下文，供 DTO 参数反序列化用；基元参数用不到，可能为 null。
     /// 由调用方（<see cref="OrielCommandDispatcher"/>）透传，**不来自任何静态状态**。
     /// </param>
-    ValueTask<object?> InvokeAsync(int index, object? target, JsonElement args, JsonSerializerContext? jsonContext);
+    /// <param name="sink">
+    /// 向发起调用的窗口推事件的能力；没有来源窗口时为 null。
+    /// <see cref="OrielChannel"/> 参数靠它把增量推回页面——通道的"另一端"是**发起调用的那个窗口**，
+    /// 不是应用，也不是"当前活动窗口"（多窗口下那两者都可能不是它）。
+    /// </param>
+    ValueTask<object?> InvokeAsync(
+        int index,
+        object? target,
+        JsonElement args,
+        JsonSerializerContext? jsonContext,
+        OrielEventSink? sink);
 }

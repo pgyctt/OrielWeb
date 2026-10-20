@@ -44,7 +44,8 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
         bool IsJsonElementArgs,
         string? DirectDisplay,
         ImmutableArray<string> DirectKinds,
-        string? DirectRead);
+        string? DirectRead,
+        bool IsChannel = false);
 
     private sealed record CommandModel(
         string CommandName,
@@ -144,6 +145,7 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
             "命令「{0}」与库内建的事件命令同名：内建命令先于应用路由，它注册成功但永不可达，" +
             "请换一个名字（只有该内建名被保留，event 前缀本身可用）。",
             Category, DiagnosticSeverity.Warning, isEnabledByDefault: true);
+
     }
 
     private static GeneratorOutput Transform(GeneratorAttributeSyntaxContext context, CancellationToken token)
@@ -243,10 +245,11 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
             {
                 var display = p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
                 bool isJsonElementArgs = display == "global::System.Text.Json.JsonElement";
+                bool isChannel = display == "global::OrielWeb.Ipc.OrielChannel";
                 // 可空性必须读符号注解：FullyQualifiedFormat 对引用类型的 '?' 不显示
                 bool isOptional = p.Type.NullableAnnotation == NullableAnnotation.Annotated;
                 var (directDisplay, directKinds, directRead) = ResolveDirectRead(p.Type, isJsonElementArgs);
-                return new CommandParameter(p.Name, display, isOptional, isJsonElementArgs, directDisplay, directKinds, directRead);
+                return new CommandParameter(p.Name, display, isOptional, isJsonElementArgs, directDisplay, directKinds, directRead, isChannel);
             })
             .ToImmutableArray();
 
@@ -327,7 +330,11 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
     }
 
     /// <summary>为单个参数生成直出读取代码（含存在性/null 校验与 kind 校验）。</summary>
-    private static void EmitDirectRead(StringBuilder source, CommandParameter parameter, string readTemplate)
+    /// <param name="pad">
+    /// 额外缩进。命令带通道参数时整段要嵌进 <c>try</c> 里，缩进由调用方统一给——
+    /// 让这个函数自己判断"我要不要缩进"会让两处缩进规则各改一次。
+    /// </param>
+    private static void EmitDirectRead(StringBuilder source, CommandParameter parameter, string readTemplate, string pad = "")
     {
         string name = Escape(parameter.Name);
         string element = $"__el_{parameter.Name}";
@@ -341,18 +348,18 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
             string declaredType = parameter.TypeDisplay.EndsWith("?", StringComparison.Ordinal)
                 ? parameter.TypeDisplay
                 : parameter.TypeDisplay + "?";
-            source.AppendLine($"                    {declaredType} __arg_{parameter.Name} = null;");
-            source.AppendLine($"                    if (global::OrielWeb.Ipc.OrielJson.TryGetArgElement(args, \"{name}\", out var {element}))");
-            source.AppendLine("                    {");
-            source.AppendLine($"                        global::OrielWeb.Ipc.OrielJson.RequireArgKind({element}, \"{name}\", \"{parameter.DirectDisplay}?\", {kinds});");
-            source.AppendLine($"                        __arg_{parameter.Name} = {read};");
-            source.AppendLine("                    }");
+            source.AppendLine($"                    {pad}{declaredType} __arg_{parameter.Name} = null;");
+            source.AppendLine($"                    {pad}if (global::OrielWeb.Ipc.OrielJson.TryGetArgElement(args, \"{name}\", out var {element}))");
+            source.AppendLine($"                    {pad}{{");
+            source.AppendLine($"                        {pad}global::OrielWeb.Ipc.OrielJson.RequireArgKind({element}, \"{name}\", \"{parameter.DirectDisplay}?\", {kinds});");
+            source.AppendLine($"                        {pad}__arg_{parameter.Name} = {read};");
+            source.AppendLine($"                    {pad}}}");
             return;
         }
 
-        source.AppendLine($"                    var {element} = global::OrielWeb.Ipc.OrielJson.RequireArgElement(args, \"{name}\");");
-        source.AppendLine($"                    global::OrielWeb.Ipc.OrielJson.RequireArgKind({element}, \"{name}\", \"{parameter.DirectDisplay}\", {kinds});");
-        source.AppendLine($"                    var __arg_{parameter.Name} = {read};");
+        source.AppendLine($"                    {pad}var {element} = global::OrielWeb.Ipc.OrielJson.RequireArgElement(args, \"{name}\");");
+        source.AppendLine($"                    {pad}global::OrielWeb.Ipc.OrielJson.RequireArgKind({element}, \"{name}\", \"{parameter.DirectDisplay}\", {kinds});");
+        source.AppendLine($"                    {pad}var __arg_{parameter.Name} = {read};");
     }
 
     /// <summary>
@@ -500,7 +507,7 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
         source.AppendLine("        }");
         source.AppendLine();
 
-        source.AppendLine("        public async global::System.Threading.Tasks.ValueTask<object?> InvokeAsync(int index, object? target, global::System.Text.Json.JsonElement args, global::System.Text.Json.Serialization.JsonSerializerContext? jsonContext)");
+        source.AppendLine("        public async global::System.Threading.Tasks.ValueTask<object?> InvokeAsync(int index, object? target, global::System.Text.Json.JsonElement args, global::System.Text.Json.Serialization.JsonSerializerContext? jsonContext, global::OrielWeb.Ipc.OrielEventSink? sink)");
         source.AppendLine("        {");
         source.AppendLine("            switch (index)");
         source.AppendLine("            {");
@@ -514,25 +521,47 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
             // 单一作用域块：参数提取与调用同域
             source.AppendLine("                {");
 
+            // 通道参数：声明在 try 之外、赋值在 try 之内、关闭在 finally 里。
+            // 三者分开的理由是"**任何**退出路径都要关掉它"——命令抛异常、第二个通道绑定失败、
+            // 正常返回，都走 same finally。泄漏的表现是页面侧留着一个没人用的监听。
+            CommandParameter[] channelParams = command.Parameters.Where(p => p.IsChannel).ToArray();
+            string pad = channelParams.Length > 0 ? "    " : string.Empty;
+
+            foreach (var channel in channelParams)
+            {
+                source.AppendLine($"                    global::OrielWeb.Ipc.OrielChannel? __arg_{channel.Name} = null;");
+            }
+
+            if (channelParams.Length > 0)
+            {
+                source.AppendLine("                    try");
+                source.AppendLine("                    {");
+            }
+
             foreach (var parameter in command.Parameters)
             {
-                if (parameter.IsJsonElementArgs)
+                if (parameter.IsChannel)
                 {
-                    source.AppendLine($"                    var __arg_{parameter.Name} = args;");
+                    string bind = parameter.IsOptional ? "BindOptional" : "Bind";
+                    source.AppendLine($"                    {pad}__arg_{parameter.Name} = global::OrielWeb.Ipc.OrielChannel.{bind}(args, \"{Escape(parameter.Name)}\", sink, jsonContext);");
+                }
+                else if (parameter.IsJsonElementArgs)
+                {
+                    source.AppendLine($"                    {pad}var __arg_{parameter.Name} = args;");
                 }
                 else if (parameter.DirectRead is { } directRead)
                 {
                     // 编译期已知类型 → 直出强类型读取，运行期零 typeof 分派
-                    EmitDirectRead(source, parameter, directRead);
+                    EmitDirectRead(source, parameter, directRead, pad);
                 }
                 else if (parameter.IsOptional)
                 {
                     // char / Guid / DateTime / DateTimeOffset / DTO 等仍走泛型入口（fallback）
-                    source.AppendLine($"                    var __arg_{parameter.Name} = global::OrielWeb.Ipc.OrielJson.GetOptionalArg<{parameter.TypeDisplay}>(args, \"{Escape(parameter.Name)}\", jsonContext);");
+                    source.AppendLine($"                    {pad}var __arg_{parameter.Name} = global::OrielWeb.Ipc.OrielJson.GetOptionalArg<{parameter.TypeDisplay}>(args, \"{Escape(parameter.Name)}\", jsonContext);");
                 }
                 else
                 {
-                    source.AppendLine($"                    var __arg_{parameter.Name} = global::OrielWeb.Ipc.OrielJson.GetRequiredArg<{parameter.TypeDisplay}>(args, \"{Escape(parameter.Name)}\", jsonContext);");
+                    source.AppendLine($"                    {pad}var __arg_{parameter.Name} = global::OrielWeb.Ipc.OrielJson.GetRequiredArg<{parameter.TypeDisplay}>(args, \"{Escape(parameter.Name)}\", jsonContext);");
                 }
             }
 
@@ -543,23 +572,36 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
 
             if (command.HasResult && command.NeedsAwait)
             {
-                source.AppendLine($"                    var __result = await {receiver}.ConfigureAwait(false);");
-                source.AppendLine("                    return __result;");
+                source.AppendLine($"                    {pad}var __result = await {receiver}.ConfigureAwait(false);");
+                source.AppendLine($"                    {pad}return __result;");
             }
             else if (command.HasResult)
             {
-                source.AppendLine($"                    var __result = {receiver};");
-                source.AppendLine("                    return __result;");
+                source.AppendLine($"                    {pad}var __result = {receiver};");
+                source.AppendLine($"                    {pad}return __result;");
             }
             else if (command.NeedsAwait)
             {
-                source.AppendLine($"                    await {receiver}.ConfigureAwait(false);");
-                source.AppendLine("                    return null;");
+                source.AppendLine($"                    {pad}await {receiver}.ConfigureAwait(false);");
+                source.AppendLine($"                    {pad}return null;");
             }
             else
             {
-                source.AppendLine($"                    {receiver};");
-                source.AppendLine("                    return null;");
+                source.AppendLine($"                    {pad}{receiver};");
+                source.AppendLine($"                    {pad}return null;");
+            }
+
+            if (channelParams.Length > 0)
+            {
+                source.AppendLine("                    }");
+                source.AppendLine("                    finally");
+                source.AppendLine("                    {");
+                foreach (var channel in channelParams)
+                {
+                    source.AppendLine($"                        __arg_{channel.Name}?.Close();");
+                }
+
+                source.AppendLine("                    }");
             }
 
             source.AppendLine("                }");

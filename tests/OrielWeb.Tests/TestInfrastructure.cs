@@ -67,6 +67,36 @@ public sealed partial class TestCommands
     [OrielCommand("t.fail")]
     public void Fail() => throw new OrielIpcException("boom");
 
+    /// <summary>通道命令（B9）：逐条推完之后返回条数。</summary>
+    /// <remarks>
+    /// 用来验证**整条链**：参数绑定（字符串 → <see cref="OrielChannel"/>）、逐条推送、
+    /// 命令返回后自动关闭（生成器在 <c>finally</c> 里发结束事件）。
+    /// </remarks>
+    [OrielCommand("t.stream")]
+    public async Task<int> Stream(int count, OrielChannel channel)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            channel.Send(i);
+        }
+
+        await Task.Delay(1);
+        return count;
+    }
+
+    /// <summary>推一个 DTO：验证通道用的是**与命令返回值同一套**序列化规则（应用上下文）。</summary>
+    [OrielCommand("t.streamDto")]
+    public void StreamDto(OrielChannel channel)
+        => channel.Send(new TestDto("a", 1, true));
+
+    /// <summary>推到一半抛异常：验证 <c>finally</c> 仍然关掉通道。</summary>
+    [OrielCommand("t.streamFail")]
+    public void StreamFail(OrielChannel channel)
+    {
+        channel.Send("before");
+        throw new OrielIpcException("boom");
+    }
+
     /// <summary>带错误码与附加数据的失败（F7 的结构化错误）。</summary>
     /// <remarks>
     /// 应用可以给自己的错误分类——库只负责把它原样送到页面。

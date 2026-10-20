@@ -223,4 +223,31 @@ public sealed class GeneratorDiagnosticsTests
 
         Assert.Empty(diagnostics);
     }
+
+    // ---- 通道参数：绑定 + 自动关闭（B9） ----
+
+    [Fact]
+    public void ChannelParameter_GeneratesBindAndFinally()
+    {
+        var (diagnostics, sources) = Compile("""
+            public static class Commands
+            {
+                [OrielWeb.Ipc.OrielCommand("t.stream")]
+                public static void Stream(OrielWeb.Ipc.OrielChannel c) => c.Send(1);
+            }
+            """);
+
+        Assert.DoesNotContain(diagnostics, d => d.Id.StartsWith("ORIELWEB", StringComparison.Ordinal));
+
+        string all = string.Join('\n', sources.Select(s => s.SourceText.ToString()));
+
+        // 绑定：字符串参数 → OrielChannel（推送能力来自分发器给的 sink）
+        Assert.Contains("OrielChannel.Bind", all);
+        Assert.Contains("sink, jsonContext", all);
+
+        // 自动关闭：命令返回、抛异常、后续参数绑定失败都要走 finally。
+        // 少了它，页面侧每次调用会漏一个监听——而那种泄漏在功能上看不出来。
+        Assert.Contains("finally", all);
+        Assert.Contains("?.Close();", all);
+    }
 }

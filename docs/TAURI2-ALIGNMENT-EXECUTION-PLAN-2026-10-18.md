@@ -56,6 +56,7 @@
 | **B6b** | 应用菜单栏（三平台各自的挂载点） | 高 | 三平台窗口宿主（Linux 要改布局） | B6a | ✅ |
 | **B7** | 真实 Tauri 应用迁移演练 | 中 | 演练工装 + 卡点清单（无 API 改动） | B0–B4 | — |
 | **B8** | 页面事件面：文件拖放（`onDragDropEvent`） | 中 | `OrielApp` 事件推送 + `window.js` 方法 + 映射表 | B7 | ✅ |
+| **B9** | 流式回传（`Channel`） | 中高 | 生成器 + `OrielChannel` + `core.js`（**不动协议**） | B7 | ✅ |
 
 **推荐顺序（单人）**：`B0 → B1 → B2 → B3 → B4 → B5 → B6a → B6b → B7`
 **双人并行**：A 线 `B0 → B1 → B3 → B5`；B 线 `B2 → B4`；汇合后 `B6a → B6b`。
@@ -403,6 +404,39 @@ position"、宿主事件名）；JS 2 条（订阅的是宿主名而页面看到
 
 ---
 
+### B9 · 流式回传（`Channel`）
+
+**来源**：B7 的 #3——lumos 的流式问答整条链路都压在 `new Channel()` 上。B7 当时把它估成
+"最贵的一项，要改 IPC 协议"。
+
+**做**：页面侧 `Channel`（`core` 模块）+ C# 侧 `OrielChannel`（`Send(object?)` / `SendJson` /
+`Close`）+ 生成器对通道参数的绑定与自动关闭。
+
+**关键决定：协议一行没改。**
+
+* **线格式是一个字符串**：页面侧 `toJSON()` 把实例变成 `__ORIEL_CHANNEL__:<id>`，桥接层本来就对
+  参数做 `JSON.stringify`——于是通道在宿主眼里只是"一个长得像字符串的参数"。**桥接脚本与三个
+  平台后端零改动**，也就不存在"某个平台没实现"。
+* **宿主→页面复用事件通道**：两条事件名（`oriel://channel/<id>` 与 `...-end/<id>`），
+  不放哨兵值进数据里（否则业务载荷里出现同名键就误判结束）。
+* **关闭由生成器保证**：命令返回、抛异常、后续参数绑定失败都走同一条 `finally`。
+  少了它，页面侧每次调用漏一个监听——而那种泄漏在功能上看不出来。
+
+**两处刻意的不对齐**：
+
+* **C# 侧是非泛型 `OrielChannel`**（Tauri 的 Rust 侧是 `Channel<T>`）。`Send(object?)` 走的是
+  **与命令返回值完全相同**的序列化路径（`OrielJson.WriteResult`），DTO 需要应用在
+  `UseJsonContext` 里声明——错误文案都一致。加泛型参数只会让同一件事有两种表达。
+* **不保证重排**。Tauri 的消息带 index + 终点标记，页面侧按序重放；本库的推送最终都落到 UI 线程
+  投递，同窗口内本就有序。加一层重排反而会掩盖"跨线程并发推"这个应用该自己决定的问题。
+
+**验收**：C# 9 条（绑定三种错误形状、无来源窗口、逐条推送与顺序、DTO 走应用上下文、
+异常路径仍关闭、幂等关闭与关闭后丢弃、可选参数）；JS 4 条（线格式与 id 唯一、构造即订阅、
+自动退订且不留监听、回调抛错不吞后续增量）；生成器 1 条（产出 `Bind` 与 `finally`）；
+`--selftest channel` 三平台真跑（参数序列化与事件名只有真跑能验）。
+
+---
+
 ## 3. 每批的统一验收
 
 任何批次合入前必须全绿：
@@ -479,6 +513,7 @@ position"、宿主事件名）；JS 2 条（订阅的是宿主名而页面看到
 | B6b | ✅ 完成（2026-10-19，三平台全做含 Linux） | `menu.setAsAppMenu` / `menu.setAsWindowMenu`、三平台菜单栏落点、`GtkBox{menubar,webview}` 布局改造、`--selftest menubar`（含客户区几何断言） |
 | B7 | ✅ 完成（2026-10-19） | 3 个真实应用（228 个源文件、16 个模块、24 个符号）机械迁移：`tools/migration-drill/` + `docs/MIGRATION-FINDINGS.md`（含命令名映射表与按频率排序的卡点） |
 | B8 | ✅ 完成（2026-10-20） | `drag.drop` → 页面 `tauri://drag-drop`；`Window.onDragDropEvent`；C# 6 条 + JS 2 条单测。只发 `drop`、不带 `position`（理由见 §2 B8） |
+| B9 | ✅ 完成（2026-10-20） | `Channel`（core）+ `OrielChannel`（C#）+ 生成器绑定/自动关闭；C# 9 条 + JS 4 条 + `--selftest channel`。协议与三平台后端零改动（理由见 §2 B9） |
 
 > **B4 的一处实现细节值得记住**：Tauri 用 `once('tauri://created')` 通知建窗结果，
 > 本库没有这条页面事件（`WEBVIEW_CREATED` 在桌面端不会触发），所以改成构造即发起、
@@ -611,7 +646,7 @@ B7 跑完之后的结论（2026-10-19，证据见 `docs/MIGRATION-FINDINGS.md`�
 
 ```
 B8 页面事件面   ← 拖放事件（宿主已有 FileDropped，只缺"变成页面事件"这一层）  ✅ 完成
-B9 Channel 取舍 ← 先决策"由库提供 / event+requestId 官方配方 / 不支持"，不是先动手
+B9 流式回传      ← Channel：线格式是字符串参数，协议与三平台不改  ✅ 完成
 不做            ← plugin-updater、clipboard.writeImage、onBackButtonPress
                   （前两项是整块生态能力；第三项是桌面库不该有的移动端 API）
 ```

@@ -1026,7 +1026,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 
 | 模块 | 内容 |
 |---|---|
-| `core` | `invoke` / `isTauri` / `convertFileSrc`（同步；宿主侧查 `asset.read` 的 scope） |
+| `core` | `invoke` / `isTauri` / `convertFileSrc`（同步；宿主侧查 `asset.read` 的 scope）/ `Channel`（流式回传，见 §11.3） |
 | `event` | `listen` / `once` / `emit` / `emitTo` / `TauriEvent`（`listen` 返回**函数**，同时是 thenable：`const un = listen(...)`、`await listen(...)`、`listen(...).then(fn => ...)` 三种写法都成立；差别只剩 `instanceof Promise === false`） |
 | `window` | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow` + `Window` 类（含静态方法 `Window.getFocusedWindow()`；M5 的状态查询与外观开关：`isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop` / `isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `isEnabled` / `theme`；`setEnabled` / `setMaximizable` / `setMinimizable` / `setClosable` / `setMaxSize` / `setSizeConstraints` / `requestUserAttention` / `setIcon` / `setBackgroundColor`；`onThemeChanged` / `onScaleChanged` / `onDragDropEvent`；显示器 `availableMonitors` / `primaryMonitor` / `currentMonitor` / `monitorFromPoint` / `cursorPosition`） |
 | `webviewWindow` | `WebviewWindow`（`extends Window`）/ `getCurrentWebviewWindow` / `getAllWebviewWindows`。**页面建窗**：`new WebviewWindow(label, options)` 后 `await w.created`，或 `await WebviewWindow.create(...)`。与 Tauri 的差别是"创建结果走 `created` 而不是 `tauri://created` 事件"（见该模块一节） |
@@ -1448,7 +1448,56 @@ const logical = screens[1].size.toLogical(screens[1].scaleFactor);
 > （`PhysicalSize.toLogical` 就是这个方向）。把 150% 屏上的 `innerSize()`（逻辑）当成物理去乘，
 > 窗口会大 1.5 倍——这是迁移时最容易犯的错。
 
-### 11.3 `window.oriel` 的原始成员
+### 11.3 流式回传：`Channel`
+
+普通命令的回执只有一条，流式场景（模型逐字输出、批量导入进度、日志尾部）需要**在命令返回之前**
+多次推送。`Channel` 就是这条路：
+
+```js
+import { Channel, invoke } from '@orielweb/api/core';
+
+const progress = new Channel((p) => console.log(p));   // 也可以事后 progress.onmessage = ...
+const total = await invoke('import.start', { paths, progress });
+// 命令返回后通道自动关闭——宿主发结束事件，页面收到就退订，不必手动关。
+```
+
+```csharp
+[OrielCommand("import.start")]
+public async Task<int> Start(string[] paths, OrielChannel progress)
+{
+    for (int i = 0; i < paths.Length; i++)
+    {
+        await Import(paths[i]);
+        progress.Send(new { index = i, total = paths.Length });   // 任意可序列化的值
+    }
+
+    return paths.Length;
+}
+```
+
+| 项 | Tauri | 本库 |
+|---|---|---|
+| 线格式 | `toJSON()` → `__CHANNEL__:<id>` 字符串 | `toJSON()` → `__ORIEL_CHANNEL__:<id>` 字符串（同一个思路：**通道在宿主眼里只是一个字符串参数**） |
+| 回调登记 | `__TAURI_INTERNALS__.callbacks` 全局表 | 两条事件名：`oriel://channel/<id>` 与 `oriel://channel-end/<id>` |
+| 关闭时机 | Rust 侧通道 drop 时发 `end`，页面 `cleanupCallback()` | 命令结束时**生成器在 `finally` 里**调 `Close()`（正常返回/抛异常/后续参数绑定失败都算）；页面收到结束事件自动退订 |
+| 显式关闭 | 无公开 API | `channel.close()`，幂等 |
+| 顺序保证 | 消息带 index + 终点标记，页面侧按序重排 | **没有重排**：到达顺序以宿主投递为准（同一线程内有序） |
+| `Send` 的序列化 | Rust 侧 `Serialize` | 与**命令返回值完全同一套**（`OrielJson.WriteResult`）：基元/字符串序列/`byte[]` 直接写，DTO 需要应用 `UseJsonContext` 里声明 |
+
+为什么把线格式做成字符串：桥接脚本对 `invoke` 的参数做 `JSON.stringify`，`toJSON()` 让通道
+自然变成字符串——**桥接层与三个平台后端一行都不用改**，也就不存在"某个平台没实现通道"。
+代价是宿主侧要自己解析前缀，但那只在 `OrielChannel.Bind` 一处。
+
+为什么不做序号重排：Tauri 需要它是因为 Rust 侧可能多线程并发 `send`，而页面按 index 重排能
+给出确定顺序。本库的推送最终都落到 UI 线程的 `PostWebMessage` / `EvaluateScript`，同一窗口内
+本来就是有序的；加一层重排只会把"跨线程并发推"的顺序问题藏起来，而那种情况本来就该由应用
+自己决定顺序。
+
+> **两个容易踩的点**：① `Channel` 要在 `invoke` **之前**构造（构造函数里就订阅了，命令执行中
+> 随时可能推）；② 命令返回之后再 `Send` 会被丢弃并在 `OrielDiagnostics` 留一条记录——
+> 后台任务与命令返回天然会赛跑，把它变成异常会让 fire-and-forget 的收尾随机炸掉。
+
+### 11.4 `window.oriel` 的原始成员
 
 | 成员 | 说明 |
 |---|---|
