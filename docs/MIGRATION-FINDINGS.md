@@ -113,6 +113,10 @@ node tools/migration-drill/drill.mjs --app lumos     # 只跑一个
 `window.oriel.invoke`，命令名也不同——**这套测试会全红**。这不是缺陷，是"测试贴着线格式写"的
 必然成本；改法是换成本库的 `mockIPC()`，并把命令名按 §4 换掉。
 
+这条配方现在**可执行**：`tools/migration-drill/fixtures/mock-ipc.test.mjs`（3 条，进 CI）钉住了
+"按本库命令名分支"与"仍用线格式时失败长什么样"。演练报告里的"测试改动点"一节会告诉你
+这次要改多少个测试文件（random-frame：32 处 / 12 个文件，全部在测试里）。
+
 **#3 Channel。** 唯一被真实用到的流式通道：`new Channel<ChatEvent>()` → `channel.onmessage = cb`
 → 作为 `invoke` 参数发出去，宿主按 id 回推。
 

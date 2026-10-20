@@ -554,8 +554,40 @@ for (const r of results) {
     for (const [token, files] of globals) {
         console.log(`  环境探测 ${token}  ${files.length} 处：${[...new Set(files)].slice(0, 3).join(', ')}`);
     }
+    if (r.pluginLiterals.length > 0) {
+        console.log(`  plugin 直调 共 ${r.pluginLiterals.length} 处（按文件的统计见下一节）`);
+    }
+}
+
+console.log('\n\n########## 测试改动点（按文件，迁移后必须跟着改） ##########\n');
+// 只看 plugin: 字面量还不够——真正决定"要改多少测试"的是它们**分布在哪些文件**。
+// 测试文件里的那一批是迁移后必红的（应用代码换了命令名，桩还停在旧名字），
+// 源码里的是运行期行为差异。两种都要改，但改法不同，所以分开计数。
+for (const r of results) {
+    const isTestFile = (f) =>
+        /(^|\/)(__tests__|tests?)\//.test(f) || /\.(test|spec)\.[cm]?[jt]sx?$/.test(f);
+
+    const byFile = new Map();
     for (const p of r.pluginLiterals) {
-        console.log(`  plugin 直调 ${p.literal}  ${p.file}`);
+        byFile.set(p.file, (byFile.get(p.file) ?? 0) + 1);
+    }
+
+    console.log(`--- ${r.slug}`);
+    if (byFile.size === 0) {
+        console.log('  无（没有直接桩 Tauri 线格式的代码）');
+        continue;
+    }
+
+    const entries = [...byFile].sort((a, b) => b[1] - a[1]);
+    const testEntries = entries.filter(([f]) => isTestFile(f));
+    const total = entries.reduce((sum, [, n]) => sum + n, 0);
+    const testTotal = testEntries.reduce((sum, [, n]) => sum + n, 0);
+
+    console.log(
+        `  ${total} 处 / ${byFile.size} 个文件；其中测试文件 ${testEntries.length} 个、${testTotal} 处`,
+    );
+    for (const [f, n] of entries.slice(0, 6)) {
+        console.log(`  ${isTestFile(f) ? '[测试]' : '[源码]'} ${f.padEnd(52)} ${n} 处`);
     }
 }
 

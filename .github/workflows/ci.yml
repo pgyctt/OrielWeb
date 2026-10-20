@@ -55,6 +55,12 @@ jobs:
         # 注意：必须显式给出文件路径——Node 把纯目录参数当作入口模块解析。
         run: node --test tests/bridge/bridge.test.mjs
 
+      - name: Migration fixture
+        # "线格式桩要改成 mockIPC"这条配方必须是**可执行**的，否则它只是文档里的一段话。
+        # 夹具覆盖三种情况：mockIPC 按本库命令名分支、仍调 plugin:fs|write_file 的失败形态、
+        # 以及本文件自身不该残留多余的字面量。
+        run: node --test tools/migration-drill/fixtures/mock-ipc.test.mjs
+
       - name: Frontend API tests
         # @orielweb/api 的单元测试（core / dpi / event / mocks）。它是页面侧公开 API 的载体，
         # 形状错了的表现是"前端迁移后行为不对"，而那种问题在 C# 侧一个断言都抓不到。
@@ -269,6 +275,23 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: Start Xvfb and wait until it accepts connections
+        # 不用 `xvfb-run -a`：它分配 display 号之后**立刻**执行命令，不等 X server 就绪。
+        # 偶发症状是 `cannot open display :99`，同一份代码重跑即绿（39350302045 就是这么红的）。
+        # 这种红会把"CI 绿"这件事的信息量削掉，所以这里自己起、自己等到能连上为止。
+        run: |
+          Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp > "$RUNNER_TEMP/xvfb.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if xdpyinfo -display :99 > /dev/null 2>&1; then
+              echo "Xvfb :99 就绪（第 ${i} 次探测，约 ${i}s）"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Xvfb 30 秒内仍未就绪，下面是它的输出：" >&2
+          cat "$RUNNER_TEMP/xvfb.log" >&2
+          exit 1
+
       - name: Verify Linux (self-tests + shell evidence + smoke run)
         # 三个阶段一次跑完（脚本内部按阶段分节，失败时逐阶段给结论）：
         #   selftest —— 机器断言（导航/IPC/能力模型/多窗口/来源探针/线程归属/托盘/主题双路径/
@@ -281,7 +304,10 @@ jobs:
         # xvfb 下仍会出现两条历史噪音——AT-SPI 找不到 org.a11y.Bus、libEGL 报 no DRI3——
         # 它们不影响判定，最终以脚本末尾的机器结论为准。
         # 脚本内部自己起 dbus-run-session（通知服务与 demo 必须同一个会话总线）。
-        run: xvfb-run -a bash tools/verify-linux.sh --backend x11 --out "$RUNNER_TEMP/linux-verify-out"
+        env:
+          # 固定 :99：上一步已确认它可连。脚本看到 DISPLAY 就不再走 xvfb-run 自举。
+          DISPLAY: ':99'
+        run: bash tools/verify-linux.sh --backend x11 --out "$RUNNER_TEMP/linux-verify-out"
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4

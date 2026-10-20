@@ -637,7 +637,7 @@ Windows 实测：`enter` + **200 条 `over`** + `drop`，坐标随移动变化�
 | B9 | ✅ 完成（2026-10-20） | `Channel`（core）+ `OrielChannel`（C#）+ 生成器绑定/自动关闭；C# 9 条 + JS 4 条 + `--selftest channel`。协议与三平台后端零改动（理由见 §2 B9） |
 | R0 | ✅ 完成（2026-10-20） | 0.3.8 → **0.4.0**：版本号、CHANGELOG 落版与 tag `v0.4.0` 同一次提交；`release.yml` 出 Release + NuGet |
 | B10 | ✅ 完成（2026-10-20） | `Win32DropTarget`（手写 `IDropTarget`）+ `OrielDragEventArgs` + 三平台四阶段 + `window.js` 四订阅与 `PhysicalPath` 归一。Windows 真机实测 enter/200 条 over/drop；C# 13 条 + JS 2 条 |
-| B11 | ⬜ 未开始 | 计划见 §2 B11。夹具先行，因为"改法可执行"比"再写一段文档"有用 |
+| B11 | ✅ 完成（2026-10-20） | `tools/migration-drill/fixtures/`（3 条可执行样例，进 CI）+ 报告新增"测试改动点"一节（实测 random-frame：32 处 / 12 个文件，全在测试里）+ `smoke-linux` 改为自起 Xvfb 并等 `xdpyinfo` 连通 |
 
 > **B4 的一处实现细节值得记住**：Tauri 用 `once('tauri://created')` 通知建窗结果，
 > 本库没有这条页面事件（`WEBVIEW_CREATED` 在桌面端不会触发），所以改成构造即发起、
@@ -778,7 +778,7 @@ B9 之后（2026-10-20）：
 ```
 R0 发版 0.4.0    ← 先把 B0–B9 落成可回溯的版本，再谈新能力            ⬅ 当前
 B10 拖放补全      ← enter/over/leave + position；Windows 换 COM IDropTarget  ✅ 完成
-B11 演练工装门禁   ← 从"能编译"到"能启动前不会崩"：夹具 + 报告加列 + Xvfb 就绪等待
+B11 演练工装门禁   ← 从"能编译"到"能启动前不会崩"：夹具 + 报告加列 + Xvfb 就绪等待  ✅ 完成
 不做              ← plugin-updater、clipboard.writeImage、onBackButtonPress
                      （前两项是整块生态能力；第三项是桌面库不该有的移动端 API）
 ```

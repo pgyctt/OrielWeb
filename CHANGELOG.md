@@ -21,6 +21,16 @@
 - **`IWindowBackend.DragDrop`**（C# 侧宿主事件）：四阶段 + 坐标。`FileDropped` 保持不变
   （0.4.0 已发布），drop 时两者都触发；库内部只订阅 `DragDrop`，避免页面收到两条 drop。
 
+### 工具与文档
+
+- **迁移夹具（`tools/migration-drill/fixtures/`）**：把"线格式桩要改成 `mockIPC`"这条配方做成
+  可执行样例（3 条，进 CI）。B7 演练里那 32 处 `plugin:fs|write_file` 是"编译能过、运行必红"的典型，
+  而红的位置在测试里，容易被误判成库的问题——夹具把失败形态钉下来了。
+- **演练报告新增"测试改动点"**：按文件统计 `plugin:` 字面量，标出哪些是测试文件。
+  实测 random-frame：32 处分布在 12 个文件，**全部是测试**——这就是"这次迁移要改多少测试"的答案。
+- **`smoke-linux` 不再偶发 `cannot open display :99`**：改用自起 Xvfb + 轮询 `xdpyinfo` 等就绪，
+  而不是 `xvfb-run -a`（它分配 display 后立刻执行命令，不等 X server）。
+
 ## 0.4.0 - 2026-10-20
 
 B0–B9 之后的第一个发版。主体是两个新能力（流式回传、文件拖放），都来自 B7 迁移演练
