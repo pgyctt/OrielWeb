@@ -2470,6 +2470,68 @@ internal partial class Win32WindowHost : IWindowBackend
         }
     }
 
+    /// <summary>覆写这个窗口的主题（见 <see cref="IWindowBackend.SetTheme"/>）。</summary>
+    /// <remarks>
+    /// <para>
+    /// **Windows 落点是 DWM 的深色标题栏属性 + UxTheme 的非客户区重绘**——
+    /// 客户区（网页）的颜色由 CSS 决定，DWM 管的是标题栏 / 边框那圈。
+    /// 所以"改主题"在这里改的是窗口的**装饰**，页面自己要跟着改配色
+    /// （页面经 <c>window.theme()</c> / <c>theme.changed</c> 拿到当前值再自己决定）。
+    /// </para>
+    /// <para>
+    /// <c>null</c> = 跟随系统：撤掉 DWM 覆写、恢复默认主题类。这两个都要做——
+    /// 只撤 DWM 不撤主题类的话，标题栏可能停在"深色"上不动。
+    /// </para>
+    /// <para>
+    /// 两个 DWM 属性名都试（<see cref="Win32Constants.DWMWA_USE_IMMERSIVE_DARK_MODE"/> 与
+    /// <see cref="Win32Constants.DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1"/>）：
+    /// Win10 2004 之前只认旧名，之后只认新名。非 0 的 HRESULT 是"这版本不认识这个属性"，
+    /// 不是错误，跳过即可。
+    /// </para>
+    /// </remarks>
+    public void SetTheme(OrielTheme? theme)
+    {
+        if (_hwnd == 0)
+        {
+            return;
+        }
+
+        int dark = theme == OrielTheme.Dark ? 1 : 0;
+
+        // 先试 20（2004+），失败再试 19（1809/1903）——两个都不接受时保持原样。
+        // DwmSetWindowAttribute 返回 HRESULT，非 0 只是"这个属性不认识"，不是调用错了。
+        int size = sizeof(int);
+        if (Win32.DwmSetWindowAttribute(
+                _hwnd, Win32Constants.DWMWA_USE_IMMERSIVE_DARK_MODE, ref dark, size) != 0)
+        {
+            _ = Win32.DwmSetWindowAttribute(
+                _hwnd, Win32Constants.DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1, ref dark, size);
+        }
+
+        if (theme is null)
+        {
+            // 跟随系统：撤掉主题类绑定，让标题栏按系统主题画
+            _ = Win32.SetWindowTheme(_hwnd, null, null);
+        }
+        else
+        {
+            // 显式覆写：让标题栏按"视觉样式"画（而不是固定浅色）
+            var data = new WTA_NONCLIENT_PARAMS
+            {
+                Flags = Win32Constants.WTNCA_USEVISUALSTYLE,
+                Mask = Win32Constants.WTNCA_USEVISUALSTYLE,
+            };
+            _ = Win32.SetWindowThemeAttribute(
+                _hwnd, Win32Constants.WTA_NONCLIENT, ref data, Marshal.SizeOf<WTA_NONCLIENT_PARAMS>());
+        }
+
+        // 让 DWM 重画非客户区：不发的话标题栏要等到下次被重绘才变
+        _ = Win32.SetWindowPos(
+            _hwnd, 0, 0, 0, 0, 0,
+            Win32Constants.SWP_NOMOVE | Win32Constants.SWP_NOSIZE | Win32Constants.SWP_NOZORDER |
+            Win32Constants.SWP_NOOWNERZORDER | Win32Constants.SWP_FRAMECHANGED);
+    }
+
     /// <summary>设置最大尺寸（见 <see cref="IWindowBackend.SetMaxSize"/>）。</summary>
     /// <remarks>
     /// 只存字段：真正的约束在 <c>WM_GETMINMAXINFO</c> 里施加（那边本来就在处理 min）。

@@ -178,6 +178,27 @@ internal interface IWindowBackend
     void SetEnabled(bool enabled);
 
     /// <summary>
+    /// 覆写**这个窗口**的主题（`null` = 恢复跟随系统），对标 Tauri 2 的
+    /// `Window.setTheme`。三个平台的落点都存在，只是作用粒度不同（见
+    /// <see cref="OrielApp.SetTheme"/> 里的说明——那边写的是同一套平台事实）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// **与 <see cref="IPlatformBackend.CurrentTheme"/> 是两件事**：后者是
+    /// "系统当前是什么主题"（只读、应用级），这里写的是"这个窗口要显示成什么主题"。
+    /// 覆写之后 <see cref="IPlatformBackend.CurrentTheme"/> 与 <c>theme.changed</c> 仍然
+    /// 跟着**系统**走——那两个回答的都是"系统现在什么样"，不该被一个窗口的覆写搅混。
+    /// 页面想知道"我这个窗口显示成什么"，用 `window.theme()`（`window.theme` 命令），
+    /// 那条会按窗口的覆写状态回答。
+    /// </para>
+    /// <para>
+    /// 后端记不住的实现也**要如实抛 <see cref="NotSupportedException"/>**，
+    /// 而不是静默 no-op——"设了但没生效"比"设了报错"难查得多（见 B15 的护栏）。
+    /// </para>
+    /// </remarks>
+    void SetTheme(OrielTheme? theme);
+
+    /// <summary>
     /// 设置窗口的最大尺寸（逻辑像素）。传 0 表示不限制。
     /// </summary>
     /// <remarks>

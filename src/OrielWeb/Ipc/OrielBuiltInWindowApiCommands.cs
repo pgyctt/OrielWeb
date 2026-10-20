@@ -287,10 +287,38 @@ internal static class OrielBuiltInWindowApiCommands
             case "window.theme":
                 // 对标 Tauri 的 Window.theme()：返回 'light' / 'dark' / null。
                 //
-                // 本库目前**只有"跟随系统"这一种来源**（OrielApp.Theme），没有"按窗口覆写主题"
-                // 的能力，所以永远给得出值、不会返回 null。Tauri 的 null 表示"无法确定"，
-                // 而"系统主题是什么"我们总是知道（三平台都能读）。
-                handler = static (sender, _) => sender.App.Theme == OrielTheme.Dark ? "dark" : "light";
+                // 按"这个窗口显示成什么"回答：窗口覆写 > 应用覆写 > 系统主题
+                // （B15 起的三级模型，见 OrielApp.EffectiveTheme）。Tauri 的 null 表示
+                // "无法确定"，而本库总是给得出值——三级里任一级都能给出确定答案。
+                handler = static (sender, args) =>
+                {
+                    OrielTheme theme = sender.App.EffectiveTheme(Resolve(sender, args));
+                    return theme == OrielTheme.Dark ? "dark" : "light";
+                };
+                return true;
+
+            case "window.setTheme":
+                // 对标 Tauri 的 Window.setTheme。值是 'light' / 'dark' / null（null = 跟随系统）。
+                // 走 WebviewWindow.ThemeOverride：那边负责"记哪个窗口有自己覆写"，
+                // 三平台的原生落点在各自的 IWindowBackend.SetTheme 里。
+                handler = static (sender, args) =>
+                {
+                    string? raw = OptionalText(args, "value");
+                    OrielTheme? theme = raw switch
+                    {
+                        null => null,
+                        "light" => OrielTheme.Light,
+                        "dark" => OrielTheme.Dark,
+                        _ => throw new OrielIpcException(
+                            $"window.setTheme: 未知的 value「{raw}」（只认 light / dark / null）。")
+                        {
+                            Code = OrielIpcErrorCodes.InvalidArgument,
+                        },
+                    };
+
+                    Resolve(sender, args).ThemeOverride = theme;
+                    return null;
+                };
                 return true;
 
             case "window.scaleFactor":
@@ -603,36 +631,40 @@ internal static class OrielBuiltInWindowApiCommands
     /// 唯一不需要应用配合的做法（代价是每次调用一次解析，而这些是低频查询）。
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// 尺寸 → 页面形状。<b>B14 起是 Tauri 2 的外部标记</b> <c>{ Logical: { width, height } }</c>
+    /// （旧内联 tag 形状 <c>{ type, width, height }</c> 仍在页面侧被兼容读取一个版本）。
+    /// </summary>
     private static JsonElement SizeOf(OrielSize size)
         => JsonDocument.Parse(
-            $"{{\"type\":\"Logical\",\"width\":{OrielEventPayload.Number(size.Width)}," +
-            $"\"height\":{OrielEventPayload.Number(size.Height)}}}").RootElement.Clone();
+            $"{{\"Logical\":{{\"width\":{OrielEventPayload.Number(size.Width)}," +
+            $"\"height\":{OrielEventPayload.Number(size.Height)}}}}}").RootElement.Clone();
 
-    /// <summary>位置 → 页面形状 <c>{ type, x, y }</c>；理由同 <see cref="SizeOf"/>。</summary>
+    /// <summary>位置 → 页面形状 <c>{ Logical: { x, y } }</c>；理由同 <see cref="SizeOf"/>。</summary>
     private static JsonElement PositionOf(OrielPosition position)
         => JsonDocument.Parse(
-            $"{{\"type\":\"Logical\",\"x\":{OrielEventPayload.Number(position.X)}," +
-            $"\"y\":{OrielEventPayload.Number(position.Y)}}}").RootElement.Clone();
+            $"{{\"Logical\":{{\"x\":{OrielEventPayload.Number(position.X)}," +
+            $"\"y\":{OrielEventPayload.Number(position.Y)}}}}}").RootElement.Clone();
 
     /// <summary>
-    /// 物理位置 → 页面形状 <c>{ type: 'Physical', x, y }</c>。
+    /// 物理位置 → 页面形状 <c>{ Physical: { x, y } }</c>。
     /// </summary>
     /// <remarks>
-    /// 与 <see cref="PositionOf"/> 分开是因为**单位不同**，而 <c>type</c> 字段正是用来
-    /// 让页面区分这一点的：Tauri 的 dpi 模块里 <c>PhysicalPosition</c> 与
-    /// <c>LogicalPosition</c> 都是 <c>{ type, x, y }</c>，算法（toLogical/toPhysical）
-    /// 靠它分支。把显示器坐标标成 Logical 会让页面在 150% 屏上把物理值当逻辑值用。
+    /// 与 <see cref="PositionOf"/> 分开是因为**单位不同**，而标记正是用来让页面区分这一点的：
+    /// Tauri 的 dpi 模块里 <c>PhysicalPosition</c> 与 <c>LogicalPosition</c> 的算法
+    /// （toLogical/toPhysical）靠它分支。把显示器坐标标成 Logical 会让页面在 150% 屏上
+    /// 把物理值当逻辑值用。
     /// </remarks>
     private static JsonElement PhysicalPositionOf(OrielPosition position)
         => JsonDocument.Parse(
-            $"{{\"type\":\"Physical\",\"x\":{OrielEventPayload.Number(position.X)}," +
-            $"\"y\":{OrielEventPayload.Number(position.Y)}}}").RootElement.Clone();
+            $"{{\"Physical\":{{\"x\":{OrielEventPayload.Number(position.X)}," +
+            $"\"y\":{OrielEventPayload.Number(position.Y)}}}}}").RootElement.Clone();
 
-    /// <summary>物理尺寸 → 页面形状 <c>{ type: 'Physical', width, height }</c>。</summary>
+    /// <summary>物理尺寸 → 页面形状 <c>{ Physical: { width, height } }</c>。</summary>
     private static JsonElement PhysicalSizeOf(OrielSize size)
         => JsonDocument.Parse(
-            $"{{\"type\":\"Physical\",\"width\":{OrielEventPayload.Number(size.Width)}," +
-            $"\"height\":{OrielEventPayload.Number(size.Height)}}}").RootElement.Clone();
+            $"{{\"Physical\":{{\"width\":{OrielEventPayload.Number(size.Width)}," +
+            $"\"height\":{OrielEventPayload.Number(size.Height)}}}}}").RootElement.Clone();
 
     /// <summary>
     /// 显示器 → 页面形状 <c>{ name, position, size, scaleFactor }</c>（Tauri 的 <c>Monitor</c>）。

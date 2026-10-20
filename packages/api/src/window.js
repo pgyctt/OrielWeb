@@ -265,6 +265,99 @@ export const UserAttentionType = Object.freeze({
     Informational: 2,
 });
 
+/**
+ * 任务栏/Dock 进度条状态（对标 Tauri 的 `ProgressBarStatus`）。
+ *
+ * 取值与 Tauri 逐键一致。**方法本身在 B22 落地**（`Window.setProgressBar`）——
+ * 常量先到位，迁移代码里的 `ProgressBarStatus.Indeterminate` 不必改。
+ */
+export const ProgressBarStatus = Object.freeze({
+    None: 'none',
+    Normal: 'normal',
+    Indeterminate: 'indeterminate',
+    Paused: 'paused',
+    Error: 'error',
+});
+
+/**
+ * 窗口视觉材质（对标 Tauri 的 `Effect`，macOS vibrancy / Windows Mica 系）。
+ *
+ * 取值与 Tauri 逐键一致（27 个）。**方法本身在 B22 落地**（`Window.setEffects`）；
+ * 不支持的平台由方法抛 `not_supported`——常量本身是跨平台的字符串。
+ */
+export const Effect = Object.freeze({
+    AppearanceBased: 'appearanceBased',
+    Light: 'light',
+    Dark: 'dark',
+    MediumLight: 'mediumLight',
+    UltraDark: 'ultraDark',
+    Titlebar: 'titlebar',
+    Selection: 'selection',
+    Menu: 'menu',
+    Popover: 'popover',
+    Sidebar: 'sidebar',
+    HeaderView: 'headerView',
+    Sheet: 'sheet',
+    WindowBackground: 'windowBackground',
+    HudWindow: 'hudWindow',
+    FullScreenUI: 'fullScreenUI',
+    Tooltip: 'tooltip',
+    ContentBackground: 'contentBackground',
+    UnderWindowBackground: 'underWindowBackground',
+    UnderPageBackground: 'underPageBackground',
+    LiquidGlassRegular: 'liquidGlassRegular',
+    LiquidGlassClear: 'liquidGlassClear',
+    Mica: 'mica',
+    Blur: 'blur',
+    Acrylic: 'acrylic',
+    Tabbed: 'tabbed',
+    TabbedDark: 'tabbedDark',
+    TabbedLight: 'tabbedLight',
+});
+
+/**
+ * 特效的激活状态（对标 Tauri 的 `EffectState`）。
+ */
+export const EffectState = Object.freeze({
+    FollowsWindowActiveState: 'followsWindowActiveState',
+    Active: 'active',
+    Inactive: 'inactive',
+});
+
+/**
+ * 关闭请求事件（对标 Tauri 的 `CloseRequestedEvent`）。
+ *
+ * 与 Tauri 的**关键差别**：Tauri 的 `preventDefault()` 能真的阻止关闭；本库的关闭
+ * 语义是"页面什么都不做窗口就不关"（见 {@link Window.onCloseRequested}），
+ * `preventDefault()` 在这里是**记录意图**（`isPreventDefault()` 可查）——
+ * 它不会改变任何行为，因为"没关"本来就是默认。迁移代码的
+ * `event.preventDefault()` 不必删，但它在本库里不产生额外效果。
+ */
+export class CloseRequestedEvent {
+    /**
+     * @param {{ event: string, id: number, payload?: unknown }} event 事件原样（`onCloseRequested` 的回调参数）。
+     */
+    constructor(event) {
+        /** 事件名。 */
+        this.event = event.event;
+        /** 事件 id（退订用）。 */
+        this.id = event.id;
+        /** 事件负载（Tauri 的类不暴露它，本库保留——纯加法）。 */
+        this.payload = event.payload;
+        this._preventDefault = false;
+    }
+
+    /** 记录"调用方不希望窗口关"（本库是记录意图，不改变行为——见类说明）。 */
+    preventDefault() {
+        this._preventDefault = true;
+    }
+
+    /** 是否调用过 {@link CloseRequestedEvent.preventDefault}。 */
+    isPreventDefault() {
+        return this._preventDefault;
+    }
+}
+
 export class Window {
 
 
@@ -463,10 +556,39 @@ export class Window {
      * @remarks
      * 对标 Tauri 的 `Window.theme()`，但有两点不同：
      * 那边可能返回 `null`（"无法确定"），本库**总是给得出值**——三平台都能读到系统主题，
-     * 而本库目前只有"跟随系统"这一种来源，没有"按窗口覆写主题"的能力。
+     * 且三级来源（窗口覆写 > 应用覆写 > 系统）里任一级都能给出确定答案。
+     * 覆写模型见 {@link Window.setTheme}。
      */
     theme() {
         return invoke('window.theme', { label: this.label });
+    }
+
+    /**
+     * 覆写**这个窗口**的主题（对标 Tauri 的 `Window.setTheme`）。
+     *
+     * @param {'light' | 'dark' | null} [theme] `null` = 跟随系统
+     * @returns {Promise<void>}
+     * @remarks
+     * **三级模型**：窗口覆写 > 应用覆写（`app.setTheme`） > 系统主题。
+     * 这一层只改"这个窗口"，不影响别的窗口；应用级的改动走 `app.setTheme`。
+     *
+     * **平台落点不同（不是实现偷懒，是平台事实）**：
+     * - Windows：`DwmSetWindowAttribute`（深色标题栏）+ UxTheme 非客户区重绘。
+     *   **只改标题栏 / 边框那圈**，客户区（网页）的颜色由 CSS 决定——页面要
+     *   自己按 `theme()` / `theme.changed` 改配色，宿主不会替你改 CSS。
+     * - macOS：`NSWindow.appearance`（按窗口），`null` = 还原成系统/应用默认。
+     * - Linux：**没有"按窗口选主题"的入口**（GTK 只有应用级的
+     *   `gtk-application-prefer-dark-theme`），所以这里落到应用级、作用域比
+     *   另两个平台大——这不是本库的缺口，是 GTK 的形状。
+     *
+     * **需要能力声明**（`window.setTheme`）——它改变窗口外观，不在标题栏白名单里。
+     */
+    setTheme(theme) {
+        if (theme !== undefined && theme !== null && theme !== 'light' && theme !== 'dark') {
+            throw new TypeError(`setTheme: theme 必须是 'light' / 'dark' / null，收到 ${JSON.stringify(theme)}`);
+        }
+
+        return invoke('window.setTheme', { label: this.label, value: theme ?? null });
     }
 
     /**

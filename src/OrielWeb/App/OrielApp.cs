@@ -372,7 +372,7 @@ public sealed class OrielApp : IDisposable
         {
             if (args.Success)
             {
-                PushTheme(created, Theme);
+                PushTheme(created, EffectiveTheme(created));
             }
         };
 
@@ -455,9 +455,87 @@ public sealed class OrielApp : IDisposable
     public OrielTheme Theme => _backend?.CurrentTheme ?? OrielTheme.Light;
 
     /// <summary>
+    /// 覆写**应用默认**的主题（`null` = 恢复跟随系统），对标 Tauri 2 的 `App.setTheme`。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 作用域是**所有没有自己覆写的窗口**（对标 Tauri 的 `App.setTheme`：那条改的是
+    /// "应用默认"，单个窗口仍可用 `Window.setTheme` 自己盖过它）。
+    /// 已经经 <see cref="WebviewWindow.ThemeOverride"/> 设过覆写的窗口**不动**——它们已经
+    /// 明确表态"我就要这个主题"，不该被应用级的调用搅混。
+    /// </para>
+    /// <para>
+    /// **与 <see cref="Theme"/> 是两件事**：后者回答"系统当前是什么主题"（只读，
+    /// 跟着 <c>theme.changed</c> 走），这里写的是"这个应用显示成什么主题"。
+    /// 覆写期间 <see cref="Theme"/> 与 <c>theme.changed</c> 仍跟着**系统**走——
+    /// 那两个回答的都是"系统现在什么样"，不该被一个应用的覆写搅混。
+    /// 页面想知道"我这个窗口显示成什么"，用 `window.theme()`（`window.theme` 命令）。
+    /// </para>
+    /// <para>
+    /// **平台落点不同（不是实现偷懒，是平台事实）**：
+    /// <list type="bullet">
+    ///   <item>Windows：<c>DwmSetWindowAttribute</c> 的
+    ///     <c>DWMWA_USE_IMMERSIVE_DARK_MODE</c>（Win10 2004+）+ 标题栏非客户区重绘。</item>
+    ///   <item>macOS：<c>NSAppearance</c>（<c>NSAppearanceNameAqua</c> /
+    ///     <c>NSAppearanceNameDarkAqua</c>），作用于**应用级**——单窗口的
+    ///     <c>NSWindow.appearance</c> 优先，没设时跟应用走。</item>
+    ///   <item>Linux：<c>GtkSettings</c> 的 <c>gtk-application-prefer-dark-theme</c>。
+    ///     这是**应用级**属性（GTK 没有"按窗口选主题"的入口），所以 Linux 上
+    ///     <c>Window.setTheme</c> 与 <c>App.setTheme</c> 落到同一个地方、按调用次序
+    ///     后者赢。这不是本库的缺口，是 GTK 的形状。</item>
+    /// </list>
+    /// </para>
+    /// </remarks>
+    public void SetTheme(OrielTheme? theme)
+    {
+        _themeOverride = theme;
+
+        foreach (WebviewWindow window in _windows)
+        {
+            // 已经有自己的覆写的窗口不动（Tauri 的 `App.setTheme` 只改"默认值"）
+            if (window.ThemeOverride is not null)
+            {
+                continue;
+            }
+
+            try
+            {
+                window.Backend.SetTheme(theme);
+                PushTheme(window, EffectiveTheme(window));
+            }
+            catch (NotSupportedException)
+            {
+                // 该平台不支持（Linux 的 GTK 无"按窗口选主题"入口）：保持原样，
+                // 但仍把当前生效值推给页面——页面至少知道自己现在是什么主题。
+                PushTheme(window, EffectiveTheme(window));
+            }
+        }
+    }
+
+    /// <summary>
+    /// 应用级主题覆写（<see cref="SetTheme"/>）。<c>null</c> = 跟随系统。
+    /// </summary>
+    private OrielTheme? _themeOverride;
+
+    /// <summary>
+    /// 某个窗口"当前显示成什么主题"：窗口覆写 &gt; 应用覆写 &gt; 系统主题。
+    /// </summary>
+    /// <remarks>
+    /// 供 <c>window.theme</c> 命令按"这个窗口显示成什么"回答；与
+    /// <see cref="Theme"/>（系统主题）是两件事，见 <see cref="SetTheme"/>。
+    /// </remarks>
+    internal OrielTheme EffectiveTheme(WebviewWindow window)
+        => window.ThemeOverride ?? _themeOverride ?? Theme;
+
+    /// <summary>
     /// 系统主题变化（用户在系统设置里切换深/浅色时触发）。
     /// 同一变化也会以 <c>theme.changed</c> 事件推给每个窗口的页面（含每次导航完成后的补推）。
     /// </summary>
+    /// <remarks>
+    /// **只推系统变化，不推"我这窗口现在显示成什么"**：那件事由
+    /// <c>window.theme</c> 命令回答（见 <see cref="EffectiveTheme"/>）。
+    /// 覆写期间这里仍跟着**系统**走——见 <see cref="SetTheme"/> 的说明。
+    /// </remarks>
     public event Action<OrielTheme>? ThemeChanged;
 
     private void OnThemeChanged(OrielTheme theme)
@@ -465,7 +543,8 @@ public sealed class OrielApp : IDisposable
         ThemeChanged?.Invoke(theme);
         foreach (WebviewWindow window in _windows)
         {
-            PushTheme(window, theme);
+            // 推的是"这窗口现在显示成什么"（含覆写），不是裸的系统值
+            PushTheme(window, EffectiveTheme(window));
         }
     }
 
@@ -1119,6 +1198,11 @@ public sealed class OrielApp : IDisposable
         // 事件已经在 UI 线程上（各平台的原生回调就在主线程），直接 EmitEvent 即可。
         tray.TrayEvent += e => BroadcastTrayEvent(e);
 
+        // 托盘菜单项点击也走 `menu.itemclicked`（B12）：页面侧 @orielweb/api/tray 的
+        // setMenu 给带 action 的项加 token 前缀，回传后按前缀认领——与 menu.js 同一套通路。
+        // 不接这根线的症状是"托盘菜单点了没反应"（菜单本身能弹出来）。
+        tray.MenuItemClicked += id => BroadcastTrayMenuItemClick(id);
+
         _trays[id] = tray;
         return tray;
     }
@@ -1140,6 +1224,22 @@ public sealed class OrielApp : IDisposable
 
     /// <summary>页面侧接收托盘事件的名称。</summary>
     internal const string TrayEventName = "tray.event";
+
+    /// <summary>
+    /// 把托盘菜单项的点击推给所有窗口的页面（事件名与 <see cref="MenuItemClickedEventName"/> 相同）。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="BroadcastTrayEvent"/> 同一个"托盘是应用级、页面才是订阅方"的理由。
+    /// 页面侧 <c>@orielweb/api/tray</c> 的 <c>setMenu</c> 给带 action 的项加 token 前缀，
+    /// 收到后按前缀认领；<c>menu.js</c> 的菜单栏/弹出走的也是这同一条通路。
+    /// </remarks>
+    private void BroadcastTrayMenuItemClick(string id)
+    {
+        foreach (WebviewWindow window in _windows)
+        {
+            PushMenuItemClick(window, id);
+        }
+    }
 
     /// <summary>把托盘事件编成 JSON（字段名与 Tauri 的 TrayIconEvent 对齐）。</summary>
     private static string TrayEventJson(OrielTrayEvent e)

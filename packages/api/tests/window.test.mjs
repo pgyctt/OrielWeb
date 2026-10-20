@@ -211,6 +211,59 @@ test('setTitle 校验参数类型', async () => {
     clearMocks();
 });
 
+// ---- setTheme（B15）----
+
+test('setTheme 发 window.setTheme，value 是 light/dark/null 三选一', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main');
+    setTransportOverride(transport);
+
+    await new Window('main').setTheme('dark');
+    await new Window('main').setTheme('light');
+    await new Window('main').setTheme(null);
+    await new Window('main').setTheme();   // 省略 = null = 跟随系统
+
+    assert.deepEqual(calls.map((c) => c[0]), [
+        'window.setTheme', 'window.setTheme', 'window.setTheme', 'window.setTheme',
+    ]);
+
+    // 按 label 寻址（与 theme() 一致），null 与省略都归一成 null
+    assert.deepEqual(calls[0][1], { label: 'main', value: 'dark' });
+    assert.deepEqual(calls[1][1], { label: 'main', value: 'light' });
+    assert.deepEqual(calls[2][1], { label: 'main', value: null });
+    assert.deepEqual(calls[3][1], { label: 'main', value: null });
+
+    clearMocks();
+});
+
+test('setTheme 收到非法值时抛 TypeError（不发命令）', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main');
+    setTransportOverride(transport);
+
+    for (const bad of ['blue', 'DARK', 0, {}]) {
+        assert.throws(
+            () => new Window('main').setTheme(/** @type {any} */ (bad)),
+            TypeError,
+            `应当拒绝 ${JSON.stringify(bad)}`);
+    }
+
+    assert.deepEqual(calls, []);
+
+    clearMocks();
+});
+
+test('theme() 发 window.theme（带 label），返回值原样透传', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', { 'window.theme': 'dark' });
+    setTransportOverride(transport);
+
+    assert.equal(await new Window('main').theme(), 'dark');
+    assert.deepEqual(calls[0], ['window.theme', { label: 'main' }]);
+
+    clearMocks();
+});
+
 // ---- 几何：PhysicalSize 要换算 ----
 
 test('setSize(LogicalSize)：原样发出，不做换算', async () => {

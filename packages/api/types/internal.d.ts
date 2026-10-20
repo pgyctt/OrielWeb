@@ -15,4 +15,10 @@ export function setTransportOverride(transport: OrielTransport | null): void;
  * @returns {boolean}
  */
 export function hasTransportOverride(): boolean;
+/** 测试钩子：开关补壳警告（双下划线命名法与 mocks 一致，不是公开 API）。 */
+/** @param {boolean} enabled */
+export function __setDebugWarnings(enabled: boolean): void;
+/** 补壳/平台差异的可观测信号：debug 模式下 console.warn，其余静默（保证零删改）。 */
+/** @param {string} message */
+export function warnCompat(message: string): void;
 export type OrielTransport = import("./types.js").OrielTransport;

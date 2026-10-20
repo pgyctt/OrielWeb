@@ -18,22 +18,82 @@
 //     所以两者返回的元数据相同、只是 `isSymlink` 如实报告。
 
 import { invoke } from './core.js';
+import * as paths from './path.js';
+
+// `BaseDirectory` 从 path 模块 re-export（Tauri 的 plugin-fs 也这么干）：
+// 迁移代码 `import { BaseDirectory } from '@tauri-apps/plugin-fs'` 能直接改前缀。
+export { BaseDirectory } from './path.js';
+
+/**
+ * `BaseDirectory` 枚举值 → `path` 模块的目录函数名（键值与 Tauri 的同名枚举逐键一致）。
+ *
+ * @type {Record<number, string>}
+ */
+const BASE_DIR_GETTERS = {
+    1: 'audioDir', 2: 'cacheDir', 3: 'configDir', 4: 'dataDir', 5: 'localDataDir',
+    6: 'documentDir', 7: 'downloadDir', 8: 'pictureDir', 9: 'publicDir', 10: 'videoDir',
+    11: 'resourceDir', 12: 'tempDir', 13: 'appConfigDir', 14: 'appDataDir',
+    15: 'appLocalDataDir', 16: 'appCacheDir', 17: 'appLogDir', 18: 'desktopDir',
+    19: 'executableDir', 20: 'fontDir', 21: 'homeDir', 22: 'runtimeDir', 23: 'templateDir',
+};
+
+/** 粗判"已经是绝对路径"（`/`、`X:\`、`\\`）——绝对路径不参与 baseDir 解析（Tauri 语义）。 */
+/** @param {unknown} path */
+function looksAbsolute(path) {
+    return typeof path === 'string'
+        && (path.startsWith('/') || path.startsWith('\\') || /^[A-Za-z]:[\\/]/.test(path));
+}
+
+/**
+ * 把相对路径按 `options.baseDir` 解析成绝对路径（B13 与 Tauri 的 `baseDir` 语义对齐）。
+ *
+ * @param {string} fnName
+ * @param {unknown} path
+ * @param {Record<string, unknown> | null | undefined} options
+ * @returns {Promise<unknown>} 没有 baseDir 时原样返回；有则返回解析后的字符串。
+ */
+async function resolveAgainstBase(fnName, path, options) {
+    const baseDir = options?.baseDir;
+    if (baseDir === undefined || baseDir === null) {
+        return path;
+    }
+
+    if (typeof path !== 'string') {
+        return path;
+    }
+
+    if (looksAbsolute(path)) {
+        return path;
+    }
+
+    const getterName = BASE_DIR_GETTERS[/** @type {number} */ (baseDir)];
+    if (getterName === undefined) {
+        return Promise.reject(new Error(
+            `${fnName}: 不认识的 baseDir 值 ${JSON.stringify(baseDir)}。` +
+            `请用 '@orielweb/api/path' 的 BaseDirectory 枚举（与 Tauri 同值）。`));
+    }
+
+    const getters = /** @type {Record<string, () => Promise<string>>} */ (/** @type {unknown} */ (paths));
+    const getter = getters[getterName];
+    if (getter === undefined) {
+        return Promise.reject(new Error(`${fnName}: 目录函数 ${getterName} 不存在（BaseDirectory 值与库版本不匹配）。`));
+    }
+
+    const dir = await getter();
+    return `${dir}/${path}`;
+}
 
 /**
  * 校验 Tauri 签名里的 `options` 位置。
  *
  * @param {string} fnName 调用方函数名（报错里要能定位到是哪个函数）
  * @param {unknown} options 调用方传进来的 options
- * @param {string[]} allowedKeys 本库**真正支持**的键（`mkdir`/`remove` 的 `recursive`）
+ * @param {string[]} allowedKeys 本库**真正支持**的键（`baseDir` 恒被接受，不必列入）
  * @returns {Error | null} 有问题时返回错误对象，由调用方 reject
  * @remarks
- * 为什么不是"忽略未知选项"：Tauri 的 `baseDir` 语义是"配合 `BaseDirectory` 枚举
- * 把相对路径解析到应用目录"。本库没有那个枚举，路径在宿主侧按**绝对路径 + 已授权
- * scope** 处理——页面传 `baseDir` 而相对路径时，`path.resolve` 会按**进程当前目录**
- * 解析，于是读到的是另一个文件，而且**不报错**。这种错最难查：文件存在、命令成功、
- * 内容不对。
- *
- * 所以这里一律 reject，并在文案里给出替代写法。
+ * `baseDir` 自 B13 起**受支持**（此前拒绝）：语义与 Tauri 一致——相对路径按
+ * `BaseDirectory` 枚举解析到对应目录，绝对路径不参与。解析在页面侧完成
+ * （`path` 的目录函数 + 拼接），宿主收到的始终是绝对路径。
  */
 function checkOptions(fnName, options, allowedKeys) {
     if (options === undefined || options === null) {
@@ -47,46 +107,47 @@ function checkOptions(fnName, options, allowedKeys) {
     // 到这里已经确认是对象；`unknown` 上读不到属性，所以显式收窄一次。
     const opts = /** @type {Record<string, unknown>} */ (options);
 
-    if (opts.baseDir !== undefined && opts.baseDir !== null) {
-        return new Error(
-            `${fnName}: 不支持 baseDir 选项。\n` +
-            'Tauri 用它配合 BaseDirectory 枚举把相对路径解析到应用目录；本库没有那套枚举，' +
-            '相对路径会按**进程当前目录**解析——静默忽略会让你读到错的文件，所以这里直接报错。\n' +
-            '替代写法：先取绝对目录，再拼路径。\n' +
-            `  const dir = await appDataDir();            // from '@orielweb/api/path'\n` +
-            `  await ${fnName}(\`\${dir}/config.json\`);`);
-    }
-
-    const unknown = Object.keys(opts).filter((key) => !allowedKeys.includes(key));
+    const unknown = Object.keys(opts).filter((key) => key !== 'baseDir' && !allowedKeys.includes(key));
     if (unknown.length > 0) {
         return new Error(
             `${fnName}: 不支持的选项 ${unknown.map((k) => `\`${k}\``).join(', ')}。` +
-            `本库该函数只接受 ${allowedKeys.length > 0 ? allowedKeys.map((k) => `\`${k}\``).join('/') : '无选项'}。`);
+            `本库该函数只接受 ${(allowedKeys.length > 0 ? allowedKeys : ['baseDir']).map((k) => `\`${k}\``).join('/')}。`);
     }
 
     return null;
 }
 
 /**
- * 带 options 校验的 `invoke`。
+ * 带 options 校验与 baseDir 解析的 `invoke`。
  *
  * @param {string} fnName
  * @param {string} command
  * @param {Record<string, unknown>} args
  * @param {unknown} options
  * @param {string[]} [allowedKeys]
+ * @param {string[]} [pathKeys] 参数里**要按 baseDir 解析**的键（默认 `['path']`）
  * @returns {Promise<any>}
  */
-function invokeWithOptions(fnName, command, args, options, allowedKeys = []) {
+async function invokeWithOptions(fnName, command, args, options, allowedKeys = [], pathKeys = ['path']) {
     const problem = checkOptions(fnName, options, allowedKeys);
-    return problem === null ? invoke(command, args) : Promise.reject(problem);
+    if (problem !== null) {
+        return Promise.reject(problem);
+    }
+
+    const opts = /** @type {Record<string, unknown> | null | undefined} */ (options);
+    const resolved = { ...args };
+    for (const key of pathKeys) {
+        resolved[key] = await resolveAgainstBase(fnName, resolved[key], opts);
+    }
+
+    return invoke(command, resolved);
 }
 
 /**
  * 读文本文件（UTF-8）。
  *
  * @param {string} path 绝对路径，或相对进程当前目录的路径。
- * @param {{ baseDir?: never }} [options] **只接受空对象**：本库不支持 `baseDir`（见 {@link checkOptions}）
+ * @param {{ baseDir?: number }} [options] `baseDir` 用 `BaseDirectory` 枚举把相对路径解析到对应目录（绝对路径不参与）
  * @returns {Promise<string>}
  */
 export function readTextFile(path, options) {
@@ -98,7 +159,7 @@ export function readTextFile(path, options) {
  *
  * @param {string} path
  * @param {string} data
- * @param {{ baseDir?: never }} [options]
+ * @param {{ baseDir?: number }} [options]
  * @returns {Promise<void>}
  * @remarks **父目录会自动创建**：不自动建的话每次写都要先 `mkdir`，
  * 而漏建的症状是 `DirectoryNotFoundException`——报错说"目录不存在"，调用方以为在写文件。
@@ -111,7 +172,7 @@ export function writeTextFile(path, data, options) {
  * 读二进制文件。
  *
  * @param {string} path
- * @param {{ baseDir?: never }} [options]
+ * @param {{ baseDir?: number }} [options]
  * @returns {Promise<Uint8Array>}
  */
 export async function readFile(path, options) {
@@ -124,7 +185,7 @@ export async function readFile(path, options) {
  *
  * @param {string} path
  * @param {Uint8Array | number[]} data
- * @param {{ baseDir?: never }} [options]
+ * @param {{ baseDir?: number }} [options]
  * @returns {Promise<void>}
  * @remarks
  * 传 `Uint8Array` 时这里会转成普通数组再发：JSON 不认 `Uint8Array`，
@@ -139,7 +200,7 @@ export function writeFile(path, data, options) {
  * 路径是否存在。
  *
  * @param {string} path
- * @param {{ baseDir?: never }} [options]
+ * @param {{ baseDir?: number }} [options]
  * @returns {Promise<boolean>}
  * @remarks **也要过 scope**：不过的话它就成了一个"这台机器上有哪些文件"的探测器，
  * 而那种信息在攻防里很有用（先枚举、再决定读什么）。
@@ -152,7 +213,7 @@ export function exists(path, options) {
  * 文件大小（字节）。目录返回宿主定义的值（通常 0）。
  *
  * @param {string} path
- * @param {{ baseDir?: never }} [options]
+ * @param {{ baseDir?: number }} [options]
  * @returns {Promise<number>}
  */
 export function size(path, options) {
@@ -163,7 +224,7 @@ export function size(path, options) {
  * 目录项列表。
  *
  * @param {string} path
- * @param {{ baseDir?: never }} [options]
+ * @param {{ baseDir?: number }} [options]
  * @returns {Promise<Array<{ name: string, isFile: boolean, isDirectory: boolean, isSymlink: boolean }>>}
  */
 export function readDir(path, options) {
@@ -174,7 +235,7 @@ export function readDir(path, options) {
  * 文件元信息（跟随符号链接）。
  *
  * @param {string} path
- * @param {{ baseDir?: never }} [options]
+ * @param {{ baseDir?: number }} [options]
  * @returns {Promise<{ isFile: boolean, isDirectory: boolean, isSymlink: boolean,
  *   size: number, mtime: number, atime: number, birthtime: number }>}
  * @remarks 时间是**毫秒时间戳**（Unix epoch，UTC），不是 `Date`。
@@ -189,7 +250,7 @@ export function stat(path, options) {
  * 文件元信息（**不跟随**符号链接）。
  *
  * @param {string} path
- * @param {{ baseDir?: never }} [options]
+ * @param {{ baseDir?: number }} [options]
  * @returns {Promise<object>}
  * @remarks 当前与 {@link stat} 返回同样的元数据（只是 `isSymlink` 如实报告）。
  * .NET 跟随符号链接，编出链接自身的长度/时间要额外做系统调用，本库目前不需要那个精度。
@@ -202,33 +263,29 @@ export function lstat(path, options) {
  * 创建目录。
  *
  * @param {string} path
- * @param {{ recursive?: boolean, baseDir?: never }} [options]
+ * @param {{ recursive?: boolean, baseDir?: number }} [options]
  * @returns {Promise<void>}
  * @remarks 非递归且目录已存在 → 报错（与 Tauri / Node 一致）；递归时已存在是正常的。
  */
 export function mkdir(path, options) {
-    const problem = checkOptions('mkdir', options, ['recursive']);
-    if (problem !== null) {
-        return Promise.reject(problem);
-    }
-
-    return invoke('fs.mkdir', options?.recursive === true ? { path, recursive: true } : { path });
+    return invokeWithOptions(
+        'mkdir', 'fs.mkdir',
+        options?.recursive === true ? { path, recursive: true } : { path },
+        options, ['recursive']);
 }
 
 /**
  * 删除文件或目录。
  *
  * @param {string} path
- * @param {{ recursive?: boolean, baseDir?: never }} [options] 删目录时必须为 `true`（否则非空目录会报错）。
+ * @param {{ recursive?: boolean, baseDir?: number }} [options] 删目录时必须为 `true`（否则非空目录会报错）。
  * @returns {Promise<void>}
  */
 export function remove(path, options) {
-    const problem = checkOptions('remove', options, ['recursive']);
-    if (problem !== null) {
-        return Promise.reject(problem);
-    }
-
-    return invoke('fs.remove', options?.recursive === true ? { path, recursive: true } : { path });
+    return invokeWithOptions(
+        'remove', 'fs.remove',
+        options?.recursive === true ? { path, recursive: true } : { path },
+        options, ['recursive']);
 }
 
 /**
@@ -236,13 +293,13 @@ export function remove(path, options) {
  *
  * @param {string} oldPath
  * @param {string} newPath
- * @param {{ baseDir?: never }} [options]
+ * @param {{ baseDir?: number }} [options]
  * @returns {Promise<void>}
  * @remarks **两个路径都要在 scope 内**：只查源的话，页面能把允许目录里的文件
  * "搬"到 scope 之外（那是一次写）。
  */
 export function rename(oldPath, newPath, options) {
-    return invokeWithOptions('rename', 'fs.rename', { oldPath, newPath }, options);
+    return invokeWithOptions('rename', 'fs.rename', { oldPath, newPath }, options, [], ['oldPath', 'newPath']);
 }
 
 /**
@@ -250,12 +307,12 @@ export function rename(oldPath, newPath, options) {
  *
  * @param {string} fromPath
  * @param {string} toPath
- * @param {{ baseDir?: never }} [options]
+ * @param {{ baseDir?: number }} [options]
  * @returns {Promise<void>}
  * @remarks 同 {@link rename}：两个路径都要过 scope。目标已存在时**覆盖**。
  */
 export function copyFile(fromPath, toPath, options) {
-    return invokeWithOptions('copyFile', 'fs.copyFile', { oldPath: fromPath, newPath: toPath }, options);
+    return invokeWithOptions('copyFile', 'fs.copyFile', { oldPath: fromPath, newPath: toPath }, options, [], ['oldPath', 'newPath']);
 }
 
 /**
@@ -263,7 +320,7 @@ export function copyFile(fromPath, toPath, options) {
  *
  * @param {string} path
  * @param {number} [len] 目标长度（字节）；大于当前长度时用零填充。省略时宿主按 0 处理。
- * @param {{ baseDir?: never }} [options] **第 3 参**：第 2 参是 `len`，不是 options
+ * @param {{ baseDir?: number }} [options] **第 3 参**：第 2 参是 `len`，不是 options
  * @returns {Promise<void>}
  */
 export function truncate(path, len, options) {

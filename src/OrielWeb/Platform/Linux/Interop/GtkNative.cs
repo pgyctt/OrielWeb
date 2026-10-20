@@ -951,6 +951,14 @@ internal static unsafe partial class GtkNative
     [LibraryImport(GOject, EntryPoint = "g_object_get_property", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void GObjectGetProperty(nint obj, string propertyName, nint value);
 
+    /// <summary>写 GObject 属性（B15 的 <c>Window.setTheme</c> 落点）。</summary>
+    [LibraryImport(GOject, EntryPoint = "g_object_set_property", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial void GObjectSetProperty(nint obj, string propertyName, nint value);
+
+    /// <summary>把 GValue 置成一个布尔值（B15 用；读方向见 <see cref="GValueGetBoolean"/>）。</summary>
+    [LibraryImport(GOject, EntryPoint = "g_value_set_boolean")]
+    internal static partial void GValueSetBoolean(nint value, int v);
+
     [LibraryImport(GOject, EntryPoint = "g_value_get_boolean")]
     internal static partial int GValueGetBoolean(nint value);
 

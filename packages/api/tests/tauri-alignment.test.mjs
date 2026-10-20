@@ -58,6 +58,9 @@ const MODULES = [
     { ours: '../src/opener.js', theirs: '@tauri-apps/plugin-opener', label: 'opener' },
     { ours: '../src/notification.js', theirs: '@tauri-apps/plugin-notification', label: 'notification' },
     { ours: '../src/autostart.js', theirs: '@tauri-apps/plugin-autostart', label: 'autostart' },
+    // 托盘（B12）：TrayIcon 类，形状与 Tauri 一致；rid 是补壳（返回 id，本库没有资源表），
+    // setTempDirPath 是补壳（本库不落盘图标），setMenuOnLeftClick 仅 Windows——都登记在下方两张表里。
+    { ours: '../src/tray.js', theirs: '@tauri-apps/api/tray', label: 'tray' },
 ];
 
 /**
@@ -80,15 +83,8 @@ const PLANNED_MODULES = [
         ours: '../src/webview.js',
         batch: 'B4',
         note: 'webview 的独立概念。本库**窗口即 webview**，没有"一个窗口挂多个 webview"；' +
-            'WebviewWindow 已经作为 Window 的子类提供，但独立的 Webview 类与 getAllWebviews 不造',
-    },
-    {
-        label: 'tray',
-        theirs: '@tauri-apps/api/tray',
-        ours: '../src/tray.js',
-        batch: 'B6b',
-        note: '托盘。宿主已有 OrielTray 与桥接层 oriel.tray（含 new/getById/getAll/onEvent），' +
-            '缺的是**包内模块**：迁移代码 import 的是 @tauri-apps/api/tray',
+            'WebviewWindow 已经作为 Window 的子类提供，但独立的 Webview 类与 getAllWebviews 不造。' +
+            '2026-10-20 决策：**暂缓**（留到有真实的多 webview 需求），webview 级方法补壳挂在 WebviewWindow 上。',
     },
 ];
 
@@ -105,6 +101,12 @@ const PLANNED_MODULES = [
 const CONST_OBJECTS = [
     { module: '../src/event.js', theirs: '@tauri-apps/api/event', name: 'TauriEvent' },
     { module: '../src/window.js', theirs: '@tauri-apps/api/window', name: 'UserAttentionType' },
+    // B13 补的三个常量（值与 Tauri 逐键一致，方法在 B22 落地）：
+    { module: '../src/window.js', theirs: '@tauri-apps/api/window', name: 'ProgressBarStatus' },
+    { module: '../src/window.js', theirs: '@tauri-apps/api/window', name: 'Effect' },
+    { module: '../src/window.js', theirs: '@tauri-apps/api/window', name: 'EffectState' },
+    // BaseDirectory 的键值同样是迁移代码会直接引用的（BaseDirectory.AppData = 14）
+    { module: '../src/path.js', theirs: '@tauri-apps/api/path', name: 'BaseDirectory' },
 ];
 
 /**
@@ -126,17 +128,15 @@ const GAPS = {
     },
     event: {},
     dpi: {
-        Position: '尺寸/位置类的联合类型别名（Tauri 用它给 setPosition 收两种单位）；本库用 normalizePosition 做同一件事',
-        Size: '同上（本库用 normalizeSize）',
+        // Size/Position 是纯类型别名，B13 已补（dpi.d.ts）——运行期 Object.keys 看不到类型，
+        // 所以它们从不构成"导出缺口"，这里也不再列。
     },
     window: {
-        CloseRequestedEvent: 'close-requested 事件的类型；本库在 event 模块用 onCloseRequested 表达',
-        Effect: '窗口特效（macOS 的 vibrancy 等）；本库还没有',
-        EffectState: '同上',
-        ProgressBarStatus: '任务栏进度条状态（Windows）；本库还没有',
+        // B13 已补：CloseRequestedEvent（类，preventDefault 记录意图）、Effect/EffectState/
+        // ProgressBarStatus（常量对象，与 Tauri 逐键同值；方法在 B22 落地）。
     },
     path: {
-        BaseDirectory: 'Tauri 用它给 resolve_directory 传枚举；本库的目录各有独立命令，不需要这个枚举',
+        // BaseDirectory 已补（B13）：枚举对象，值与 Tauri 逐键同值，fs 的 baseDir 选项由此串接。
     },
     app: {
         BundleType: 'Tauri 打包器的产物类型；本库是库不是打包器，给不出（见 API.md）',
@@ -146,12 +146,11 @@ const GAPS = {
         onBackButtonPress: '移动端返回键；桌面端没有',
         removeDataStore: '同 fetchDataStoreIdentifiers',
         setDockVisibility: 'macOS 的 Dock 显隐；本库还没有',
-        setTheme: '应用级主题覆写；本库的 Theme 目前是只读的',
     },
     mocks: {},
     fs: {
-        BaseDirectory: '与 path 的同名导出一样，是"给目录解析传枚举"用的；本库不需要',
-        FileHandle: '文件句柄类；本库没有句柄表',
+        // BaseDirectory 已补（B13，从 path re-export）。
+        FileHandle: '文件句柄类；B17 计划补（句柄表）',
         SeekMode: '配合 FileHandle',
         create: '句柄式创建；本库只做整文件读写',
         open: '句柄式打开；同上',
@@ -190,6 +189,10 @@ const GAPS = {
         removeChannel: 'Android 通知渠道',
     },
     autostart: {},
+    tray: {
+        // Tauri 的 TrayIcon extends Resource，构造是 rid + id 双字段；本库的构造只有 id
+        // （没有资源表）。导出面一致，差异在类的方法层（METHOD_DIVERGENCES）。
+    },
 };
 
 /**
@@ -224,6 +227,10 @@ const EXTRAS = {
         getMockWindowLabels: '读 mock 出来的窗口 label 列表，便于断言',
         isMocked: '当前是否装了 mock。前端单测靠它判断"我是不是在测试里"',
         mockEmit: '模拟宿主推事件。Tauri 的 mocks 里没有，而写前端测试时它是必需的（否则 listen 的回调永远不触发）',
+    },
+    tray: {
+        __setDebugWarnings: '测试钩子：开关补壳警告（rid / setTempDirPath 的 debug 提示）。' +
+            '双下划线前缀表明它不是公开 API。',
     },
 };
 
@@ -327,9 +334,10 @@ test('未实现模块有登记，且登记与代码状态一致', async (t) => {
         }
     }
 
-    // 模块数不变量：两个模块仍在计划里（少一个说明有人删了条目而不是做了实现）
-    assert.equal(PLANNED_MODULES.length, 2,
-        'PLANNED_MODULES 应当登记 2 个未实现模块（tray/webview）');
+    // 模块数不变量：只剩 webview 一个仍在计划里（tray 已在 B12 实现并移进 MODULES；
+    // 少一个说明有人删了条目而不是做了实现）
+    assert.equal(PLANNED_MODULES.length, 1,
+        'PLANNED_MODULES 应当登记 1 个未实现模块（webview）');
 
     assert.deepEqual(problems, [], `未实现模块登记有问题：\n  - ${problems.join('\n  - ')}`);
 
@@ -402,25 +410,21 @@ const METHOD_DIVERGENCES = {
         '**这是一处有意的语义分歧，迁移代码里的 `await menu.close()` 不会抛错，但也不会释放任何资源**' +
         '（本来就没有资源可释放）。',
 
-    closeImage:
-        '**Image.close() 有意不做**：`Image` 只是**页面侧的字节容器**，没有任何宿主侧资源可释放。' +
-        '给一个空的 `close()` 会让调用方以为"不关就泄漏"，所以**不给**比给一个骗人的空方法诚实。' +
-        '迁移代码里的 `await image.close()` 会抛 `TypeError`（不是静默跳过）——' +
-        '宁可当场炸，也不要让人带着错误的心智模型继续写。' +
-        '（注意与 `menu` 的 `close` 不同：那个是真的有活干——关掉在屏的菜单。）',
+    // closeImage（B6a 的"Image.close 有意不做"）已随 B14 决策删除：现在 Image.close
+    // 是补壳（存在、无副作用），方法比对两侧都有这个名字，不再是分歧。
     cleanupCallback:
         '**等价物的名字不同**：Tauri 的 `Channel.cleanupCallback()` 注销 `transformCallback` 注册的回调；' +
         '本库没有全局回调表，对应能力是公开的 `Channel.close()`（退订两个事件监听、幂等）。' +
         '因此这里**不做**同名方法——给一个 `cleanupCallback()` 别名只会让"关通道"这件事有两个名字。',
     __TAURI_TO_IPC_KEY__:
-        'Tauri 2 的序列化钩子：类把值编成 `{ Logical: { x, y } }`（外部标记枚举）。' +
-        '本库的线格式是 `{ type: "Logical", x, y }`（Tauri 1 的形状），宿主只认后者。' +
-        '改过去要**同时改宿主协议**，而页面看不到差别（它只是把对象原样传回 setSize）。' +
-        '这是一处**有意的分歧**，不是漏实现。',
+        'Tauri 2 的序列化钩子（Symbol）。**B14 起本库的线格式与 Tauri 2 一致**' +
+        '（外部标记 `{ Logical: { x, y } }`），但钩子本身仍不提供：本库的序列化走 `toJSON`，' +
+        '没有"给 IPC 层单独序列化"这条路。迁移代码若显式访问这个 Symbol，会拿到 undefined——' +
+        '正常用法（把实例当 invoke 参数）不受影响。',
 
     toJSON:
-        '与 `__TAURI_TO_IPC_KEY__` 是同一件事的两面（Tauri 的类靠它触发那套序列化）。' +
-        '本库的类是普通可枚举对象，宿主直接读 `type` / `x` / `y`，不需要 toJSON。',
+        '（B14 后已不再是分歧——保留登记是因为它是上一条的另一面：）' +
+        '本库的 `toJSON` 输出与 Tauri 2 相同的外部标记形状。',
 
     _handleTauriEvent: 'Tauri 内部的 Window 事件分发入口（下划线前缀），不是公开 API。',
 
@@ -525,11 +529,6 @@ const METHOD_GAP_GROUPS = [
         ],
     },
     {
-        reason: '【A·跨平台不一致】应用级主题覆写。本库现在只有"跟随系统"（`OrielApp.Theme` 是只读的），' +
-            '要做就得先定"覆写的作用域是什么"（整个应用？单个窗口？）——那是设计决策。',
-        methods: ['window.Window#setTheme'],
-    },
-    {
         reason: '【B·跨平台一致·待做】webview 级能力，三平台都支持，只是没排到：' +
             '`setZoom`（WebView2 的 ZoomFactor / WebKitGTK 的 zoom_level / WKWebView 的 pageZoom）与 ' +
             '`clearAllBrowsingData`（清缓存与站点数据，三家都有对应 API）。' +
@@ -613,6 +612,13 @@ const METHOD_EXTRAS = {
         '**本库特有状态查询**：`Image` 可能是"只有 RGBA 没有编码字节"的（`fromBytes` 传原始像素），' +
         '这时 `toBytes()` 拿不到 PNG。Tauri 的 Image 总是持编码字节，所以没有这个问题、' +
         '也就没有这个方法。给出来是为了让调用方在调 `toBytes()` 前能判断。',
+
+    // ---- tray（B12）----
+    'tray.TrayIcon#onEvent':
+        '**本库扩展**：句柄上的事件订阅方法。Tauri 把回调挂在 `TrayIconOptions.action`' +
+        '（构造时）或 Rust 侧资源上；本库页面需要"创建后随时订阅"的入口，且事件是' +
+        '按 id 广播的（托盘是应用级资源），订阅时按 `this.id` 过滤。' +
+        '纯加法：迁移代码用 `TrayIcon.new({ action })` 零改动。',
 };
 
 test('待做清单的每一项都标了 A/B 归属（方针：跨平台不一致的不做）', () => {
@@ -781,20 +787,24 @@ test('同名类的方法也对得上（我们缺的都在 METHOD_DIVERGENCES 里
     assert.deepEqual(problems, [], `方法对照发现 ${problems.length} 处未记录差异：\n  - ${problems.join('\n  - ')}`);
 });
 
-test('`close` 的分歧按类分开记：menu 有（关菜单）、Image 没有', () => {
+test('`close` 的语义按类分开记：menu 是关菜单、Image 是补壳', () => {
     // `METHOD_DIVERGENCES` 是**按方法名**索引的扁平表，一个名字只能有一条理由。
-    // `close` 恰好落在两种完全不同的情形上，于是名字冲突了：
-    //   * `menu.*` 的 `close()` **存在**，做的是"关掉在屏菜单"（本库扩展，Tauri 那边是释放 rid）；
-    //   * `Image.close()` **不存在**，因为 Image 只是页面侧字节容器，没有宿主资源可释放。
+    // `close` 恰好落在两种完全不同的情形上：
+    //   * `menu.*` 的 `close()` 做的是"关掉在屏菜单"（本库扩展，Tauri 那边是释放 rid）；
+    //   * `Image.close()` 是 **B14 补壳**（没有资源可释放，但迁移代码零删改）。
     //
-    // 冲突的后果是**真实缺口被掩盖**：把 `close` 登记进分歧表之后，方法比对会对所有类
-    // 跳过这个名字——`Image` 少了 `close` 这件事就再也没人盯着了。
-    // 所以这里单独把它钉死，用一条与扁平表无关的断言。
-    return import('../src/image.js').then(({ Image }) => {
+    // B14 前 Image.close 不存在，用一条反向断言钉着"别为了对齐加空方法"；
+    // 决策改为补壳后，这里改为钉住**两者语义仍然不同**，防止哪天有人把
+    // Image.close 也做成"关掉什么"。
+    return import('../src/image.js').then(async ({ Image }) => {
         assert.equal(
-            Object.getOwnPropertyNames(Image.prototype).includes('close'),
-            false,
-            'Image.close 仍然不该存在（没有资源表可释放）；' +
-            '如果哪天加了，请把 METHOD_DIVERGENCES.closeImage 删掉并更新这条断言');
+            typeof Image.prototype.close,
+            'function',
+            'Image.close 应当存在（B14 补壳）');
+
+        // 补壳必须无副作用：调用后不发 IPC、不改变对象
+        const image = await Image.new(new Uint8Array(4), 1, 1);
+        await image.close();
+        assert.equal(image.width, 1, 'close 之后 Image 照常可用（补壳没有资源可释放）');
     });
 });

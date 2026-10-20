@@ -21,6 +21,7 @@ import {
     exit,
     show,
     hide,
+    setTheme,
 } from '../src/app.js';
 import { clearMocks } from '../src/mocks.js';
 import { setTransportOverride } from '../src/internal.js';
@@ -52,7 +53,7 @@ test('五个函数各自发对应命令', async () => {
         'app.getName': '示例应用',
         'app.getVersion': '1.2.3',
         'app.getIdentifier': 'com.example.app',
-        'app.getTauriVersion': '0.4.0',
+        'app.getTauriVersion': '0.4.1',
         'app.supportsMultipleWindows': true,
     });
     setTransportOverride(transport);
@@ -60,7 +61,7 @@ test('五个函数各自发对应命令', async () => {
     assert.equal(await getName(), '示例应用');
     assert.equal(await getVersion(), '1.2.3');
     assert.equal(await getIdentifier(), 'com.example.app');
-    assert.equal(await getTauriVersion(), '0.4.0');
+    assert.equal(await getTauriVersion(), '0.4.1');
     assert.equal(await supportsMultipleWindows(), true);
 
     assert.deepEqual(calls.map((c) => c[0]), [
@@ -93,13 +94,13 @@ test('五个函数都不带参数', async () => {
 
 test('getTauriVersion() 返回的是**库**版本，不是 Tauri 框架版本', async () => {
     clearMocks();
-    const { transport } = makeTransport({ 'app.getTauriVersion': '0.4.0' });
+    const { transport } = makeTransport({ 'app.getTauriVersion': '0.4.1' });
     setTransportOverride(transport);
 
     const reported = await getTauriVersion();
 
     // 这不是"实现细节"，是迁移正确性的核心：
-    // Tauri 的 getTauriVersion() 给 '2.x.y'（框架版本），本库给 '0.4.0'（库版本）。
+    // Tauri 的 getTauriVersion() 给 '2.x.y'（框架版本），本库给 '0.4.1'（库版本）。
     // 两者放在一起比较没有意义，而照搬 Tauri 的版本判断会静默地得到错答案。
     //
     // 断言形状：本库版本是 0.x 起的三段式。若哪天有人把它改成"伪装成 Tauri 的 2.x"，
@@ -165,6 +166,64 @@ test('exit / show / hide 未授权时错误码透传（它们不在 always-allow
             },
         );
     }
+
+    clearMocks();
+});
+
+// ---- setTheme（B15）----
+
+test('setTheme 发 app.setTheme，value 是 light/dark/null 三选一', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport();
+    setTransportOverride(transport);
+
+    await setTheme('dark');
+    await setTheme('light');
+    await setTheme(null);
+    await setTheme();   // 省略 = null = 跟随系统
+
+    assert.deepEqual(calls.map((c) => c[0]), [
+        'app.setTheme', 'app.setTheme', 'app.setTheme', 'app.setTheme',
+    ]);
+
+    assert.deepEqual(calls[0][1], { value: 'dark' });
+    assert.deepEqual(calls[1][1], { value: 'light' });
+    // null 与省略都归一成 null（"跟随系统"），而不是发 undefined——JSON 里 undefined 会消失
+    assert.deepEqual(calls[2][1], { value: null });
+    assert.deepEqual(calls[3][1], { value: null });
+
+    clearMocks();
+});
+
+test('setTheme 收到非法值时抛 TypeError（不发命令）', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport();
+    setTransportOverride(transport);
+
+    for (const bad of ['blue', 'DARK', 0, {}]) {
+        assert.throws(() => setTheme(bad), TypeError, `应当拒绝 ${JSON.stringify(bad)}`);
+    }
+
+    // 校验在发命令**之前**，所以一条都不该发出去
+    assert.deepEqual(calls, []);
+
+    clearMocks();
+});
+
+test('setTheme 未授权时错误码透传（它不在 always-allowed 名单里）', async () => {
+    clearMocks();
+
+    const error = new Error("命令 'app.setTheme' 不在能力名单里。");
+    error.code = 'not_allowed';
+    setTransportOverride({ async invoke() { throw error; } });
+
+    await assert.rejects(
+        () => setTheme('dark'),
+        (caught) => {
+            assert.equal(caught.code, 'not_allowed');
+            return true;
+        },
+    );
 
     clearMocks();
 });

@@ -363,6 +363,44 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         }
     }
 
+    /// <summary>覆写这个窗口的主题（见 <see cref="IWindowBackend.SetTheme"/>）。</summary>
+    /// <remarks>
+    /// <para>
+    /// macOS 落点是 <c>NSWindow.appearance</c>（**按窗口**）：设了它的窗口按这个
+    /// appearance 画，没设的跟应用走（<c>NSApp.appearance</c>）。所以 macOS 上
+    /// "这个窗口"与"整个应用"是两层，语义比 Linux（只有一层）清楚。
+    /// </para>
+    /// <para>
+    /// <c>null</c> = 跟随系统：把 <c>appearance</c> 还原成 <c>nil</c>，
+    /// 那表示"让 NSWindow 自己按系统/应用决定"。
+    /// </para>
+    /// </remarks>
+    public void SetTheme(OrielTheme? theme)
+    {
+        if (_nsWindow == 0)
+        {
+            return;
+        }
+
+        if (theme is null)
+        {
+            // 还原：让 NSWindow 按系统/应用主题画
+            ObjCRuntime.SendVoidObj(_nsWindow, ObjCRuntime.Sel("setAppearance:"), 0);
+            return;
+        }
+
+        nint appearanceName = ObjCRuntime.MakeNSString(
+            theme == OrielTheme.Dark ? "NSAppearanceNameDarkAqua" : "NSAppearanceNameAqua");
+        nint appearance = ObjCRuntime.SendIdObj(
+            ObjCRuntime.GetClassOrThrow("NSAppearance"),
+            ObjCRuntime.Sel("appearanceNamed:"),
+            appearanceName);
+        if (appearance != 0)
+        {
+            ObjCRuntime.SendVoidObj(_nsWindow, ObjCRuntime.Sel("setAppearance:"), appearance);
+        }
+    }
+
     /// <summary>设置最大尺寸（见 <see cref="IWindowBackend.SetMaxSize"/>）。</summary>
     /// <remarks>
     /// <c>setContentMaxSize:</c> 收 <c>NSSize</c>。<b>传 0 表示不限制</b>——

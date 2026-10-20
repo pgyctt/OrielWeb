@@ -235,6 +235,22 @@ internal static class Win32Constants
     /// <summary>RegGetValue 的可接受类型：只要 REG_DWORD。</summary>
     public const uint RRF_RT_REG_DWORD = 0x00000010;
 
+    /// <summary>非客户区要重绘了（改了深色模式后发一次，让标题栏跟着重画）。</summary>
+    public const uint WM_NCPAINT = 0x0085;
+    /// <summary>DWM 属性：是否用深色模式画非客户区（Win10 2004+）。</summary>
+    public const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
+    /// <summary>Win10 1809/1903 上对应的旧属性名（值 20 在那些版本上返回 E_INVALIDARG）。</summary>
+    public const int DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1 = 19;
+
+    /// <summary><see cref="Win32.SetWindowThemeAttribute"/> 的属性类别：非客户区。</summary>
+    public const int WTA_NONCLIENT = 1;
+    /// <summary>让标题栏跟着应用主题画（而不是总是浅色）。</summary>
+    public const int WTNCA_NODRAWCAPTION = 0x00000001;
+    public const int WTNCA_NODRAWBORDER = 0x00000002;
+    /// <summary>按主题画（而不是固定浅色）。</summary>
+    public const int WTNCA_USEVISUALSTYLE = 0x00000004;
+
+    // ---- 鼠标修饰键（wParam of WM_MOUSE*）----
     public const int MK_LBUTTON = 0x0001;
     public const int MK_RBUTTON = 0x0002;
     public const int MK_SHIFT = 0x0004;
@@ -332,6 +348,20 @@ internal static class Win32Constants
     public const int IDNO = 7;
 
     public static readonly nint DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4;
+}
+
+/// <summary>
+/// <c>SetWindowThemeAttribute</c> 的 <c>WTA_NONCLIENT</c> 属性载荷（B15 的 <c>Window.setTheme</c>）。
+/// </summary>
+/// <remarks>
+/// <c>Mask</c> 说"这次要改哪几位"，<c>Flags</c> 是"改成什么"。只改一位时两者相等即可。
+/// </remarks>
+[StructLayout(LayoutKind.Sequential)]
+internal struct WTA_NONCLIENT_PARAMS
+{
+    public uint Flags;
+    public uint Mask;
+    public int Reserved;
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -601,6 +631,39 @@ internal struct OPENFILENAMEW
 
 internal static unsafe partial class Win32
 {
+    // ---- 主题（dwmapi / uxtheme）----
+    //
+    // B15 用：`Window.setTheme` / `App.setTheme` 在 Windows 上的落点。
+    // 常量（DWMWA_USE_IMMERSIVE_DARK_MODE / WTA_NONCLIENT 等）在 Win32Constants 里。
+
+    /// <summary>
+    /// 让 DWM 按深色模式画这个窗口的非客户区（标题栏 / 边框）。
+    /// </summary>
+    /// <remarks>
+    /// Win10 1809/1903 用旧属性名（<c>Win32Constants.DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1</c>），
+    /// 2004+ 才用 <c>Win32Constants.DWMWA_USE_IMMERSIVE_DARK_MODE</c>——调用方两个都试，
+    /// 旧系统对 20 返回 E_INVALIDARG，正好当作"这个属性不认识"跳过。
+    /// 返回值是 HRESULT，**非 0 不抛**：那是"这个 Windows 版本不支持"，不是"调用错了"。
+    /// </remarks>
+    [LibraryImport("dwmapi")]
+    internal static partial int DwmSetWindowAttribute(nint hwnd, int attribute, ref int value, int size);
+
+    /// <summary>把窗口绑定到一个主题类（<c>null</c> 表示恢复默认），让标题栏跟着主题画。</summary>
+    [LibraryImport("uxtheme", EntryPoint = "SetWindowTheme", StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int SetWindowTheme(nint hwnd, string? subAppName, string? subIdList);
+
+    /// <summary>
+    /// 设置窗口的非客户区主题属性（<see cref="Win32Constants.WTA_NONCLIENT"/> 等）。
+    /// </summary>
+    /// <remarks>
+    /// <c>value</c> 收 <see cref="WTA_NONCLIENT_PARAMS"/> 的引用（按 <c>size</c> 传大小）。
+    /// <c>SetWindowThemeAttribute</c> 的真实签名是 <c>void* pvAttribute</c>，这里按结构体
+    /// 封送更省事（源生成器对 <c>void*</c> 只能给 <c>nint</c>，调用方还得手工取地址）。
+    /// </remarks>
+    [LibraryImport("uxtheme")]
+    internal static partial int SetWindowThemeAttribute(
+        nint hwnd, int attribute, ref WTA_NONCLIENT_PARAMS value, int size);
+
     // ---- user32 ----
 
     [LibraryImport("user32", SetLastError = true)]

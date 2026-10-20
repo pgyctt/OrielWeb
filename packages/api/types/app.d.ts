@@ -79,3 +79,21 @@ export function show(): Promise<void>;
  * @remarks **需要能力声明**（`app.hide`）。语义是"隐藏所有窗口"，理由同 {@link show}。
  */
 export function hide(): Promise<void>;
+/**
+ * 覆写**应用默认**的主题（对标 Tauri 的 `App.setTheme`）。
+ *
+ * @param {'light' | 'dark' | null} [theme] `null` = 跟随系统
+ * @returns {Promise<void>}
+ * @remarks
+ * **三级模型**：窗口覆写（`window.setTheme`）> 应用覆写（本条）> 系统主题。
+ * 这一条只改"应用默认"，**不动已经自己设过 `window.setTheme` 的窗口**——
+ * 那些窗口已经明确表态"我就要这个主题"。
+ *
+ * **平台落点见 `Window.setTheme` 的说明**：Windows 只改标题栏 / 边框那圈，
+ * macOS 改 `NSWindow.appearance`，**Linux 上落到应用级**（GTK 没有"按窗口选主题"
+ * 的入口）——所以 Linux 上 `window.setTheme` 与 `app.setTheme` 落到同一个地方、
+ * 按调用次序后者赢。
+ *
+ * **需要能力声明**（`app.setTheme`）——它改变应用外观，不在只读元信息那组里。
+ */
+export function setTheme(theme?: "light" | "dark" | null): Promise<void>;

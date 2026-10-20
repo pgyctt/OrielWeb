@@ -10,8 +10,7 @@
 //
 // 仍然缺失的几项，理由各不相同：
 //
-//   * `setTheme` / `setDockVisibility` —— 应用级主题覆写 / macOS Dock 显隐，本库还没有
-//     （主题目前只读；Dock 操作是 macOS 专有）。
+//   * `setDockVisibility` —— macOS Dock 显隐，本库还没有（Dock 操作是 macOS 专有）。
 //   * `getBundleType` / `BundleType` —— **本库给不出这个值**。它返回的是 Tauri 打包器的
 //     产物类型（nsis / msi / deb / rpm / appimage / app）；OrielWeb 是库不是打包器。
 //     编一个值比不提供更糟：迁移代码会据此分支，而它会基于错信息分支。
@@ -125,4 +124,29 @@ export function show() {
  */
 export function hide() {
     return invoke('app.hide');
+}
+
+/**
+ * 覆写**应用默认**的主题（对标 Tauri 的 `App.setTheme`）。
+ *
+ * @param {'light' | 'dark' | null} [theme] `null` = 跟随系统
+ * @returns {Promise<void>}
+ * @remarks
+ * **三级模型**：窗口覆写（`window.setTheme`）> 应用覆写（本条）> 系统主题。
+ * 这一条只改"应用默认"，**不动已经自己设过 `window.setTheme` 的窗口**——
+ * 那些窗口已经明确表态"我就要这个主题"。
+ *
+ * **平台落点见 `Window.setTheme` 的说明**：Windows 只改标题栏 / 边框那圈，
+ * macOS 改 `NSWindow.appearance`，**Linux 上落到应用级**（GTK 没有"按窗口选主题"
+ * 的入口）——所以 Linux 上 `window.setTheme` 与 `app.setTheme` 落到同一个地方、
+ * 按调用次序后者赢。
+ *
+ * **需要能力声明**（`app.setTheme`）——它改变应用外观，不在只读元信息那组里。
+ */
+export function setTheme(theme) {
+    if (theme !== undefined && theme !== null && theme !== 'light' && theme !== 'dark') {
+        throw new TypeError(`setTheme: theme 必须是 'light' / 'dark' / null，收到 ${JSON.stringify(theme)}`);
+    }
+
+    return invoke('app.setTheme', { value: theme ?? null });
 }

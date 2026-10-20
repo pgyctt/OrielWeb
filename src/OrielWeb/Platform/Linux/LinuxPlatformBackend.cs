@@ -41,6 +41,60 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
 
     public OrielTheme CurrentTheme => IsDarkTheme() ? OrielTheme.Dark : OrielTheme.Light;
 
+    /// <summary>
+    /// 把 GTK 的应用级主题开关设成"深色 / 浅色 / 跟随系统"（B15 的 <c>Window.setTheme</c> 落点）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// GTK **没有"按窗口选主题"的入口**：能改的只有应用级的
+    /// <c>gtk-application-prefer-dark-theme</c>（改了之后**所有** GTK 窗口都跟着变）。
+    /// 所以 <c>Window.setTheme</c> 与 <c>App.setTheme</c> 在 Linux 上落到同一个地方、
+    /// 按调用次序后者赢——这是 GTK 的形状，不是本库的缺口。
+    /// </para>
+    /// <para>
+    /// <c>null</c> = 跟随系统：把 <c>gtk-application-prefer-dark-theme</c> 还原成
+    /// <c>IsDarkTheme</c> 读出来的系统值（而不是留着上一次的覆写）。
+    /// </para>
+    /// </remarks>
+    internal void SetApplicationTheme(OrielTheme? theme)
+    {
+        nint settings = GtkNative.GtkSettingsGetDefault();
+        if (settings == 0)
+        {
+            return;
+        }
+
+        // 用 GValue 写（g_value_set_boolean + g_object_set_property）——
+        // 与读取（WithGValue）同一套 GValue 生命周期，只是方向反过来。
+        bool dark = theme switch
+        {
+            OrielTheme.Dark => true,
+            OrielTheme.Light => false,
+            // null = 跟随系统：还原成系统当前值（IsDarkTheme 读的正是这条属性 + 主题名）
+            _ => IsDarkTheme(),
+        };
+
+        nint value = Marshal.AllocHGlobal(GValueSize);
+        try
+        {
+            Marshal.Copy(new byte[GValueSize], 0, value, GValueSize);
+            GtkNative.GValueInit(value, GtkNative.GTypeFromName("gboolean"));
+            try
+            {
+                GtkNative.GValueSetBoolean(value, dark ? 1 : 0);
+                GtkNative.GObjectSetProperty(settings, "gtk-application-prefer-dark-theme", value);
+            }
+            finally
+            {
+                GtkNative.GValueUnset(value);
+            }
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(value);
+        }
+    }
+
     /// <summary>重新读主题，变化了才上报（信号可能因任一属性变化而触发）。</summary>
     internal void RaiseThemeIfChanged()
     {

@@ -238,6 +238,20 @@ internal static class OrielBuiltInMenuCommands
             throw Invalid("position", "必须是 { x, y } 对象或 null");
         }
 
+        // B14 线格式：Tauri 2 外部标记 `{ Logical: { x, y } }` / `{ Physical: { x, y } }`；
+        // 旧内联 tag 形状 `{ type, x, y }` 仍然接受（读兼容一个版本，见 CHANGELOG）。
+        if (position.TryGetProperty("Logical", out JsonElement logical)
+            && logical.ValueKind == JsonValueKind.Object)
+        {
+            return new RequestedPosition(Number(logical, "x"), Number(logical, "y"), IsPhysical: false);
+        }
+
+        if (position.TryGetProperty("Physical", out JsonElement physical)
+            && physical.ValueKind == JsonValueKind.Object)
+        {
+            return new RequestedPosition(Number(physical, "x"), Number(physical, "y"), IsPhysical: true);
+        }
+
         double x = Number(position, "x");
         double y = Number(position, "y");
 
@@ -247,6 +261,18 @@ internal static class OrielBuiltInMenuCommands
             : "Logical";
 
         return new RequestedPosition(x, y, string.Equals(type, "Physical", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// 供托盘复用的入口（B12）：<c>tray.setMenu</c> 与 <c>tray.new</c> 的菜单走**同一套线格式**
+    /// （<c>kind</c>/<c>text</c>）与同一个解析器。此前托盘有自己的 <c>type</c>/<c>label</c> 解析，
+    /// 两套格式并存是静默漂移的温床——页面侧 <c>@orielweb/api/tray</c> 直接复用 <c>menu.js</c> 的
+    /// wire 输出，宿主这边没有理由再养一个解析器。
+    /// </summary>
+    internal static IReadOnlyList<OrielMenuItem> ParseMenuItems(JsonElement array)
+    {
+        int count = 0;
+        return ParseItems(array, depth: 1, ref count);
     }
 
     /// <summary>解析菜单树。</summary>

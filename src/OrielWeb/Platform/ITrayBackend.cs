@@ -85,6 +85,17 @@ internal interface ITrayBackend : IDisposable
     event Action<string>? RawEvent;
 
     /// <summary>
+    /// 是否允许**左键点击弹出菜单**（默认 false：左键只触发 <see cref="Clicked"/>，菜单走右键）。
+    /// </summary>
+    /// <remarks>
+    /// <b>只有 Windows 真正支持运行期切换</b>：Linux 与 macOS 的"左键弹菜单"是平台惯例
+    /// （Tauri 的 <c>showMenuOnLeftClick</c> 同标注 Linux Unsupported），那两个后端的 setter
+    /// 直接抛 <see cref="NotSupportedException"/>——由命令层转成 <c>not_supported</c>，
+    /// 不让"关掉了左键菜单"变成一句空话（B12 护栏：不支持 ≠ 静默忽略）。
+    /// </remarks>
+    bool MenuOnClick { get; set; }
+
+    /// <summary>
     /// 托盘是否**真的对用户可见**。语义按平台能力解释：
     /// Windows = 图标已成功加入通知区（<c>Shell_NotifyIcon</c> 成功）；macOS = 状态项已创建且未被隐藏；
     /// Linux = 图标被托盘宿主接收（<c>gtk_status_icon_is_embedded</c>——GNOME 未装扩展、Wayland 会话下为 false）。

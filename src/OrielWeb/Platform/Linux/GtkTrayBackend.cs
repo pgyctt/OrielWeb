@@ -40,6 +40,17 @@ internal sealed unsafe class GtkTrayBackend : ITrayBackend
 
     public string Id { get; }
 
+    /// <inheritdoc/>
+    /// <remarks>Linux 上左键弹菜单是平台惯例（GtkStatusIcon 无开关），setter 抛错。</remarks>
+    public bool MenuOnClick
+    {
+        get => _menuOnClick;
+        set => throw new NotSupportedException(
+            "Linux 的托盘左键行为由平台惯例决定（左键就弹菜单），不支持运行期切换。");
+    }
+
+    private readonly bool _menuOnClick;
+
     public event Action? Clicked;
     public event Action<OrielTrayEvent>? EventReceived;
     public event Action<string>? MenuItemClicked;
@@ -50,6 +61,7 @@ internal sealed unsafe class GtkTrayBackend : ITrayBackend
         _app = app;
         Id = id;
         _tooltip = options.Tooltip;
+        _menuOnClick = options.MenuOnClick;
 
         _statusIcon = GtkNative.GtkStatusIconNew();
         if (_statusIcon == 0)

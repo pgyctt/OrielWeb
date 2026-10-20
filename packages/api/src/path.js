@@ -275,3 +275,61 @@ export const videoDir = dirFunction('Video');
 export function resolveResource(resourcePath) {
     return invoke('path.resolveResource', { path: resourcePath });
 }
+
+/**
+ * 目录枚举（对标 Tauri 的 `BaseDirectory`）——给 `fs` 系列的 `baseDir` 选项用：
+ * 相对路径按枚举解析到对应目录（绝对路径不参与）。
+ *
+ * 取值与 Tauri 逐键同值（1–22），所以迁移代码里的 `BaseDirectory.AppData` 不必改。
+ *
+ * @readonly
+ */
+export const BaseDirectory = Object.freeze({
+    Audio: 1,
+    Cache: 2,
+    Config: 3,
+    Data: 4,
+    LocalData: 5,
+    Document: 6,
+    Download: 7,
+    Picture: 8,
+    Public: 9,
+    Video: 10,
+    Resource: 11,
+    Temp: 12,
+    AppConfig: 13,
+    AppData: 14,
+    AppLocalData: 15,
+    AppCache: 16,
+    AppLog: 17,
+    Desktop: 18,
+    Executable: 19,
+    Font: 20,
+    Home: 21,
+    Runtime: 22,
+    Template: 23,
+    // 反向映射（与 UserAttentionType 同一理由）：迁移代码里两种写法都可能出现
+    1: 'Audio',
+    2: 'Cache',
+    3: 'Config',
+    4: 'Data',
+    5: 'LocalData',
+    6: 'Document',
+    7: 'Download',
+    8: 'Picture',
+    9: 'Public',
+    10: 'Video',
+    11: 'Resource',
+    12: 'Temp',
+    13: 'AppConfig',
+    14: 'AppData',
+    15: 'AppLocalData',
+    16: 'AppCache',
+    17: 'AppLog',
+    18: 'Desktop',
+    19: 'Executable',
+    20: 'Font',
+    21: 'Home',
+    22: 'Runtime',
+    23: 'Template',
+});

@@ -113,7 +113,10 @@ public sealed class BuiltInTrayCommandTests
     public async Task TraySetMethods_MissingTray_ReportNotFound()
     {
         using var app = Oriel.CreateBuilder().Build();
-        string[] commands = ["tray.setIcon", "tray.setMenu", "tray.setTooltip", "tray.setTitle", "tray.setVisible"];
+        // tray.setIcon 不在此列：它**先校验参数形态再找托盘**（B12）——见
+        // TraySetIcon_* 的几条。参数错与目标不存在是两回事，混在一个优先级里
+        // 会把调用方带去查 id。
+        string[] commands = ["tray.setMenu", "tray.setTooltip", "tray.setTitle", "tray.setVisible"];
 
         foreach (string command in commands)
         {
@@ -122,6 +125,12 @@ public sealed class BuiltInTrayCommandTests
             Assert.False(reply.RootElement.GetProperty("ok").GetBoolean(), $"{command} 应报错");
             Assert.Contains("不存在", reply.RootElement.GetProperty("error").GetString()!, StringComparison.Ordinal);
         }
+
+        // setIcon 带上合法形态后同样应当报"托盘不存在"
+        using JsonDocument iconReply = await DispatchAsync(
+            "tray.setIcon", new { id = "nope", iconPath = "a.png" }, WindowWith(app));
+        Assert.False(iconReply.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Contains("不存在", iconReply.RootElement.GetProperty("error").GetString()!, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -159,5 +168,75 @@ public sealed class BuiltInTrayCommandTests
 
         Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
         Assert.Contains("不存在", reply.RootElement.GetProperty("error").GetString()!, StringComparison.Ordinal);
+    }
+
+    // ---- B12：tray.setIcon 三形态与 setMenuOnLeftClick 的协议层 ----
+
+    [Fact]
+    public async Task TraySetIcon_MissingShape_ReportsArgumentError()
+    {
+        // 三种形态都没有：报"需要 …"，而不是"托盘不存在"（参数错先于目标查找）
+        using var app = Oriel.CreateBuilder().Build();
+        using JsonDocument reply = await DispatchAsync("tray.setIcon", new { id = "t" }, WindowWith(app));
+
+        Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Contains("需要 iconPath、bytes 或 rgba", reply.RootElement.GetProperty("error").GetString()!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TraySetIcon_InvalidBase64_ReportsEncodingErrorNotImageError()
+    {
+        // 编码错与图像错的修法完全不同：错误文案必须指向 base64
+        using var app = Oriel.CreateBuilder().Build();
+        using JsonDocument reply = await DispatchAsync(
+            "tray.setIcon", new { id = "t", bytes = "!!not-base64!!" }, WindowWith(app));
+
+        Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Contains("不是合法的 base64", reply.RootElement.GetProperty("error").GetString()!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TraySetIcon_RgbaLengthMismatch_ReportsLengthError()
+    {
+        using var app = Oriel.CreateBuilder().Build();
+        // 2x2 需要 16 字节，这里只给 4 字节
+        string rgba = Convert.ToBase64String(new byte[4]);
+        using JsonDocument reply = await DispatchAsync(
+            "tray.setIcon", new { id = "t", rgba, width = 2, height = 2 }, WindowWith(app));
+
+        Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Contains("rgba 长度不符", reply.RootElement.GetProperty("error").GetString()!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TraySetIcon_RgbaBadSize_ReportsSizeError()
+    {
+        using var app = Oriel.CreateBuilder().Build();
+        string rgba = Convert.ToBase64String(new byte[16]);
+        using JsonDocument reply = await DispatchAsync(
+            "tray.setIcon", new { id = "t", rgba, width = 0, height = 2 }, WindowWith(app));
+
+        Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Contains("正整数", reply.RootElement.GetProperty("error").GetString()!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TraySetMenuOnLeftClick_Windows_ProceedsToFind()
+    {
+        // Windows 上开关受支持，走到"托盘不存在"；非 Windows 会先报 not_supported
+        // （那半边在 Windows 测试机上覆盖不到，如实留白）。
+        using var app = Oriel.CreateBuilder().Build();
+        using JsonDocument reply = await DispatchAsync(
+            "tray.setMenuOnLeftClick", new { id = "nope", onLeft = true }, WindowWith(app));
+
+        Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Contains("不存在", reply.RootElement.GetProperty("error").GetString()!, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Contains("仅 Windows 支持", reply.RootElement.GetProperty("error").GetString()!, StringComparison.Ordinal);
+        }
     }
 }

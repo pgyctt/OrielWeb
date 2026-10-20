@@ -1002,15 +1002,18 @@ for (const bridge of bridges) {
         assert.equal(seen.length, 1, '退订后仍被调用');
     });
 
-    test(`${label} 托盘：托盘事件不会串到通用 oriel.on('tray.event')`, () => {
+    test(`${label} 托盘：tray.event 两路分发——通用 oriel.on('tray.event') 也收到`, () => {
         const env = loadBridge(buildScript(bridge), bridge.channel);
         const viaGeneric = [];
         env.window.oriel.on('tray.event', (v) => viaGeneric.push(v));
 
         deliverEvent(env, 'tray.event', { id: 'main', type: 'Click' });
 
-        // 托盘事件走专属订阅集合：通用 on 不该收到它（避免被窗口状态事件打扰的双向保证）
-        assert.equal(viaGeneric.length, 0);
+        // B12 起 tray.event **两路都分发**：先走 oriel.tray.onEvent（专属订阅集合），
+        // 再进通用 on()——@orielweb/api/tray 用 transport.on('tray.event') 接收，
+        // 不进通用通路它就永远收不到。此前的"不串"断言随 B12 的双路修复作废。
+        assert.equal(viaGeneric.length, 1);
+        assert.equal(viaGeneric[0].type, 'Click');
     });
 
     test(`${label} 托盘：onEvent 参数校验与单处理器异常隔离`, () => {

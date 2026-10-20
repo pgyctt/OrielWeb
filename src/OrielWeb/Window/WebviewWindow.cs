@@ -542,8 +542,36 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// <remarks>macOS 上只挡鼠标、不挡键盘，见后端接口的说明。</remarks>
     public bool IsEnabled => Backend.IsEnabled;
 
-    /// <summary>启用/禁用窗口的输入（对标 Tauri 的 `Window.setEnabled()`）。</summary>
+    /// <summary>
+    /// 启用/禁用窗口的输入（对标 Tauri 的 `Window.setEnabled()`）。
+    /// </summary>
     public void SetEnabled(bool enabled) => Backend.SetEnabled(enabled);
+
+    /// <summary>
+    /// 这个窗口的主题覆写（<c>window.setTheme</c>）。<c>null</c> = 跟随系统。
+    /// </summary>
+    /// <remarks>
+    /// 记住当前覆写，供 <c>window.theme</c> 按"这个窗口显示成什么"回答；
+    /// 真正的应用动作（三平台的原生落点）由 <see cref="IWindowBackend.SetTheme"/> 承担。
+    /// 平台差异与"系统主题不被覆写搅混"的说明见 <see cref="OrielApp.SetTheme"/>。
+    /// </remarks>
+    public OrielTheme? ThemeOverride
+    {
+        get => _themeOverride;
+        set
+        {
+            _themeOverride = value;
+            Backend.SetTheme(value);
+        }
+    }
+
+    private OrielTheme? _themeOverride;
+
+    /// <summary>
+    /// 只读的覆写值（<see cref="IOrielWindowControl"/> 需要，但公开 API 上不给 setter——
+    /// 外部只能经 <see cref="ThemeOverride"/> 改，那是有意的）。
+    /// </summary>
+    OrielTheme? IOrielWindowControl.ThemeOverride => _themeOverride;
 
     /// <summary>
     /// 设置窗口最大尺寸（逻辑像素，对标 Tauri 的 `Window.setMaxSize()`）。传 0 表示不限制。

@@ -38,6 +38,9 @@ public sealed class BuiltInMenuCommandTests
 
         public string? Label { get; set; } = "main";
 
+        /// <summary>主题覆写（<c>window.setTheme</c> / <c>app.setTheme</c> 用）。可写是为了断言"真的改了"。</summary>
+        public OrielTheme? ThemeOverride { get; set; }
+
         /// <summary>缩放比；物理 → 逻辑的换算要用它。</summary>
         public double ScaleFactor { get; set; } = 1.0;
 

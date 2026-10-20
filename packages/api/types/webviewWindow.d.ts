@@ -46,5 +46,34 @@ export class WebviewWindow extends Window {
     constructor(label: string, options?: Record<string, any>, internal?: symbol);
     /** @type {Promise<void>} */
     created: Promise<void>;
+    /**
+     * webview 在窗口内的偏移——本库恒为 `(0, 0)`（webview 铺满客户区）。
+     *
+     * @returns {Promise<LogicalPosition>}
+     */
+    position(): Promise<LogicalPosition>;
+    /**
+     * webview 在窗口内的尺寸——本库等于客户区尺寸（{@link Window.innerSize}）。
+     *
+     * @returns {Promise<any>}
+     */
+    size(): Promise<any>;
+    /**
+     * 开关"webview 随窗口缩放"——**补壳**：本库的 webview 永远跟着窗口变，没有可关的开关。
+     * 调用不报错、不生效；debug 模式下打警告。
+     *
+     * @param {boolean} [_autoResize]
+     * @returns {Promise<void>}
+     */
+    setAutoResize(_autoResize?: boolean): Promise<void>;
+    /**
+     * 把 webview 移到另一个窗口——**补壳**：本库没有"webview 可从窗口脱离"的模型。
+     * 调用不报错、不生效；debug 模式下打警告。
+     *
+     * @param {any} [_window]
+     * @returns {Promise<void>}
+     */
+    reparent(_window?: any): Promise<void>;
 }
 import { Window } from './window.js';
+import { LogicalPosition } from './dpi.js';

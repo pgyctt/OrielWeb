@@ -40,6 +40,11 @@ export class LogicalSize {
     toPhysical(scaleFactor) {
         return new PhysicalSize(logicalToPhysical(this.width, scaleFactor), logicalToPhysical(this.height, scaleFactor));
     }
+
+    /** Tauri 2 线格式：外部标记 `{ Logical: { width, height } }`（B14）。 */
+    toJSON() {
+        return { Logical: { width: this.width, height: this.height } };
+    }
 }
 
 /**
@@ -65,6 +70,11 @@ export class PhysicalSize {
      */
     toLogical(scaleFactor) {
         return new LogicalSize(physicalToLogical(this.width, scaleFactor), physicalToLogical(this.height, scaleFactor));
+    }
+
+    /** Tauri 2 线格式：外部标记 `{ Physical: { width, height } }`（B14）。 */
+    toJSON() {
+        return { Physical: { width: this.width, height: this.height } };
     }
 }
 
@@ -92,6 +102,11 @@ export class LogicalPosition {
     toPhysical(scaleFactor) {
         return new PhysicalPosition(logicalToPhysical(this.x, scaleFactor), logicalToPhysical(this.y, scaleFactor));
     }
+
+    /** Tauri 2 线格式：外部标记 `{ Logical: { x, y } }`（B14）。 */
+    toJSON() {
+        return { Logical: { x: this.x, y: this.y } };
+    }
 }
 
 /**
@@ -118,6 +133,11 @@ export class PhysicalPosition {
     toLogical(scaleFactor) {
         return new LogicalPosition(physicalToLogical(this.x, scaleFactor), physicalToLogical(this.y, scaleFactor));
     }
+
+    /** Tauri 2 线格式：外部标记 `{ Physical: { x, y } }`（B14）。 */
+    toJSON() {
+        return { Physical: { x: this.x, y: this.y } };
+    }
 }
 
 /**
@@ -138,6 +158,20 @@ export function normalizeSize(size, fallbackType = 'Logical') {
     }
 
     if (size && typeof size === 'object') {
+        // Tauri 2 外部标记形状 `{ Logical: { width, height } }`（B14 起的线格式）；
+        // 旧的内联 tag 形状 `{ type: 'Logical', width, height }` 仍然接受（读兼容一个版本）。
+        const record = /** @type {Record<string, unknown>} */ (size);
+        if (typeof record.type !== 'string'
+            && (record.Logical !== undefined || record.Physical !== undefined)) {
+            const tag = record.Logical !== undefined ? 'Logical' : 'Physical';
+            const inner = /** @type {Record<string, unknown>} */ (record[tag]);
+            return {
+                type: tag,
+                width: requireFinite(inner?.width, 'width'),
+                height: requireFinite(inner?.height, 'height'),
+            };
+        }
+
         const candidate = /** @type {Partial<SizeObject>} */ (size);
         const type = candidate.type === 'Physical' ? 'Physical'
             : candidate.type === 'Logical' ? 'Logical'
@@ -167,6 +201,19 @@ export function normalizePosition(position, fallbackType = 'Logical') {
     }
 
     if (position && typeof position === 'object') {
+        // 同 normalizeSize：Tauri 2 外部标记形状优先，旧内联 tag 兼容读取。
+        const record = /** @type {Record<string, unknown>} */ (position);
+        if (typeof record.type !== 'string'
+            && (record.Logical !== undefined || record.Physical !== undefined)) {
+            const tag = record.Logical !== undefined ? 'Logical' : 'Physical';
+            const inner = /** @type {Record<string, unknown>} */ (record[tag]);
+            return {
+                type: tag,
+                x: requireFinite(inner?.x, 'x'),
+                y: requireFinite(inner?.y, 'y'),
+            };
+        }
+
         const candidate = /** @type {Partial<PositionObject>} */ (position);
         const type = candidate.type === 'Physical' ? 'Physical'
             : candidate.type === 'Logical' ? 'Logical'
@@ -262,4 +309,84 @@ function roundToEven(value) {
 
     // 恰为 .5：取偶。floored 是偶数则留它，否则进一。
     return floored % 2 === 0 ? floored : floored + 1;
+}
+
+/**
+ * 尺寸的联合包装（对标 Tauri 的 `Size`）：`setSize` 一类接口收两种单位时用它。
+ *
+ * `toJSON()` 输出 Tauri 2 的外部标记形状 `{ Logical: { width, height } }`（B14 起）。
+ */
+export class Size {
+    /**
+     * @param {LogicalSize | PhysicalSize} size
+     */
+    constructor(size) {
+        /** @type {LogicalSize | PhysicalSize} */
+        this.size = size;
+    }
+
+    /**
+     * 换算成逻辑尺寸（已是 `LogicalSize` 时原样返回）。
+     * @param {number} scaleFactor
+     * @returns {LogicalSize}
+     */
+    toLogical(scaleFactor) {
+        return this.size instanceof LogicalSize
+            ? this.size
+            : this.size.toLogical(scaleFactor);
+    }
+
+    /**
+     * 换算成物理尺寸（已是 `PhysicalSize` 时原样返回）。
+     * @param {number} scaleFactor
+     * @returns {PhysicalSize}
+     */
+    toPhysical(scaleFactor) {
+        return this.size instanceof PhysicalSize
+            ? this.size
+            : this.size.toPhysical(scaleFactor);
+    }
+
+    toJSON() {
+        return { [this.size.type]: { width: this.size.width, height: this.size.height } };
+    }
+}
+
+/**
+ * 位置的联合包装（对标 Tauri 的 `Position`）。线格式差别同 {@link Size}。
+ */
+export class Position {
+    /**
+     * @param {LogicalPosition | PhysicalPosition} position
+     */
+    constructor(position) {
+        /** @type {LogicalPosition | PhysicalPosition} */
+        this.position = position;
+    }
+
+    /**
+     * 换算成逻辑位置。
+     * @param {number} scaleFactor
+     * @returns {LogicalPosition}
+     */
+    toLogical(scaleFactor) {
+        return this.position instanceof LogicalPosition
+            ? this.position
+            : this.position.toLogical(scaleFactor);
+    }
+
+    /**
+     * 换算成物理位置。
+     * @param {number} scaleFactor
+     * @returns {PhysicalPosition}
+     */
+    toPhysical(scaleFactor) {
+        return this.position instanceof PhysicalPosition
+            ? this.position
+            : this.position.toPhysical(scaleFactor);
+    }
+
+    toJSON() {
+        return { [this.position.type]: { x: this.position.x, y: this.position.y } };
+    }
 }

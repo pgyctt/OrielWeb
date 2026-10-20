@@ -144,6 +144,16 @@ export class Image {
      * （`OrielImage.FromBytes`）。
      */
     rgba(): Promise<Uint8Array>;
+    /**
+     * 释放资源——**补壳**（B14）：本库的 `Image` 只是页面侧的字节容器，
+     * 没有任何宿主侧资源可释放，调用不报错也不做任何事（迁移代码零删改）。
+     *
+     * debug 模式下打一条警告——**补壳必须可观测**，否则"close 了但什么都没发生"
+     * 会让人以为资源管理有了效果。
+     *
+     * @returns {Promise<void>}
+     */
+    close(): Promise<void>;
 }
 export type ImageSize = {
     width: number;

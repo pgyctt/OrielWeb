@@ -15,6 +15,8 @@
 
 import { invoke } from './core.js';
 import { Window, getAllWindows, getCurrentWindow } from './window.js';
+import { LogicalPosition } from './dpi.js';
+import { warnCompat } from './internal.js';
 
 /** 内部标记：带它的构造表示"包装一个已存在的窗口"，不发 `window.new`。 */
 const EXISTING = Symbol('oriel.webviewWindow.existing');
@@ -96,6 +98,55 @@ export class WebviewWindow extends Window {
     /** 全部存活窗口（不创建新窗口）。 */
     static getAllWebviewWindows() {
         return getAllWebviewWindows();
+    }
+
+    // ---- webview 级方法（B14 补壳）----
+    //
+    // Tauri 的 WebviewWindow = Webview + Window，"webview 在窗口内的布局"是独立一层；
+    // 本库**窗口即 webview**（一个窗口一个 webview，铺满客户区），没有"窗口内偏移"这个概念。
+    // 这四个方法让迁移代码零删改：能给出正确答案的给真值（position/size），
+    // 没有对应物的 no-op + debug 警告（setAutoResize/reparent）——补壳必须可观测。
+
+    /**
+     * webview 在窗口内的偏移——本库恒为 `(0, 0)`（webview 铺满客户区）。
+     *
+     * @returns {Promise<LogicalPosition>}
+     */
+    async position() {
+        return new LogicalPosition(0, 0);
+    }
+
+    /**
+     * webview 在窗口内的尺寸——本库等于客户区尺寸（{@link Window.innerSize}）。
+     *
+     * @returns {Promise<any>}
+     */
+    async size() {
+        return this.innerSize();
+    }
+
+    /**
+     * 开关"webview 随窗口缩放"——**补壳**：本库的 webview 永远跟着窗口变，没有可关的开关。
+     * 调用不报错、不生效；debug 模式下打警告。
+     *
+     * @param {boolean} [_autoResize]
+     * @returns {Promise<void>}
+     */
+    setAutoResize(_autoResize) {
+        warnCompat('WebviewWindow.setAutoResize 是补壳：本库的 webview 永远随窗口缩放，该调用不生效。');
+        return Promise.resolve();
+    }
+
+    /**
+     * 把 webview 移到另一个窗口——**补壳**：本库没有"webview 可从窗口脱离"的模型。
+     * 调用不报错、不生效；debug 模式下打警告。
+     *
+     * @param {any} [_window]
+     * @returns {Promise<void>}
+     */
+    reparent(_window) {
+        warnCompat('WebviewWindow.reparent 是补壳：本库的 webview 属于它的窗口，不能移动。');
+        return Promise.resolve();
     }
 }
 

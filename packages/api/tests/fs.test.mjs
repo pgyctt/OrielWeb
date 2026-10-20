@@ -28,6 +28,7 @@ import {
     rename,
     copyFile,
     truncate,
+    BaseDirectory,
 } from '../src/fs.js';
 import { clearMocks } from '../src/mocks.js';
 import { setTransportOverride } from '../src/internal.js';
@@ -291,64 +292,84 @@ test('truncate 带 len', async () => {
     clearMocks();
 });
 
-// ---- baseDir 必须显式失败 ----
+// ---- baseDir：相对路径按 BaseDirectory 解析（B13 起受支持）----
 
-test('14 个函数都拒绝 baseDir（不能静默按进程 CWD 解析）', async () => {
+test('14 个函数都接受 baseDir，相对路径按目录解析', async () => {
     // 参数表的**位置**是重点：每个函数的 options 位置不同，照印象写测试会漏掉
     // `truncate` 那种"第 2 参是 len、第 3 参才是 options"的签名。
     const cases = [
-        ['readTextFile', (o) => readTextFile('/a', o)],
-        ['writeTextFile', (o) => writeTextFile('/a', 'x', o)],
-        ['readFile', (o) => readFile('/a', o)],
-        ['writeFile', (o) => writeFile('/a', [1], o)],
-        ['exists', (o) => exists('/a', o)],
-        ['size', (o) => size('/a', o)],
-        ['readDir', (o) => readDir('/a', o)],
-        ['stat', (o) => stat('/a', o)],
-        ['lstat', (o) => lstat('/a', o)],
-        ['mkdir', (o) => mkdir('/a', o)],
-        ['remove', (o) => remove('/a', o)],
-        ['rename', (o) => rename('/a', '/b', o)],
-        ['copyFile', (o) => copyFile('/a', '/b', o)],
-        ['truncate', (o) => truncate('/a', 4, o)],
+        ['readTextFile', (o) => readTextFile('a', o), { path: '/data/a' }],
+        ['writeTextFile', (o) => writeTextFile('a', 'x', o), { path: '/data/a', data: 'x' }],
+        ['readFile', (o) => readFile('a', o), { path: '/data/a' }],
+        ['writeFile', (o) => writeFile('a', [1], o), { path: '/data/a', data: [1] }],
+        ['exists', (o) => exists('a', o), { path: '/data/a' }],
+        ['size', (o) => size('a', o), { path: '/data/a' }],
+        ['readDir', (o) => readDir('a', o), { path: '/data/a' }],
+        ['stat', (o) => stat('a', o), { path: '/data/a' }],
+        ['lstat', (o) => lstat('a', o), { path: '/data/a' }],
+        ['mkdir', (o) => mkdir('a', o), { path: '/data/a' }],
+        ['remove', (o) => remove('a', o), { path: '/data/a' }],
+        ['rename', (o) => rename('a', 'b', o), { oldPath: '/data/a', newPath: '/data/b' }],
+        ['copyFile', (o) => copyFile('a', 'b', o), { oldPath: '/data/a', newPath: '/data/b' }],
+        ['truncate', (o) => truncate('a', 4, o), { path: '/data/a', len: 4 }],
     ];
 
     assert.equal(cases.length, 14, 'Tauri 的 fs 有 14 个带 options 的函数');
 
-    for (const [name, call] of cases) {
+    for (const [name, call, expected] of cases) {
         clearMocks();
-        const { calls, transport } = makeTransport();
+        const { calls, transport } = makeTransport({ 'path.appDataDir': '/data' });
         setTransportOverride(transport);
 
-        await assert.rejects(
-            () => call({ baseDir: 1 }),
-            (err) => {
-                assert.match(err.message, /baseDir/, `${name}: 报错里必须出现 baseDir，否则调用方不知道改哪里`);
-                return true;
-            },
-            `${name} 收到 baseDir 时必须 reject`,
-        );
+        await call({ baseDir: BaseDirectory.AppData });
 
-        // **一个命令都不该发出去**：静默忽略的表现是"命令成功但文件不对"，
-        // 这里断言连 invoke 都没发生，才算真的挡住了。
-        assert.deepEqual(calls, [], `${name}: 拒绝时不该发命令`);
+        // calls 里还会有目录函数自己的 `path.appDataDir` 调用——只看 fs.* 那条
+        const fsCalls = calls.filter(([n]) => n.startsWith('fs.'));
+        assert.equal(fsCalls.length, 1, `${name}: 应当发出命令（baseDir 不再被拒绝）`);
+        assert.deepEqual(fsCalls[0][1], expected, `${name}: 相对路径应按 baseDir 解析`);
     }
 
     clearMocks();
 });
 
-test('baseDir 被拒但 recursive 照旧可用（逐键判，不是一刀切）', async () => {
+test('绝对路径不参与 baseDir 解析（Tauri 语义）', async () => {
     clearMocks();
-    const { calls, transport } = makeTransport();
+    const { calls, transport } = makeTransport({ 'path.appDataDir': '/data' });
     setTransportOverride(transport);
 
-    await mkdir('/a', { recursive: true });
-    await remove('/a', { recursive: true });
-    await rename('/a', '/b');
-    await truncate('/a', 4);
+    await readTextFile('/abs/a.txt', { baseDir: BaseDirectory.AppData });
 
-    assert.deepEqual(calls.map((c) => c[0]), ['fs.mkdir', 'fs.remove', 'fs.rename', 'fs.truncate']);
-    assert.deepEqual(calls[0][1], { path: '/a', recursive: true });
+    assert.deepEqual(calls[0][1], { path: '/abs/a.txt' });
+
+    clearMocks();
+});
+
+test('未知 baseDir 值报错且不发命令', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({ 'path.appDataDir': '/data' });
+    setTransportOverride(transport);
+
+    await assert.rejects(
+        () => readTextFile('a', { baseDir: 999 }),
+        (err) => {
+            assert.match(err.message, /baseDir/);
+            return true;
+        });
+    assert.deepEqual(calls, [], '报错前不该发命令');
+
+    clearMocks();
+});
+
+test('baseDir 与 recursive 并存（逐键判，不是一刀切）', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({ 'path.appDataDir': '/data' });
+    setTransportOverride(transport);
+
+    await mkdir('a', { recursive: true, baseDir: BaseDirectory.AppData });
+
+    assert.deepEqual(
+        calls.filter(([n]) => n.startsWith('fs.')),
+        [['fs.mkdir', { path: '/data/a', recursive: true }]]);
 
     clearMocks();
 });

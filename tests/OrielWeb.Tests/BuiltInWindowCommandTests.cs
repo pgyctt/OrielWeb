@@ -41,6 +41,9 @@ public sealed class BuiltInWindowCommandTests
         /// </remarks>
         public string? Label { get; set; } = "main";
 
+        /// <summary>主题覆写（<c>window.setTheme</c> / <c>app.setTheme</c> 用）。可写是为了断言"真的改了"。</summary>
+        public OrielTheme? ThemeOverride { get; set; }
+
         public void Minimize() => Calls.Add("minimize");
 
         public bool ToggleMaximize()

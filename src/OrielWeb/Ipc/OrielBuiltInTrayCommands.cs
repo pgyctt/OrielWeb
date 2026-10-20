@@ -47,6 +47,17 @@ internal static class OrielBuiltInTrayCommands
                     }
 
                     OrielTray tray = window.App.CreateTray(o => CopyInto(options, o));
+
+                    // 菜单与 tray.setMenu 同一套线格式（kind/text，见 ParseMenuItems）。
+                    // 创建时就带菜单是 Tauri 的 TrayIconOptions.menu 的等价物——
+                    // 不解析的话页面传了 menu 会被静默忽略（"图标设了菜单没出来"）。
+                    if (args.ValueKind == JsonValueKind.Object
+                        && args.TryGetProperty("items", out JsonElement items)
+                        && items.ValueKind == JsonValueKind.Array)
+                    {
+                        tray.SetMenu(OrielBuiltInMenuCommands.ParseMenuItems(items));
+                    }
+
                     return tray.Id;
                 };
                 return true;
@@ -99,11 +110,84 @@ internal static class OrielBuiltInTrayCommands
                 return true;
 
             case "tray.setIcon":
+                // 三形态与 window.setIcon 同一套（B12）：iconPath（路径，null=清除）/
+                // bytes（PNG·ICO 字节）/ rgba+width+height（裸像素）。
+                // 页面侧 @orielweb/api/tray 的 setIcon 把 JsImage 编成这三种之一。
+                //
+                // **参数校验在 Find 之前**：调用方写错了参数要能拿到"参数错"而不是
+                // "托盘不存在"——后者会把人带去查 id，而真正的问题在 base64。
                 handler = static (window, args) =>
                 {
+                    OrielImage? image = null;
+                    string? iconPath = null;
+                    bool hasPath = false;
+
+                    // iconPath 属性存在（哪怕值是 null）就走路径分支：null 表示"清除图标"
+                    if (args.ValueKind == JsonValueKind.Object && args.TryGetProperty("iconPath", out _))
+                    {
+                        hasPath = true;
+                        iconPath = Text(args, "iconPath");
+                    }
+                    else if (OptionalString(args, "bytes") is { } base64)
+                    {
+                        byte[] decoded;
+                        try
+                        {
+                            decoded = Convert.FromBase64String(base64);
+                        }
+                        catch (FormatException ex)
+                        {
+                            // 说清是**编码**错而不是图像错：这两种错误的修法完全不同
+                            throw new OrielIpcException($"tray.setIcon 的 bytes 不是合法的 base64：{ex.Message}");
+                        }
+
+                        image = OrielImage.FromBytes(decoded);
+                    }
+                    else if (OptionalString(args, "rgba") is { } rgbaBase64)
+                    {
+                        byte[] rgba;
+                        try
+                        {
+                            rgba = Convert.FromBase64String(rgbaBase64);
+                        }
+                        catch (FormatException ex)
+                        {
+                            throw new OrielIpcException($"tray.setIcon 的 rgba 不是合法的 base64：{ex.Message}");
+                        }
+
+                        int width = RequiredInt(args, "width", "tray.setIcon");
+                        int height = RequiredInt(args, "height", "tray.setIcon");
+
+                        if (width <= 0 || height <= 0)
+                        {
+                            throw new OrielIpcException(
+                                $"tray.setIcon 的尺寸必须是正整数（收到 {width}x{height}）。");
+                        }
+
+                        if (rgba.Length != width * height * 4)
+                        {
+                            throw new OrielIpcException(
+                                $"tray.setIcon 的 rgba 长度不符：{width}x{height} 需要 " +
+                                $"{width * height * 4} 字节，收到 {rgba.Length} 字节。");
+                        }
+
+                        image = new OrielImage(rgba, width, height);
+                    }
+                    else
+                    {
+                        throw new OrielIpcException("tray.setIcon 需要 iconPath、bytes 或 rgba+width+height 其中之一。");
+                    }
+
                     OrielTray tray = Find(window, args, "tray.setIcon");
-                    string? iconPath = Text(args, "iconPath");
-                    tray.SetIcon(iconPath);
+                    if (hasPath)
+                    {
+                        tray.SetIcon(iconPath);
+                    }
+                    else
+                    {
+                        tray.SetIcon(image);
+                    }
+
                     return null;
                 };
                 return true;
@@ -113,6 +197,31 @@ internal static class OrielBuiltInTrayCommands
                 {
                     OrielTray tray = Find(window, args, "tray.setIconAsTemplate");
                     tray.IconAsTemplate = Bool(args, "asTemplate") ?? true;
+                    return null;
+                };
+                return true;
+
+            case "tray.setMenuOnLeftClick":
+                // 对标 Tauri 的 setMenuOnLeftClick / setShowMenuOnLeftClick（两个方法一个开关）。
+                // **只在 Windows 生效**：Linux 与 macOS 上"左键弹菜单"是平台惯例（Tauri 对
+                // Linux 同标注 Unsupported），本库后端没接通开关——如实抛 not_supported，
+                // 不让"关掉了左键菜单"变成一句空话（B12 护栏：不支持 ≠ 静默忽略）。
+                handler = static (window, args) =>
+                {
+                    // 平台判断在 Find 之前："这平台不支持"与"托盘不存在"是两回事，
+                    // 后者会把人带去查 id，而真正的问题是平台。
+                    if (!OperatingSystem.IsWindows())
+                    {
+                        throw new OrielIpcException(
+                            "tray.setMenuOnLeftClick 仅 Windows 支持：Linux 与 macOS 的左键行为由平台惯例决定"
+                            + "（左键就弹菜单，Tauri 对 Linux 同标注 Unsupported）。")
+                        {
+                            Code = OrielIpcErrorCodes.NotSupported,
+                        };
+                    }
+
+                    OrielTray tray = Find(window, args, "tray.setMenuOnLeftClick");
+                    tray.MenuOnClick = Bool(args, "onLeft") ?? true;
                     return null;
                 };
                 return true;
@@ -194,13 +303,9 @@ internal static class OrielBuiltInTrayCommands
     }
 
     /// <summary>
-    /// 解析页面传来的菜单项数组。
+    /// 解析页面传来的菜单项数组——**与 <c>menu.*</c> 同一套线格式**（B12 统一，
+    /// 见 <see cref="OrielBuiltInMenuCommands.ParseMenuItems"/>）。
     /// </summary>
-    /// <remarks>
-    /// 字段名与 <see cref="OrielMenuItem"/> 对齐；<c>type</c> 取 <c>separator</c> / <c>role</c> /
-    /// 默认（普通项）——用 <c>type</c> 而不是"猜"是因为分隔线与 role 项都没有 label，
-    /// 光看字段判断不出调用方想要哪一种。
-    /// </remarks>
     private static IReadOnlyList<OrielMenuItem> ReadMenu(JsonElement args)
     {
         if (args.ValueKind != JsonValueKind.Object
@@ -210,87 +315,7 @@ internal static class OrielBuiltInTrayCommands
             return [];
         }
 
-        var result = new List<OrielMenuItem>();
-        foreach (JsonElement element in items.EnumerateArray())
-        {
-            if (element.ValueKind != JsonValueKind.Object)
-            {
-                continue;
-            }
-
-            string? type = Text(element, "type");
-            if (string.Equals(type, "separator", StringComparison.Ordinal))
-            {
-                result.Add(OrielMenuItem.Separator());
-                continue;
-            }
-
-            if (string.Equals(type, "role", StringComparison.Ordinal))
-            {
-                result.Add(OrielMenuItem.RoleItem(Text(element, "role") ?? string.Empty));
-                continue;
-            }
-
-            var item = new OrielMenuItem
-            {
-                Id = Text(element, "id"),
-                Label = Text(element, "label"),
-                Role = Text(element, "role"),
-                Accelerator = Text(element, "accelerator"),
-                Enabled = Bool(element, "enabled") ?? true,
-                Checked = Bool(element, "checked") ?? false,
-            };
-
-            // 子菜单递归（Tauri 的 Submenu 等价形态）
-            if (element.TryGetProperty("items", out JsonElement children)
-                && children.ValueKind == JsonValueKind.Array)
-            {
-                var nested = new List<OrielMenuItem>();
-                foreach (JsonElement child in children.EnumerateArray())
-                {
-                    OrielMenuItem? parsed = ParseItem(child);
-                    if (parsed is not null)
-                    {
-                        nested.Add(parsed);
-                    }
-                }
-
-                item.Items = nested;
-            }
-
-            result.Add(item);
-        }
-
-        return result;
-    }
-
-    private static OrielMenuItem? ParseItem(JsonElement element)
-    {
-        if (element.ValueKind != JsonValueKind.Object)
-        {
-            return null;
-        }
-
-        string? type = Text(element, "type");
-        if (string.Equals(type, "separator", StringComparison.Ordinal))
-        {
-            return OrielMenuItem.Separator();
-        }
-
-        if (string.Equals(type, "role", StringComparison.Ordinal))
-        {
-            return OrielMenuItem.RoleItem(Text(element, "role") ?? string.Empty);
-        }
-
-        return new OrielMenuItem
-        {
-            Id = Text(element, "id"),
-            Label = Text(element, "label"),
-            Role = Text(element, "role"),
-            Accelerator = Text(element, "accelerator"),
-            Enabled = Bool(element, "enabled") ?? true,
-            Checked = Bool(element, "checked") ?? false,
-        };
+        return OrielBuiltInMenuCommands.ParseMenuItems(items);
     }
 
     /// <summary>读一个必给的字符串参数；缺了就报错（静默用空串会让命令作用到错误的对象上）。</summary>
@@ -317,4 +342,17 @@ internal static class OrielBuiltInTrayCommands
            && element.ValueKind is JsonValueKind.True or JsonValueKind.False
             ? element.GetBoolean()
             : null;
+
+    /// <summary>读一个可选字符串参数（与 <c>window.*</c> 命令同名同义，tray 的图标三形态用）。</summary>
+    private static string? OptionalString(JsonElement args, string property)
+        => Text(args, property);
+
+    /// <summary>读一个必给的整数参数；缺了或非整数就报错。</summary>
+    private static int RequiredInt(JsonElement args, string property, string commandName)
+        => args.ValueKind == JsonValueKind.Object
+           && args.TryGetProperty(property, out JsonElement element)
+           && element.ValueKind == JsonValueKind.Number
+           && element.TryGetInt32(out int value)
+            ? value
+            : throw new OrielIpcException($"命令 '{commandName}' 缺少整数参数 '{property}'。");
 }

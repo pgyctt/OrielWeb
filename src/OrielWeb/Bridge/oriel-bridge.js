@@ -239,11 +239,12 @@
             return () => { set.delete(handler); };
         },
         _onEvent(name, value) {
-            // 托盘事件走专属的订阅集合（oriel.tray.onEvent），与通用 on() 分开：
-            // 页面若只关心托盘，不该被窗口状态事件（最大化、导航等）打扰。
+            // 托盘事件先走 oriel.tray.onEvent（专属订阅集合），**再**进通用 on()：
+            // B12 的 @orielweb/api/tray 用 transport.on('tray.event') 接收（与其他 npm 模块
+            // 同一条通路），不分流它就永远收不到。两套并存：只关心托盘的页面仍可
+            // 用 oriel.tray.onEvent，不被窗口状态事件打扰。
             if (name === 'tray.event') {
                 oriel.tray._onEvent(value);
-                return;
             }
 
             const set = listeners.get(name);

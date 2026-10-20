@@ -127,6 +127,14 @@ export class Channel {
      */
     close(): void;
     /**
+     * Tauri 的 `Channel.cleanupCallback()` 的**对齐别名**（B14）：注销回调。
+     *
+     * Tauri 那边它清的是 `transformCallback` 注册的全局回调表；本库没有那张表，
+     * 等价能力就是 {@link Channel.close}（退订两条监听、幂等）。做成同名方法是为了
+     * 迁移代码零删改——调用它与调 `close()` 完全等价。
+     */
+    cleanupCallback(): void;
+    /**
      * 序列化成宿主认识的字符串形态。
      *
      * @returns {string}

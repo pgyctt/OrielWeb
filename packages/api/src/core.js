@@ -130,7 +130,7 @@ export function convertFileSrc(filePath, protocol) {
     const transport = getTransport();
     if (typeof transport.convertFileSrc !== 'function') {
         throw new Error(
-            'convertFileSrc: 当前宿主不支持（需要 OrielWeb 0.5.0+）。' +
+            'convertFileSrc: 当前宿主不支持（需要 OrielWeb 0.3.6+）。' +
             '旧宿主上没有文件 asset 协议。');
     }
 
@@ -239,6 +239,17 @@ export class Channel {
                 // 退订失败不影响"已经关了"这个事实
             }
         }
+    }
+
+    /**
+     * Tauri 的 `Channel.cleanupCallback()` 的**对齐别名**（B14）：注销回调。
+     *
+     * Tauri 那边它清的是 `transformCallback` 注册的全局回调表；本库没有那张表，
+     * 等价能力就是 {@link Channel.close}（退订两条监听、幂等）。做成同名方法是为了
+     * 迁移代码零删改——调用它与调 `close()` 完全等价。
+     */
+    cleanupCallback() {
+        this.close();
     }
 
     /**

@@ -28,6 +28,16 @@ internal interface IOrielWindowControl
     bool IsVisible { get; }
 
     /// <summary>
+    /// 这个窗口的主题覆写（<c>window.setTheme</c> 用）。<c>null</c> = 跟随系统。
+    /// </summary>
+    /// <remarks>
+    /// 放在接口上而不是让命令层直接摸 <see cref="WebviewWindow"/>：<c>window.theme</c>
+    /// 要按"这个窗口显示成什么"回答，而命令层只认这个窄接口。
+    /// 真正的应用动作（<c>SetTheme</c>）在 <see cref="IWindowBackend"/> 上。
+    /// </remarks>
+    OrielTheme? ThemeOverride { get; }
+
+    /// <summary>
     /// 本窗口的缩放比（物理像素 / 逻辑像素）。
     /// </summary>
     /// <remarks>

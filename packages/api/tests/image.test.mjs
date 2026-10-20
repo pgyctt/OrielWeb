@@ -174,13 +174,20 @@ test('Image.fromPath：把路径交给宿主读成字节', async () => {
     clearMocks();
 });
 
-test('Image 没有 close()：本库没有资源表可释放', async () => {
+test('Image.close 是补壳（B14）：存在、不抛、不发 IPC', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', {});
+    setTransportOverride(transport);
+
     const image = await Image.fromBytes(pngHeader(16, 16));
 
-    // Tauri 的 Image 继承 Resource，有 close()。本库**刻意不提供**：
-    // 给一个空方法会让调用方误以为"不关就泄漏"。这条测试就是钉住这个决定——
-    // 哪天有人"为了对齐 Tauri"加了个空 close()，这里会红。
-    assert.equal(image.close, undefined);
+    // B14 决策推翻了 B6a 的"宁可当场炸"：改为补壳（迁移零删改）+ debug 警告。
+    // 这里钉住三件事：不抛、不发 IPC、调用后 Image 照常可用。
+    await image.close();
+    assert.deepEqual(calls, [], 'close 不得发 IPC（本库没有宿主资源可释放）');
+    assert.equal(await image.size() !== undefined, true, 'close 之后 Image 照常可用');
+
+    clearMocks();
 });
 
 test('Image.new 的产物能直接设成图标（走 rgba 而不是编码字节）', async () => {

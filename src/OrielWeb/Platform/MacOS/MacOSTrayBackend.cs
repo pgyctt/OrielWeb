@@ -38,6 +38,17 @@ internal sealed class MacOSTrayBackend : ITrayBackend
 
     public string Id { get; }
 
+    /// <inheritdoc/>
+    /// <remarks>macOS 上左键弹菜单是平台惯例（Tauri 有此开关而本库后端暂未接通），setter 抛错。</remarks>
+    public bool MenuOnClick
+    {
+        get => _menuOnClick;
+        set => throw new NotSupportedException(
+            "macOS 的托盘左键行为由平台惯例决定，本库后端暂未接通运行期切换。");
+    }
+
+    private readonly bool _menuOnClick;
+
     public event Action? Clicked;
     public event Action<OrielTrayEvent>? EventReceived;
     public event Action<string>? MenuItemClicked;
@@ -48,6 +59,7 @@ internal sealed class MacOSTrayBackend : ITrayBackend
         _app = app;
         Id = id;
         _iconAsTemplate = options.IconAsTemplate;
+        _menuOnClick = options.MenuOnClick;
 
         nint statusBar = ObjCRuntime.SendId(
             ObjCRuntime.GetClassOrThrow("NSStatusBar"), ObjCRuntime.Sel("systemStatusBar"));

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using OrielWeb.Ipc;
 using Xunit;
 
@@ -172,6 +173,7 @@ public sealed class AppInfoTests
     [InlineData("app.getIdentifier")]
     [InlineData("app.getTauriVersion")]
     [InlineData("app.supportsMultipleWindows")]
+    [InlineData("app.setTheme")]
     public void AppCommandsAreRegistered(string name)
         => Assert.True(OrielBuiltInAppCommands.TryGet(name, out _), $"未注册：{name}");
 
@@ -203,5 +205,44 @@ public sealed class AppInfoTests
         //
         // 若哪天有人图省事改成"前缀匹配"，这条会立刻变红——那正是它存在的理由。
         Assert.False(OrielCapabilityRules.IsAlwaysAllowedAppCommand(name));
+    }
+
+    // ---- app.setTheme（B15）----
+
+    [Theory]
+    [InlineData("dark")]
+    [InlineData("light")]
+    [InlineData(null)]
+    public async Task SetTheme_AcceptsLightDarkAndNull(string? value)
+    {
+        // 'light' / 'dark' / null（跟随系统）是合法值，不该被当非法参数拒掉
+        var window = new BuiltInWindowCommandTests.FakeWindow
+        {
+            App = Oriel.CreateBuilder().Build(),
+        };
+
+        using var doc = JsonDocument.Parse(
+            value is null ? """{ }""" : $$"""{"value":"{{value}}"}""");
+        Assert.True(OrielBuiltInAppCommands.TryGet("app.setTheme", out var handler));
+        handler(window, doc.RootElement);
+
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public void SetTheme_RejectsUnknownValue()
+    {
+        // 非法值要在**发给 SetTheme 之前**就被拒掉
+        var window = new BuiltInWindowCommandTests.FakeWindow
+        {
+            App = Oriel.CreateBuilder().Build(),
+        };
+
+        using var doc = JsonDocument.Parse("""{"value":"blue"}""");
+        Assert.True(OrielBuiltInAppCommands.TryGet("app.setTheme", out var handler));
+
+        OrielIpcException ex = Assert.Throws<OrielIpcException>(() => handler(window, doc.RootElement));
+        Assert.Contains("未知的 value", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(OrielIpcErrorCodes.InvalidArgument, ex.Code);
     }
 }

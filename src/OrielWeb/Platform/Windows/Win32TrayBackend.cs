@@ -38,7 +38,6 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
     private static readonly Dictionary<uint, Win32TrayBackend> s_instances = [];
 
     private readonly OrielApp _app;
-    private readonly bool _menuOnClick;
     private readonly uint _trayId;
 
     /// <summary>
@@ -57,6 +56,9 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
 
     public string Id { get; }
 
+    /// <inheritdoc/>
+    public bool MenuOnClick { get; set; }
+
     public event Action? Clicked;
     public event Action<OrielTrayEvent>? EventReceived;
     public event Action<string>? MenuItemClicked;
@@ -66,7 +68,7 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
     {
         _app = app;
         Id = id;
-        _menuOnClick = options.MenuOnClick;
+        MenuOnClick = options.MenuOnClick;
         _tooltip = options.Tooltip;
 
         _trayId = (uint)Interlocked.Increment(ref s_nextTrayId);
@@ -198,7 +200,7 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
         if (isClick && button == OrielTrayMouseButton.Left)
         {
             Clicked?.Invoke();
-            if (_menuOnClick)
+            if (MenuOnClick)
             {
                 ShowMenu();
             }

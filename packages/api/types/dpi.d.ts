@@ -66,6 +66,13 @@ export class LogicalSize {
      * @returns {PhysicalSize}
      */
     toPhysical(scaleFactor: number): PhysicalSize;
+    /** Tauri 2 线格式：外部标记 `{ Logical: { width, height } }`（B14）。 */
+    toJSON(): {
+        Logical: {
+            width: number;
+            height: number;
+        };
+    };
 }
 /**
  * 物理像素尺寸（对标 `PhysicalSize`）。
@@ -87,6 +94,13 @@ export class PhysicalSize {
      * @returns {LogicalSize}
      */
     toLogical(scaleFactor: number): LogicalSize;
+    /** Tauri 2 线格式：外部标记 `{ Physical: { width, height } }`（B14）。 */
+    toJSON(): {
+        Physical: {
+            width: number;
+            height: number;
+        };
+    };
 }
 /**
  * 逻辑坐标位置（对标 `LogicalPosition`）。
@@ -108,6 +122,13 @@ export class LogicalPosition {
      * @returns {PhysicalPosition}
      */
     toPhysical(scaleFactor: number): PhysicalPosition;
+    /** Tauri 2 线格式：外部标记 `{ Logical: { x, y } }`（B14）。 */
+    toJSON(): {
+        Logical: {
+            x: number;
+            y: number;
+        };
+    };
 }
 /**
  * 物理坐标位置（对标 `PhysicalPosition`）。
@@ -129,6 +150,73 @@ export class PhysicalPosition {
      * @returns {LogicalPosition}
      */
     toLogical(scaleFactor: number): LogicalPosition;
+    /** Tauri 2 线格式：外部标记 `{ Physical: { x, y } }`（B14）。 */
+    toJSON(): {
+        Physical: {
+            x: number;
+            y: number;
+        };
+    };
+}
+/**
+ * 尺寸的联合包装（对标 Tauri 的 `Size`）：`setSize` 一类接口收两种单位时用它。
+ *
+ * `toJSON()` 输出 Tauri 2 的外部标记形状 `{ Logical: { width, height } }`（B14 起）。
+ */
+export class Size {
+    /**
+     * @param {LogicalSize | PhysicalSize} size
+     */
+    constructor(size: LogicalSize | PhysicalSize);
+    /** @type {LogicalSize | PhysicalSize} */
+    size: LogicalSize | PhysicalSize;
+    /**
+     * 换算成逻辑尺寸（已是 `LogicalSize` 时原样返回）。
+     * @param {number} scaleFactor
+     * @returns {LogicalSize}
+     */
+    toLogical(scaleFactor: number): LogicalSize;
+    /**
+     * 换算成物理尺寸（已是 `PhysicalSize` 时原样返回）。
+     * @param {number} scaleFactor
+     * @returns {PhysicalSize}
+     */
+    toPhysical(scaleFactor: number): PhysicalSize;
+    toJSON(): {
+        [x: string]: {
+            width: number;
+            height: number;
+        };
+    };
+}
+/**
+ * 位置的联合包装（对标 Tauri 的 `Position`）。线格式差别同 {@link Size}。
+ */
+export class Position {
+    /**
+     * @param {LogicalPosition | PhysicalPosition} position
+     */
+    constructor(position: LogicalPosition | PhysicalPosition);
+    /** @type {LogicalPosition | PhysicalPosition} */
+    position: LogicalPosition | PhysicalPosition;
+    /**
+     * 换算成逻辑位置。
+     * @param {number} scaleFactor
+     * @returns {LogicalPosition}
+     */
+    toLogical(scaleFactor: number): LogicalPosition;
+    /**
+     * 换算成物理位置。
+     * @param {number} scaleFactor
+     * @returns {PhysicalPosition}
+     */
+    toPhysical(scaleFactor: number): PhysicalPosition;
+    toJSON(): {
+        [x: string]: {
+            x: number;
+            y: number;
+        };
+    };
 }
 export type SizeType = "Logical" | "Physical";
 export type SizeObject = {

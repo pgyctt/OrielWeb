@@ -85,6 +85,7 @@ public sealed class BuiltInWindowApiCommandTests
     [InlineData("window.getFocused")]
     [InlineData("window.setCloseIntercept")]
     [InlineData("window.setEventForwarding")]
+    [InlineData("window.setTheme")]
     public void OtherWindowCommands_AreNotAlwaysAllowed(string command)
     {
         // 这些才是"能力"：改标题、改尺寸、枚举窗口、改别的窗口的转发开关……
@@ -142,6 +143,56 @@ public sealed class BuiltInWindowApiCommandTests
 
         string error = reply.RootElement.GetProperty("error").GetString() ?? string.Empty;
         Assert.DoesNotContain("Allow 名单", error);
+    }
+
+    [Fact]
+    public async Task SetTheme_IsDeniedWithoutCapability()
+    {
+        // 端到端：改主题是改外观，不在标题栏白名单里，必须显式 Allow
+        (var dispatcher, var window) = Create("todo.*");
+
+        (JsonDocument reply, _) = await TestHarness.DispatchAsync(
+            dispatcher, "window.setTheme", new { value = "dark" }, window: window);
+
+        Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Contains("不在 Allow 名单里", reply.RootElement.GetProperty("error").GetString());
+    }
+
+    [Theory]
+    [InlineData("dark")]
+    [InlineData("light")]
+    public async Task SetTheme_AcceptsLightAndDark(string value)
+    {
+        // 'light' / 'dark' 是合法值，不该被当非法参数拒掉
+        OrielApp app = Oriel.CreateBuilder().Build();
+        var window = new RecordingWindow { App = app, Label = "main" };
+        var guard = new OrielIpcGuard(
+            new OrielCapabilityOptions().Allow("window.setTheme"),
+            isDebugBuild: false,
+            "app.oriel");
+        var dispatcher = new OrielCommandDispatcher([], null, guard);
+
+        (JsonDocument reply, _) = await TestHarness.DispatchAsync(
+            dispatcher, "window.setTheme", new { value }, window: window);
+
+        // FakeWindow 不在 app.Windows 里，Resolve 会失败——这里断言的是
+        // "过了门禁、值也合法"，所以错误文案不该是权限拒绝或参数错误。
+        string error = reply.RootElement.GetProperty("error").GetString() ?? string.Empty;
+        Assert.DoesNotContain("Allow 名单", error);
+        Assert.DoesNotContain("未知的 value", error);
+    }
+
+    [Fact]
+    public async Task SetTheme_RejectsUnknownValue()
+    {
+        // 非法值要在**发给后端之前**就被拒掉，而不是传给 SetTheme 让它悄悄忽略
+        (var dispatcher, var window) = Create("window.setTheme");
+
+        (JsonDocument reply, _) = await TestHarness.DispatchAsync(
+            dispatcher, "window.setTheme", new { value = "blue" }, window: window);
+
+        Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Contains("未知的 value", reply.RootElement.GetProperty("error").GetString());
     }
 
     [Fact]
@@ -318,6 +369,10 @@ public sealed class BuiltInWindowApiCommandTests
         public bool IsAlwaysOnTop { get; set; }
 
         public string? Label { get; set; } = "main";
+
+        /// <summary>主题覆写（<c>window.setTheme</c> / <c>app.setTheme</c> 用）。可写是为了断言"真的改了"。</summary>
+        public OrielTheme? ThemeOverride { get; set; }
+
         public bool CloseInterceptEnabled { get; set; }
         public void Minimize() => Calls.Add("minimize");
         public bool ToggleMaximize() { Calls.Add("toggleMaximize"); return true; }

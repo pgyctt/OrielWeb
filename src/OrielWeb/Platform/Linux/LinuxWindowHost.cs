@@ -351,6 +351,30 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         }
     }
 
+    /// <summary>覆写这个窗口的主题（见 <see cref="IWindowBackend.SetTheme"/>）。</summary>
+    /// <remarks>
+    /// <para>
+    /// <b>GTK 没有"按窗口选主题"的入口</b>：能设的只有应用级的
+    /// <c>gtk-application-prefer-dark-theme</c>（改了之后**所有** GTK 窗口都跟着变）。
+    /// 所以这里落点是 <see cref="LinuxPlatformBackend.SetApplicationTheme"/>——
+    /// 作用域是应用，不是"这个窗口"。这不是本库的缺口，是 GTK 的形状。
+    /// </para>
+    /// <para>
+    /// 与 <see cref="OrielApp.SetTheme"/> 那侧的分工：那边负责"记哪个窗口有自己覆写、
+    /// 哪些跟着应用走"，这里只负责把结论写进 GTK。两边各管一半，免得作用域逻辑写两遍。
+    /// </para>
+    /// </remarks>
+    public void SetTheme(OrielTheme? theme)
+    {
+        if (!WindowAlive)
+        {
+            return;
+        }
+
+        // GTK 只有应用级主题入口（见方法的 remarks）：落点是平台后端的共用设置
+        _backend.SetApplicationTheme(theme);
+    }
+
     /// <summary>设置最大尺寸（见 <see cref="IWindowBackend.SetMaxSize"/>）。</summary>
     /// <remarks>
     /// <para>

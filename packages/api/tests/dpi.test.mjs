@@ -190,3 +190,51 @@ test('window 模块也转出了 dpi 的四个类（Tauri 的 window 会 re-expor
         assert.equal(typeof windowModule[name], 'function', `window 没转出 ${name}`);
     }
 });
+
+// ---------------------------------------------------------------------------
+// B14：线格式（Tauri 2 外部标记）
+// ---------------------------------------------------------------------------
+
+test('toJSON 输出 Tauri 2 的外部标记形状（写新）', async () => {
+    const { LogicalSize, PhysicalSize, LogicalPosition, PhysicalPosition, Size, Position } =
+        await import('../src/dpi.js');
+
+    assert.deepEqual(new LogicalSize(3, 4).toJSON(), { Logical: { width: 3, height: 4 } });
+    assert.deepEqual(new PhysicalSize(5, 6).toJSON(), { Physical: { width: 5, height: 6 } });
+    assert.deepEqual(new LogicalPosition(1, 2).toJSON(), { Logical: { x: 1, y: 2 } });
+    assert.deepEqual(new PhysicalPosition(7, 8).toJSON(), { Physical: { x: 7, y: 8 } });
+
+    // 包装类跟随内层的标记
+    assert.deepEqual(new Size(new LogicalSize(3, 4)).toJSON(), { Logical: { width: 3, height: 4 } });
+    assert.deepEqual(new Position(new PhysicalPosition(7, 8)).toJSON(), { Physical: { x: 7, y: 8 } });
+
+    // JSON.stringify 走 toJSON（invoke 的参数序列化路径）
+    assert.equal(
+        JSON.stringify(new LogicalSize(3, 4)),
+        '{"Logical":{"width":3,"height":4}}');
+});
+
+test('normalize 读兼容：新旧两种形状都认（读兼容一个版本）', async () => {
+    const { normalizeSize, normalizePosition } = await import('../src/dpi.js');
+
+    // 新形状（外部标记）
+    assert.deepEqual(
+        normalizeSize({ Logical: { width: 1, height: 2 } }),
+        { type: 'Logical', width: 1, height: 2 });
+    assert.deepEqual(
+        normalizePosition({ Physical: { x: 3, y: 4 } }),
+        { type: 'Physical', x: 3, y: 4 });
+
+    // 旧形状（内联 tag）——0.6.0 前的页面/宿主仍在发它
+    assert.deepEqual(
+        normalizeSize({ type: 'Physical', width: 5, height: 6 }),
+        { type: 'Physical', width: 5, height: 6 });
+    assert.deepEqual(
+        normalizePosition({ type: 'Logical', x: 7, y: 8 }),
+        { type: 'Logical', x: 7, y: 8 });
+
+    // 无标记的裸对象仍然按 fallbackType（与旧行为一致）
+    assert.deepEqual(
+        normalizeSize({ width: 9, height: 10 }),
+        { type: 'Logical', width: 9, height: 10 });
+});

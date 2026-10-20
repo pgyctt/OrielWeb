@@ -98,6 +98,35 @@ internal static class OrielBuiltInAppCommands
                 };
                 return true;
 
+            case "app.setTheme":
+                // 对标 Tauri 的 App.setTheme。值是 'light' / 'dark' / null（null = 跟随系统）。
+                // 作用域是"所有没自己覆写的窗口"——已设过 window.setTheme 的窗口不动
+                // （见 OrielApp.SetTheme 的三级模型说明）。
+                handler = static (window, args) =>
+                {
+                    string? raw = args.ValueKind == JsonValueKind.Object
+                                  && args.TryGetProperty("value", out JsonElement value)
+                                  && value.ValueKind == JsonValueKind.String
+                        ? value.GetString()
+                        : null;
+
+                    OrielTheme? theme = raw switch
+                    {
+                        null => null,
+                        "light" => OrielTheme.Light,
+                        "dark" => OrielTheme.Dark,
+                        _ => throw new OrielIpcException(
+                            $"app.setTheme: 未知的 value「{raw}」（只认 light / dark / null）。")
+                        {
+                            Code = OrielIpcErrorCodes.InvalidArgument,
+                        },
+                    };
+
+                    window.App.SetTheme(theme);
+                    return null;
+                };
+                return true;
+
             default:
                 handler = null!;
                 return false;

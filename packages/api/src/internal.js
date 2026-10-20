@@ -55,3 +55,27 @@ export function setTransportOverride(transport) {
 export function hasTransportOverride() {
     return transportOverride !== null;
 }
+
+// ---------------------------------------------------------------------------
+// 补壳警告（B14）：`rid` / `setTempDirPath` / `setAutoResize` 这类"为迁移零删改而存在、
+// 但对本库没有任何作用"的成员，**必须可观测**——否则"调用不报错但什么都没发生"
+// 是最难查的一类问题。默认静默（零删改），`UseDebug()` 或 __setDebugWarnings(true) 下打警告。
+// ---------------------------------------------------------------------------
+
+let debugWarningsEnabled =
+    typeof globalThis !== 'undefined'
+    && (/** @type {Record<string, unknown>} */ (/** @type {unknown} */ (globalThis))).__ORIEL_DEBUG__ === true;
+
+/** 测试钩子：开关补壳警告（双下划线命名法与 mocks 一致，不是公开 API）。 */
+/** @param {boolean} enabled */
+export function __setDebugWarnings(enabled) {
+    debugWarningsEnabled = enabled === true;
+}
+
+/** 补壳/平台差异的可观测信号：debug 模式下 console.warn，其余静默（保证零删改）。 */
+/** @param {string} message */
+export function warnCompat(message) {
+    if (debugWarningsEnabled) {
+        console.warn(`[orielweb] ${message}`);
+    }
+}

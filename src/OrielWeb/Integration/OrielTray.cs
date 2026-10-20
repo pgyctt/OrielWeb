@@ -46,6 +46,19 @@ public sealed class OrielTray : IDisposable
     /// <summary>本托盘的标识（用于 <see cref="OrielApp.GetTray"/> / <see cref="OrielApp.RemoveTray(string)"/>）。</summary>
     public string Id => _backend.Id;
 
+    /// <summary>
+    /// 是否允许**左键点击弹出菜单**（默认 false：左键只触发 <see cref="Clicked"/>，菜单走右键）。
+    /// </summary>
+    /// <remarks>
+    /// 只有 Windows 真正支持运行期切换；Linux 与 macOS 的左键行为是平台惯例，
+    /// setter 在那两个平台上抛 <see cref="NotSupportedException"/>（命令层转成 <c>not_supported</c>）。
+    /// </remarks>
+    public bool MenuOnClick
+    {
+        get => _backend.MenuOnClick;
+        set => _backend.MenuOnClick = value;
+    }
+
     /// <summary>图标被点击（Windows 左键抬起、macOS 状态项按钮点击、Linux 的 activate 信号）。</summary>
     /// <remarks>
     /// 无参数的退化形态（历史 API）。需要按键/状态/坐标时订阅 <see cref="TrayEvent"/>——

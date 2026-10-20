@@ -141,20 +141,21 @@ public sealed class BuiltInMonitorCommandTests
         Assert.Equal(["name", "position", "size", "scaleFactor"], keys);
 
         Assert.Equal(@"\\.\DISPLAY1", first.GetProperty("name").GetString());
-        Assert.Equal(0, first.GetProperty("position").GetProperty("x").GetDouble());
-        Assert.Equal(1920, first.GetProperty("size").GetProperty("width").GetDouble());
+        Assert.Equal(0, first.GetProperty("position").GetProperty("Physical").GetProperty("x").GetDouble());
+        Assert.Equal(1920, first.GetProperty("size").GetProperty("Physical").GetProperty("width").GetDouble());
         Assert.Equal(1.0, first.GetProperty("scaleFactor").GetDouble());
 
         // 位置/尺寸必须标成 Physical：页面据此决定要不要除以缩放比。
-        Assert.Equal("Physical", first.GetProperty("position").GetProperty("type").GetString());
-        Assert.Equal("Physical", first.GetProperty("size").GetProperty("type").GetString());
+        // B14 起是 Tauri 2 的外部标记形状 `{ Physical: { x, y } }`（不是旧的 `{ type, x, y }`）。
+        Assert.True(first.GetProperty("size").TryGetProperty("Physical", out _));
+        Assert.True(first.GetProperty("position").TryGetProperty("Physical", out _));
 
         JsonElement second = monitors[1];
 
         // name 为 null 时必须是 JSON null（而不是省略键）：Tauri 的类型是 string | null，
         // 页面里最常见的写法是 monitor.name === null。
         Assert.Equal(JsonValueKind.Null, second.GetProperty("name").ValueKind);
-        Assert.Equal(1920, second.GetProperty("position").GetProperty("x").GetDouble());
+        Assert.Equal(1920, second.GetProperty("position").GetProperty("Physical").GetProperty("x").GetDouble());
         Assert.Equal(2.0, second.GetProperty("scaleFactor").GetDouble());
     }
 
@@ -227,9 +228,10 @@ public sealed class BuiltInMonitorCommandTests
             dispatcher, "window.cursorPosition", null, window: window);
 
         JsonElement position = reply.Value();
-        Assert.Equal("Physical", position.GetProperty("type").GetString());
-        Assert.Equal(321, position.GetProperty("x").GetDouble());
-        Assert.Equal(654, position.GetProperty("y").GetDouble());
+        // B14 起是外部标记形状 `{ Physical: { x, y } }`
+        Assert.True(position.TryGetProperty("Physical", out JsonElement physical));
+        Assert.Equal(321, physical.GetProperty("x").GetDouble());
+        Assert.Equal(654, physical.GetProperty("y").GetDouble());
     }
 
     // ---- 未运行时 ----

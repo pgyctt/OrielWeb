@@ -37,7 +37,7 @@
 import { invoke } from './core.js';
 import { listen } from './event.js';
 import { normalizePosition } from './dpi.js';
-import { getTransport } from './internal.js';
+import { getTransport, warnCompat } from './internal.js';
 
 /** 点击事件名（宿主侧见 OrielApp.MenuItemClickedEventName）。 */
 const ITEM_CLICKED_EVENT = 'menu.itemclicked';
