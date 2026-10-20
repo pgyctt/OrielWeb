@@ -90,8 +90,7 @@ export function __clearEventSubscriptions(): void;
  * | `WINDOW_SCALE_FACTOR_CHANGED` / `WINDOW_THEME_CHANGED` / `WINDOW_CREATED` | ⬜ 未实现 |
  * | `WINDOW_SUSPENDED` / `WINDOW_RESUMED` | ⛔ 桌面端不会触发（移动端生命周期事件） |
  * | `WEBVIEW_CREATED` | ⛔ 桌面端不会触发：本库没有"一个窗口里挂多个 webview"的概念，窗口创建即 webview 创建，用 `WINDOW_CREATED` |
- * | `DRAG_DROP` | ✅ 可用，但**只有 drop**：三个平台都是 OS 级投放（松手那一刻才回调），payload 里也没有 `position`。见 `Window.onDragDropEvent` |
- * | `DRAG_ENTER` / `DRAG_OVER` / `DRAG_LEAVE` | ⛔ 不会触发：拖动过程中的事件各平台要另加一套机制（Windows 得用 COM 的 `IDropTarget`），本库没做。**别用 `over` 做"拖到此处高亮"——它永远不亮** |
+ * | `DRAG_ENTER` / `DRAG_OVER` / `DRAG_DROP` / `DRAG_LEAVE` | ✅ 四个都会来（B10 补齐）。`position` 是**客户区物理像素**；`over` 不带 `paths`、`leave` 只有 `type`。**Linux 的 `enter.paths` 是空数组**——GTK 在 `drag-motion` 阶段拿不到路径。见 `Window.onDragDropEvent` |
  *
  * > 这一行此前记的是"不做：页面拿不到文件路径（浏览器安全模型如此）"。**那个前提只对
  * > HTML5 拖放成立**：本库走的是 OS 级投放，路径一直在宿主手里（`FileDropped`）。
