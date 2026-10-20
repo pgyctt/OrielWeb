@@ -26,12 +26,18 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
 
     /// <param name="userDataFolder">
     /// 覆盖 WebView2 的 user data folder（<see cref="OrielAppBuilder.UseUserDataFolder"/>）；
-    /// 为空则用 <see cref="DefaultUserDataFolder"/>。它必须是**全进程一个**：环境按它创建，见
+    /// 为空则用 <see cref="DefaultUserDataFolderFor"/>。它必须是**全进程一个**：环境按它创建，见
     /// <see cref="GetEnvironmentAsync"/>。
     /// </param>
-    public WindowsPlatformBackend(string? userDataFolder)
+    /// <param name="appIdentifier">
+    /// 应用标识符，只在 <paramref name="userDataFolder"/> 为空时用来拼默认目录。
+    /// 省略时退化成一个固定名——直接 new 本类的场景（测试、工具）不会配它。
+    /// </param>
+    public WindowsPlatformBackend(string? userDataFolder, string? appIdentifier = null)
     {
-        _userDataFolder = string.IsNullOrWhiteSpace(userDataFolder) ? DefaultUserDataFolder : userDataFolder;
+        _userDataFolder = string.IsNullOrWhiteSpace(userDataFolder)
+            ? DefaultUserDataFolderFor(appIdentifier ?? DefaultAppIdentifier)
+            : userDataFolder;
         EnsureDpiAwareness();
         EnsureMessageWindowClass();
 
@@ -77,13 +83,36 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
     /// </remarks>
     private Task<IComObject<ICoreWebView2Environment>?>? _environment;
 
-    /// <summary>默认的 user data folder：<c>%LOCALAPPDATA%\OrielWeb\WebView2</c>。</summary>
-    internal static string DefaultUserDataFolder { get; } = Path.Combine(
+    /// <summary>标识符缺失时的退化名（与 <c>path.*</c> 内建命令的退化名一致）。</summary>
+    private const string DefaultAppIdentifier = "oriel-app";
+
+    /// <summary>默认的 user data folder：<c>%LOCALAPPDATA%\%3C标识符%3E\WebView2</c>。</summary>
+    /// <remarks>
+    /// <para>
+    /// <b>按应用隔离，不按库共用。</b>此前这里是写死的 <c>%LOCALAPPDATA%\OrielWeb\WebView2</c>——
+    /// 于是"两个基于本库的应用同时打开"必然撞车：目录只有一个，而 WebView2 不允许两个进程
+    /// 同时打开同一个用户数据目录，后启动的那个直接以 <c>0x800700AA</c>（ERROR_BUSY）装配失败。
+    /// 而 <see cref="OrielAppInfo.Identifier"/> 的文档从 0.3 起就写着"它将成为数据目录的组成部分"，
+    /// 唯独 WebView2 这份目录没跟上——两处说法不一致，错的是这里。
+    /// </para>
+    /// <para>
+    /// 标识符在 <c>Build()</c> 时已按"能安全当目录名"校验过（<see cref="OrielAppInfo.Validate"/>），
+    /// 所以这里可以直接拼——不存在 <c>..</c> 或分隔符跳目录的可能。
+    /// </para>
+    /// <para>
+    /// 代价是老目录里已有的 profile（localStorage / cookie）不再被读到。这是有意的：
+    /// 一份全库共用的 profile 本身就不该存在，迁移它等于把错误的东西搬到正确的位置。
+    /// </para>
+    /// </remarks>
+    internal static string DefaultUserDataFolderFor(string appIdentifier) => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "OrielWeb",
+        appIdentifier,
         Win32WindowHost.WebView2UserDataFolderName);
 
     /// <summary>本次应用的 user data folder（<c>UseUserDataFolder</c> 覆盖过就用它）。</summary>
+    /// <remarks>失败提示要用它——只说"被占用"而不给路径，等于让人自己去猜是哪个目录。</remarks>
+    internal string UserDataFolder => _userDataFolder;
+
     private readonly string _userDataFolder;
 
     /// <summary>取（必要时创建）共享环境。必须在 UI 线程调用。</summary>

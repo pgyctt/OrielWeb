@@ -1448,7 +1448,9 @@ public sealed class OrielApp : IDisposable
             return;
         }
 
-        _backend = PlatformBackendFactory.Create(_builder.UserDataFolder);
+        // 标识符一起传下去：没显式配目录时，默认目录由它拼（%LOCALAPPDATA%\<标识符>\WebView2）。
+        // 不传的话所有基于本库的应用会共用一个目录，同时打开就有一个起不来。
+        _backend = PlatformBackendFactory.Create(_builder.UserDataFolder, _builder.AppInfo.Identifier);
         _backend.ThemeChanged += OnThemeChanged;
 
         // 显示器后端跟着平台后端就位。放在 ThemeChanged 之后、建窗之前：

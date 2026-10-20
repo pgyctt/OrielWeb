@@ -143,7 +143,19 @@ public sealed class OrielAppBuilder
 
     internal List<(WebviewWindow Window, OrielWindowOptions Options)> PendingWindows { get; } = [];
 
-    /// <summary>覆盖 WebView2 用户数据目录（默认 %LOCALAPPDATA%\OrielWeb\WebView2）。</summary>
+    /// <summary>覆盖 WebView2 用户数据目录（默认 <c>%LOCALAPPDATA%\&lt;标识符&gt;\WebView2</c>）。</summary>
+    /// <remarks>
+    /// <para>
+    /// 默认值按**应用标识符**隔离（<see cref="WithAppInfo"/> 的 <c>identifier</c>），
+    /// 所以两个基于本库的应用各自有一份 profile，不会互抢目录、也不会共用 cookie 与 localStorage。
+    /// </para>
+    /// <para>
+    /// 需要这个覆盖的场景是真存在同一份 profile 的多个进程/多个产品形态（例如同一产品的
+    /// 稳定版与预览版刻意共享登录态）。**不要让不相干的应用指向同一个目录**：WebView2 的
+    /// 用户数据目录同一时刻只允许一个浏览器进程持有，撞上时后来者会以
+    /// <c>0x800700AA</c>（请求的资源在使用中）装配失败。
+    /// </para>
+    /// </remarks>
     public OrielAppBuilder UseUserDataFolder(string path)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);

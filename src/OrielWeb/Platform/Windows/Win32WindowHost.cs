@@ -1396,8 +1396,40 @@ internal partial class Win32WindowHost : IWindowBackend
         }
         catch (Exception ex)
         {
-            OnWebViewFailed($"初始化 WebView2 失败：{ex.Message}");
+            OnWebViewFailed(DescribeWebView2Failure(ex, _backend.UserDataFolder));
         }
+    }
+
+    /// <summary>
+    /// 把装配失败翻成"看得懂 + 能照做"的提示。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 只有一条值得单独翻译：<c>0x800700AA</c>（ERROR_BUSY）/ <c>0x80070020</c>
+    /// （ERROR_SHARING_VIOLATION）。它们的系统文案是"请求的资源在使用中"，而**"资源"在这里
+    /// 指的是用户数据目录**——用户看到这句话时既不知道该关谁，也不知道该找哪个目录。
+    /// 剩下的失败仍原样透出：给一个涵盖所有 HRESULT 的通用解释，只会把真正的原因埋掉。
+    /// </para>
+    /// </remarks>
+    /// <param name="ex">装配时抛出的异常。</param>
+    /// <param name="userDataFolder">本次应用的用户数据目录，用于把路径写进提示。</param>
+    internal static string DescribeWebView2Failure(Exception ex, string userDataFolder)
+    {
+        const int ErrorBusy = unchecked((int)0x800700AA);
+        const int ErrorSharingViolation = unchecked((int)0x80070020);
+
+        if (ex.HResult is not (ErrorBusy or ErrorSharingViolation))
+        {
+            return $"初始化 WebView2 失败：{ex.Message}";
+        }
+
+        return "初始化 WebView2 失败：用户数据目录已被另一个进程占用。\n\n"
+            + $"{userDataFolder}\n\n"
+            + "同一个目录同一时刻只能有一个进程打开。按以下顺序检查：\n"
+            + "1. 是否已经开着本应用的另一个实例（含最小化到托盘的）——关掉它再启动。\n"
+            + "   需要「再启动一次就把前台实例叫回来」的话，构建时用 SingleInstance()。\n"
+            + "2. 是否是另一个基于 OrielWeb 的应用在运行——用 UseUserDataFolder() 让它们各用各的目录。\n"
+            + "3. 都排除了就等几秒重试：上一次异常退出时，浏览器进程可能还没退干净。";
     }
 
     /// <summary>
@@ -1545,6 +1577,11 @@ internal partial class Win32WindowHost : IWindowBackend
 
     internal void OnWebViewFailed(string message)
     {
+        // 先走诊断通道，再弹窗：弹窗在**无人值守**的运行里是个坑——它会一直等一个
+        // 永远不会有人点的"确定"，于是启动故障表现为"卡住"而不是"失败"。
+        // 走到这里的场景（CI、后台启动、脚本拉起）不少，至少要让日志里有据可查。
+        OrielDiagnostics.Report($"[OrielWeb] {message}");
+
         MessageBoxResult(message, "OrielWeb", OrielMessageBoxIcon.Error);
         Win32.DestroyWindow(_hwnd);
     }

@@ -50,7 +50,7 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 | `AddCommands<T>() where T : new()`<br>`AddCommands<T>(Func<T> factory)` | 注册含 `[OrielCommand]` 的类型（惰性单例；`factory` 用于需要构造参数的命令类）。命令实例**共享**，所有 invoke 作用在同一实例上 → **命令方法必须线程安全**；同名命令在启动时报冲突 |
 | `AddWindow(Action<OrielWindowOptions>? configure = null)`<br>`AddWindow(Action<OrielWindowOptions>? configure, Action<WebviewWindow> onCreated)` | 加窗口。`onCreated` 是**配置期**回调（`Run()` 之前、建窗之前调用），用途只有一个：挂事件处理器（`Loaded`/`Closing` 这类必须早于建窗订阅的）。此时窗口后端还没建，访问 `window.App` / `PostToUiThread` / `Show` / `Hide` / `EmitEvent` 一律**抛 `InvalidOperationException`**（"窗口后端尚未初始化"）——**不是返回 null**；要窗口能力请等 `Loaded` / `NavigationCompleted` |
 | `UseDebug(bool debug = true)`；`bool Debug { get; }` | 打开 DevTools（三平台的实现与前置条件见 §1 末与 §13） |
-| `UseUserDataFolder(string path)` | 覆盖 WebView2 用户数据目录（默认 `%LOCALAPPDATA%\OrielWeb\WebView2`）。**同一进程的所有窗口共享一个 WebView2 环境**——否则第二个窗口起不来 |
+| `UseUserDataFolder(string path)` | 覆盖 WebView2 用户数据目录（默认 `%LOCALAPPDATA%\<标识符>\WebView2`，标识符即 `WithAppInfo` 的 `identifier`）。**同一进程的所有窗口共享一个 WebView2 环境**——否则第二个窗口起不来。目录按应用隔离：两个基于本库的应用不会共用一份 profile |
 | `SingleInstance(string id, Action<WebviewWindow?, IReadOnlyList<string>>? onActivate = null)` | 单实例（见 §6，含三态判定与运行期目录）。**判定发生在 `Build()`**：`app.IsSecondaryInstance` 在 `Run()` 之前就能问，第二实例因此可以在打开数据库/连设备**之前**分流，再 `Run()` 让库负责"通知首实例并静默退出"。`onActivate` 的首实例回调会拿到**第二实例的启动参数**（`Oriel.CreateBuilder(args)` 的那份），用于"用命令行让已运行的程序打开某个页面" |
 | `UseCapabilities(Action<OrielCapabilityOptions>? configure = null)` | 声明页面可调用的命令与可信来源（见 §4） |
 | `UseShell(Action<OrielShellOptions>? configure = null)` | Shell 集成的 scheme 白名单（见 §7） |

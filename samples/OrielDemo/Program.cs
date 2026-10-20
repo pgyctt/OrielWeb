@@ -75,6 +75,11 @@ internal static class Program
             // 没有控制台（WinExe 双击启动）时设置会失败，那不是错误
         }
 
+        // 库的诊断通道默认是**静默**的（没有订阅者就什么都不做），示例把它接到 stderr：
+        // 这样"WebView2 装配失败"这类只弹窗的故障在脚本/CI 里也留有痕迹。
+        // 顺带一提，弹窗本身在无人值守时会把"失败"变成"卡住"——日志是唯一可靠的那份证据。
+        OrielDiagnostics.Reported += e => Console.Error.WriteLine(e.Message);
+
         // --hidden：以隐藏窗口启动。既用于验证三平台的 Hidden 语义（窗口不上屏，但页面照常
         // 加载、IPC 照常往返），也是"先隐藏预热、准备好再显示"这类用法的示例。
         var hidden = args.Contains("--hidden");

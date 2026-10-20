@@ -8,11 +8,14 @@ internal static class PlatformBackendFactory
     /// WebView2 用户数据目录的覆盖值（来自 <see cref="OrielAppBuilder.UseUserDataFolder"/>）。
     /// 只有 Windows 用得着——另两个平台的引擎没有这个概念，收了也不用。
     /// </param>
-    public static IPlatformBackend Create(string? webView2UserDataFolder = null)
+    /// <param name="appIdentifier">
+    /// 应用标识符，只在上面那个覆盖值为空时用来拼默认目录。同样只有 Windows 用得着。
+    /// </param>
+    public static IPlatformBackend Create(string? webView2UserDataFolder = null, string? appIdentifier = null)
     {
         if (OperatingSystem.IsWindows())
         {
-            return new OrielWeb.Platform.Windows.WindowsPlatformBackend(webView2UserDataFolder);
+            return new OrielWeb.Platform.Windows.WindowsPlatformBackend(webView2UserDataFolder, appIdentifier);
         }
         if (OperatingSystem.IsMacOS())
         {
