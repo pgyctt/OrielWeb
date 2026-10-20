@@ -121,6 +121,14 @@ internal static unsafe class LinuxSignalHandlers
         // 拖放载荷：只在 webview 上接（落点也设在 webview 上，见 LinuxWindowHost.Create）
         GtkNative.GSignalConnectData(webview, "drag-data-received",
             (delegate* unmanaged<nint, nint, int, int, nint, uint, uint, nint, void>)&OnDragDataReceivedTrampoline, 0, 0, 0);
+        // 拖动过程中：签名 (GtkWidget*, GdkDragContext*, gint x, gint y, guint time, gpointer) → gboolean。
+        // **必须返回 TRUE** 才会继续收到 motion 与最终的 drop——返回 FALSE 等于当场拒绝，
+        // 症状是"能拖进来、光标也在、松手却不触发 drag-data-received"。
+        GtkNative.GSignalConnectData(webview, "drag-motion",
+            (delegate* unmanaged<nint, nint, int, int, uint, nint, int>)&OnDragMotionTrampoline, 0, 0, 0);
+        // 拖出：签名 (GtkWidget*, GdkDragContext*, guint time, gpointer) → void
+        GtkNative.GSignalConnectData(webview, "drag-leave",
+            (delegate* unmanaged<nint, nint, uint, nint, void>)&OnDragLeaveTrampoline, 0, 0, 0);
         // 内建右键菜单：签名 (WebKitWebView*, WebKitContextMenu*, GdkEvent*, WebKitHitTestResult*, gpointer) → gboolean
         GtkNative.GSignalConnectData(webview, "context-menu",
             (delegate* unmanaged<nint, nint, nint, nint, nint, int>)&OnContextMenuTrampoline, 0, 0, 0);
@@ -338,6 +346,60 @@ internal static unsafe class LinuxSignalHandlers
     }
 
     /// <summary>
+    /// GTK 的 <c>drag-motion</c>：拖动过程中持续回调。
+    /// 信号签名 <c>(GtkWidget*, GdkDragContext*, gint x, gint y, guint time, gpointer) → gboolean</c>。
+    /// </summary>
+    /// <remarks>
+    /// GTK 没有单独的 "enter" 信号，所以首帧 motion 当 enter 上报（与 Tauri 的 GTK 实现同一做法）。
+    /// 坐标是 widget 内的**逻辑像素**，交给宿主乘 scaleFactor 换成物理像素。
+    /// </remarks>
+    [UnmanagedCallersOnly]
+    internal static int OnDragMotionTrampoline(nint widget, nint context, int x, int y, uint time, nint data)
+    {
+        try
+        {
+            if (!WebviewStates.TryGetValue(widget, out var host))
+            {
+                return 0;
+            }
+
+            (int px, int py) = host.ToPhysicalDragPoint(x, y);
+            if (host.DragSessionActive)
+            {
+                host.OnDragOver(px, py);
+            }
+            else
+            {
+                // 路径要等 drag-data-received 才有，这里如实给空
+                host.OnDragEnter([], px, py);
+            }
+
+            return 1;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>GTK 的 <c>drag-leave</c>：拖出 widget。签名 <c>(GtkWidget*, GdkDragContext*, guint time, gpointer)</c>。</summary>
+    [UnmanagedCallersOnly]
+    internal static void OnDragLeaveTrampoline(nint widget, nint context, uint time, nint data)
+    {
+        try
+        {
+            if (WebviewStates.TryGetValue(widget, out var host))
+            {
+                host.OnDragLeave();
+            }
+        }
+        catch
+        {
+            // 异常不外泄
+        }
+    }
+
+    /// <summary>
     /// GTK 的 <c>drag-data-received</c>。信号签名：
     /// <c>(GtkWidget*, GdkDragContext*, gint x, gint y, GtkSelectionData*, guint info, guint time, gpointer)</c>。
     /// </summary>
@@ -377,7 +439,8 @@ internal static unsafe class LinuxSignalHandlers
 
             if (paths.Count > 0 && WebviewStates.TryGetValue(widget, out var host))
             {
-                host.OnFilesDropped(paths);
+                (int px, int py) = host.ToPhysicalDragPoint(x, y);
+                host.OnFilesDropped(paths, px, py);
             }
         }
         catch

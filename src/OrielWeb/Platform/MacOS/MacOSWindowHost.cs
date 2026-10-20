@@ -287,13 +287,9 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     // B10 第二批：本平台目前只上报 drop（见 OnFilesDropped）。enter/over/leave 要各自的坐标系换算
     // （macOS 左下原点 + backingScaleFactor、GTK 逻辑像素 + scaleFactor），与页面事件面同批上线——
     // 只在 Windows 收到 enter 的平台分裂比三平台都没有更难查。
-    event Action<OrielDragEventArgs>? IWindowBackend.DragDrop
-    {
-        // 故意空实现：本平台还没有触发点（见上面的待办）。写成"转发到一个从不触发的私有事件"
-        // 只会换来一条 CS0067 和"看起来实现了"的错觉。
-        add { }
-        remove { }
-    }
+    event Action<OrielDragEventArgs>? IWindowBackend.DragDrop { add => DragDrop += value; remove => DragDrop -= value; }
+
+    private event Action<OrielDragEventArgs>? DragDrop;
 
     public bool IsMaximized => ObjCRuntime.SendBoolRet(_nsWindow, ObjCRuntime.Sel("isZoomed"));
 
@@ -617,8 +613,51 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     }
 
     /// <summary>拖放视图解析出的本地路径（由 <c>MacOSObjCClasses</c> 的 trampoline 调用）。</summary>
-    internal void OnFilesDropped(IReadOnlyList<string> paths)
-        => FileDropped?.Invoke(new OrielFileDropEventArgs(paths));
+    internal void OnFilesDropped(IReadOnlyList<string> paths, int x, int y)
+    {
+        // FileDropped 是 B8 已发布的公开事件，drop 时两者都发；DragDrop 是完整版本
+        DragDrop?.Invoke(new OrielDragEventArgs(OrielDragEventType.Drop, paths, x, y));
+        FileDropped?.Invoke(new OrielFileDropEventArgs(paths));
+    }
+
+    /// <summary>拖动进入窗口（<c>draggingEntered:</c>）。</summary>
+    internal void OnDragEntered(IReadOnlyList<string> paths, int x, int y)
+        => DragDrop?.Invoke(new OrielDragEventArgs(OrielDragEventType.Enter, paths, x, y));
+
+    /// <summary>在窗口内移动（<c>draggingUpdated:</c>，频率可达每秒几十次）。</summary>
+    internal void OnDragUpdated(int x, int y)
+        => DragDrop?.Invoke(new OrielDragEventArgs(OrielDragEventType.Over, [], x, y));
+
+    /// <summary>离开窗口（<c>draggingExited:</c>）。</summary>
+    internal void OnDragExited()
+        => DragDrop?.Invoke(new OrielDragEventArgs(OrielDragEventType.Leave, [], 0, 0));
+
+    /// <summary>
+    /// 取当前拖动位置（客户区物理像素）。
+    /// </summary>
+    /// <remarks>
+    /// <b>不用 <c>-draggingLocation</c></b>：它返回 <c>NSPoint</c> 结构体，而本库的约定是不做
+    /// struct 返回的 <c>objc_msgSend</c>（x86_64 要走 <c>objc_msgSend_stret</c>、arm64 是隐式 sret，
+    /// 绑定里没有那条路）。拖动期间鼠标就在拖动点上，所以用 <c>CGEventGetLocation</c> 的全局位置
+    /// 减去客户区原点，结果一致，且完全绕开结构体返回的 ABI。
+    /// </remarks>
+    internal (int X, int Y) DragPosition()
+    {
+        try
+        {
+            OrielPosition cursor = App.MonitorBackend.GetCursorPosition(); // 物理像素、全局左上原点
+            OrielPosition inner = InnerPosition;                            // 逻辑像素、客户区左上原点
+            double scale = ScaleFactor;
+
+            return ((int)Math.Round(cursor.X - (inner.X * scale)),
+                    (int)Math.Round(cursor.Y - (inner.Y * scale)));
+        }
+        catch (Exception ex)
+        {
+            OrielDiagnostics.Report($"[OrielWeb] 读取拖动坐标失败：{ex}");
+            return (0, 0);
+        }
+    }
 
     // ------------------------------------------------------------------
     // 创建

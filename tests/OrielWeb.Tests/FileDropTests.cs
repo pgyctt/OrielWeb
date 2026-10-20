@@ -135,17 +135,50 @@ public sealed class FileDropTests
     }
 
     [Fact]
-    public void PayloadSinglePath()
+    public void EnterPayloadCarriesPathsAndPosition()
     {
-        using var doc = JsonDocument.Parse(OrielApp.DragDropPayloadJson(["/home/x/a.txt"]));
-        Assert.Equal("drop", doc.RootElement.GetProperty("type").GetString());
+        var args = new OrielDragEventArgs(OrielDragEventType.Enter, ["/home/x/a.txt"], 12, 34);
+
+        using var doc = JsonDocument.Parse(OrielApp.DragDropPayloadJson(args));
+
+        Assert.Equal("enter", doc.RootElement.GetProperty("type").GetString());
         Assert.Equal("/home/x/a.txt", doc.RootElement.GetProperty("paths")[0].GetString());
+        Assert.Equal(12, doc.RootElement.GetProperty("position").GetProperty("x").GetInt32());
+        Assert.Equal(34, doc.RootElement.GetProperty("position").GetProperty("y").GetInt32());
     }
 
     [Fact]
-    public void PayloadKeepsOrderAndCount()
+    public void OverPayloadHasPositionButNoPaths()
     {
-        using var doc = JsonDocument.Parse(OrielApp.DragDropPayloadJson(["/a", "/b", "/c"]));
+        // Tauri 的 drag-over 不带 paths：拖动过程中还没解析（也不需要）载荷
+        var args = new OrielDragEventArgs(OrielDragEventType.Over, [], 5, 6);
+
+        using var doc = JsonDocument.Parse(OrielApp.DragDropPayloadJson(args));
+
+        Assert.Equal("over", doc.RootElement.GetProperty("type").GetString());
+        Assert.False(doc.RootElement.TryGetProperty("paths", out _));
+        Assert.Equal(5, doc.RootElement.GetProperty("position").GetProperty("x").GetInt32());
+    }
+
+    [Fact]
+    public void LeavePayloadHasNeitherPathsNorPosition()
+    {
+        // leave 的坐标是占位 0,0，不是"拖到了左上角"——所以整个字段都不发
+        var args = new OrielDragEventArgs(OrielDragEventType.Leave, [], 0, 0);
+
+        using var doc = JsonDocument.Parse(OrielApp.DragDropPayloadJson(args));
+
+        Assert.Equal("leave", doc.RootElement.GetProperty("type").GetString());
+        Assert.False(doc.RootElement.TryGetProperty("position", out _));
+        Assert.False(doc.RootElement.TryGetProperty("paths", out _));
+    }
+
+    [Fact]
+    public void DropPayloadKeepsOrderAndCount()
+    {
+        var args = new OrielDragEventArgs(OrielDragEventType.Drop, ["/a", "/b", "/c"], 0, 0);
+
+        using var doc = JsonDocument.Parse(OrielApp.DragDropPayloadJson(args));
         string[] paths = doc.RootElement.GetProperty("paths")
             .EnumerateArray().Select(e => e.GetString()!).ToArray();
 
@@ -153,10 +186,14 @@ public sealed class FileDropTests
     }
 
     [Fact]
-    public void PayloadEmptyListIsEmptyArrayNotNull()
+    public void EmptyDropIsEmptyArrayNotNull()
     {
-        // `paths: null` 会让页面侧 `.map()` 当场抛；空数组才是"拖进来 0 个"的正确形状。
-        Assert.Equal("{\"type\":\"drop\",\"paths\":[]}", OrielApp.DragDropPayloadJson([]));
+        // `paths: null` 会让页面侧 `.map()` 当场抛；空数组才是"拖进来 0 个"的正确形状
+        var args = new OrielDragEventArgs(OrielDragEventType.Drop, [], 0, 0);
+
+        Assert.Equal(
+            "{\"type\":\"drop\",\"paths\":[],\"position\":{\"x\":0,\"y\":0}}",
+            OrielApp.DragDropPayloadJson(args));
     }
 
     [Fact]
@@ -164,21 +201,21 @@ public sealed class FileDropTests
     {
         // Windows 路径本身就带反斜杠；文件名里带引号也合法（POSIX 上）。
         // 手写 JSON 最容易在这里出错：漏转义 → 页面 JSON.parse 失败。
-        const string tricky = "C:\\tmp\\a\"b\\报告.txt";
+        const string tricky = @"C:\tmp\a""b\报告.txt";
+        var args = new OrielDragEventArgs(OrielDragEventType.Drop, [tricky], 0, 0);
 
-        using var doc = JsonDocument.Parse(OrielApp.DragDropPayloadJson([tricky]));
+        using var doc = JsonDocument.Parse(OrielApp.DragDropPayloadJson(args));
         Assert.Equal(tricky, doc.RootElement.GetProperty("paths")[0].GetString());
     }
 
     [Fact]
-    public void PayloadHasNoPositionField()
+    public void FourStageEventNamesMatchHostConvention()
     {
-        // Tauri 的 payload 有 position（物理像素）。本库**有意不给**：三个后端在
-        // "解析出路径"那一步就把坐标丢了，补它要给两个平台各写一次坐标系换算。
-        // 不给字段的话页面读 `position.x` 得到 undefined 并当场发现；给 0 会被
-        // 当成"拖到了左上角"——一个看起来成功的错误。
-        // 这条断言的作用是：将来补上 position 时，必须同时改这里和文档，不能悄悄改。
-        using var doc = JsonDocument.Parse(OrielApp.DragDropPayloadJson(["/a"]));
-        Assert.False(doc.RootElement.TryGetProperty("position", out _));
+        // 宿主侧用本库命名法（drag.*），页面侧看到 Tauri 的名字（tauri://drag-*），
+        // 翻译在 event.js 的 HOST_EVENT_MAP。两边各存一份字面量，各钉各的。
+        Assert.Equal("drag.enter", OrielApp.DragEnterEventName);
+        Assert.Equal("drag.over", OrielApp.DragOverEventName);
+        Assert.Equal("drag.drop", OrielApp.DragDropEventName);
+        Assert.Equal("drag.leave", OrielApp.DragLeaveEventName);
     }
 }

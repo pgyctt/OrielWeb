@@ -845,17 +845,30 @@ string? folder = window.ShowFolderDialog("选择目录");
 
 ## 9. 文件拖放
 
+两套入口，同一份数据：
+
 ```csharp
-window.FileDropped += e => Console.WriteLine(string.Join(", ", e.Paths));
+window.FileDropped += e => Console.WriteLine(string.Join(", ", e.Paths));  // 只有 drop（B8 的公开面）
 ```
 
-三平台的落点接入方式不同，但对外是同一个事件：
+页面侧有完整的四个阶段（`enter` / `over` / `drop` / `leave`），见 §9.1。
 
-- **Windows**：窗口加 `WS_EX_ACCEPTFILES` → `WM_DROPFILES` → `DragQueryFileW`；
-  本库是 Composition 宿主，WebView2 **不是子窗口**，拖放会落到本窗口——不必手写 OLE `IDropTarget`，
-  但必须关掉 WebView2 的 `AllowExternalDrop` 以免它截走。
-- **macOS**：自定义 `NSView` 子类承载 `NSDraggingDestination`，webview 作为其子视图（不碰 `WKWebView` 的方法表）。
-- **Linux**：`gtk_drag_dest_set(webview, "text/uri-list")` + `drag-data-received`。
+三平台的落点：
+
+- **Windows**：`RegisterDragDrop` + 手写的 `IDropTarget`（`Win32DropTarget`，本仓库唯一一处手写 COM）。
+  拖动过程中持续回调；`IDropTarget` 给的是**屏幕**坐标，而 `ScreenToClient` 的 `POINT` 不能用于
+  源生成 P/Invoke，所以用"客户区原点的屏幕坐标相减"换算。
+  **`WM_DROPFILES` 保留为降级路径**：OLE 注册失败时仍能收到 drop，只是没有 enter/over/leave。
+  窗口必须关掉 WebView2 的 `AllowExternalDrop`，否则它会自己占住 `IDropTarget`，
+  我们的注册会拿到 `DRAGDROP_E_ALREADYREGISTERED`。
+- **macOS**：自定义 `NSView` 子类承载 `NSDraggingDestination`
+  （`draggingEntered:` / `draggingUpdated:` / `draggingExited:` / `performDragOperation:`），
+  不碰 `WKWebView` 的方法表。坐标**不用** `-draggingLocation`（返回 `NSPoint` 结构体，
+  而本库不做 struct 返回的 `objc_msgSend`），改用 CG 全局光标位置减客户区原点——
+  拖动期间鼠标就在拖动点上。顺带避开了左下原点与 `backingScaleFactor` 的换算。
+- **Linux**：`gtk_drag_dest_set(webview, "text/uri-list")` + `drag-data-received` /
+  `drag-motion` / `drag-leave`。GTK 没有单独的 enter 信号，**首帧 `drag-motion` 当 enter**；
+  而那个阶段拿不到路径，所以 Linux 的 `enter.paths` 是空数组（Tauri 的 GTK 实现同样如此）。
 
 URI → 本地路径的解析（百分号编码含非 ASCII、`+` 不等于空格、Windows 盘符、`localhost` 与远程主机、批量保序）
 有 23 个单测；**"真的把文件拖进去"只能在真机上人眼验证**（无头环境造不出 XDND/OLE 会话）。
@@ -866,26 +879,40 @@ URI → 本地路径的解析（百分号编码含非 ASCII、`+` 不等于空�
 import { getCurrentWindow } from '@orielweb/api/window';
 
 const un = await getCurrentWindow().onDragDropEvent(({ payload }) => {
-    if (payload.type !== 'drop') return;   // 本库只有这一种；这么写与 Tauri 的迁移代码一致
-    console.log(payload.paths);            // 本地路径（与 C# 的 FileDropped 是同一份数据）
+    switch (payload.type) {
+        case 'enter': // payload.paths（Linux 上为空）、payload.position
+            break;
+        case 'over':  // 只有 payload.position，每秒可达几十条
+            break;
+        case 'drop':  // payload.paths、payload.position
+            break;
+        case 'leave': // 没有 paths，也没有 position
+            break;
+    }
 });
 ```
 
-宿主在 OS 投放完成时推一次 `drag.drop`；页面看到的仍是 Tauri 的名字 `tauri://drag-drop`（`TauriEvent.DRAG_DROP`）。
+四个阶段各对应一条宿主事件（`drag.enter` / `drag.over` / `drag.drop` / `drag.leave`），
+页面看到的是 Tauri 的名字（`tauri://drag-*`），由 `event.js` 的 `HOST_EVENT_MAP` 翻译。
+`onDragDropEvent` 内部订阅四次、归一成一个回调，形状与 Tauri 一致（`position` 是 `PhysicalPosition`）。
 
-**与 Tauri 的两处差异，且都会静默生效**：
+| 项 | 说明 |
+|---|---|
+| `position` | **客户区物理像素**（左上原点）。与 `cursorPosition` 不同——那个是屏幕坐标，拖放要画的是"在窗口里的哪里" |
+| `over` | 不带 `paths`（Tauri 也不带）。频率等于系统刷新率，节流由页面按渲染节奏决定 |
+| `leave` | 只有 `type`：坐标没有意义，索性不发 |
 
-| 项 | Tauri | 本库 |
-|---|---|---|
-| 事件类型 | `enter` / `over` / `drop` / `leave` | **只有 `drop`**。三平台的原生投放都只在松手那一刻回调一次；靠 `over` 做的"拖到此处高亮"在本库上**不会亮** |
-| payload | 含 `position`（物理像素） | **没有 `position`**。读它得到 `undefined`——有意为之：给一个 0 会被当成"拖到了左上角" |
+**一处平台差异，如实标注**：Linux 的 `enter.paths` 是空数组（见上）。需要"进入时就判断受不受理"的
+代码应当看 `over` / `drop`，或者在 `enter` 时只做视觉高亮。
 
 方法位置：Tauri 的 `Window` 与 `Webview` 上都有（`Window` 那份是转发）；本库没有 webview 层，
 只在 `Window` 上。迁移时 `getCurrentWebview().onDragDropEvent(...)` 改成
 `getCurrentWindow().onDragDropEvent(...)` 即可。
 
-覆盖率说明：C# 侧钉住 payload 形状与 JSON 转义（6 条单测），JS 侧钉住"Tauri 名 → 宿主名"的映射与回调
-（2 条）。**原生投放那一段与上面的 `FileDropped` 是同一条路径**，仍然只能真机验证。
+覆盖率：C# 侧四阶段 payload 形状 8 条 + 结构布局与 vtable 槽位 5 条（`FORMATETC`/`STGMEDIUM`
+错位会让 `GetData` 返回 `DV_E_FORMATETC`，看起来像"拖的东西没有文件"）；JS 侧 2 条
+（四事件订阅与归一、映射表四条齐全）。**原生投放那一段仍只能真机验证**：
+Windows 已实测（`enter` + 200 条 `over` + `drop`，坐标随移动变化），macOS/Linux 的人工项照旧。
 
 ## 10. 内建右键菜单
 

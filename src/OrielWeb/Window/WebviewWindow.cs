@@ -151,6 +151,17 @@ public sealed class WebviewWindow : IOrielWindowControl
     public event Action<OrielFileDropEventArgs>? FileDropped;
 
     /// <summary>
+    /// 拖放的四个阶段（enter / over / drop / leave），带客户区物理像素坐标。
+    /// </summary>
+    /// <remarks>
+    /// internal 而不是 public：这是库**自己**推页面事件用的（<see cref="OrielApp"/> 订阅它，
+    /// 再编成 <c>drag.*</c> 事件发给页面）。应用侧要观测拖放应当用公开的
+    /// <see cref="FileDropped"/>，或者干脆在页面里订阅 <c>onDragDropEvent</c>——
+    /// 多一个公开面就多一套要长期维持的语义。
+    /// </remarks>
+    internal event Action<OrielDragEventArgs>? DragDropReceived;
+
+    /// <summary>
     /// 在鼠标位置弹出上下文菜单（项里的 <see cref="OrielMenuItem.Role"/> 走平台语义，
     /// 自定义项在用户选择后触发 <see cref="ContextMenuItemClicked"/>）。
     /// </summary>
@@ -349,6 +360,7 @@ public sealed class WebviewWindow : IOrielWindowControl
         backend.MessageReceived += args => MessageReceived?.Invoke(args);
         backend.ContextMenuItemClicked += id => ContextMenuItemClicked?.Invoke(id);
         backend.FileDropped += args => FileDropped?.Invoke(args);
+        backend.DragDrop += args => DragDropReceived?.Invoke(args);
     }
 
     // ---- 显示状态 ----

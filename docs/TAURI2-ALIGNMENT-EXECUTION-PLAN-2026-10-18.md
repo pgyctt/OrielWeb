@@ -489,10 +489,14 @@ position"、宿主事件名）；JS 2 条（订阅的是宿主名而页面看到
   且不报错——这是本批最容易埋进去的静默失败。
 * GTK 的 `drag-dest` 目标列表改了会表现成"以前能拖进去，现在不行"。
 
-**验收**：C# ~12 条（四种 `type` 的 payload 形状、三平台坐标换算各一条纯函数测试、paths 保序、
-空投放不是 null）+ `--selftest dragdrop`（只能验"拖放目标已注册"这类**静态事实**）。
-**真正的 enter/over/leave 必须人工拖一次**，写进人工项——无头环境造不出 OLE/XDND 会话，
-这一点与 B8 一致，不假装能自动化。
+**验收（实际做法，与最初的设想有一处不同）**：C# 四阶段 payload 形状 8 条 + 结构布局与
+vtable 槽位 5 条；JS 2 条（四事件订阅与归一、映射表四条齐全）。
+
+**没有做 `--selftest dragdrop`**：自检能验的只有"拖放目标注册成功"这一件静态事实，
+而它已经由一次性真机验证确认过（`RegisterDragDrop` 成功、未落降级分支）。为一条只能验注册的
+自检加三个平台的接线，收益不抵成本。**真正的 enter/over/leave 通过人工拖一次验证**——
+Windows 实测：`enter` + **200 条 `over`** + `drop`，坐标随移动变化。macOS/Linux 的人工项照旧
+（无头环境造不出 OLE/XDND 会话）。
 
 **三平台的起点不一样，成本差一个数量级**（2026-10-20 摸底，不是估算）：
 
@@ -632,7 +636,7 @@ position"、宿主事件名）；JS 2 条（订阅的是宿主名而页面看到
 | B8 | ✅ 完成（2026-10-20） | `drag.drop` → 页面 `tauri://drag-drop`；`Window.onDragDropEvent`；C# 6 条 + JS 2 条单测。只发 `drop`、不带 `position`（理由见 §2 B8） |
 | B9 | ✅ 完成（2026-10-20） | `Channel`（core）+ `OrielChannel`（C#）+ 生成器绑定/自动关闭；C# 9 条 + JS 4 条 + `--selftest channel`。协议与三平台后端零改动（理由见 §2 B9） |
 | R0 | ✅ 完成（2026-10-20） | 0.3.8 → **0.4.0**：版本号、CHANGELOG 落版与 tag `v0.4.0` 同一次提交；`release.yml` 出 Release + NuGet |
-| B10 | ⬜ 未开始 | 计划见 §2 B10。启动前先做三件事：确认 `OleInitialize` 返回值、确认 GTK `drag-dest` 目标列表与现状一致、把坐标换算写成**纯函数**单独测 |
+| B10 | ✅ 完成（2026-10-20） | `Win32DropTarget`（手写 `IDropTarget`）+ `OrielDragEventArgs` + 三平台四阶段 + `window.js` 四订阅与 `PhysicalPath` 归一。Windows 真机实测 enter/200 条 over/drop；C# 13 条 + JS 2 条 |
 | B11 | ⬜ 未开始 | 计划见 §2 B11。夹具先行，因为"改法可执行"比"再写一段文档"有用 |
 
 > **B4 的一处实现细节值得记住**：Tauri 用 `once('tauri://created')` 通知建窗结果，
@@ -773,8 +777,7 @@ B9 之后（2026-10-20）：
 
 ```
 R0 发版 0.4.0    ← 先把 B0–B9 落成可回溯的版本，再谈新能力            ⬅ 当前
-B10 拖放补全      ← enter/over/leave + position；Windows 换 COM IDropTarget
-                     （B8 只发了 drop 的欠账，本批还掉）
+B10 拖放补全      ← enter/over/leave + position；Windows 换 COM IDropTarget  ✅ 完成
 B11 演练工装门禁   ← 从"能编译"到"能启动前不会崩"：夹具 + 报告加列 + Xvfb 就绪等待
 不做              ← plugin-updater、clipboard.writeImage、onBackButtonPress
                      （前两项是整块生态能力；第三项是桌面库不该有的移动端 API）

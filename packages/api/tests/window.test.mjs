@@ -545,13 +545,13 @@ test('onFocusChanged：一个回调覆盖 focus 与 blur 两个宿主事件', as
     clearMocks();
 });
 
-// ---- 文件拖放（B8）----
+// ---- 文件拖放（B8 → B10 补齐四个阶段）----
 //
-// 这一组的重点是**两层名字不要混**：宿主侧叫 `drag.drop`（本库命名法），
-// 页面侧看到的仍是 Tauri 的 `tauri://drag-drop`。混了的症状是"订阅了但永远收不到"，
+// 这一组的重点是**两层名字不要混**：宿主侧叫 `drag.enter/over/drop/leave`（本库命名法），
+// 页面侧看到的仍是 Tauri 的 `tauri://drag-*`。混了的症状是"订阅了但永远收不到"，
 // 而它不会报错——正是 B7 里那类"编译器看不见"的问题。
 
-test('onDragDropEvent：订阅宿主的 drag.drop，payload 原样交给回调', async () => {
+test('onDragDropEvent：订阅四条宿主事件，payload 归一成 Tauri 形状', async () => {
     clearMocks();
 
     /** @type {Map<string, (payload: unknown) => void>} */
@@ -569,31 +569,47 @@ test('onDragDropEvent：订阅宿主的 drag.drop，payload 原样交给回调',
     const seen = [];
     const off = await new Window('main').onDragDropEvent((e) => seen.push(e));
 
-    assert.ok(raw.has('drag.drop'), '应当订阅宿主侧的 drag.drop');
+    for (const hostName of ['drag.enter', 'drag.over', 'drag.drop', 'drag.leave']) {
+        assert.ok(raw.has(hostName), `应当订阅宿主侧的 ${hostName}`);
+    }
     assert.ok(!raw.has(TauriEvent.DRAG_DROP), '不该拿 Tauri 名去订阅宿主（宿主不认这个名字）');
 
-    raw.get('drag.drop')?.({ type: 'drop', paths: ['/a', '/b'] });
+    raw.get('drag.enter')?.({ type: 'enter', paths: ['/a'], position: { x: 1, y: 2 } });
+    raw.get('drag.over')?.({ type: 'over', position: { x: 3, y: 4 } });
+    raw.get('drag.drop')?.({ type: 'drop', paths: ['/a', '/b'], position: { x: 5, y: 6 } });
+    raw.get('drag.leave')?.({ type: 'leave' });
 
-    assert.equal(seen.length, 1);
-    assert.equal(seen[0].event, TauriEvent.DRAG_DROP, '页面读 e.event 应当拿到 Tauri 名');
-    assert.deepEqual(seen[0].payload, { type: 'drop', paths: ['/a', '/b'] });
+    assert.equal(seen.length, 4);
+
+    assert.equal(seen[0].event, TauriEvent.DRAG_ENTER, '页面读 e.event 应当拿到 Tauri 名');
+    assert.equal(seen[0].payload.type, 'enter');
+    assert.deepEqual(seen[0].payload.paths, ['/a']);
+    assert.ok(seen[0].payload.position instanceof PhysicalPosition, 'position 应当是 PhysicalPosition');
+    assert.equal(seen[0].payload.position.x, 1);
+    assert.equal(seen[0].payload.position.y, 2);
+
+    assert.equal(seen[1].payload.type, 'over');
+    assert.equal(seen[1].payload.position.y, 4);
+    assert.equal(seen[1].payload.paths, undefined, 'over 不该带 paths（Tauri 也不带）');
+
+    assert.equal(seen[2].payload.type, 'drop');
+    assert.deepEqual(seen[2].payload.paths, ['/a', '/b']);
+    assert.equal(seen[2].payload.position.x, 5);
+
+    assert.deepEqual(seen[3].payload, { type: 'leave' }, 'leave 只有 type：坐标是占位，不发');
 
     off();
-    assert.equal(raw.size, 0);
+    assert.equal(raw.size, 0, '退订之后不该留下四条监听（否则每次调用漏四条）');
 
     clearMocks();
 });
 
-test('TauriEvent.DRAG_DROP 有宿主对应物，另外三个没有', () => {
+test('四个 DRAG_* 都有宿主对应物', () => {
     // 映射表漏一条 = 页面订阅了一个宿主永远不推的名字。这条把"漏了"变成红的。
+    assert.equal(toHostEventName(TauriEvent.DRAG_ENTER), 'drag.enter');
+    assert.equal(toHostEventName(TauriEvent.DRAG_OVER), 'drag.over');
     assert.equal(toHostEventName(TauriEvent.DRAG_DROP), 'drag.drop');
-
-    // enter / over / leave 故意没有宿主对应物：宿主三平台都只在松手那一刻回调一次。
-    // 这里断言"确实没有"，是为了让"以后补上"必须同时改映射表、文档与这里——
-    // 而不是某一处悄悄变了、其余地方还按旧假设跑。
-    for (const name of [TauriEvent.DRAG_ENTER, TauriEvent.DRAG_OVER, TauriEvent.DRAG_LEAVE]) {
-        assert.equal(toHostEventName(name), name, `${name} 不该有宿主对应物`);
-    }
+    assert.equal(toHostEventName(TauriEvent.DRAG_LEAVE), 'drag.leave');
 });
 
 // ---- 显示器 ----

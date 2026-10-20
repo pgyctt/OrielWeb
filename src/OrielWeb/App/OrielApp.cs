@@ -387,10 +387,10 @@ public sealed class OrielApp : IDisposable
         // 的一定是它自己那棵菜单的点击。
         created.ContextMenuItemClicked += id => PushMenuItemClick(created, id);
 
-        // 文件被拖入窗口 → 推给页面（事件名见 DragDropEventName）。
-        // 与菜单点击同一套理由：订阅只发生一次，放在建窗处，一个窗口恰好一条。
-        // 数据早就有了（三个后端的 OS 级投放都会触发 FileDropped），此前只到 C# 对象模型为止。
-        created.FileDropped += args => PushDragDrop(created, args.Paths);
+        // 拖放的四个阶段 → 推给页面（事件名见 DragEnterEventName 一组）。
+        // 订阅 DragDropReceived 而不是 FileDropped：后者只有 drop，而且 drop 时两者都会触发，
+        // 同时订阅会让页面收到两条 drop。
+        created.DragDropReceived += args => PushDragDropEvent(created, args);
 
         // 新建窗口套用应用菜单（Tauri："If a window was not created with an explicit menu
         // or had one set explicitly, this menu will be assigned to it."）。
@@ -501,36 +501,50 @@ public sealed class OrielApp : IDisposable
     }
 
     /// <summary>
-    /// 宿主侧"文件被拖入窗口"的事件名：<c>drag.drop</c>。
+    /// 拖放四个阶段的宿主事件名（<c>drag.enter</c> / <c>drag.over</c> / <c>drag.drop</c> / <c>drag.leave</c>）。
     /// </summary>
     /// <remarks>
     /// <para>
     /// 宿主事件名沿用本库自己的命名法（`theme.changed` / `menu.itemclicked` 同一套），
-    /// 页面看到的是 Tauri 的名字 <c>tauri://drag-drop</c>——由 <c>event.js</c> 的
-    /// <c>HOST_EVENT_MAP</c> 翻译。这样页面侧不用为迁移改名字，宿主侧也不必出现一个
-    /// 属于别的库协议的字符串。
+    /// 页面看到的是 Tauri 的名字 <c>tauri://drag-enter</c> 等——由 <c>event.js</c> 的
+    /// <c>HOST_EVENT_MAP</c> 翻译。页面侧不必为迁移改名字，宿主侧也不必出现别的库的协议字符串。
     /// </para>
     /// <para>
-    /// <b>只发 <c>drop</c>，不发 <c>enter</c> / <c>over</c> / <c>leave</c>。</b>
-    /// 这不是遗漏：三个平台走的都是 OS 级投放（Windows 的 <c>WM_DROPFILES</c>、GTK 的
-    /// <c>drag-data-received</c>、AppKit 的 <c>performDragOperation:</c>），它们只在
-    /// <b>松手那一刻</b>回调一次。要在拖动过程中持续汇报，Windows 得改用 COM 的
-    /// <c>IDropTarget</c>，另两个平台也要各加一套坐标系换算——那是另一批的事。
-    /// 现在发四个里的一个，好过发四个里三个假的。
+    /// <b>四个是真的，不是凑齐的。</b>B8 只发 <c>drop</c>，因为那时三平台都只有"松手那一刻"
+    /// 的原生回调；B10 把 Windows 换成了 COM 的 <c>IDropTarget</c>、macOS 补了
+    /// <c>draggingUpdated:</c> / <c>draggingExited:</c>、GTK 补了 <c>drag-motion</c> /
+    /// <c>drag-leave</c>，四个阶段才都有来源。
     /// </para>
     /// </remarks>
+    internal const string DragEnterEventName = "drag.enter";
+
+    /// <inheritdoc cref="DragEnterEventName"/>
+    internal const string DragOverEventName = "drag.over";
+
+    /// <inheritdoc cref="DragEnterEventName"/>
     internal const string DragDropEventName = "drag.drop";
 
-    /// <summary>把"文件被拖入"推给窗口的页面。</summary>
+    /// <inheritdoc cref="DragEnterEventName"/>
+    internal const string DragLeaveEventName = "drag.leave";
+
+    /// <summary>把拖放事件推给窗口的页面。</summary>
     /// <remarks>
     /// 与 <see cref="PushMenuItemClick"/> 同一姿态：拖放是用户动作的尾巴，
     /// 窗口正在销毁时 <see cref="WebviewWindow.EmitEvent"/> 会抛，静默丢弃即可。
     /// </remarks>
-    private static void PushDragDrop(WebviewWindow window, IReadOnlyList<string> paths)
+    private static void PushDragDropEvent(WebviewWindow window, OrielDragEventArgs e)
     {
+        string name = e.Type switch
+        {
+            OrielDragEventType.Enter => DragEnterEventName,
+            OrielDragEventType.Over => DragOverEventName,
+            OrielDragEventType.Leave => DragLeaveEventName,
+            _ => DragDropEventName,
+        };
+
         try
         {
-            window.EmitEvent(DragDropEventName, DragDropPayloadJson(paths));
+            window.EmitEvent(name, DragDropPayloadJson(e));
         }
         catch (InvalidOperationException)
         {
@@ -538,23 +552,52 @@ public sealed class OrielApp : IDisposable
         }
     }
 
-    /// <summary>拖放事件的 payload：<c>{"type":"drop","paths":[...]}</c>。</summary>
+    /// <summary>
+    /// 拖放事件的 payload，形状与 Tauri 一致：<c>{type, paths?, position?}</c>。
+    /// </summary>
     /// <remarks>
-    /// <b>没有 <c>position</c></b>，而 Tauri 的 payload 有（物理像素、相对 webview 左上角）。
-    /// 三个后端目前都在"解析出路径"这一步就把坐标丢了：macOS 的 trampoline 手里有
-    /// <c>draggingLocation</c>、GTK 的信号参数里有 x/y，补它要给两个平台各写一次坐标系换算。
-    /// <b>不给字段比给一个 0 好</b>：调用方读 <c>position.x</c> 会拿到 <c>undefined</c>
-    /// 并当场发现，而 0 会被当成"拖到了左上角"——那是一个看起来成功的错误。
-    ///
+    /// <para>
+    /// <c>over</c> 不带 <c>paths</c>、<c>leave</c> 既不带 <c>paths</c> 也不带 <c>position</c>
+    /// ——Tauri 就是这么发的，页面按 <c>type</c> 收窄类型即可。
+    /// </para>
     /// <para>
     /// 手写 JSON 而不是 STJ 序列化：与托盘事件同一套做法，为的是走 Native AOT 时
     /// 不需要为这个内部形状再注册一个 <c>JsonTypeInfo</c>。
     /// </para>
     /// </remarks>
-    internal static string DragDropPayloadJson(IReadOnlyList<string> paths)
+    internal static string DragDropPayloadJson(OrielDragEventArgs e)
     {
         var builder = new System.Text.StringBuilder(64);
-        builder.Append("{\"type\":\"drop\",\"paths\":[");
+        builder.Append("{\"type\":\"");
+
+        switch (e.Type)
+        {
+            case OrielDragEventType.Enter:
+                builder.Append("enter\",\"paths\":[");
+                AppendPaths(builder, e.Paths);
+                builder.Append(']');
+                break;
+            case OrielDragEventType.Over:
+                builder.Append("over\"");
+                break;
+            case OrielDragEventType.Leave:
+                builder.Append("leave\"");
+                // leave 没有坐标：给 0,0 会被当成"拖到了左上角"
+                return builder.Append('}').ToString();
+            default:
+                builder.Append("drop\",\"paths\":[");
+                AppendPaths(builder, e.Paths);
+                builder.Append(']');
+                break;
+        }
+
+        builder.Append(",\"position\":{\"x\":").Append(e.X)
+               .Append(",\"y\":").Append(e.Y).Append('}');
+        return builder.Append('}').ToString();
+    }
+
+    private static void AppendPaths(System.Text.StringBuilder builder, IReadOnlyList<string> paths)
+    {
         for (int i = 0; i < paths.Count; i++)
         {
             if (i > 0)
@@ -564,9 +607,6 @@ public sealed class OrielApp : IDisposable
 
             builder.Append(JsonText.EncodeString(paths[i]));
         }
-
-        builder.Append("]}");
-        return builder.ToString();
     }
 
     // ------------------------------------------------------------------

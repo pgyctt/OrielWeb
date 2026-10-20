@@ -66,6 +66,10 @@ internal static unsafe class MacOSObjCClasses
     private static void AddMethod(nint cls, string selector, delegate* unmanaged<nint, nint, nint> imp, string encoding)
         => ObjCRuntime.class_addMethod(cls, ObjCRuntime.Sel(selector), imp, encoding);
 
+    /// <summary>返回 void 的方法（如 <c>draggingExited:</c>）——用 nint 重载去接是签名不匹配。</summary>
+    private static void AddMethod(nint cls, string selector, delegate* unmanaged<nint, nint, nint, void> imp, string encoding)
+        => ObjCRuntime.class_addMethod(cls, ObjCRuntime.Sel(selector), imp, encoding);
+
     private static void AddMethod(nint cls, string selector, delegate* unmanaged<nint, nint, nint, nint> imp, string encoding)
         => ObjCRuntime.class_addMethod(cls, ObjCRuntime.Sel(selector), imp, encoding);
 
@@ -630,6 +634,8 @@ internal static unsafe class MacOSObjCClasses
         // NSDragOperation 是 NSUInteger；返回 NSDragOperationCopy 才是"受理"，
         // 返回 0 会让系统显示禁止光标（拖不进来）。
         AddMethod(cls, "draggingEntered:", &DraggingEntered, "L@:@");
+        AddMethod(cls, "draggingUpdated:", &DraggingUpdated, "L@:@");
+        AddMethod(cls, "draggingExited:", &DraggingExited, "v@:@");
         AddMethod(cls, "performDragOperation:", &PerformDragOperation, "c@:@");
         ObjCRuntime.objc_registerClassPair(cls);
         return cls;
@@ -643,11 +649,70 @@ internal static unsafe class MacOSObjCClasses
     {
         try
         {
-            return DropViewStates.ContainsKey(self) ? NSDragOperationCopy : 0;
+            if (!DropViewStates.TryGetValue(self, out var host))
+            {
+                return 0;
+            }
+
+            // 进入时就要解析路径：页面靠 enter 的 paths 决定"这个拖放我受不受理"，
+            // 等到 drop 才给就太晚了（那时松手已经发生）。
+            IReadOnlyList<string> paths = ReadDraggedPaths(sender);
+            if (paths.Count == 0)
+            {
+                return 0; // 拖的不是文件：返回 0 让系统显示禁止光标，也不上报
+            }
+
+            (int x, int y) = host.DragPosition();
+            host.OnDragEntered(paths, x, y);
+            return NSDragOperationCopy;
         }
         catch
         {
             return 0;
+        }
+    }
+
+    /// <summary>
+    /// <c>draggingUpdated:</c>：拖动过程中持续回调（频率跟系统刷新一致）。
+    /// </summary>
+    /// <remarks>
+    /// <b>必须返回有效的 NSDragOperation</b>，返回 0 会让系统认为本视图不再受理，
+    /// 后续的 <c>performDragOperation:</c> 就不会来——表现为"能拖进去、松手却什么都不发生"。
+    /// </remarks>
+    [UnmanagedCallersOnly]
+    private static nint DraggingUpdated(nint self, nint sel, nint sender)
+    {
+        try
+        {
+            if (!DropViewStates.TryGetValue(self, out var host))
+            {
+                return 0;
+            }
+
+            (int x, int y) = host.DragPosition();
+            host.OnDragUpdated(x, y);
+            return NSDragOperationCopy;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    /// <summary><c>draggingExited:</c>：拖出视图（不是 drop）。</summary>
+    [UnmanagedCallersOnly]
+    private static void DraggingExited(nint self, nint sel, nint sender)
+    {
+        try
+        {
+            if (DropViewStates.TryGetValue(self, out var host))
+            {
+                host.OnDragExited();
+            }
+        }
+        catch
+        {
+            // 异常不得穿越 ObjC 边界
         }
     }
 
@@ -667,7 +732,8 @@ internal static unsafe class MacOSObjCClasses
                 return 0;
             }
 
-            host.OnFilesDropped(paths);
+            (int x, int y) = host.DragPosition();
+            host.OnFilesDropped(paths, x, y);
             return 1;
         }
         catch

@@ -7,6 +7,20 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
+## Unreleased
+
+### 新增
+
+- **拖放补齐四个阶段（`onDragDropEvent` 的 `enter` / `over` / `leave` + `position`）**：
+  0.4.0 只发 `drop`，因为那时三个平台都只有"松手那一刻"的原生回调。现在 Windows 换成了 COM 的
+  `IDropTarget`（`WM_DROPFILES` 保留为降级路径）、macOS 补了 `draggingUpdated:` / `draggingExited:`、
+  GTK 补了 `drag-motion` / `drag-leave`，四个阶段才都有真实来源。
+  `position` 是**客户区物理像素**（与 `cursorPosition` 的屏幕坐标不同）；`over` 不带 `paths`、
+  `leave` 只有 `type`。**Linux 的 `enter.paths` 是空数组**——GTK 在 `drag-motion` 阶段拿不到路径，
+  与 Tauri 的 GTK 实现一致。见 `docs/API.md` §9.1。
+- **`IWindowBackend.DragDrop`**（C# 侧宿主事件）：四阶段 + 坐标。`FileDropped` 保持不变
+  （0.4.0 已发布），drop 时两者都触发；库内部只订阅 `DragDrop`，避免页面收到两条 drop。
+
 ## 0.4.0 - 2026-10-20
 
 B0–B9 之后的第一个发版。主体是两个新能力（流式回传、文件拖放），都来自 B7 迁移演练

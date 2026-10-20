@@ -1136,8 +1136,46 @@ export class Window {
      * 迁移时 `getCurrentWebview().onDragDropEvent(...)` 改成
      * `getCurrentWindow().onDragDropEvent(...)` 即可。
      */
-    onDragDropEvent(handler) {
-        return listenAsync(TauriEvent.DRAG_DROP, handler);
+    async onDragDropEvent(handler) {
+        // 四次订阅、一个回调：宿主把四个阶段当四条独立事件发（事件名与 Tauri 相同），
+        // 这里按 Tauri 的形状归一 —— 调用方只看 `payload.type` 收窄。
+        const offEnter = await listenAsync(TauriEvent.DRAG_ENTER, (event) => {
+            handler({
+                ...event,
+                payload: {
+                    type: 'enter',
+                    paths: event.payload.paths ?? [],
+                    position: toDragPosition(event.payload.position),
+                },
+            });
+        });
+        const offOver = await listenAsync(TauriEvent.DRAG_OVER, (event) => {
+            handler({
+                ...event,
+                payload: { type: 'over', position: toDragPosition(event.payload.position) },
+            });
+        });
+        const offDrop = await listenAsync(TauriEvent.DRAG_DROP, (event) => {
+            handler({
+                ...event,
+                payload: {
+                    type: 'drop',
+                    paths: event.payload.paths ?? [],
+                    position: toDragPosition(event.payload.position),
+                },
+            });
+        });
+        const offLeave = await listenAsync(TauriEvent.DRAG_LEAVE, (event) => {
+            // leave 没有坐标也没有载荷：宿主根本不发那两个字段，这里也不造
+            handler({ ...event, payload: { type: 'leave' } });
+        });
+
+        return () => {
+            offEnter();
+            offOver();
+            offDrop();
+            offLeave();
+        };
     }
 
     /**
@@ -1353,4 +1391,18 @@ export async function monitorFromPoint(x, y) {
 export async function cursorPosition() {
     const raw = await invoke('window.cursorPosition');
     return new PhysicalPosition(raw?.x ?? 0, raw?.y ?? 0);
+}
+
+/**
+ * 把宿主给的 `{x, y}` 包成 `PhysicalPosition`（对标 Tauri 在 `onDragDropEvent` 里的做法）。
+ *
+ * @param {{ x: number, y: number } | undefined} position
+ * @returns {PhysicalPosition}
+ * @remarks
+ * 坐标是**客户区物理像素**（左上原点）。与 `cursorPosition` 不同——那个是屏幕坐标，
+ * 拖放要画的是"在窗口里的哪里"，用屏幕坐标还得再减一次窗口位置。
+ * @private
+ */
+function toDragPosition(position) {
+    return new PhysicalPosition(position?.x ?? 0, position?.y ?? 0);
 }
