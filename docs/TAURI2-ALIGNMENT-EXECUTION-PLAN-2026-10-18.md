@@ -57,6 +57,9 @@
 | **B7** | 真实 Tauri 应用迁移演练 | 中 | 演练工装 + 卡点清单（无 API 改动） | B0–B4 | — |
 | **B8** | 页面事件面：文件拖放（`onDragDropEvent`） | 中 | `OrielApp` 事件推送 + `window.js` 方法 + 映射表 | B7 | ✅ |
 | **B9** | 流式回传（`Channel`） | 中高 | 生成器 + `OrielChannel` + `core.js`（**不动协议**） | B7 | ✅ |
+| **B10** | 拖放补全：`enter` / `over` / `leave` + `position` | 高 | 三平台拖放宿主（Windows 要换 COM `IDropTarget`）+ 页面事件面 | B8 | ✅ |
+| **B11** | 演练工装升级为门禁（从"能编译"到"能启动"） | 中 | `tools/migration-drill/` + 迁移夹具 + smoke 的 Xvfb 就绪等待 | B7 | — |
+| **R0** | 发版 0.4.0（里程碑，不是批次） | 低 | `Directory.Build.props` + `CHANGELOG.md` + tag | B0–B9 | ✅ |
 
 **推荐顺序（单人）**：`B0 → B1 → B2 → B3 → B4 → B5 → B6a → B6b → B7`
 **双人并行**：A 线 `B0 → B1 → B3 → B5`；B 线 `B2 → B4`；汇合后 `B6a → B6b`。
@@ -74,7 +77,11 @@
 | B6a | 2 | 4 | ~12 条 + 1 个自检 | 中高 |
 | B6b | 0 | 6 | ~9 条 + 3 个自检 | 高 |
 | B7 | 3 | 4 | 0 条（产出 `docs/MIGRATION-FINDINGS.md` + 演练工装） | 中 |
-| **合计** | **~9** | **~39** | **~100 条** | — |
+| B8 | 0 | 5 | 8 条 + 1 个自检 | 中 |
+| B9 | 2 | 6 | 14 条 + 1 个自检 | 中高 |
+| B10 | 0 | 7 | ~12 条 + 1 个自检（原生那一段仍是人工项） | 高 |
+| B11 | 2 | 4 | 0 条（产出夹具与文档；顺带修掉 smoke 的 flaky） | 中 |
+| **合计** | **~13** | **~61** | **~134 条** | — |
 
 > 这个量级说明：**B0–B2 是"一个下午能落三批"的规模**，B4/B6b 才是真正吃时间的两块。
 > 如果只能做三批，就做 B0 + B1 + B2——它们解决"差异看不见 + 迁移静默出错 + 页面不能退出"，性价比最高。
@@ -437,6 +444,85 @@ position"、宿主事件名）；JS 2 条（订阅的是宿主名而页面看到
 
 ---
 
+### B10 · 拖放补全：`enter` / `over` / `leave` + `position`
+
+**来源**：B8 只发了 `drop`、且 payload 不带 `position`（理由见 §2 B8 的"发四个里的一个，好过发四个里三个假的"）。
+但真实应用里 `enter`/`over` 是"拖到此处高亮"的唯一来源，`position` 是"插入指示线画在哪"的唯一来源——
+缺了它们，拖放只能做"松手之后才知道"的那一半。
+
+**做**：
+
+* **页面**：`Window.onDragDropEvent` 补齐四种 `type`（`enter` / `over` / `drop` / `leave`），
+  payload 加 `position`（**客户区物理像素**，左上原点）。
+* **Windows**：从 `WM_DROPFILES` 换成 `RegisterDragDrop` + `IDropTarget`。
+  现在只有 `DragQueryFile` 能拿路径，而 `DragEnter`/`DragOver`/`DragLeave`/`Drop` 才带 `POINTL` 与 effect。
+* **macOS**：`registerForDraggedTypes:` + `draggingEntered:` / `draggingUpdated:` /
+  `draggingExited:` / `performDragOperation:`。
+* **Linux**：GTK 的 `drag-motion` / `drag-leave` / `drag-drop`（`drag-dest` 目标列表保持与现状一致）。
+
+**坐标必须统一，而三个平台给的原点都不一样**——这是这批最容易做错的地方：
+
+| 平台 | 原生坐标 | 换算 |
+|---|---|---|
+| Windows | `POINTL` 是**屏幕**坐标 | `ScreenToClient` |
+| macOS | `draggingLocation` 是**窗口**坐标，原点在**左下** | 翻 Y，再按 `backingScaleFactor` 转物理像素 |
+| Linux | widget 内**逻辑**像素 | 乘 `scaleFactor` |
+
+口径**不是** `window.cursorPosition`（那个是屏幕坐标，问的是"鼠标在桌面哪里"），
+而是 Tauri 的 `drag-drop.position`：**相对窗口客户区左上角**。两者用途不同——
+拖放要画的是"在窗口里的哪里"，屏幕坐标还得再减一次窗口位置，多一层容易算错的地方。
+同一批里要把这个差别写进 `window.js` 的 JSDoc，否则迁移者会拿 `cursorPosition` 的直觉套过来。
+
+**不做什么**：
+
+* **不做"能不能接受这个拖放"的策略**：`effect` 一律给 Copy。需要 Move 语义的应用自己在
+  `drop` 之后处理，库不猜。
+* **不读文件内容**（只给路径），与 Tauri 一致。
+* **不做 `over` 的节流/合并**：原生事件频率就是页面收到的频率。合并会让"指示线跟手"变卡，
+  而限流该由页面自己按渲染节奏决定。
+
+**风险**：
+
+* **换掉 `WM_DROPFILES` 会动到一条已经在工作的路径**（B8 的 6 条单测只覆盖 payload 形状）。
+  `OleInitialize` 必须在 UI 线程每线程一次；现有 STA 满足，但要显式检查返回值。
+* **`DragOver` 必须返回有效 effect，否则 `Drop` 根本不会到达**。症状是"什么都没发生"，
+  且不报错——这是本批最容易埋进去的静默失败。
+* GTK 的 `drag-dest` 目标列表改了会表现成"以前能拖进去，现在不行"。
+
+**验收**：C# ~12 条（四种 `type` 的 payload 形状、三平台坐标换算各一条纯函数测试、paths 保序、
+空投放不是 null）+ `--selftest dragdrop`（只能验"拖放目标已注册"这类**静态事实**）。
+**真正的 enter/over/leave 必须人工拖一次**，写进人工项——无头环境造不出 OLE/XDND 会话，
+这一点与 B8 一致，不假装能自动化。
+
+---
+
+### B11 · 演练工装升级为门禁：从"能编译"到"能启动"
+
+**来源**：B7 的结论止步于"机械迁移后还剩 7 条编译错误"。它证明不了"迁完能跑"，
+而迁移者真正会踩的坑正好在编译之后：`random-frame` 有 **32 处测试按 Tauri 线格式桩命令名**
+（`plugin:fs|write_file`），编译能过、运行必红。
+
+**做**：
+
+1. **可执行的夹具**：`tools/migration-drill/fixtures/` 放一个最小迁移样例——一个命令、
+   一处 `mockIPC`、一处线格式桩，两种写法各一份，`tsc` 与 `node --test` 都能过。
+   作用是让"把线格式桩改成 `mockIPC`"这条配方**可回归**，而不是文档里的一段话。
+2. **演练报告加一列"测试改动点"**：扫 `plugin:<x>|<y>` 字面量与 `__TAURI_INTERNALS__` 探测，
+   按文件计数。B7 已经证明这两类是"编译器看不见"的坑，但它们目前只在正文里提了一句，
+   没有进报告的结构化输出。
+3. **修掉 `smoke-linux` 的 flaky**：Xvfb 改成"等 `xdpyinfo` 能连上再跑"。
+   `39350302045` 的红就是 `cannot open display :99`，同一份代码重跑即绿——这种红会让
+   "CI 绿"失去信息量。
+
+**不做什么**：**不在 CI 里真的启动迁移后的应用**。那是 3 个真实应用 × 3 平台矩阵，
+成本远超收益，而且第一步仍然缺 `node_modules`。"能不能启动"保持人工；
+但"启动前会因为什么崩"由第 2 条覆盖。
+
+**验收**：夹具的 `tsc` + `node --test` 进 CI；演练报告含"测试改动点"列；
+`smoke-linux` 连跑三次无 display 失败。
+
+---
+
 ## 3. 每批的统一验收
 
 任何批次合入前必须全绿：
@@ -468,8 +554,22 @@ position"、宿主事件名）；JS 2 条（订阅的是宿主名而页面看到
 | B5 | 3 个提交（记录类型 + 三平台后端 + 命令/JS） | minor |
 | B6a / B6b | 各 1–2 个提交 | minor |
 | B7 | 文档提交 | — |
+| B8 | 1 个提交（事件面 + 三处文档同步） | minor |
+| B9 | 2 个提交（C# 通道 / JS + 账本） | minor |
+| B10 | 3 个提交（Windows OLE / macOS / Linux）+ 1 个文档 | minor |
+| B11 | 2 个提交（夹具 / smoke 就绪等待） | — |
+| R0 | 1 个提交（版本号 + CHANGELOG），**与打 tag 同一次** | 0.4.0 |
 
 提交说明遵循 `AGENTS.md`：「类型: 简明描述」，中文。
+
+**R0（0.4.0）为什么必须现在发**：Unreleased 里已经堆了两类东西——两个新 API（`Channel`、
+`onDragDropEvent`）和一项**行为可见的破坏性变更**（WebView2 用户数据目录默认值从全库共用改为
+按标识符）。按发布纪律，版本号唯一来源是 `Directory.Build.props`、改版本与打 tag 必须同一次提交；
+**B0–B9 这四十来个提交目前没有任何 tag**，源码状态只能靠区间近似还原。再往后堆，回溯成本只会更高。
+
+发版动作本身有一步是外部的：推 `v*` tag 会触发 `release.yml`，产出 GitHub Release 并把包推到
+**nuget.org**。版本号一旦占用不可撤回——所以 tag 与版本号一致这条校验（工作流里已有）必须过，
+且推送前要确认同 commit 的 CI 是绿的（工作流里的「Require green CI on this commit」会拦）。
 
 ---
 
@@ -514,6 +614,9 @@ position"、宿主事件名）；JS 2 条（订阅的是宿主名而页面看到
 | B7 | ✅ 完成（2026-10-19） | 3 个真实应用（228 个源文件、16 个模块、24 个符号）机械迁移：`tools/migration-drill/` + `docs/MIGRATION-FINDINGS.md`（含命令名映射表与按频率排序的卡点） |
 | B8 | ✅ 完成（2026-10-20） | `drag.drop` → 页面 `tauri://drag-drop`；`Window.onDragDropEvent`；C# 6 条 + JS 2 条单测。只发 `drop`、不带 `position`（理由见 §2 B8） |
 | B9 | ✅ 完成（2026-10-20） | `Channel`（core）+ `OrielChannel`（C#）+ 生成器绑定/自动关闭；C# 9 条 + JS 4 条 + `--selftest channel`。协议与三平台后端零改动（理由见 §2 B9） |
+| R0 | ✅ 完成（2026-10-20） | 0.3.8 → **0.4.0**：版本号、CHANGELOG 落版与 tag `v0.4.0` 同一次提交；`release.yml` 出 Release + NuGet |
+| B10 | ⬜ 未开始 | 计划见 §2 B10。启动前先做三件事：确认 `OleInitialize` 返回值、确认 GTK `drag-dest` 目标列表与现状一致、把坐标换算写成**纯函数**单独测 |
+| B11 | ⬜ 未开始 | 计划见 §2 B11。夹具先行，因为"改法可执行"比"再写一段文档"有用 |
 
 > **B4 的一处实现细节值得记住**：Tauri 用 `once('tauri://created')` 通知建窗结果，
 > 本库没有这条页面事件（`WEBVIEW_CREATED` 在桌面端不会触发），所以改成构造即发起、
@@ -647,6 +750,18 @@ B7 跑完之后的结论（2026-10-19，证据见 `docs/MIGRATION-FINDINGS.md`�
 ```
 B8 页面事件面   ← 拖放事件（宿主已有 FileDropped，只缺"变成页面事件"这一层）  ✅ 完成
 B9 流式回传      ← Channel：线格式是字符串参数，协议与三平台不改  ✅ 完成
-不做            ← plugin-updater、clipboard.writeImage、onBackButtonPress
-                  （前两项是整块生态能力；第三项是桌面库不该有的移动端 API）
 ```
+
+B9 之后（2026-10-20）：
+
+```
+R0 发版 0.4.0    ← 先把 B0–B9 落成可回溯的版本，再谈新能力            ⬅ 当前
+B10 拖放补全      ← enter/over/leave + position；Windows 换 COM IDropTarget
+                     （B8 只发了 drop 的欠账，本批还掉）
+B11 演练工装门禁   ← 从"能编译"到"能启动前不会崩"：夹具 + 报告加列 + Xvfb 就绪等待
+不做              ← plugin-updater、clipboard.writeImage、onBackButtonPress
+                     （前两项是整块生态能力；第三项是桌面库不该有的移动端 API）
+```
+
+为什么是 R0 打头而不是接着写代码：0.3.8 之后已经积累了两个新 API 和一项行为可见变更，
+却**没有任何 tag**。版本可回溯不是整洁癖——出问题时要能回答"这个行为是哪一版引入的"。
