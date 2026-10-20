@@ -1493,9 +1493,12 @@ public async Task<int> Start(string[] paths, OrielChannel progress)
 本来就是有序的；加一层重排只会把"跨线程并发推"的顺序问题藏起来，而那种情况本来就该由应用
 自己决定顺序。
 
-> **两个容易踩的点**：① `Channel` 要在 `invoke` **之前**构造（构造函数里就订阅了，命令执行中
+> **三个容易踩的点**：① `Channel` 要在 `invoke` **之前**构造（构造函数里就订阅了，命令执行中
 > 随时可能推）；② 命令返回之后再 `Send` 会被丢弃并在 `OrielDiagnostics` 留一条记录——
-> 后台任务与命令返回天然会赛跑，把它变成异常会让 fire-and-forget 的收尾随机炸掉。
+> 后台任务与命令返回天然会赛跑，把它变成异常会让 fire-and-forget 的收尾随机炸掉；
+> ③ **`closed` 可能比 `await invoke(...)` 晚一拍**：结束事件与命令回执走两条投递路径，
+> 在 Windows 上回执可以先进页面（自检实测）。想确认"已经关了"就轮询或自己再推一条
+> 收尾增量，别在 `await` 之后立刻断言。
 
 ### 11.4 `window.oriel` 的原始成员
 

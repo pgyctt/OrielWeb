@@ -170,6 +170,11 @@ let nextChannelId = 1;
  * `__TAURI_INTERNALS__.callbacks`（全局回调表）；本库没有那张表，改用两个事件名
  * （`oriel://channel/<id>` 与 `oriel://channel-end/<id>`）。差别对调用方不可见，
  * 但**顺序保证也同样没有**：多线程推送时到达顺序以宿主投递为准。
+ *
+ * <b>`closed` 可能比 `await invoke(...)` 晚一拍</b>：结束事件与命令回执走的是两条投递路径，
+ * 在 Windows 上回执可以先进页面（实测如此）。所以**不要在 `await invoke(...)` 之后立刻断言
+ * `channel.closed === true`**——要么等一个事件（自己推最后一条"完成"增量），要么轮询。
+ * 这不是缺陷，是"关闭通知"与"命令完成"本来就是两件事。
  */
 export class Channel {
     /**

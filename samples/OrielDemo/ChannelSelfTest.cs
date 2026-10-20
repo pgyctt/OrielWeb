@@ -101,8 +101,15 @@ internal sealed class ChannelSelfTest
                     //
                     //    注意 Channel 必须在 invoke **之前**构造——宿主在命令里随时可能推，
                     //    等 promise 落地再订阅就晚了。
+                    //
+                    //    另外再挂一个**原始**监听：它不参与业务，只用来在失败时回答
+                    //    "页面到底收到了什么"。通道自动关闭失败时，光看 closed=false
+                    //    分不清"结束事件没发"与"发了但没到"。
                     const values = [];
                     const channel = new Channel((v) => values.push(v));
+                    const raw = [];
+                    oriel.on('oriel://channel/' + channel.id, (v) => raw.push(['data', v]));
+                    oriel.on('oriel://channel-end/' + channel.id, () => raw.push(['end']));
 
                     let error = null;
                     let result = null;
@@ -112,10 +119,15 @@ internal sealed class ChannelSelfTest
                         error = String((e && e.message) || e);
                     }
 
-                    // 结束事件在命令返回时发出，与回执之间没有顺序保证——等一拍再断言
-                    // "关没关"。这一步同时验证"关闭是自动的"：页面没有调用 close()。
-                    await sleep(150);
-                    post({ step: 'stream', error, result, values, closed: channel.closed });
+                    // 结束事件与回执之间没有跨线程顺序保证，**轮询**而不是睡固定时长：
+                    // 睡 150ms 在慢一点的机器上会把"晚到"误判成"没来"。
+                    const started = Date.now();
+                    while (!channel.closed && Date.now() - started < 2000) {
+                        await sleep(20);
+                    }
+                    const closedAtMs = channel.closed ? Date.now() - started : -1;
+
+                    post({ step: 'stream', error, result, values, raw, closed: channel.closed, closedAtMs });
 
                     // ② 异常路径：推到一半抛错，通道也必须关掉（生成器的 finally）。
                     const values2 = [];
@@ -128,8 +140,18 @@ internal sealed class ChannelSelfTest
                         error2 = String((e && e.message) || e);
                     }
 
-                    await sleep(150);
-                    post({ step: 'fail', error: error2, values: values2, closed: channel2.closed });
+                    const started2 = Date.now();
+                    while (!channel2.closed && Date.now() - started2 < 2000) {
+                        await sleep(20);
+                    }
+
+                    post({
+                        step: 'fail',
+                        error: error2,
+                        values: values2,
+                        closed: channel2.closed,
+                        closedAtMs: channel2.closed ? Date.now() - started2 : -1,
+                    });
                 } catch (e) {
                     post({ step: 'fatal', error: String((e && e.message) || e) });
                 }
@@ -221,7 +243,9 @@ internal sealed class ChannelSelfTest
             values is [0, 1, 2],
             $"增量应当是 [0,1,2]，实际 [{string.Join(",", values)}]");
 
-        Check(Bool(root, "closed"), "命令返回后通道应当已自动关闭（channel.closed 为 false）");
+        Check(Bool(root, "closed"),
+            "命令返回后通道应当已自动关闭，但 closed=false（2 秒内没等到结束事件）。" +
+            $"closedAtMs={Int(root, "closedAtMs")}，页面收到的原始事件：[{Raw(root)}]");
     }
 
     private static void CheckFailPath(JsonElement root)
@@ -269,6 +293,31 @@ internal sealed class ChannelSelfTest
         => root.TryGetProperty(name, out JsonElement array) && array.ValueKind == JsonValueKind.Array
             ? array.GetArrayLength()
             : 0;
+
+    /// <summary>页面收到的原始事件，格式化成 <c>data:0, data:1, end</c>（失败时用来定性）。</summary>
+    private static string Raw(JsonElement root)
+    {
+        if (!root.TryGetProperty("raw", out JsonElement array) || array.ValueKind != JsonValueKind.Array)
+        {
+            return "（页面没有回传原始事件）";
+        }
+
+        var parts = new List<string>();
+        foreach (JsonElement pair in array.EnumerateArray())
+        {
+            if (pair.ValueKind != JsonValueKind.Array || pair.GetArrayLength() < 1)
+            {
+                continue;
+            }
+
+            string kind = pair[0].GetString() ?? "?";
+            parts.Add(kind == "data"
+                ? $"data:{pair[1].ToString()}"
+                : kind);
+        }
+
+        return string.Join(", ", parts);
+    }
 
     /// <summary>把数字数组读成列表；非数字项跳过（异常路径里推的是字符串）。</summary>
     private static List<double> Numbers(JsonElement root, string name)
