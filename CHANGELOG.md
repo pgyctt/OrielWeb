@@ -28,9 +28,6 @@
 
 - **对齐账本里一条过期的"有意不做"**：`onDragDropEvent` 原先记的是"页面拿不到文件路径，
   浏览器安全模型如此"——那个前提只对 HTML5 拖放成立。本库走 OS 级投放，路径一直在宿主手里。
-
-### 修复
-
 - **WebView2 用户数据目录不再全库共用**：默认从 `%LOCALAPPDATA%\OrielWeb\WebView2` 改为
   `%LOCALAPPDATA%\<标识符>\WebView2`（标识符见 `WithAppInfo`）。此前所有基于本库的应用共用
   同一份 profile——两个应用同时打开会互抢同一目录（后启动者以 `0x800700AA` 失败），
