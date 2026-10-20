@@ -602,7 +602,13 @@ internal static class WindowSelfTest
                 SelfTestJson.Object(("label", SelfTestJson.String(ProbeLabel)), ("value", SelfTestJson.Object(("width", "800"), ("height", "600")))));
 
             // 上限设完窗口仍能正常读几何——至少证明没把窗口搞坏
-            Check((await AskWithLabelAsync("window.outerSize", ProbeLabel)).GetProperty("width").GetDouble() > 0,
+            // B14 线格式：宿主返回 Tauri 2 外部标记 { Logical: { width, height } }。
+            // 与宿主参数绑定的读兼容同一策略：新形状优先，旧内联形状 { width, height } 也认。
+            JsonElement outerSize = await AskWithLabelAsync("window.outerSize", ProbeLabel);
+            JsonElement outerLogical = outerSize.TryGetProperty("Logical", out JsonElement logicalWrapper)
+                ? logicalWrapper
+                : outerSize;
+            Check(outerLogical.GetProperty("width").GetDouble() > 0,
                 "设了最大尺寸之后 outerSize 仍应给得出正数");
 
             // 0 表示不限制（取消上限）
