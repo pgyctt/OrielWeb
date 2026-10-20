@@ -343,6 +343,46 @@ internal struct POINT
     public POINT(int x, int y) { X = x; Y = y; }
 }
 
+/// <summary>OLE 拖放的坐标：**屏幕**坐标，左上原点。</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct POINTL
+{
+    public int x;
+    public int y;
+}
+
+/// <summary>
+/// <c>FORMATETC</c>：向 <c>IDataObject::GetData</c> 描述"我要哪种格式"。
+/// </summary>
+/// <remarks>
+/// 字段顺序不能改：<c>ptd</c> 在 x64 上按 8 字节对齐，所以 <c>cfFormat</c> 后面有 6 字节填充，
+/// 整体 32 字节。写成别的顺序会让 OLE 读到错位的值并返回 <c>DV_E_FORMATETC</c>。
+/// </remarks>
+[StructLayout(LayoutKind.Sequential)]
+internal struct FORMATETC
+{
+    public ushort cfFormat;
+    public nint ptd;
+    public uint dwAspect;
+    public int lindex;
+    public uint tymed;
+}
+
+/// <summary>
+/// <c>STGMEDIUM</c>：<c>GetData</c> 的返回值，装载实际载荷。
+/// </summary>
+/// <remarks>
+/// 中间那个字段在 C 里是 union（hBitmap / hMetaFilePict / hEnhMetaFile / hGlobal / lpszFileName /
+/// pstm / pstg）。这里只声明 <c>hGlobal</c>：本库只取 CF_HDROP，它一定走这条分支。
+/// </remarks>
+[StructLayout(LayoutKind.Sequential)]
+internal struct STGMEDIUM
+{
+    public uint tymed;
+    public nint hGlobal;
+    public nint pUnkForRelease;
+}
+
 [StructLayout(LayoutKind.Sequential)]
 internal struct RECT
 {
@@ -1000,6 +1040,47 @@ internal static unsafe partial class Win32
     /// <summary>释放 HDROP（由系统在消息处理结束后仍然有效，但必须由我们释放）。</summary>
     [LibraryImport("shell32")]
     internal static partial void DragFinish(nint hDrop);
+
+    // ---- OLE 拖放（ole32）----
+    // 这一节是为 B10 的 enter/over/leave 加的。上面的 WM_DROPFILES 只在**松手那一刻**回调一次，
+    // 拿不到"拖动过程中"的任何信息；要边拖边汇报，只能做 OLE 的 IDropTarget。
+    // 当时不走 OLE 的理由是"需求只到 drop"（见上），不是 OLE 不可行。
+
+    /// <summary>
+    /// 初始化当前线程的 OLE（拖放需要）。**每线程一次**，成对调用 <see cref="OleUninitialize"/>。
+    /// </summary>
+    /// <remarks>
+    /// 返回 <c>S_FALSE(1)</c> 表示该线程已经初始化过，也算成功；<c>RPC_E_CHANGED_MODE</c> 才是问题
+    /// （线程已被初始化成另一种套间模型）。调用方按"非负即成功"判断。
+    /// </remarks>
+    [LibraryImport("ole32")]
+    internal static partial int OleInitialize(nint pvReserved);
+
+    [LibraryImport("ole32")]
+    internal static partial void OleUninitialize();
+
+    /// <summary>把窗口注册成 OLE 拖放目标。失败会返回 HRESULT（<c>DRAGDROP_E_ALREADYREGISTERED</c> 表示已被占用）。</summary>
+    [LibraryImport("ole32")]
+    internal static partial int RegisterDragDrop(nint hwnd, nint pDropTarget);
+
+    [LibraryImport("ole32")]
+    internal static partial int RevokeDragDrop(nint hwnd);
+
+    /// <summary>释放 <see cref="STGMEDIUM"/>（取到 CF_HDROP 之后必须调，否则泄漏全局内存）。</summary>
+    [LibraryImport("ole32")]
+    internal static partial void ReleaseStgMedium(ref STGMEDIUM pmedium);
+
+    /// <summary><c>DROPEFFECT_COPY</c>：只受理复制语义。</summary>
+    internal const uint DROPEFFECT_COPY = 1;
+
+    /// <summary><c>CF_HDROP</c>：拖放载荷里"文件列表"的剪贴板格式。</summary>
+    internal const ushort CF_HDROP = 15;
+
+    /// <summary><c>DVASPECT_CONTENT</c>：取内容（而不是缩略图/图标）。</summary>
+    internal const uint DVASPECT_CONTENT = 1;
+
+    /// <summary><c>TYMED_HGLOBAL</c>：载荷在全局内存里（HDROP 就是这个）。</summary>
+    internal const uint TYMED_HGLOBAL = 1;
 
     // ---- 弹出菜单（user32）----
 

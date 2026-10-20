@@ -41,6 +41,16 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         EnsureDpiAwareness();
         EnsureMessageWindowClass();
 
+        // OLE 拖放（IDropTarget）要求本线程初始化过 OLE。重复初始化返回 S_FALSE(1)，按"非负即成功"处理；
+        // 真失败（如 RPC_E_CHANGED_MODE，线程已被别的套间模型占住）时拖放退回 WM_DROPFILES，
+        // 其余功能不受影响——所以这里只报告，不抛。
+        int oleResult = Win32.OleInitialize(0);
+        if (oleResult < 0)
+        {
+            OrielDiagnostics.Report(
+                $"[OrielWeb] OleInitialize 失败：0x{oleResult:X8}——拖放退回 WM_DROPFILES（只有 drop）。");
+        }
+
         _uiThreadId = Win32.GetCurrentThreadId();
         // lpParam 传 0：MessageWindowProc 只处理 WM_APP_DISPATCH（要被执行的 Action 随消息的
         // lParam 传递），从不读取创建参数或 GWLP_USERDATA，因此无需分配 GCHandle

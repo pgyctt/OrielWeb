@@ -76,6 +76,18 @@ internal partial class Win32WindowHost : IWindowBackend
     private CoreWebView2Events? _webViewEvents;
     private CoreWebView2CompositionControllerEvents? _compositionEvents;
 
+    /// <summary>
+    /// OLE 拖放目标（提供 enter / over / leave / drop）。
+    /// </summary>
+    /// <remarks>
+    /// 为 null 表示注册失败（窗口上已被别人占用、或 OLE 没初始化）——那时退回
+    /// <c>WM_DROPFILES</c>，只有 <c>drop</c> 但至少能用。
+    /// </remarks>
+    private Win32DropTarget? _dropTarget;
+
+    /// <summary>本次拖动会话收到的 <c>over</c> 条数（只在诊断里汇报，用于验证"边拖边汇报"真的在工作）。</summary>
+    private int _dragOverCount;
+
     // DirectComposition 合成树。窗口用 WS_EX_NOREDIRECTIONBITMAP 创建，没有系统绘制的表面，
     // 内容完全由这棵树提供；WebView2 作为其中一个视觉（RootVisualTarget），因此它不再是子窗口。
     private DCompDevice? _dcompDevice;
@@ -314,6 +326,78 @@ internal partial class Win32WindowHost : IWindowBackend
     }
 
     /// <summary>
+    /// 把窗口注册成 OLE 拖放目标（enter / over / leave / drop）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 失败时**不停用** <c>WM_DROPFILES</c>：那条路虽然只有 drop，但比"什么都收不到"好。
+    /// 注册成功后 shell 的拖放源会走 OLE，<c>WM_DROPFILES</c> 不再发——所以这里不主动关掉
+    /// <c>DragAcceptFiles</c>，留着正好当降级开关。
+    /// </para>
+    /// <para>
+    /// 注册点必须在 <c>AllowExternalDrop = false</c> 之后（见调用处）：WebView2 没关掉自带拖放时
+    /// 会自己占住窗口上的 <c>IDropTarget</c>，我们注册会拿到 <c>DRAGDROP_E_ALREADYREGISTERED</c>。
+    /// </para>
+    /// </remarks>
+    private void RegisterDropTarget()
+    {
+        try
+        {
+            var target = new Win32DropTarget(_hwnd, OnDragEvent);
+            if (!target.Register())
+            {
+                OrielDiagnostics.Report("[OrielWeb] 拖放降级为 WM_DROPFILES：只有 drop，没有 enter/over/leave。");
+                return;
+            }
+
+            _dropTarget = target;
+        }
+        catch (Exception ex)
+        {
+            // 拖放是增强项：注册不成功也不该让窗口装配失败
+            OrielDiagnostics.Report($"[OrielWeb] 注册拖放目标失败：{ex}");
+        }
+    }
+
+    /// <summary>OLE 拖放事件 → 现有 <see cref="FileDropped"/> 链路（drop）或诊断通道（其余）。</summary>
+    /// <remarks>
+    /// <b>enter/over/leave 暂时只落诊断，不推页面</b>：页面事件面要与 macOS/Linux 同批上线，
+    /// 否则会变成"只在 Windows 上收到 enter"的平台分裂（B10 计划里写明了不许这样）。
+    /// 这一版先把"能不能收到"这件事验证掉。
+    /// </remarks>
+    private void OnDragEvent(Win32DragEvent e)
+    {
+        switch (e.Kind)
+        {
+            case Win32DragKind.Enter:
+                _dragOverCount = 0;
+                OrielDiagnostics.Report($"[OrielWeb] drag.enter x={e.X} y={e.Y} files={e.Paths.Count}");
+                return;
+
+            case Win32DragKind.Over:
+                // over 每秒可达几十条，逐条打会把日志冲掉；用计数在 leave/drop 时一并汇报，
+                // 既能证明它真的在来，又不淹没别的信息。
+                _dragOverCount++;
+                return;
+
+            case Win32DragKind.Leave:
+                OrielDiagnostics.Report($"[OrielWeb] drag.leave（本次收到 {_dragOverCount} 条 over）");
+                return;
+
+            case Win32DragKind.Drop:
+                OrielDiagnostics.Report(
+                    $"[OrielWeb] drag.drop x={e.X} y={e.Y} files={e.Paths.Count}（本次收到 {_dragOverCount} 条 over）");
+                if (e.Paths.Count > 0)
+                {
+                    // B8 的页面链路（drag.drop → tauri://drag-drop）因此完全不变
+                    FileDropped?.Invoke(new OrielFileDropEventArgs(e.Paths));
+                }
+
+                return;
+        }
+    }
+
+    /// <summary>
     /// 处理 <c>WM_DROPFILES</c>：从 HDROP 里逐个取路径，完成后 <c>DragFinish</c> 释放。
     /// </summary>
     /// <remarks>
@@ -330,33 +414,9 @@ internal partial class Win32WindowHost : IWindowBackend
 
         try
         {
-            uint count = Win32.DragQueryFileW(hDrop, 0xFFFFFFFF, 0, 0);
-            var paths = new List<string>((int)count);
-
-            for (uint i = 0; i < count; i++)
-            {
-                uint length = Win32.DragQueryFileW(hDrop, i, 0, 0);
-                if (length == 0)
-                {
-                    continue;
-                }
-
-                nint buffer = Marshal.AllocHGlobal((int)(length + 1) * sizeof(char));
-                try
-                {
-                    Marshal.WriteInt16(buffer, 0);
-                    if (Win32.DragQueryFileW(hDrop, i, buffer, length + 1) > 0
-                        && Marshal.PtrToStringUni(buffer) is { Length: > 0 } path)
-                    {
-                        paths.Add(path);
-                    }
-                }
-                finally
-                {
-                    Marshal.FreeHGlobal(buffer);
-                }
-            }
-
+            // 解析交给 Win32FileDropReader：OLE 的 drop 分支读的是同一种 HDROP，
+            // 两处各写一份"取长度读两次"迟早会有一处写错，而错法是"路径被截断"。
+            List<string> paths = Win32FileDropReader.Read(hDrop);
             if (paths.Count > 0)
             {
                 FileDropped?.Invoke(new OrielFileDropEventArgs(paths));
@@ -364,6 +424,7 @@ internal partial class Win32WindowHost : IWindowBackend
         }
         finally
         {
+            // HDROP 的生命周期归我们：中途抛异常也不能漏
             Win32.DragFinish(hDrop);
         }
     }
@@ -1185,6 +1246,12 @@ internal partial class Win32WindowHost : IWindowBackend
     /// <summary>窗口销毁时的清理：先关控制器、释放合成树，再触发 Closed 与窗口计数。</summary>
     internal void OnWindowDestroyedCore()
     {
+        // 拖放目标要先撤：它在 hwnd 上注册，窗口一销毁 RevokeDragDrop 就无从谈起，
+        // 而 OLE 之后还可能往这个已死的窗口投递回调。
+        var dropTarget = _dropTarget;
+        _dropTarget = null;
+        dropTarget?.Dispose();
+
         // 菜单栏要先摘再放（顺序见 DetachMenuBar）。放在最前：后面的清理可能抛，
         // 而菜单栏是挂在 hwnd 上的——hwnd 即将销毁，再晚就摘不下来了。
         DetachMenuBar();
@@ -1323,6 +1390,11 @@ internal partial class Win32WindowHost : IWindowBackend
             {
                 controller4.AllowExternalDrop = false;
             }
+
+            // 注册 OLE 拖放目标，拿 enter / over / leave（WM_DROPFILES 只在松手那刻回调一次）。
+            // 必须在 AllowExternalDrop = false **之后**：否则 WebView2 可能已经占了窗口上的
+            // IDropTarget，注册会以 DRAGDROP_E_ALREADYREGISTERED 失败。
+            RegisterDropTarget();
 
             _compositionEvents = new CoreWebView2CompositionControllerEvents(_compositionController);
             _compositionEvents.CursorChanged += OnCursorChanged;
