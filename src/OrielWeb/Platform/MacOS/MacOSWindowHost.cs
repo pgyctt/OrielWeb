@@ -251,6 +251,10 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         CloseInterceptEnabled = options.InterceptClose;
         if (options.MinWidth is int minWidth) _minWidth = minWidth;
         if (options.MinHeight is int minHeight) _minHeight = minHeight;
+        // 运行期可改（SetDecorations）；**注意 macOS 无边框窗口的 styleMask 里仍然带 Titled**
+        // （无边框是"Titled + 透明标题栏 + 隐藏按钮 + fullSizeContentView"），
+        // 所以不能用 styleMask 推断"有没有装饰"——那会把无边框窗口读成有装饰。
+        _decorations = !options.Frameless;
         _messageHandler = new MacOSWebMessageHandler(this);
     }
 
@@ -323,10 +327,13 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     /// <summary>是否置顶（取库记住的状态，见 <see cref="IWindowBackend.IsAlwaysOnTop"/>）。</summary>
     public bool IsAlwaysOnTop => _isOnTop;
 
-    /// <summary>是否有系统装饰（读原生 styleMask：<see cref="SetDecorations"/> 会改它）。</summary>
-    public bool IsDecorated
-        => _nsWindow != 0
-            && ((nuint)ObjCRuntime.SendNint(_nsWindow, ObjCRuntime.Sel("styleMask")) & StyleTitled) != 0;
+    /// <summary>当前是否显示系统装饰；<see cref="SetDecorations"/> 会改它。</summary>
+    /// <remarks>
+    /// 记库里的状态而不是读 <c>styleMask</c>：本库的无边框窗口**仍然带 <c>Titled</c>**
+    /// （无边框靠"透明标题栏 + 隐藏按钮 + fullSizeContentView"实现），
+    /// 读样式位会把无边框窗口读成"有装饰"。
+    /// </remarks>
+    public bool IsDecorated => _decorations;
 
     /// <summary>是否可缩放（原生读，见 <see cref="IWindowBackend.IsResizable"/>）。</summary>
     public bool IsResizable => (CurrentStyleMask() & StyleResizable) != 0;
@@ -599,6 +606,9 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     /// <summary>B22 的材质视图（<c>NSVisualEffectView</c>）；0 = 没有。</summary>
     private nint _effectView;
 
+    /// <summary>当前是否显示系统装饰（见 <see cref="IsDecorated"/>）。</summary>
+    private bool _decorations;
+
     /// <inheritdoc />
     public void SetSkipTaskbar(bool skip)
         => throw new NotSupportedException(
@@ -816,12 +826,19 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
 
     /// <inheritdoc />
     /// <remarks>
-    /// 只切 <c>NSWindowStyleMaskTitled</c>。它**不会**顺手补 <c>fullSizeContentView</c>
-    /// 或重置标题可见性——那是 <see cref="SetTitleBarStyle"/> 的事，两个方法各管一段。
+    /// <para>
+    /// 两件事一起做：切 <c>NSWindowStyleMaskTitled</c>，并把标题栏的透明/可见性设回去。
+    /// 只切样式位不够——AppKit 里"无装饰"是**borderless**（没有标题栏、没有红绿灯），
+    /// 而 Titled 位还在但标题栏透明的窗口看起来仍然是"有装饰"的（那是本库的 Frameless 形态）。
+    /// </para>
+    /// <para>
+    /// 它**不会**动 <c>fullSizeContentView</c> 或标题可见性——那两件是
+    /// <see cref="SetTitleBarStyle"/> 的事，两个方法各管一段。
+    /// </para>
     /// </remarks>
     public void SetDecorations(bool decorations)
     {
-        if (_nsWindow == 0)
+        if (_nsWindow == 0 || decorations == _decorations)
         {
             return;
         }
@@ -829,6 +846,13 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         nuint mask = (nuint)ObjCRuntime.SendNint(_nsWindow, ObjCRuntime.Sel("styleMask"));
         mask = decorations ? mask | StyleTitled : mask & ~StyleTitled;
         ObjCRuntime.SendVoidNint(_nsWindow, ObjCRuntime.Sel("setStyleMask:"), (nint)mask);
+
+        ObjCRuntime.SendVoidBool(
+            _nsWindow, ObjCRuntime.Sel("setTitlebarAppearsTransparent:"), !decorations);
+        ObjCRuntime.SendVoidNint(
+            _nsWindow, ObjCRuntime.Sel("setTitleVisibility:"), decorations ? 0 : NSWindowTitleHidden);
+
+        _decorations = decorations;
     }
 
     /// <inheritdoc />

@@ -831,6 +831,12 @@ internal static class WindowSelfTest
             bool isWindows = OperatingSystem.IsWindows();
             bool isMac = OperatingSystem.IsMacOS();
 
+            // 任务栏相关的三条（skip / progress / overlay）需要**会话里有 Explorer 的任务栏**。
+            // GitHub 的 Windows runner 是服务会话：没有 shell，`CoCreateInstance` 建不出
+            // ITaskbarList——那不是库的问题，也不是"平台不支持"，所以下面按 SKIP 处理，
+            // 而不是把环境不足报成失败（否则这条红灯会训练人忽略红灯）。
+            bool taskbarAvailable = true;
+
             // --- 阴影：Linux 没有这个概念 ---
             if (IsLinux)
             {
@@ -908,6 +914,22 @@ internal static class WindowSelfTest
                     skip is null && (LastError ?? string.Empty).StartsWith("not_supported", StringComparison.Ordinal),
                     $"macOS 上 setSkipTaskbar 应当明确报 not_supported（实际：{(skip is null ? LastError : "成功")}）");
             }
+            else if (isWindows)
+            {
+                try
+                {
+                    await AskMainAsync("window.setSkipTaskbar", SelfTestJson.Object(("value", SelfTestJson.Bool(true))));
+                    await AskMainAsync("window.setSkipTaskbar", SelfTestJson.Object(("value", SelfTestJson.Bool(false))));
+                    Console.WriteLine("[window-selftest] OK: window.setSkipTaskbar 摘掉再挂回");
+                }
+                catch (InvalidOperationException ex) when (ex.Message.Contains("任务栏列表不可用", StringComparison.Ordinal))
+                {
+                    taskbarAvailable = false;
+                    Console.WriteLine(
+                        "[window-selftest] SKIP: 本会话没有 Explorer 的任务栏，"
+                        + "setSkipTaskbar / setProgressBar / setOverlayIcon 无从验证（验的是环境而不是库）");
+                }
+            }
             else
             {
                 await AskMainAsync("window.setSkipTaskbar", SelfTestJson.Object(("value", SelfTestJson.Bool(true))));
@@ -973,7 +995,11 @@ internal static class WindowSelfTest
             }
 
             // --- 任务栏进度条 / 覆盖图标：只有 Windows 有 ---
-            if (isWindows)
+            if (isWindows && !taskbarAvailable)
+            {
+                // 上面已经打过 SKIP 说明，这里只需跳过（再打一遍只会淹没日志）
+            }
+            else if (isWindows)
             {
                 await AskMainAsync(
                     "window.setProgressBar",
