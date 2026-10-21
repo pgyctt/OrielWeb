@@ -710,8 +710,14 @@ internal static class WindowSelfTest
             // 或者被锁死的光标是很糟的副作用。
 
             JsonElement cursorBefore = await AskMainAsync("window.cursorPosition", "null");
-            double cursorScreenX = cursorBefore.GetProperty("x").GetDouble();
-            double cursorScreenY = cursorBefore.GetProperty("y").GetDouble();
+
+            // 宿主返回的是 Tauri 2 的**外部标记**形状 `{ Physical: { x, y } }`（B14 起的线格式），
+            // 直接取顶层 x 会抛 KeyNotFoundException
+            JsonElement cursorPoint = cursorBefore.TryGetProperty("Physical", out JsonElement physical)
+                ? physical
+                : cursorBefore;
+            double cursorScreenX = cursorPoint.GetProperty("x").GetDouble();
+            double cursorScreenY = cursorPoint.GetProperty("y").GetDouble();
 
             // 未知形状必须被拒（拼错的名字不该被悄悄当成 default）
             JsonElement? badIcon = await TryAskMainAsync(
