@@ -150,6 +150,9 @@ internal static unsafe partial class GtkNative
 
     private const string GdkPixbuf = "libgdk_pixbuf-2.0.so.0";
 
+    /// <summary>cairo（GTK 的硬依赖，装得上 GTK 就一定有）。<c>cairo_region_*</c> 在这里。</summary>
+    private const string Cairo = "libcairo.so.2";
+
     /// <summary>
     /// 由裸像素数据造 <c>GdkPixbuf</c>。返回的是**新引用**，调用方负责 <c>g_object_unref</c>。
     /// </summary>
@@ -504,12 +507,20 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gdk, EntryPoint = "gdk_device_warp")]
     internal static partial void GdkDeviceWarp(nint device, nint screen, int x, int y);
 
-    /// <summary>造一个空区域（cairo_region_t）。作为输入形状传给部件 = 该部件不再接收任何输入。</summary>
-    [LibraryImport(Gdk, EntryPoint = "gdk_region_new")]
-    internal static partial nint GdkRegionNew();
+    /// <summary>
+    /// 造一个空区域（<c>cairo_region_t</c>）。作为输入形状传给部件 = 该部件不再接收任何输入。
+    /// </summary>
+    /// <remarks>
+    /// <b>必须走 cairo，不能走 <c>gdk_region_new</c></b>：GDK3 里后者是**宏**
+    /// （<c>#define gdk_region_new() cairo_region_create()</c>），<c>libgdk-3.so.0</c>
+    /// 里根本没有这个符号——P/Invoke 到它会在运行期报 "Unable to find an entry point"
+    /// （CI 的 smoke-linux 就是这么抓到的）。
+    /// </remarks>
+    [LibraryImport(Cairo, EntryPoint = "cairo_region_create")]
+    internal static partial nint CairoRegionCreate();
 
-    [LibraryImport(Gdk, EntryPoint = "gdk_region_destroy")]
-    internal static partial void GdkRegionDestroy(nint region);
+    [LibraryImport(Cairo, EntryPoint = "cairo_region_destroy")]
+    internal static partial void CairoRegionDestroy(nint region);
 
     /// <summary>
     /// 给部件设置输入形状。<paramref name="region"/> 传 0 = 恢复默认（接收全部输入）。

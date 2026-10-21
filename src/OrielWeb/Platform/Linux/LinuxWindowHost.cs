@@ -983,7 +983,7 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
 
         // 空区域 = 该部件不再接收任何输入。**顶层与 webview 都要设**：
         // X11 的输入形状按窗口生效，顶层设了空区域不会自动让子窗口一起穿透。
-        nint region = ignore ? GtkNative.GdkRegionNew() : 0;
+        nint region = ignore ? GtkNative.CairoRegionCreate() : 0;
         try
         {
             GtkNative.GtkWidgetInputShapeCombineRegion(_gtkWindow, region);
@@ -996,7 +996,7 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         {
             if (region != 0)
             {
-                GtkNative.GdkRegionDestroy(region);
+                GtkNative.CairoRegionDestroy(region);
             }
         }
     }
