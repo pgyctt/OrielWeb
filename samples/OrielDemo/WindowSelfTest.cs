@@ -831,12 +831,6 @@ internal static class WindowSelfTest
             bool isWindows = OperatingSystem.IsWindows();
             bool isMac = OperatingSystem.IsMacOS();
 
-            // 任务栏相关的三条（skip / progress / overlay）需要**会话里有 Explorer 的任务栏**。
-            // GitHub 的 Windows runner 是服务会话：没有 shell，`CoCreateInstance` 建不出
-            // ITaskbarList——那不是库的问题，也不是"平台不支持"，所以下面按 SKIP 处理，
-            // 而不是把环境不足报成失败（否则这条红灯会训练人忽略红灯）。
-            bool taskbarAvailable = true;
-
             // --- 阴影：Linux 没有这个概念 ---
             if (IsLinux)
             {
@@ -924,7 +918,9 @@ internal static class WindowSelfTest
                 }
                 catch (InvalidOperationException ex) when (ex.Message.Contains("任务栏列表不可用", StringComparison.Ordinal))
                 {
-                    taskbarAvailable = false;
+                    // GitHub 的 Windows runner 是服务会话：`CoCreateInstance` 建不出任务栏对象
+                    // （实测 E_NOINTERFACE）。那不是库的问题、也不是"平台不支持"，
+                    // 所以按 SKIP 处理——把环境不足报成失败只会训练人忽略红灯。
                     Console.WriteLine(
                         "[window-selftest] SKIP: 本会话没有 Explorer 的任务栏，"
                         + "setSkipTaskbar / setProgressBar / setOverlayIcon 无从验证（验的是环境而不是库）");
@@ -995,27 +991,32 @@ internal static class WindowSelfTest
             }
 
             // --- 任务栏进度条 / 覆盖图标：只有 Windows 有 ---
-            if (isWindows && !taskbarAvailable)
+            if (isWindows)
             {
-                // 上面已经打过 SKIP 说明，这里只需跳过（再打一遍只会淹没日志）
-            }
-            else if (isWindows)
-            {
-                await AskMainAsync(
-                    "window.setProgressBar",
-                    SelfTestJson.Object(("value", SelfTestJson.Object(
-                        ("status", SelfTestJson.String("normal")),
-                        ("progress", SelfTestJson.Number(42))))));
-                await AskMainAsync(
-                    "window.setProgressBar",
-                    SelfTestJson.Object(("value", SelfTestJson.Object(
-                        ("status", SelfTestJson.String("none"))))));
-                Console.WriteLine("[window-selftest] OK: window.setProgressBar 42% 再隐藏");
+                try
+                {
+                    await AskMainAsync(
+                        "window.setProgressBar",
+                        SelfTestJson.Object(("value", SelfTestJson.Object(
+                            ("status", SelfTestJson.String("normal")),
+                            ("progress", SelfTestJson.Number(42))))));
+                    await AskMainAsync(
+                        "window.setProgressBar",
+                        SelfTestJson.Object(("value", SelfTestJson.Object(
+                            ("status", SelfTestJson.String("none"))))));
+                    Console.WriteLine("[window-selftest] OK: window.setProgressBar 42% 再隐藏");
 
-                // 覆盖图标：只验"清除"这条路（设图标要先有 16x16 的图，
-                // 而真正的观感只有人眼能判）。清除同样会走一遍 ITaskbarList3。
-                await AskMainAsync("window.setOverlayIcon", SelfTestJson.Object());
-                Console.WriteLine("[window-selftest] OK: window.setOverlayIcon 清除");
+                    // 覆盖图标：只验"清除"这条路（设图标要先有 16x16 的图，
+                    // 而真正的观感只有人眼能判）。清除同样会走一遍 ITaskbarList3。
+                    await AskMainAsync("window.setOverlayIcon", SelfTestJson.Object());
+                    Console.WriteLine("[window-selftest] OK: window.setOverlayIcon 清除");
+                }
+                catch (InvalidOperationException ex) when (ex.Message.Contains("任务栏列表不可用", StringComparison.Ordinal))
+                {
+                    Console.WriteLine(
+                        "[window-selftest] SKIP: 本会话只有 ITaskbarList（没有 Explorer），"
+                        + "setProgressBar / setOverlayIcon 无从验证");
+                }
             }
             else
             {

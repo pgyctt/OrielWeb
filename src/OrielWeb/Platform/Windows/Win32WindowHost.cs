@@ -1955,7 +1955,8 @@ internal partial class Win32WindowHost : IWindowBackend
         if (!Win32TaskbarList.SetProgressState(_hwnd, flag))
         {
             throw new InvalidOperationException(
-                "window.setProgressBar：任务栏列表不可用（当前会话没有 Explorer 的任务栏）。");
+                "window.setProgressBar：任务栏列表不可用（本会话只有 ITaskbarList，没有 ITaskbarList3）。"
+                + "没有 Explorer 的任务栏时进度条没有落点。");
         }
 
         // None 表示隐藏：状态位已经清了，值不必再写（写了也不会显示）
@@ -1998,7 +1999,8 @@ internal partial class Win32WindowHost : IWindowBackend
             }
 
             throw new InvalidOperationException(
-                "window.setOverlayIcon：任务栏列表不可用（当前会话没有 Explorer 的任务栏）。");
+                "window.setOverlayIcon：任务栏列表不可用（本会话只有 ITaskbarList，没有 ITaskbarList3）。"
+                + "没有 Explorer 的任务栏时覆盖图标没有落点。");
         }
 
         // 换下来的旧图标由本对象销毁（任务栏已经拷走了它需要的那份）

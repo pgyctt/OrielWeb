@@ -30,7 +30,20 @@ namespace OrielWeb.Platform.Windows;
 internal static unsafe class Win32TaskbarList
 {
     private static readonly Guid CLSID_TaskbarList = new("56FDF344-FD6D-11d0-958A-006097C9A090");
+
+    /// <summary><c>ITaskbarList3</c>（Win7+）：进度条与覆盖图标要靠它。</summary>
     private static readonly Guid IID_ITaskbarList3 = new("EA1AFB91-9E28-4B86-90E9-9E9F8A5EEA84");
+
+    /// <summary>
+    /// <c>ITaskbarList</c>（Win2000+）：只有 <c>HrInit</c> / <c>AddTab</c> / <c>DeleteTab</c>。
+    /// </summary>
+    /// <remarks>
+    /// **这是 v3 拿不到时的降级路径**。没有 Explorer 的会话（Windows Server Core、
+    /// GitHub 的 Windows runner）里 <c>CoCreateInstance</c> 能建出对象，但只支持这一版接口
+    /// （请求 v3 会得到 <c>E_NOINTERFACE</c>）。有了它，"隐藏任务栏按钮"在那种环境里
+    /// 仍然可用——虽然那里本来就没有任务栏可隐藏，但语义是"尽力而为"而不是"整组作废"。
+    /// </remarks>
+    private static readonly Guid IID_ITaskbarList = new("56FDF342-FD6D-11d0-958A-006097C9A090");
 
     // 槽位（见类型注释）
     private const int SlotHrInit = 3;
@@ -50,6 +63,9 @@ internal static unsafe class Win32TaskbarList
     private static nint s_instance;
     private static bool s_failed;
 
+    /// <summary>拿到的接口版本：0 = 不可用、1 = <c>ITaskbarList</c>、3 = <c>ITaskbarList3</c>。</summary>
+    private static int s_level;
+
     /// <summary>取（或懒建）任务栏对象；不可用时返回 0。</summary>
     private static nint Instance()
     {
@@ -59,25 +75,42 @@ internal static unsafe class Win32TaskbarList
         }
 
         Guid clsid = CLSID_TaskbarList;
-        Guid iid = IID_ITaskbarList3;
+        Guid iid3 = IID_ITaskbarList3;
 
         // 失败时不抛：任务栏是"锦上添花"的能力，抛出去会让 setProgressBar 在
         // 没有 Explorer 的会话里变成硬错误。调用方按返回值决定是否上报。
         int hr = Win32.CoCreateInstance(
-            &clsid, 0, Win32.CLSCTX_INPROC_SERVER, &iid, out nint taskbar);
+            &clsid, 0, Win32.CLSCTX_INPROC_SERVER, &iid3, out nint taskbar);
+
+        int level = 3;
         if (hr < 0 || taskbar == 0)
         {
-            s_failed = true;
+            // 退到 v1：它至少还有 AddTab / DeleteTab（"隐藏任务栏按钮"那条）
+            Guid iid1 = IID_ITaskbarList;
+            int fallback = Win32.CoCreateInstance(
+                &clsid, 0, Win32.CLSCTX_INPROC_SERVER, &iid1, out taskbar);
+
+            if (fallback < 0 || taskbar == 0)
+            {
+                s_failed = true;
+                OrielDiagnostics.Report(
+                    $"[OrielWeb] 任务栏列表不可用（ITaskbarList3 HRESULT=0x{hr:X8}，"
+                    + $"ITaskbarList HRESULT=0x{fallback:X8}）："
+                    + "进度条/覆盖图标/隐藏任务栏按钮将不生效。");
+                return 0;
+            }
+
+            level = 1;
             OrielDiagnostics.Report(
-                $"[OrielWeb] 任务栏列表不可用（CoCreateInstance HRESULT=0x{hr:X8}）："
-                + "进度条/覆盖图标/隐藏任务栏按钮将不生效。");
-            return 0;
+                "[OrielWeb] 任务栏列表只支持 ITaskbarList（没有 Explorer 的会话？）："
+                + "隐藏任务栏按钮可用，进度条与覆盖图标不可用。");
         }
 
         // HrInit 是 ITaskbarList 的初始化握手，必须在其它调用之前一次。
         _ = ((delegate* unmanaged[Stdcall]<nint, int>)(*(nint**)taskbar)[SlotHrInit])(taskbar);
 
         s_instance = taskbar;
+        s_level = level;
         return s_instance;
     }
 
@@ -87,11 +120,21 @@ internal static unsafe class Win32TaskbarList
     /// <summary>把窗口从任务栏摘掉（<c>DeleteTab</c>）；返回是否成功。</summary>
     internal static bool DeleteTab(nint hwnd) => Call2(SlotDeleteTab, hwnd);
 
+    /// <summary>是否拿到了 <c>ITaskbarList3</c>（进度条与覆盖图标需要它）。</summary>
+    internal static bool SupportsProgress
+    {
+        get
+        {
+            _ = Instance();
+            return s_level >= 3;
+        }
+    }
+
     /// <summary>设置进度百分比（<c>SetProgressValue</c>，0–100）。</summary>
     internal static bool SetProgressValue(nint hwnd, ulong completed, ulong total)
     {
         nint taskbar = Instance();
-        if (taskbar == 0)
+        if (taskbar == 0 || s_level < 3)
         {
             return false;
         }
@@ -105,7 +148,7 @@ internal static unsafe class Win32TaskbarList
     internal static bool SetProgressState(nint hwnd, int state)
     {
         nint taskbar = Instance();
-        if (taskbar == 0)
+        if (taskbar == 0 || s_level < 3)
         {
             return false;
         }
@@ -119,7 +162,7 @@ internal static unsafe class Win32TaskbarList
     internal static bool SetOverlayIcon(nint hwnd, nint icon, string? description)
     {
         nint taskbar = Instance();
-        if (taskbar == 0)
+        if (taskbar == 0 || s_level < 3)
         {
             return false;
         }
