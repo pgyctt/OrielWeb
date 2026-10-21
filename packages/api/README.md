@@ -28,7 +28,7 @@ import { invoke } from '@orielweb/api/core';
 | `dpi` | ✅ 四个类 + 归一 + `toPhysical` / `toLogical` 换算 |
 | `path` | ✅ `sep` / `delimiter`（同步）+ 7 个路径运算 + 24 个目录解析（由宿主算） |
 | `app` | ✅ `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`（只读元信息，无需能力声明） |
-| `fs` | ✅ 整文件族（`readTextFile` / `writeTextFile` / `readFile` / `writeFile` / `exists` / `size` / `readDir` / `stat` / `lstat` / `mkdir` / `remove` / `rename` / `copyFile` / `truncate`）+ **句柄族**（`open` / `create` / `FileHandle` / `SeekMode` / `readTextFileLines`，B17）——**命令授权 + 路径 scope 两道关都必过**；句柄的 scope 只在 open/create 时判 |
+| `fs` | ✅ 整文件族（`readTextFile` / `writeTextFile` / `readFile` / `writeFile` / `exists` / `size` / `readDir` / `stat` / `lstat` / `mkdir` / `remove` / `rename` / `copyFile` / `truncate`）+ **句柄族**（`open` / `create` / `FileHandle` / `SeekMode` / `readTextFileLines`，B17）+ **监视族**（`watch` / `watchImmediate`，B20）——**命令授权 + 路径 scope 两道关都必过**；句柄的 scope 只在 open/create 时判，监视的 scope 逐项判 |
 | `dialog` | ✅ `open` / `save` / `message` / `ask` / `confirm` |
 | `clipboard` | ✅ `readText` / `writeText` / `clear` + `readImage` / `writeImage`（PNG）/ `writeHtml`（HTML + 纯文本回退）/ `writeSecret`（请求不进历史）。图片走 PNG：宿主把剪贴板位图统一编码成 PNG 回来 |
 | `opener` | ✅ `openUrl` / `openPath` / `revealItemInDir`（`openWith` 明确拒绝） |

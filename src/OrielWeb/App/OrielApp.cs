@@ -43,6 +43,10 @@ public sealed class OrielApp : IDisposable
             static (delay, callback) => _ = new Timer(_ => callback(), null, delay, Timeout.InfiniteTimeSpan),
             DeliverScheduledNotification);
 
+        // 文件监视器：事件只回给发起监视的那个窗口（与 Tauri 把 Channel 绑在调用方 webview
+        // 上同一个语义）——广播会让 A 窗口看到 B 窗口在盯的路径。
+        FsWatchers = new OrielFsWatcherRegistry(EmitFsWatchEvent);
+
         // 单实例判定在这里（= Build() 期间）而不是 Run()：宿主往往要在 Run() 之前装配配置、数据库、
         // 设备连接，判定太晚会把第二实例的副作用先跑一遍（下游反馈 2026-10-11 的 P0-2：第二实例
         // 已经连上同一台 PLC 并向同一个库写了记录）。Run() 只剩"是第二实例 → 打印标记并退出"。
@@ -125,6 +129,22 @@ public sealed class OrielApp : IDisposable
     /// 应用级的操作（Tauri 的插件也是进程级）。
     /// </remarks>
     internal OrielNotificationRegistry Notifications { get; }
+
+    /// <summary>
+    /// 文件系统监视器登记表（B20）：<c>fs.watch</c> / <c>fs.watchImmediate</c> 背后的 watcher 表。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 应用级而不是窗口级：监视器活在宿主进程里（<see cref="FileSystemWatcher"/>），
+    /// 页面只是事件接收方。事件**只回给发起监视的那个窗口**——与 Tauri 把 Channel 绑在
+    /// 调用方 webview 上同一个语义。
+    /// </para>
+    /// <para>
+    /// 窗口关掉之后监视器仍然活着（直到 <c>unwatch</c> 或应用退出）：事件没有收件人，
+    /// 但监视本身不该因为"页面导航"这类与用户意图无关的事情被悄悄取消。
+    /// </para>
+    /// </remarks>
+    internal OrielFsWatcherRegistry FsWatchers { get; }
 
     /// <summary>
     /// 入站 IPC 被门禁拒绝时触发（来源 / 令牌 / 命令授权三层都有）。
@@ -1595,6 +1615,66 @@ public sealed class OrielApp : IDisposable
         }
     }
 
+    /// <summary>页面侧接收文件系统监视事件的名称前缀（后接监视器编号）。</summary>
+    /// <remarks>
+    /// 每个监视器一个事件名（<c>oriel://fs-watch/3</c>），与通道的命名同一形状。
+    /// 用同一个名字 + 载荷里带 id 也能做，但那样每个页面都要先过滤一遍，
+    /// 而事件名本来就是天然的订阅键。
+    /// </remarks>
+    internal const string FsWatchEventPrefix = "oriel://fs-watch/";
+
+    /// <summary>把一条文件系统事件送给发起监视的那个窗口（监视器回调线程调用）。</summary>
+    private void EmitFsWatchEvent(string? windowLabel, long id, string payload)
+    {
+        if (windowLabel is null)
+        {
+            return;
+        }
+
+        WebviewWindow? target = null;
+        foreach (WebviewWindow window in _windows.ToArray())
+        {
+            if (string.Equals(window.Label, windowLabel, StringComparison.Ordinal))
+            {
+                target = window;
+                break;
+            }
+        }
+
+        if (target is null)
+        {
+            // 窗口已经关了：事件没有收件人。**不回退成广播**——那是把 A 窗口的路径变化
+            // 送给 B 窗口，属于越界而不是"尽力而为"
+            return;
+        }
+
+        try
+        {
+            target.EmitEvent(
+                FsWatchEventPrefix + id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                payload);
+        }
+        catch (Exception ex)
+        {
+            // 页面还没就绪 / 正在导航：事件送不到不是监视失败
+            OrielDiagnostics.Report($"[OrielWeb] 推送 fs.watch 事件失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 开始监视一批路径（<c>fs.watch</c> / <c>fs.watchImmediate</c> 的宿主侧入口）。
+    /// </summary>
+    /// <param name="windowLabel">事件只回给这个窗口；<c>null</c> = 不投递（只记账）。</param>
+    /// <param name="paths">**已经过 scope 校验**的绝对路径。</param>
+    /// <param name="recursive">目录是否递归。</param>
+    /// <param name="delayMs">debounce 窗口（毫秒）；<c>null</c> = 来一条发一条。</param>
+    /// <returns>监视器编号（可用于 <see cref="UnwatchPaths"/>）。</returns>
+    internal long WatchPaths(string? windowLabel, IReadOnlyList<string> paths, bool recursive, int? delayMs)
+        => FsWatchers.Watch(windowLabel, paths, recursive, delayMs);
+
+    /// <summary>停止监视；编号不存在时返回 <c>false</c>。</summary>
+    internal bool UnwatchPaths(long id) => FsWatchers.Unwatch(id);
+
     /// <summary>登记表到点时的投递（定时器线程调用）。</summary>
     private bool DeliverScheduledNotification(OrielNotificationRecord record)
     {
@@ -1937,6 +2017,10 @@ public sealed class OrielApp : IDisposable
         // 排期定时器：先停（否则最后一次回调可能在后端已释放之后再投递一次）。
         // 待发的通知随进程一起消失——没有系统级调度器，这是如实的行为（见 API.md）。
         Notifications.Dispose();
+
+        // 文件监视器：停掉所有 FileSystemWatcher。放在后端 Dispose 之前——
+        // 关掉监视器不需要消息循环，但拖到后面就可能对着已销毁的窗口推事件。
+        FsWatchers.Dispose();
         _backend?.Dispose();
     }
 }

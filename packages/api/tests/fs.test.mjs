@@ -34,6 +34,8 @@ import {
     FileHandle,
     SeekMode,
     BaseDirectory,
+    watch,
+    watchImmediate,
 } from '../src/fs.js';
 import { clearMocks } from '../src/mocks.js';
 import { setTransportOverride } from '../src/internal.js';
@@ -599,6 +601,264 @@ test('readTextFileLines 返回的迭代器逐行给出，末尾空行不产生',
 
     assert.deepEqual(lines, ['a', 'b', ''], '宿主给什么就给什么（空行是内容）');
     assert.deepEqual(calls, [['fs.readTextFileLines', { path: '/tmp/x.txt' }]]);
+
+    clearMocks();
+});
+
+
+// ---- B20：监视族 ----
+
+/**
+ * 装一个既记命令、又能投递事件的传输层。
+ *
+ * @param {Record<string, unknown>} [responses]
+ */
+function makeEventTransport(responses = {}) {
+    /** @type {Array<[string, any]>} */
+    const calls = [];
+    /** @type {Map<string, Set<(payload: any) => void>>} */
+    const listeners = new Map();
+
+    return {
+        calls,
+        transport: {
+            async invoke(name, args) {
+                calls.push([name, args]);
+                return Object.prototype.hasOwnProperty.call(responses, name) ? responses[name] : null;
+            },
+            on(name, handler) {
+                let set = listeners.get(name);
+                if (!set) {
+                    set = new Set();
+                    listeners.set(name, set);
+                }
+
+                set.add(handler);
+                return () => set.delete(handler);
+            },
+            deliver(name, payload) {
+                for (const handler of Array.from(listeners.get(name) ?? [])) {
+                    handler(payload);
+                }
+            },
+            listenerCount(name) {
+                return listeners.get(name)?.size ?? 0;
+            },
+        },
+    };
+}
+
+test('watch 默认带 2000ms 合并窗口，paths 一律发数组', async () => {
+    clearMocks();
+    const { calls, transport } = makeEventTransport({ 'fs.watch': 3 });
+    setTransportOverride(transport);
+
+    const unwatch = await watch('/tmp/logs', () => {});
+
+    assert.deepEqual(calls, [['fs.watch', { paths: ['/tmp/logs'], delayMs: 2000 }]]);
+    unwatch();
+
+    clearMocks();
+});
+
+test('watchImmediate 不带 delayMs（与 Tauri 的 WatchOptions 同形）', async () => {
+    clearMocks();
+    const { calls, transport } = makeEventTransport({ 'fs.watch': 4 });
+    setTransportOverride(transport);
+
+    const unwatch = await watchImmediate('/tmp/logs', () => {});
+
+    const [name, args] = calls[0];
+    assert.equal(name, 'fs.watch');
+    assert.deepEqual(args, { paths: ['/tmp/logs'] });
+    assert.equal('delayMs' in args, false);
+
+    unwatch();
+    clearMocks();
+});
+
+test('recursive 与 delayMs 原样透传，路径数组保持顺序', async () => {
+    clearMocks();
+    const { calls, transport } = makeEventTransport({ 'fs.watch': 5 });
+    setTransportOverride(transport);
+
+    const unwatch = await watch(['/a', '/b'], () => {}, { recursive: true, delayMs: 250 });
+
+    assert.deepEqual(calls, [['fs.watch', { paths: ['/a', '/b'], recursive: true, delayMs: 250 }]]);
+    unwatch();
+
+    clearMocks();
+});
+
+test('delayMs=0 是合法的（= 不要窗口），负数/小数/非数字当场拒', async () => {
+    clearMocks();
+    const { transport } = makeEventTransport({ 'fs.watch': 6 });
+    setTransportOverride(transport);
+
+    (await watch('/a', () => {}, { delayMs: 0 }))();
+
+    for (const bad of [-1, 1.5, NaN, '200']) {
+        await assert.rejects(
+            () => watch('/a', () => {}, { delayMs: /** @type {any} */ (bad) }),
+            TypeError,
+            `delayMs=${String(bad)} 应当抛 TypeError`);
+    }
+
+    clearMocks();
+});
+
+test('watchImmediate 不接受 delayMs（那个选项属于 watch）', async () => {
+    clearMocks();
+    const { calls, transport } = makeEventTransport({ 'fs.watch': 2 });
+    setTransportOverride(transport);
+
+    await assert.rejects(
+        () => watchImmediate('/a', () => {}, { delayMs: 100 }),
+        /不支持的选项/);
+
+    assert.deepEqual(calls, []);
+    clearMocks();
+});
+
+test('回调不是函数时当场拒，且不发命令', async () => {
+    clearMocks();
+    const { calls, transport } = makeEventTransport();
+    setTransportOverride(transport);
+
+    await assert.rejects(() => watch('/a', /** @type {any} */ (null)), TypeError);
+    await assert.rejects(() => watchImmediate('/a', /** @type {any} */ ('nope')), TypeError);
+
+    assert.deepEqual(calls, []);
+    clearMocks();
+});
+
+test('空 paths 数组当场拒', async () => {
+    clearMocks();
+    const { calls, transport } = makeEventTransport();
+    setTransportOverride(transport);
+
+    await assert.rejects(() => watch([], () => {}), /至少要有一个路径/);
+    assert.deepEqual(calls, []);
+
+    clearMocks();
+});
+
+test('file: URL 转成路径（Unix / Windows 盘符 / UNC）', async () => {
+    clearMocks();
+    const { calls, transport } = makeEventTransport({ 'fs.watch': 8 });
+    setTransportOverride(transport);
+
+    // unwatch 会再发一条 fs.unwatch，所以只看 fs.watch 那几条
+    const lastPaths = () => calls.filter(([name]) => name === 'fs.watch').at(-1)[1].paths;
+
+    (await watch(new URL('file:///tmp/a%20b'), () => {}))();
+    assert.deepEqual(lastPaths(), ['/tmp/a b'], '百分号编码要解开');
+
+    (await watch(new URL('file:///C:/dir/x'), () => {}))();
+    assert.deepEqual(lastPaths(), ['C:/dir/x'], 'Windows 盘符要去掉前导斜杠');
+
+    (await watch(new URL('file://server/share/x'), () => {}))();
+    assert.deepEqual(lastPaths(), ['//server/share/x'], 'UNC 要把 host 拼回去');
+
+    clearMocks();
+});
+
+test('非 file: 的 URL 当场拒（不静默当成路径）', async () => {
+    clearMocks();
+    const { calls, transport } = makeEventTransport();
+    setTransportOverride(transport);
+
+    await assert.rejects(
+        () => watch(new URL('http://example.com/a'), () => {}),
+        /只接受 file: URL/);
+
+    assert.deepEqual(calls, []);
+    clearMocks();
+});
+
+test('baseDir 把相对路径解析成绝对路径', async () => {
+    clearMocks();
+    const { calls, transport } = makeEventTransport({ 'fs.watch': 9, 'path.appDataDir': '/data' });
+    setTransportOverride(transport);
+
+    const unwatch = await watch('logs', () => {}, { baseDir: BaseDirectory.AppData });
+
+    const fsCall = calls.find(([name]) => name === 'fs.watch');
+    assert.deepEqual(fsCall[1].paths, ['/data/logs']);
+    unwatch();
+
+    clearMocks();
+});
+
+test('事件按监视器编号路由：只送到自己的回调', async () => {
+    clearMocks();
+    const { transport } = makeEventTransport({ 'fs.watch': 11 });
+    setTransportOverride(transport);
+
+    /** @type {any[]} */
+    const events = [];
+    const unwatch = await watch('/tmp/a', (event) => events.push(event));
+
+    const payload = { type: 'any', paths: ['/tmp/a/x.txt'], attrs: {} };
+    transport.deliver('oriel://fs-watch/11', payload);
+
+    assert.deepEqual(events, [payload], '事件对象原样交给回调（形状由宿主保证）');
+
+    // 别的编号不串台
+    transport.deliver('oriel://fs-watch/12', { type: 'any', paths: ['/elsewhere'], attrs: {} });
+    assert.equal(events.length, 1);
+
+    unwatch();
+    clearMocks();
+});
+
+test('取消监视：先退订再发 fs.unwatch，重复调用不重复发', async () => {
+    clearMocks();
+    const { calls, transport } = makeEventTransport({ 'fs.watch': 21 });
+    setTransportOverride(transport);
+
+    const unwatch = await watch('/tmp/a', () => {});
+    assert.equal(transport.listenerCount('oriel://fs-watch/21'), 1);
+
+    unwatch();
+
+    assert.equal(transport.listenerCount('oriel://fs-watch/21'), 0, '退订要立刻生效');
+    assert.deepEqual(
+        calls.filter(([name]) => name === 'fs.unwatch'),
+        [['fs.unwatch', { id: 21 }]]);
+
+    unwatch();
+    assert.equal(
+        calls.filter(([name]) => name === 'fs.unwatch').length,
+        1,
+        '幂等：第二次调用不该再发命令');
+
+    clearMocks();
+});
+
+test('回调抛错不影响后续事件的投递', async () => {
+    clearMocks();
+    const { transport } = makeEventTransport({ 'fs.watch': 31 });
+    setTransportOverride(transport);
+
+    const originalError = console.error;
+    console.error = () => {};
+
+    try {
+        let calls = 0;
+        const unwatch = await watch('/tmp/a', () => {
+            calls += 1;
+            throw new Error('调用方自己的 bug');
+        });
+
+        transport.deliver('oriel://fs-watch/31', { type: 'any', paths: ['/a'], attrs: {} });
+        transport.deliver('oriel://fs-watch/31', { type: 'any', paths: ['/b'], attrs: {} });
+
+        assert.equal(calls, 2, '第一条回调抛错之后，第二条仍然要送到');
+        unwatch();
+    } finally {
+        console.error = originalError;
+    }
 
     clearMocks();
 });

@@ -21,8 +21,14 @@
 //     `FileHandle.read` 的块大小因此有上限（8 MiB/次），见该方法的说明。
 //   * **`lstat` 与 `stat` 的差别只在"链接自身算不算"**：.NET 对符号链接会跟随，
 //     所以两者返回的元数据相同、只是 `isSymlink` 如实报告。
+//   * **监视自 B20 起提供**（`watch` / `watchImmediate`）：底层是 .NET 的
+//     `FileSystemWatcher`，与 Tauri 的 `notify` 落到**同一组系统设施**上
+//     （ReadDirectoryChangesW / inotify / FSEvents），所以"能看到哪些变化"基本一致。
+//     差别在归类与 debounce 的合并算法（见 `WatchEvent` 与 `watch` 的说明），
+//     以及**事件只回给发起监视的那个窗口**（Tauri 的 Channel 也绑在调用方 webview 上）。
 
 import { invoke } from './core.js';
+import { getTransport } from './internal.js';
 import * as paths from './path.js';
 
 // `BaseDirectory` 从 path 模块 re-export（Tauri 的 plugin-fs 也这么干）：
@@ -586,4 +592,272 @@ export async function readTextFileLines(path, options) {
             yield line;
         }
     })();
+}
+
+
+// ---------------------------------------------------------------------------
+// 监视族（B20，对标 Tauri 的 watch / watchImmediate，需要 Rust 侧的 watch feature）
+// ---------------------------------------------------------------------------
+//
+// 宿主侧每个监视器占一个编号（应用级登记表，见 OrielFsWatcherRegistry）；
+// 事件经 `oriel://fs-watch/<id>` 只回给**发起监视的那个窗口**。
+//
+// 与 Tauri 的两处差别，都如实写在下面的注释与 docs/API.md 里：
+//   1. 事件种类的归类有三处降级（`FileSystemWatcher` 给不出更细的信息）；
+//   2. debounce 是"按路径合并、后来的种类覆盖先前的"，不是 notify-debouncer-full
+//      的逐字段合并算法。
+
+/**
+ * 一次变化里"访问"的种类（对标 Tauri 的 `WatchEventKindAccess`）。
+ *
+ * @typedef {{ kind: 'any' }
+ *   | { kind: 'close', mode: WatchEventMode }
+ *   | { kind: 'open', mode: WatchEventMode }
+ *   | { kind: 'other' }} WatchEventKindAccess
+ */
+
+/**
+ * 访问模式（对标 Tauri 的 `WatchEventKindClose`/`Open` 的 `mode`）。
+ *
+ * @typedef {'any' | 'execute' | 'read' | 'write' | 'other'} WatchEventMode
+ */
+
+/**
+ * 新建了什么（对标 Tauri 的 `WatchEventKindCreate`）。
+ *
+ * @typedef {{ kind: 'any' } | { kind: 'file' } | { kind: 'folder' } | { kind: 'other' }} WatchEventKindCreate
+ */
+
+/**
+ * 改了什么（对标 Tauri 的 `WatchEventKindModify`）。
+ *
+ * @typedef {{ kind: 'any' }
+ *   | { kind: 'data', mode: 'any' | 'size' | 'content' | 'other' }
+ *   | { kind: 'metadata', mode: 'any' | 'access-time' | 'write-time' | 'permissions' | 'ownership' | 'extended' | 'other' }
+ *   | { kind: 'rename', mode: 'any' | 'to' | 'from' | 'both' | 'other' }
+ *   | { kind: 'other' }} WatchEventKindModify
+ */
+
+/**
+ * 删掉了什么（对标 Tauri 的 `WatchEventKindRemove`）。
+ *
+ * @typedef {{ kind: 'any' } | { kind: 'file' } | { kind: 'folder' } | { kind: 'other' }} WatchEventKindRemove
+ */
+
+/**
+ * 变化的种类（对标 Tauri 的 `WatchEventKind`）。
+ *
+ * @typedef {'any' | 'other'
+ *   | { access: WatchEventKindAccess }
+ *   | { create: WatchEventKindCreate }
+ *   | { modify: WatchEventKindModify }
+ *   | { remove: WatchEventKindRemove }} WatchEventKind
+ */
+
+/**
+ * 一次文件系统变化（对标 Tauri 的 `WatchEvent`）。
+ *
+ * @typedef {object} WatchEvent
+ * @property {WatchEventKind} type 变化的种类
+ * @property {string[]} paths 受影响的路径（**绝对路径**）
+ * @property {unknown} attrs 底层 watcher 的附加属性
+ */
+
+/**
+ * 停止监视（对标 Tauri 的 `UnwatchFn`）。同步调用，幂等。
+ *
+ * @typedef {() => void} UnwatchFn
+ */
+
+/**
+ * `watchImmediate` 的选项（对标 Tauri 的 `WatchOptions`）。
+ *
+ * @typedef {object} WatchOptions
+ * @property {boolean} [recursive] 目录是否递归（对单文件无意义）
+ * @property {number} [baseDir] 用 `BaseDirectory` 枚举把相对路径解析到对应目录
+ */
+
+/**
+ * `watch` 的选项（对标 Tauri 的 `DebouncedWatchOptions`）。
+ *
+ * @typedef {WatchOptions & { delayMs?: number }} DebouncedWatchOptions
+ */
+
+/**
+ * 把 `string | URL` 统一成路径字符串。
+ *
+ * @param {string} fnName
+ * @param {unknown} value
+ * @returns {string}
+ * @remarks
+ * `file:` URL 会转成路径（Windows 盘符与 UNC 都处理）。其他协议的 URL **当场拒**——
+ * 与 Tauri 的 `Must be a file URL.` 同一个姿态：静默当成路径会让
+ * `http://x/a` 变成当前目录下一个叫 `http:` 的目录。
+ */
+function watchPathOf(fnName, value) {
+    if (typeof value === 'string') {
+        if (value.length === 0) {
+            throw new TypeError(`${fnName}: 路径不能是空字符串。`);
+        }
+
+        return value;
+    }
+
+    if (value instanceof URL) {
+        if (value.protocol !== 'file:') {
+            throw new TypeError(`${fnName}: 只接受 file: URL（收到 ${value.protocol}）。`);
+        }
+
+        let path;
+        try {
+            path = decodeURIComponent(value.pathname);
+        } catch {
+            throw new TypeError(`${fnName}: URL 的百分号编码不合法（${value.href}）。`);
+        }
+
+        // Windows 盘符：/C:/dir → C:/dir
+        if (/^\/[A-Za-z]:/.test(path)) {
+            path = path.slice(1);
+        }
+
+        // UNC：file://server/share → //server/share
+        return value.host ? `//${value.host}${path}` : path;
+    }
+
+    throw new TypeError(
+        `${fnName}: paths 的元素必须是字符串或 URL，收到 ${value === null ? 'null' : typeof value}。`);
+}
+
+/**
+ * 监视一批路径（对标 Tauri 的 `watch`）。
+ *
+ * @param {string | URL | Array<string | URL>} paths 要监视的路径
+ * @param {(event: WatchEvent) => void} cb 收到变化时调用
+ * @param {DebouncedWatchOptions} [options]
+ * @returns {Promise<UnwatchFn>} 停止监视的函数
+ * @remarks
+ * <b>合并窗口</b>：默认 `delayMs = 2000`（与 Tauri 一致）。窗口内的变化先攒着，
+ * 窗口结束再发；<b>按路径合并、后来的种类覆盖先前的</b>（"先建后改"最终报 `modify`），
+ * 重命名按 `(旧, 新)` 单独成条。这不是 `notify-debouncer-full` 的逐字段合并算法，
+ * 但保证"一个路径不会在窗口里报两次"。
+ *
+ * ```js
+ * const unwatch = await watch('logs', (event) => {
+ *     console.log(event.type, event.paths);
+ * }, { baseDir: BaseDirectory.AppLog, recursive: true });
+ * // 用完停掉
+ * unwatch();
+ * ```
+ *
+ * <b>事件只回给发起监视的那个窗口</b>（Tauri 的 Channel 同样绑在调用方 webview 上）。
+ * 窗口关闭后监视器仍然存在（事件没有收件人），直到 `unwatch()` 或应用退出——
+ * 监视不该因为页面导航这类与用户意图无关的事情被悄悄取消。
+ *
+ * 需要能力声明（`fs.watch`）与**每一个路径的 scope**。
+ */
+export async function watch(paths, cb, options) {
+    return watchInternal('watch', paths, cb, { delayMs: 2000, ...options });
+}
+
+/**
+ * 监视一批路径，变化**立刻**上报（对标 Tauri 的 `watchImmediate`）。
+ *
+ * @param {string | URL | Array<string | URL>} paths
+ * @param {(event: WatchEvent) => void} cb
+ * @param {WatchOptions} [options]
+ * @returns {Promise<UnwatchFn>}
+ * @remarks
+ * 与 {@link watch} 的唯一差别是**没有合并窗口**：一次保存被系统拆成三条事件，这里就收到三条
+ * （Windows 上很常见：`Changed` 会来两次）。要"一次保存只处理一次"就用 {@link watch}。
+ *
+ * 需要能力声明（`fs.watch`）与**每一个路径的 scope**。
+ */
+export async function watchImmediate(paths, cb, options) {
+    return watchInternal('watchImmediate', paths, cb, options);
+}
+
+/**
+ * `watch` 与 `watchImmediate` 的共同实现。
+ *
+ * @param {string} fnName
+ * @param {string | URL | Array<string | URL>} paths
+ * @param {(event: WatchEvent) => void} cb
+ * @param {Record<string, unknown> | null | undefined} options
+ * @returns {Promise<UnwatchFn>}
+ */
+async function watchInternal(fnName, paths, cb, options) {
+    if (typeof cb !== 'function') {
+        throw new TypeError(`${fnName}: 第二个参数必须是回调函数。`);
+    }
+
+    const isDebounced = fnName === 'watch';
+    const problem = checkOptions(fnName, options, isDebounced ? ['recursive', 'delayMs'] : ['recursive']);
+    if (problem !== null) {
+        throw problem;
+    }
+
+    const list = Array.isArray(paths) ? paths : [paths];
+    if (list.length === 0) {
+        throw new TypeError(`${fnName}: paths 至少要有一个路径。`);
+    }
+
+    /** @type {string[]} */
+    const resolved = [];
+    for (const entry of list) {
+        // resolveAgainstBase 的返回类型是 unknown（它对"不是字符串就原样返回"），
+        // 而这里入参已经保证是字符串
+        resolved.push(/** @type {string} */ (await resolveAgainstBase(fnName, watchPathOf(fnName, entry), options)));
+    }
+
+    /** @type {Record<string, unknown>} */
+    const args = { paths: resolved };
+
+    const recursive = options?.recursive;
+    if (recursive !== undefined) {
+        args.recursive = Boolean(recursive);
+    }
+
+    if (isDebounced) {
+        const delayMs = options?.delayMs;
+        if (delayMs !== undefined) {
+            if (typeof delayMs !== 'number' || !Number.isInteger(delayMs) || delayMs < 0) {
+                throw new TypeError(`${fnName}: delayMs 必须是非负整数（毫秒），收到 ${String(delayMs)}。`);
+            }
+
+            args.delayMs = delayMs;
+        }
+    }
+
+    const id = await invoke('fs.watch', args);
+    const transport = getTransport();
+    if (typeof transport.on !== 'function') {
+        throw new Error(`${fnName}: 当前传输层没有 on()，无法接收监视事件。`);
+    }
+
+    // 与 Channel 同一条通路：事件名里带编号，页面侧天然按监视器分流
+    const off = transport.on(`oriel://fs-watch/${id}`, (payload) => {
+        try {
+            cb(/** @type {WatchEvent} */ (payload));
+        } catch (error) {
+            // 回调抛错不该打断后续事件的投递（与桥接脚本对 oriel.on 的处理一致）
+            console.error(`${fnName} 的回调抛出`, error);
+        }
+    });
+
+    let stopped = false;
+
+    return () => {
+        if (stopped) {
+            return;
+        }
+
+        stopped = true;
+        off();
+
+        // 停止命令是异步的，而 UnwatchFn 按 Tauri 的形状是同步的（返回 void）——
+        // 失败只进控制台：那一刻调用方已经在收尾，抛错也没有人接
+        void invoke('fs.unwatch', { id }).catch((error) => {
+            console.error(`${fnName}: 停止监视失败`, error);
+        });
+    };
 }

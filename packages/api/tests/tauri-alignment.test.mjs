@@ -155,10 +155,10 @@ const GAPS = {
     fs: {
         // BaseDirectory 已补（B13，从 path re-export）。
         // FileHandle / SeekMode / create / open / readTextFileLines 已补（B17 句柄族）。
+        // watch / watchImmediate 已补（B20，宿主侧 FileSystemWatcher 登记表 +
+        // oriel://fs-watch/<id> 事件；文件 URL 与 baseDir 都走同一套解析）。
         startAccessingSecurityScopedResource: 'macOS 沙箱的 security-scoped bookmark；本库还没有',
         stopAccessingSecurityScopedResource: '同上',
-        watch: '文件系统监视；要常驻 watcher',
-        watchImmediate: '同上',
     },
     dialog: {},
     clipboard: {

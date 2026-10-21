@@ -19,7 +19,14 @@ namespace OrielWeb.Ipc;
 /// <c>seek</c> / <c>read</c> / <c>write</c> / <c>readTextFileLines</c>）：宿主侧有一张
 /// <see cref="OrielFileHandleRegistry"/> 的 id 句柄表（应用级，对标 Tauri 的资源表）。
 /// <b>scope 只在 <c>open</c>/<c>create</c> 时判</b>——拿到 id 之后的读写不再看路径，
-/// 与 Tauri 相同（理由见句柄表的说明）。<c>watch</c> 仍不提供（要常驻 watcher，属 B20）。
+/// 与 Tauri 相同（理由见句柄表的说明）。
+/// </para>
+/// <para>
+/// <b>监视自 B20 起提供</b>（<c>fs.watch</c> / <c>fs.unwatch</c>）：宿主侧是应用级的
+/// <see cref="OrielFsWatcherRegistry"/>，每次监视一个编号，事件经
+/// <c>oriel://fs-watch/&lt;id&gt;</c> 只回给发起它的那个窗口。
+/// <b><c>paths</c> 的每一项都单独过 scope</b>（不是只看第一项）——只放行第一项的话，
+/// 后面的路径就成了"搭便车"。
 /// </para>
 /// <para>
 /// <b>二进制走 JSON 数字数组</b>：<c>readFile</c> 返回 <c>byte[]</c>（页面侧
@@ -388,6 +395,21 @@ internal static class OrielBuiltInFsCommands
                 };
                 return true;
 
+            // ---- 监视（B20）----
+            case "fs.watch":
+                handler = static (window, command, args) => Watch(window, command, args);
+                return true;
+
+            case "fs.unwatch":
+                handler = static (window, _, args) =>
+                {
+                    // 不需要 scope：编号是宿主发出去的，它代表"已经过校验的那批路径"。
+                    // 再按路径判一遍反而会把"监视期间目录被改名"变成关不掉。
+                    long id = OrielJson.GetRequiredArg<long>(args, "id", null);
+                    return window.App.UnwatchPaths(id);
+                };
+                return true;
+
             default:
                 handler = null!;
                 return false;
@@ -559,7 +581,35 @@ internal static class OrielBuiltInFsCommands
         string argName = "path")
     {
         string raw = OrielJson.GetRequiredArg<string>(args, argName, null);
+        string full = AuthorizeRawPath(window, command, raw, argName);
 
+        // data 与 path 一起取出来：写命令两者都要，分两次取会让"取 path 时顺手验了 scope"
+        // 这个顺序保证被拆散
+        data = args.ValueKind == JsonValueKind.Object && args.TryGetProperty("data", out JsonElement value)
+            ? value
+            : default;
+
+        return full;
+    }
+
+    /// <summary>
+    /// 归一 + 过 scope 的**共用部分**（路径来自参数，或来自 <c>paths</c> 数组的某一项）。
+    /// </summary>
+    /// <param name="window">来源窗口（拿应用标识符与门禁）。</param>
+    /// <param name="command">命令名（用于匹配 scope 与报错）。</param>
+    /// <param name="raw">待校验的原始路径（可能相对、可能含 <c>..</c>）。</param>
+    /// <param name="argName">报错时用的参数名（数组场景下是 <c>paths[i]</c>）。</param>
+    /// <remarks>
+    /// 把这段单独抽出来是因为 <c>fs.watch</c> 收的是**数组**：每一项都要走完全相同的
+    /// "归一 → 命令授权 → 路径 scope"，抄一份的话总有一天两处的顺序会不一样——
+    /// 而顺序错了就是 scope 绕过（见 <see cref="AuthorizePath"/> 的说明）。
+    /// </remarks>
+    private static string AuthorizeRawPath(
+        IOrielWindowControl window,
+        string command,
+        string raw,
+        string argName)
+    {
         if (raw.Length == 0)
         {
             throw new OrielIpcException($"命令参数 '{argName}' 不能为空。")
@@ -603,13 +653,82 @@ internal static class OrielBuiltInFsCommands
             };
         }
 
-        // data 与 path 一起取出来：写命令两者都要，分两次取会让"取 path 时顺手验了 scope"
-        // 这个顺序保证被拆散
-        data = args.ValueKind == JsonValueKind.Object && args.TryGetProperty("data", out JsonElement value)
-            ? value
-            : default;
-
         return full;
+    }
+
+    /// <summary>
+    /// <c>fs.watch</c>：校验并开始监视（<c>fs.watchImmediate</c> 与它同一条命令，只差 <c>delayMs</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>每个路径都要过 scope</b>，而且是逐项校验、全过才建 watcher——放行一项再报错
+    /// 会让调用方拿到一个"部分监视"的编号，之后收不齐事件却看不出原因。
+    /// </para>
+    /// <para>
+    /// <c>delayMs</c> 缺省 = immediate；给了 0 也按 immediate 处理（<c>Timer</c> 的 0 延时
+    /// 与"下一条事件立刻发"在语义上没有差别，而 0 更容易被误读成"关闭 debounce"）。
+    /// </para>
+    /// </remarks>
+    private static long Watch(IOrielWindowControl window, string command, JsonElement args)
+    {
+        JsonElement pathsElement = OrielJson.RequireArgElement(args, "paths");
+        if (pathsElement.ValueKind != JsonValueKind.Array)
+        {
+            throw new OrielIpcException(
+                $"fs.watch: paths 必须是字符串数组，实际 {pathsElement.ValueKind}。")
+            {
+                Code = OrielIpcErrorCodes.InvalidArgument,
+            };
+        }
+
+        var paths = new List<string>();
+        int index = 0;
+        foreach (JsonElement item in pathsElement.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String)
+            {
+                throw new OrielIpcException(
+                    $"fs.watch: paths[{index}] 不是字符串（实际 {item.ValueKind}）。")
+                {
+                    Code = OrielIpcErrorCodes.InvalidArgument,
+                };
+            }
+
+            paths.Add(AuthorizeRawPath(window, command, item.GetString()!, $"paths[{index}]"));
+            index++;
+        }
+
+        if (paths.Count == 0)
+        {
+            throw new OrielIpcException("fs.watch: paths 至少要有一个路径。")
+            {
+                Code = OrielIpcErrorCodes.InvalidArgument,
+            };
+        }
+
+        bool recursive = args.ValueKind == JsonValueKind.Object
+                         && args.TryGetProperty("recursive", out JsonElement recursiveElement)
+                         && recursiveElement.ValueKind == JsonValueKind.True;
+
+        int? delayMs = null;
+        if (args.ValueKind == JsonValueKind.Object
+            && args.TryGetProperty("delayMs", out JsonElement delayElement)
+            && delayElement.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
+        {
+            if (delayElement.ValueKind != JsonValueKind.Number
+                || !delayElement.TryGetInt32(out int parsed)
+                || parsed < 0)
+            {
+                throw new OrielIpcException("fs.watch: delayMs 必须是非负整数（毫秒）。")
+                {
+                    Code = OrielIpcErrorCodes.InvalidArgument,
+                };
+            }
+
+            delayMs = parsed;
+        }
+
+        return window.App.WatchPaths(window.Label, paths, recursive, delayMs);
     }
 
     /// <summary>读字符串参数；类型不符时给 invalid_argument。</summary>

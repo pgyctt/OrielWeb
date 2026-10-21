@@ -238,6 +238,48 @@ export function create(path: string, options?: {
 export function readTextFileLines(path: string, options?: {
     baseDir?: number;
 }): Promise<AsyncIterableIterator<string>>;
+/**
+ * 监视一批路径（对标 Tauri 的 `watch`）。
+ *
+ * @param {string | URL | Array<string | URL>} paths 要监视的路径
+ * @param {(event: WatchEvent) => void} cb 收到变化时调用
+ * @param {DebouncedWatchOptions} [options]
+ * @returns {Promise<UnwatchFn>} 停止监视的函数
+ * @remarks
+ * <b>合并窗口</b>：默认 `delayMs = 2000`（与 Tauri 一致）。窗口内的变化先攒着，
+ * 窗口结束再发；<b>按路径合并、后来的种类覆盖先前的</b>（"先建后改"最终报 `modify`），
+ * 重命名按 `(旧, 新)` 单独成条。这不是 `notify-debouncer-full` 的逐字段合并算法，
+ * 但保证"一个路径不会在窗口里报两次"。
+ *
+ * ```js
+ * const unwatch = await watch('logs', (event) => {
+ *     console.log(event.type, event.paths);
+ * }, { baseDir: BaseDirectory.AppLog, recursive: true });
+ * // 用完停掉
+ * unwatch();
+ * ```
+ *
+ * <b>事件只回给发起监视的那个窗口</b>（Tauri 的 Channel 同样绑在调用方 webview 上）。
+ * 窗口关闭后监视器仍然存在（事件没有收件人），直到 `unwatch()` 或应用退出——
+ * 监视不该因为页面导航这类与用户意图无关的事情被悄悄取消。
+ *
+ * 需要能力声明（`fs.watch`）与**每一个路径的 scope**。
+ */
+export function watch(paths: string | URL | Array<string | URL>, cb: (event: WatchEvent) => void, options?: DebouncedWatchOptions): Promise<UnwatchFn>;
+/**
+ * 监视一批路径，变化**立刻**上报（对标 Tauri 的 `watchImmediate`）。
+ *
+ * @param {string | URL | Array<string | URL>} paths
+ * @param {(event: WatchEvent) => void} cb
+ * @param {WatchOptions} [options]
+ * @returns {Promise<UnwatchFn>}
+ * @remarks
+ * 与 {@link watch} 的唯一差别是**没有合并窗口**：一次保存被系统拆成三条事件，这里就收到三条
+ * （Windows 上很常见：`Changed` 会来两次）。要"一次保存只处理一次"就用 {@link watch}。
+ *
+ * 需要能力声明（`fs.watch`）与**每一个路径的 scope**。
+ */
+export function watchImmediate(paths: string | URL | Array<string | URL>, cb: (event: WatchEvent) => void, options?: WatchOptions): Promise<UnwatchFn>;
 export { BaseDirectory } from "./path.js";
 /**
  * 定位方式（对标 Tauri 的 `SeekMode`）。
@@ -347,3 +389,114 @@ export class FileHandle {
      */
     close(): Promise<void>;
 }
+/**
+ * 一次变化里"访问"的种类（对标 Tauri 的 `WatchEventKindAccess`）。
+ */
+export type WatchEventKindAccess = {
+    kind: "any";
+} | {
+    kind: "close";
+    mode: WatchEventMode;
+} | {
+    kind: "open";
+    mode: WatchEventMode;
+} | {
+    kind: "other";
+};
+/**
+ * 访问模式（对标 Tauri 的 `WatchEventKindClose`/`Open` 的 `mode`）。
+ */
+export type WatchEventMode = "any" | "execute" | "read" | "write" | "other";
+/**
+ * 新建了什么（对标 Tauri 的 `WatchEventKindCreate`）。
+ */
+export type WatchEventKindCreate = {
+    kind: "any";
+} | {
+    kind: "file";
+} | {
+    kind: "folder";
+} | {
+    kind: "other";
+};
+/**
+ * 改了什么（对标 Tauri 的 `WatchEventKindModify`）。
+ */
+export type WatchEventKindModify = {
+    kind: "any";
+} | {
+    kind: "data";
+    mode: "any" | "size" | "content" | "other";
+} | {
+    kind: "metadata";
+    mode: "any" | "access-time" | "write-time" | "permissions" | "ownership" | "extended" | "other";
+} | {
+    kind: "rename";
+    mode: "any" | "to" | "from" | "both" | "other";
+} | {
+    kind: "other";
+};
+/**
+ * 删掉了什么（对标 Tauri 的 `WatchEventKindRemove`）。
+ */
+export type WatchEventKindRemove = {
+    kind: "any";
+} | {
+    kind: "file";
+} | {
+    kind: "folder";
+} | {
+    kind: "other";
+};
+/**
+ * 变化的种类（对标 Tauri 的 `WatchEventKind`）。
+ */
+export type WatchEventKind = "any" | "other" | {
+    access: WatchEventKindAccess;
+} | {
+    create: WatchEventKindCreate;
+} | {
+    modify: WatchEventKindModify;
+} | {
+    remove: WatchEventKindRemove;
+};
+/**
+ * 一次文件系统变化（对标 Tauri 的 `WatchEvent`）。
+ */
+export type WatchEvent = {
+    /**
+     * 变化的种类
+     */
+    type: WatchEventKind;
+    /**
+     * 受影响的路径（**绝对路径**）
+     */
+    paths: string[];
+    /**
+     * 底层 watcher 的附加属性
+     */
+    attrs: unknown;
+};
+/**
+ * 停止监视（对标 Tauri 的 `UnwatchFn`）。同步调用，幂等。
+ */
+export type UnwatchFn = () => void;
+/**
+ * `watchImmediate` 的选项（对标 Tauri 的 `WatchOptions`）。
+ */
+export type WatchOptions = {
+    /**
+     * 目录是否递归（对单文件无意义）
+     */
+    recursive?: boolean | undefined;
+    /**
+     * 用 `BaseDirectory` 枚举把相对路径解析到对应目录
+     */
+    baseDir?: number | undefined;
+};
+/**
+ * `watch` 的选项（对标 Tauri 的 `DebouncedWatchOptions`）。
+ */
+export type DebouncedWatchOptions = WatchOptions & {
+    delayMs?: number;
+};

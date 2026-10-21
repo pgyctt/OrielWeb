@@ -11,6 +11,33 @@
 
 ### 新增
 
+- **文件监视（B20）：`fs.watch` / `fs.watchImmediate`**——
+  `@orielweb/api/fs` 至此覆盖 Tauri fs 插件除两项 macOS 沙箱专用能力外的全部导出。
+  - 宿主侧新增应用级 `OrielFsWatcherRegistry`（`FileSystemWatcher`，三个平台分别落到
+    `ReadDirectoryChangesW` / `inotify` / `FSEvents`——与 Tauri 的 `notify` 是同一组系统设施）。
+    编号单调递增、永不复用；应用退出时统一释放。
+  - 事件形状与 Tauri 的 `WatchEvent` 一致：`{ type, paths, attrs }`，`type` 是
+    `'any' / 'other'` 或 `{ access }` / `{ create }` / `{ modify }` / `{ remove }` 之一。
+    `paths` 一律绝对路径；重命名给 `[旧, 新]` 两条。
+  - **三处如实降级**：`Changed` 一律 `{modify:{kind:'data',mode:'any'}}`（`FileSystemWatcher`
+    不区分内容/元数据）、`Deleted` 一律 `{remove:{kind:'any'}}`（已删掉，没法再 stat）、
+    `Created` 在事件到达时 stat 一次，能分 `file`/`folder`，瞬生瞬灭的报 `any`。
+    `access` 类型保留但**永远不会出现**（这套设施不报告"被谁读过"）。
+  - `attrs` 恒为 `{}`：Tauri 那边是 `notify` 的 tracker/flag，本库没有对应概念。
+  - **debounce**：`watch` 默认 `delayMs = 2000`（与 Tauri 一致）；窗口内按路径合并、
+    **后来的种类覆盖先前的**，重命名成对保留。不是 `notify-debouncer-full` 的逐字段合并，
+    但保证同一路径在窗口内只报一次。
+  - **事件只回给发起监视的窗口**（`oriel://fs-watch/<id>`，与 Tauri 把 Channel 绑在调用方
+    webview 上同一语义）。不广播——否则 A 窗口能看到 B 窗口在盯的路径。
+  - **scope 逐项校验**：`paths` 的每一项都要在 `fs.watch` 条目的 scope 内，有一项不在就
+    整个调用失败，不留"半套监视"。`fs.unwatch` 不看 scope（编号代表已校验过的那批路径）。
+  - 已知限制（写进 API.md）：内核缓冲区溢出时事件**永久丢失**（本库把缓冲区调到 64 KiB，
+    只降低概率），收到 `{type:'other', attrs:{error}}` 应重新扫描；SMB / 部分 FUSE 上的
+    变更通知本身不完整。
+  - 对齐账本的 fs 缺口从 2 项降到 0（只剩 macOS 沙箱的两项 security-scoped bookmark）。
+
+### 新增
+
 - **剪贴板补齐（B19）：`readImage` / `writeImage` / `writeHtml` / `writeSecret`**——
   `@orielweb/plugin-clipboard-manager` 的 7 个导出至此全部实现。
   - **图片**：`readImage()` 返回 `Image`（与 `@orielweb/api/image` 同一个类），

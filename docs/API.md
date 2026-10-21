@@ -1064,7 +1064,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 | `webviewWindow` | `WebviewWindow`（`extends Window`）/ `getCurrentWebviewWindow` / `getAllWebviewWindows`。**页面建窗**：`new WebviewWindow(label, options)` 后 `await w.created`，或 `await WebviewWindow.create(...)`。与 Tauri 的差别是"创建结果走 `created` 而不是 `tauri://created` 事件"（见该模块一节） |
 | `path` | `sep` / `delimiter`（**同步**）+ `join` / `normalize` / `dirname` / `extname` / `basename` / `isAbsolute` / `resolve` |
 | `app` | `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`（只读元信息，**无需能力声明**）；`exit` / `show` / `hide`（**需要显式 `Allow`**，见 §4 的能力表） |
-| `fs` | `readTextFile` / `writeTextFile` / `readFile` / `writeFile` / `exists` / `size` / `readDir` / `stat` / `lstat` / `mkdir` / `remove` / `rename` / `copyFile` / `truncate`（**两道关都必过**，见下） |
+| `fs` | `readTextFile` / `writeTextFile` / `readFile` / `writeFile` / `exists` / `size` / `readDir` / `stat` / `lstat` / `mkdir` / `remove` / `rename` / `copyFile` / `truncate` + `open` / `create` / `FileHandle` / `SeekMode` / `readTextFileLines`（B17）+ `watch` / `watchImmediate`（B20，**两道关都必过**，见下） |
 | `opener` | `openUrl` / `openPath` / `revealItemInDir` |
 | `notification` | `isPermissionGranted` / `requestPermission` / `sendNotification`（含 `schedule` 排期）+ 登记表 `active` / `pending` / `cancel` / `cancelAll` / `removeActive` / `removeAllActive` + `Schedule` / `ScheduleEvery` + `onNotificationReceived`（真事件）/ `onAction`（订阅时抛 `not_supported`，见该模块一节） |
 | `autostart` | `isEnabled` / `enable` / `disable` |
@@ -1403,7 +1403,8 @@ c.Allow("fs.writeTextFile", s => s.AllowPath("$APPDATA/reports/**").DenyPath("$A
 
 | 项 | 本库 | Tauri |
 |---|---|---|
-| 句柄式 API（`open`/`FileHandle`/`seek`） | ✅ B17 起提供（`watch` 仍无，属 B20） | ✅ |
+| 句柄式 API（`open`/`FileHandle`/`seek`） | ✅ B17 起提供 | ✅ |
+| 监视（`watch`/`watchImmediate`） | ✅ B20 起提供（宿主 `FileSystemWatcher`）；归类有降级、debounce 算法不同，见下 | ✅ `notify` |
 | `readTextFileLines` | ✅ 迭代契约一致，但**不流式**（整文件读入再切行） | ✅ 流式 |
 | 二进制通道 | JSON 数字数组（几十 MB 的文件不适用；单次 `read` 上限 8 MiB） | `invoke` 的二进制 body |
 | `stat` 的时间 | 毫秒时间戳（数字） | `Date` |
@@ -1441,6 +1442,33 @@ await file.close();
 - **`readTextFileLines` 不是流式**：返回 async 迭代器、切分规则与 Tauri 一致
   （`\n` 切、去 `\r`、末尾换行不产生空行），但宿主整文件读入——内存 = 文件大小。
   大文件请用 `open` + 分块 `read`。
+
+**监视族（B20）**——`watch` / `watchImmediate`：
+
+```js
+import { watch, watchImmediate } from '@orielweb/api/fs';
+
+const unwatch = await watch('logs', (event) => {
+    // event.type / event.paths / event.attrs，形状与 Tauri 的 WatchEvent 一致
+    if ('modify' in event.type) console.log('改了', event.paths);
+}, { baseDir: BaseDirectory.AppLog, recursive: true, delayMs: 2000 });
+
+unwatch();   // 同步、幂等
+```
+
+| 要点 | 说明 |
+|---|---|
+| **两个函数的差别** | `watch` 有合并窗口（默认 `delayMs = 2000`），`watchImmediate` 来一条发一条（Windows 上一次保存常收到两条 `Changed`） |
+| **事件形状** | `{ type, paths, attrs }`，`type` 是 `'any' / 'other'` 或 `{ access }` / `{ create }` / `{ modify }` / `{ remove }` 之一，与 Tauri 的 `WatchEventKind` 同形。`attrs` **恒为 `{}`**——Tauri 那边是 `notify` 的 tracker/flag，本库这套设施没有对应概念 |
+| **`paths` 是绝对路径** | 即使调用时给的是相对路径或用了 `baseDir`。重命名给两条：`[旧, 新]` |
+| **归类降级（三处）** | `Changed` 一律 `{modify:{kind:'data',mode:'any'}}`（`FileSystemWatcher` 不区分内容/元数据）；`Deleted` 一律 `{remove:{kind:'any'}}`（已删掉，没法再 stat 判断文件还是目录）；`Created` 会在事件到达时 stat，能分 `file`/`folder`，瞬生瞬灭的报 `any` |
+| **`access` 永远不会出现** | `FileSystemWatcher` 不报告"被谁打开/读过"。类型里保留 `access` 只是为了与 Tauri 的类型对齐 |
+| **debounce 的合并算法** | 按路径合并、**后来的种类覆盖先前的**（"先建后改"最终报 `modify`），重命名按 `(旧, 新)` 单独成条。不是 `notify-debouncer-full` 的逐字段合并，但保证"一个路径不会在窗口里报两次" |
+| **事件只回给发起监视的窗口** | 与 Tauri 把 Channel 绑在调用方 webview 上同一语义。**不广播**——否则 A 窗口能看到 B 窗口在盯的路径。窗口关闭后监视器仍在（事件没有收件人），直到 `unwatch()` 或应用退出 |
+| **scope 逐项校验** | `paths` 的**每一项**都要在 `fs.watch` 条目的 scope 内；有一项不在就整个调用失败，不留"半套监视" |
+| **`fs.unwatch` 不需要 scope** | 编号代表"已经过校验的那批路径"。再按路径判一遍会把"监视期间目录被改名"变成关不掉 |
+| **可能丢事件** | 内核缓冲区溢出（一次大批量写入、`git checkout`）时系统只给一条 `Error`，溢出期间的变化**永久丢失**。本库把缓冲区调到 64 KiB（默认 8 KiB）只是降低概率；收到 `{type:'other', attrs:{error}}` 就应当重新扫描一遍 |
+| **不监视网络盘 / 容器挂载的可靠性** | 这些文件系统的变更通知本身就不完整（SMB、部分 FUSE），与 Tauri 面对同一限制 |
 
 **`writeTextFile` 不写 BOM**（Tauri 亦然）：用 `Encoding.UTF8` 写文件会带上
 `EF BB BF`，后果是"写 5 个汉字得到 18 字节"，且下游的 JSON/CSV/shell 解析器
