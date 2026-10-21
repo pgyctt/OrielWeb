@@ -30,7 +30,7 @@ import { invoke } from '@orielweb/api/core';
 | `app` | ✅ `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`（只读元信息，无需能力声明） |
 | `fs` | ✅ 整文件族（`readTextFile` / `writeTextFile` / `readFile` / `writeFile` / `exists` / `size` / `readDir` / `stat` / `lstat` / `mkdir` / `remove` / `rename` / `copyFile` / `truncate`）+ **句柄族**（`open` / `create` / `FileHandle` / `SeekMode` / `readTextFileLines`，B17）——**命令授权 + 路径 scope 两道关都必过**；句柄的 scope 只在 open/create 时判 |
 | `dialog` | ✅ `open` / `save` / `message` / `ask` / `confirm` |
-| `clipboard` | ✅ `readText` / `writeText` / `clear`（纯文本；`label` 明确拒绝） |
+| `clipboard` | ✅ `readText` / `writeText` / `clear` + `readImage` / `writeImage`（PNG）/ `writeHtml`（HTML + 纯文本回退）/ `writeSecret`（请求不进历史）。图片走 PNG：宿主把剪贴板位图统一编码成 PNG 回来 |
 | `opener` | ✅ `openUrl` / `openPath` / `revealItemInDir`（`openWith` 明确拒绝） |
 | `notification` | ✅ `isPermissionGranted` / `requestPermission` / `sendNotification`（含 `schedule` 排期）+ `Schedule` / `ScheduleEvery` + 登记表（`active` / `pending` / `cancel` / `cancelAll` / `removeActive` / `removeAllActive`）+ `onNotificationReceived`（真事件）/ `onAction`（订阅时抛 `not_supported`）。移动端的渠道与等级 8 项不做 |
 | `autostart` | ✅ `isEnabled` / `enable` / `disable` |

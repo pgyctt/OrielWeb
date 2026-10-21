@@ -174,6 +174,44 @@ internal static class OrielBuiltInPlatformCommands
                 handler = static (window, _, _) => window.App.ClearClipboard();
                 return true;
 
+            // ---- clipboard：图片 / HTML / 敏感文本（B19）----
+
+            case "clipboard.readImage":
+                // 没有图片时返回 null（页面侧据此抛"剪贴板里没有图片"，与 Tauri 的 reject 同姿态）。
+                // 二进制一律 base64：PNG 用数字数组传要四倍体积，而这本来就是 JSON 文本通道。
+                handler = static (window, _, _) =>
+                {
+                    byte[]? png = window.App.ReadClipboardImage();
+                    return png is null ? null : Convert.ToBase64String(png);
+                };
+                return true;
+
+            case "clipboard.writeImage":
+                handler = static (window, command, args) => WriteClipboardImage(window, args);
+                return true;
+
+            case "clipboard.writeHtml":
+                handler = static (window, command, args) =>
+                {
+                    string html = OrielJson.GetRequiredArg<string>(args, "html", null);
+
+                    string? altText = args.TryGetProperty("altText", out JsonElement alt)
+                                      && alt.ValueKind == JsonValueKind.String
+                        ? alt.GetString()
+                        : null;
+
+                    return window.App.WriteClipboardHtml(html, altText);
+                };
+                return true;
+
+            case "clipboard.writeSecret":
+                handler = static (window, command, args) =>
+                {
+                    string text = OrielJson.GetRequiredArg<string>(args, "text", null);
+                    return window.App.WriteClipboardSecret(text);
+                };
+                return true;
+
             default:
                 handler = null!;
                 return false;
@@ -364,6 +402,115 @@ internal static class OrielBuiltInPlatformCommands
 
         return Running(window) && window.App.ShowNotification(title, body);
     }
+
+    /// <summary>
+    /// 写剪贴板图片（<c>clipboard.writeImage</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参数 <c>image</c> 是对象：<c>{ path }</c>（文件路径）或 <c>{ bytes }</c>（base64 的
+    /// PNG/ICO）。<b>不收裸 RGBA</b>——那没有随行尺寸，猜一个只会得到一张错图
+    /// （Tauri 的 JS 文档示例里那个"红绿两个像素"的写法在它的 Rust 侧同样解不出来）。
+    /// </para>
+    /// <para>
+    /// 一律**先统一成 PNG** 再交给后端：ICO 只有 Windows 那边的解码器可靠，
+    /// macOS 的 <c>NSImage</c> 与 GdkPixbuf 对 ICO 的支持取决于系统装了哪些 loader。
+    /// 统一之后三个平台的输入面完全一样。
+    /// </para>
+    /// </remarks>
+    private static bool WriteClipboardImage(IOrielWindowControl window, JsonElement args)
+    {
+        JsonElement image = OrielJson.RequireArgElement(args, "image");
+
+        byte[] data;
+        if (image.ValueKind == JsonValueKind.String)
+        {
+            // Tauri 的 transformImage 把路径原样给出来；页面侧本库发的是 { path }，
+            // 这里两种都收（直接调 invoke 的旧代码传字符串路径是合理的）
+            data = ReadImageFileForClipboard(image.GetString()!);
+        }
+        else if (image.ValueKind == JsonValueKind.Object
+                 && image.TryGetProperty("path", out JsonElement pathElement)
+                 && pathElement.ValueKind == JsonValueKind.String)
+        {
+            data = ReadImageFileForClipboard(pathElement.GetString()!);
+        }
+        else if (image.ValueKind == JsonValueKind.Object
+                 && image.TryGetProperty("bytes", out JsonElement bytesElement)
+                 && bytesElement.ValueKind == JsonValueKind.String)
+        {
+            try
+            {
+                data = Convert.FromBase64String(bytesElement.GetString()!);
+            }
+            catch (FormatException ex)
+            {
+                throw new OrielIpcException($"clipboard.writeImage 的 bytes 不是合法的 base64：{ex.Message}")
+                {
+                    Code = OrielIpcErrorCodes.InvalidArgument,
+                };
+            }
+        }
+        else
+        {
+            throw new OrielIpcException(
+                "clipboard.writeImage: image 必须是 { path }（文件路径）或 { bytes }（base64 的 PNG/ICO）。")
+            {
+                Code = OrielIpcErrorCodes.InvalidArgument,
+            };
+        }
+
+        if (data.Length == 0)
+        {
+            throw new OrielIpcException("clipboard.writeImage: 图像数据是空的。")
+            {
+                Code = OrielIpcErrorCodes.InvalidArgument,
+            };
+        }
+
+        // 已经是 PNG 就直接用（省一次解码 + 重新编码）
+        if (IsPng(data))
+        {
+            return window.App.WriteClipboardImage(data);
+        }
+
+        try
+        {
+            OrielImage decoded = OrielImage.FromBytes(data);
+            return window.App.WriteClipboardImage(
+                OrielPngEncoder.Encode(decoded.Rgba.Span, decoded.Width, decoded.Height));
+        }
+        catch (OrielImageFormatException ex)
+        {
+            throw new OrielIpcException($"clipboard.writeImage: {ex.Message}")
+            {
+                Code = OrielIpcErrorCodes.InvalidArgument,
+            };
+        }
+    }
+
+    /// <summary>读一个图像文件（相对路径按可执行文件目录解析，与图标同一约定）。</summary>
+    private static byte[] ReadImageFileForClipboard(string path)
+    {
+        try
+        {
+            return File.ReadAllBytes(OrielPathResolver.Resolve(path));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException
+                                       or ArgumentException or System.Security.SecurityException)
+        {
+            throw new OrielIpcException($"clipboard.writeImage 读不到「{path}」：{ex.Message}")
+            {
+                Code = OrielIpcErrorCodes.InvalidArgument,
+            };
+        }
+    }
+
+    /// <summary>是不是 PNG（8 字节签名）。</summary>
+    private static bool IsPng(ReadOnlySpan<byte> data)
+        => data.Length >= 8
+           && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47
+           && data[4] == 0x0D && data[5] == 0x0A && data[6] == 0x1A && data[7] == 0x0A;
 
     /// <summary>
     /// 读 <c>notifications</c> 数组（数字或 <c>{ id }</c>）。

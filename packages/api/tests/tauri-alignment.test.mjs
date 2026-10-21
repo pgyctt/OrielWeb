@@ -162,10 +162,9 @@ const GAPS = {
     },
     dialog: {},
     clipboard: {
-        readImage: '剪贴板图片；要图像句柄模型',
-        writeImage: '同上',
-        writeHtml: 'HTML 剪贴板在 Windows 上是 CF_HTML，偏移头写错会静默产生乱码（见 API.md）',
-        writeSecret: 'macOS 专有的"不记入剪贴板历史"标记',
+        // B19 之后**没有缺口**：readImage / writeImage / writeHtml / writeSecret 四个都做了。
+        // 图片走 PNG：宿主读到的剪贴板位图统一编码成 PNG（Windows 那侧用本库的
+        // OrielPngEncoder），页面侧 Image 持有的正是编码字节。
     },
     opener: {},
     notification: {

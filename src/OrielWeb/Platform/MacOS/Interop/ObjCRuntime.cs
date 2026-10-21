@@ -445,6 +445,23 @@ internal static unsafe partial class ObjCRuntime
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial int SendIntObjObj(nint self, nint sel, nint a, nint b);
 
+    /// <summary>
+    /// <c>objc_msgSend</c> 的 <c>- (BOOL)setX:(id)a</c> 形态（如 <c>NSPasteboard writeObjects:</c>）。
+    /// </summary>
+    /// <remarks>返回值同样用 <see cref="int"/> 接，理由见上面 <see cref="SendIntObjObj"/>。</remarks>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial int SendIntObj(nint self, nint sel, nint arg);
+
+    /// <summary>
+    /// <c>objc_msgSend</c> 的 <c>- (id)method:(NSInteger)n someObject:(id)obj</c> 形态。
+    /// </summary>
+    /// <remarks>
+    /// <c>NSBitmapImageRep</c> 的 <c>representationUsingType:properties:</c> 是这一形
+    /// （第一个参数是枚举，按 <c>NSInteger</c> 传）。剪贴板读图时用它把 TIFF 转成 PNG。
+    /// </remarks>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendIdNintObj(nint self, nint sel, nint integer, nint obj);
+
     /// <summary>[[NSString UTF8String]] → 托管字符串（指针仅在当前调用/池内有效，立即复制）。</summary>
     internal static string ToManagedString(nint nsString)
     {

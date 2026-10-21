@@ -11,7 +11,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { readText, writeText, clear } from '../src/clipboard.js';
+import { readText, writeText, clear, readImage, writeImage, writeHtml, writeSecret } from '../src/clipboard.js';
+import { Image } from '../src/image.js';
+import { bytesToBase64, base64ToBytes } from '../src/image-bytes.js';
 import { clearMocks } from '../src/mocks.js';
 import { setTransportOverride } from '../src/internal.js';
 
@@ -167,4 +169,134 @@ test('模块顶层导入不发命令', async () => {
 
     assert.deepEqual(calls, []);
     clearMocks();
+});
+
+
+// ---- B19：图片 / HTML / 敏感文本 ----
+
+/** 1x1 的合法 PNG（IHDR：1x1、8 位、颜色类型 6）。 */
+const ONE_PIXEL_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
+test('readImage 把宿主的 base64 还原成 Image（尺寸来自 PNG 头）', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({ 'clipboard.readImage': ONE_PIXEL_PNG });
+    setTransportOverride(transport);
+
+    const image = await readImage();
+
+    assert.ok(image instanceof Image);
+    assert.deepEqual(await image.size(), { width: 1, height: 1 });
+    assert.deepEqual(calls, [['clipboard.readImage', undefined]]);
+
+    clearMocks();
+});
+
+test('readImage 在"剪贴板里没有图片"时 reject（与 Tauri 同姿态）', async () => {
+    clearMocks();
+    const { transport } = makeTransport({ 'clipboard.readImage': null });
+    setTransportOverride(transport);
+
+    await assert.rejects(() => readImage(), /剪贴板里没有图片/);
+
+    clearMocks();
+});
+
+test('writeImage 传路径时发 { path }', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({ 'clipboard.writeImage': true });
+    setTransportOverride(transport);
+
+    assert.equal(await writeImage('C:/shots/a.png'), true);
+    assert.deepEqual(calls, [['clipboard.writeImage', { image: { path: 'C:/shots/a.png' } }]]);
+
+    clearMocks();
+});
+
+test('writeImage 传 Image 时发它的编码字节', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({
+        'clipboard.writeImage': true,
+        'window.readImageFile': ONE_PIXEL_PNG,
+    });
+    setTransportOverride(transport);
+
+    const image = await Image.fromPath('icons/a.png');
+    await writeImage(image);
+
+    const [name, args] = calls.at(-1);
+    assert.equal(name, 'clipboard.writeImage');
+    assert.equal(args.image.bytes, bytesToBase64(base64ToBytes(ONE_PIXEL_PNG)));
+
+    clearMocks();
+});
+
+test('writeImage 传裸字节（Uint8Array / number[]）时按编码字节处理', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({ 'clipboard.writeImage': true });
+    setTransportOverride(transport);
+
+    const bytes = base64ToBytes(ONE_PIXEL_PNG);
+    await writeImage(bytes);
+    assert.deepEqual(calls.at(-1), ['clipboard.writeImage', { image: { bytes: ONE_PIXEL_PNG } }]);
+
+    await writeImage([...bytes]);
+    assert.deepEqual(calls.at(-1), ['clipboard.writeImage', { image: { bytes: ONE_PIXEL_PNG } }]);
+
+    clearMocks();
+});
+
+test('writeImage 对 null / 不认识的形状当场拒（不发 IPC）', () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({ 'clipboard.writeImage': true });
+    setTransportOverride(transport);
+
+    assert.throws(() => writeImage(/** @type {any} */ (null)), TypeError);
+    assert.throws(() => writeImage(/** @type {any} */ ({ width: 2, height: 2, rgba: [1, 2, 3, 4] })), TypeError);
+    assert.deepEqual(calls, []);
+
+    clearMocks();
+});
+
+test('writeHtml 省略 altText 时不带那个字段', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({ 'clipboard.writeHtml': true });
+    setTransportOverride(transport);
+
+    await writeHtml('<b>x</b>');
+
+    assert.deepEqual(calls, [['clipboard.writeHtml', { html: '<b>x</b>' }]]);
+    assert.equal('altText' in calls[0][1], false);
+
+    clearMocks();
+});
+
+test('writeHtml 带 altText 时透传', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({ 'clipboard.writeHtml': true });
+    setTransportOverride(transport);
+
+    await writeHtml('<b>x</b>', 'x');
+
+    assert.deepEqual(calls, [['clipboard.writeHtml', { html: '<b>x</b>', altText: 'x' }]]);
+
+    clearMocks();
+});
+
+test('writeHtml 对非字符串当场拒', () => {
+    assert.throws(() => writeHtml(/** @type {any} */ ({})), TypeError);
+});
+
+test('writeSecret 发 { text }', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({ 'clipboard.writeSecret': true });
+    setTransportOverride(transport);
+
+    assert.equal(await writeSecret('hunter2'), true);
+    assert.deepEqual(calls, [['clipboard.writeSecret', { text: 'hunter2' }]]);
+
+    clearMocks();
+});
+
+test('writeSecret 对非字符串当场拒', () => {
+    assert.throws(() => writeSecret(/** @type {any} */ (123)), TypeError);
 });

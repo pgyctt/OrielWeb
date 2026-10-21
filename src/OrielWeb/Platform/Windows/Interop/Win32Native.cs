@@ -1335,6 +1335,9 @@ internal static partial class Win32Clipboard
 {
     internal const uint CF_UNICODETEXT = 13;
 
+    /// <summary>设备无关位图（<c>BITMAPINFOHEADER</c> + 像素，自下而上）。</summary>
+    internal const uint CF_DIB = 8;
+
     /// <summary>全局内存标志 <c>GMEM_MOVEABLE</c>：剪贴板要求用它分配。</summary>
     internal const uint GMEM_MOVEABLE = 0x0002;
 
@@ -1372,6 +1375,20 @@ internal static partial class Win32Clipboard
 
     [LibraryImport("kernel32", EntryPoint = "GlobalFree", SetLastError = true)]
     internal static partial nint GlobalFree(nint hMem);
+
+    /// <summary>取全局内存块的大小（读 CF_DIB 时要知道数据有多长）。</summary>
+    [LibraryImport("kernel32", EntryPoint = "GlobalSize", SetLastError = true)]
+    internal static partial nuint GlobalSize(nint hMem);
+
+    /// <summary>
+    /// 把自定义格式名注册成剪贴板格式编号（<c>HTML Format</c> / <c>PNG</c> / 剪贴板历史标记都用它）。
+    /// </summary>
+    /// <remarks>
+    /// 同一名字重复注册会返回同一个编号，所以每次写入前直接调即可，不需要缓存。
+    /// 名字大小写不敏感。
+    /// </remarks>
+    [LibraryImport("user32", EntryPoint = "RegisterClipboardFormatW", StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial uint RegisterClipboardFormat(string format);
 }
 
 

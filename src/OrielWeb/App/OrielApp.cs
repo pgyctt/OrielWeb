@@ -1458,6 +1458,31 @@ public sealed class OrielApp : IDisposable
     /// <summary>清空系统剪贴板；失败时返回 <c>false</c>。</summary>
     public bool ClearClipboard() => _backend?.ClearClipboard() ?? false;
 
+    /// <summary>读剪贴板里的图片（PNG 编码）；没有图片时返回 <c>null</c>。</summary>
+    /// <remarks>没有后端（未 <c>Run()</c>）时返回 <c>null</c>，与"剪贴板里没有图片"同一结论。</remarks>
+    public byte[]? ReadClipboardImage() => _backend?.ReadClipboardImage();
+
+    /// <summary>把 PNG 写进剪贴板；失败时返回 <c>false</c>。</summary>
+    /// <remarks>
+    /// 只收 **PNG**（不是裸像素）：调用方拿到的是 <c>Image</c> 的编码字节或文件内容，
+    /// 而"这张图多大"必须由图片文件本身说了算——裸像素跨进程传时没有随行的尺寸，
+    /// 猜一个只会得到一张错图。
+    /// </remarks>
+    public bool WriteClipboardImage(byte[] png) => _backend?.WriteClipboardImage(png) ?? false;
+
+    /// <summary>写 HTML（+ 纯文本回退）到剪贴板；失败时返回 <c>false</c>。</summary>
+    public bool WriteClipboardHtml(string html, string? altText = null)
+        => _backend?.WriteClipboardHtml(html, altText) ?? false;
+
+    /// <summary>
+    /// 写一段"敏感文本"：文本照常可粘贴，但请求系统别把它记进历史/同步到别的设备。
+    /// </summary>
+    /// <remarks>
+    /// 这只是**请求**，不是保证：Windows 的剪贴板历史、macOS/Linux 的剪贴板管理器
+    /// 都可以不理这个标记。
+    /// </remarks>
+    public bool WriteClipboardSecret(string text) => _backend?.WriteClipboardSecret(text) ?? false;
+
     /// <summary>
     /// 发送一条系统通知。
     /// </summary>

@@ -905,4 +905,50 @@ internal interface IPlatformBackend : IDisposable
 
     /// <summary>清空系统剪贴板；失败时返回 <c>false</c>。</summary>
     bool ClearClipboard();
+
+    /// <summary>
+    /// 读剪贴板里的图片，返回 **PNG 编码**的字节；剪贴板里没有图片时返回 <c>null</c>。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 返回**编码后的 PNG** 而不是裸像素：调用方（命令层）要把它交给页面侧的
+    /// <c>Image.fromBytes</c>，而那里的 <c>Image</c> 持有的就是编码字节——
+    /// 中间换成裸像素只是多一次转换、并让"图片尺寸"这件事在跨进程边界上失去依据。
+    /// </para>
+    /// <para>
+    /// 各平台怎么拿到 PNG：Windows 读 <c>CF_DIB</c> 再自己编码（<see cref="OrielPngEncoder"/>）；
+    /// macOS 优先取 <c>public.png</c>、否则把 <c>public.tiff</c> 交给 AppKit 转 PNG；
+    /// Linux 从 <c>GdkPixbuf</c> 读裸像素再编码（<c>gdk_pixbuf_save_to_buffer</c> 是变参函数，
+    /// 没法直接 P/Invoke）。
+    /// </para>
+    /// </remarks>
+    byte[]? ReadClipboardImage();
+
+    /// <summary>把 PNG 字节写进剪贴板；失败时返回 <c>false</c>（剪贴板被占用是正常状态）。</summary>
+    /// <param name="png">PNG 编码的图片（命令层会把任意支持的格式统一转成 PNG 再进来）。</param>
+    bool WriteClipboardImage(byte[] png);
+
+    /// <summary>
+    /// 写"富文本"：<paramref name="html"/> 作为 HTML，<paramref name="altText"/> 作为纯文本回退。
+    /// </summary>
+    /// <param name="html">HTML 片段（不需要 <c>&lt;html&gt;</c> 外壳）。</param>
+    /// <param name="altText">不支持 HTML 的粘贴目标拿到的纯文本；为 <c>null</c> 时用 <paramref name="html"/> 原文。</param>
+    /// <remarks>
+    /// Windows 上这是 <c>CF_HTML</c>（带 UTF-8 字节偏移头的自描述格式，见
+    /// <see cref="OrielClipboardHtml"/>）；macOS 上写 <c>public.html</c> + <c>public.utf8-plain-text</c>；
+    /// Linux 上注册 <c>text/html</c> 与 <c>UTF8_STRING</c> 两个目标。
+    /// </remarks>
+    bool WriteClipboardHtml(string html, string? altText);
+
+    /// <summary>
+    /// 写一段"敏感文本"：除了正常文本，还告诉系统别把它记进历史/同步到别的设备。
+    /// </summary>
+    /// <remarks>
+    /// 机制各平台不同：Windows 用 <c>CanIncludeInClipboardHistory=0</c> /
+    /// <c>CanUploadToCloudClipboard=0</c> / <c>ExcludeClipboardContentFromMonitorProcessing</c>
+    /// 三个标记格式；macOS 写 <c>org.nspasteboard.ConcealedType</c>；Linux 写
+    /// <c>x-kde-passwordManagerHint=secret</c>。<b>都是"请求"，不是保证</b>——
+    /// 剪贴板管理器可以不理（这与 Tauri 的说明一致）。
+    /// </remarks>
+    bool WriteClipboardSecret(string text);
 }

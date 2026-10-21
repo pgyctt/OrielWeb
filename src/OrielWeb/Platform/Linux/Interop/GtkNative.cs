@@ -171,6 +171,22 @@ internal static unsafe partial class GtkNative
     [LibraryImport(GdkPixbuf, EntryPoint = "gdk_pixbuf_get_pixels")]
     internal static partial nint GdkPixbufGetPixels(nint pixbuf);
 
+    [LibraryImport(GdkPixbuf, EntryPoint = "gdk_pixbuf_get_rowstride")]
+    internal static partial int GdkPixbufGetRowstride(nint pixbuf);
+
+    [LibraryImport(GdkPixbuf, EntryPoint = "gdk_pixbuf_get_width")]
+    internal static partial int GdkPixbufGetWidth(nint pixbuf);
+
+    [LibraryImport(GdkPixbuf, EntryPoint = "gdk_pixbuf_get_height")]
+    internal static partial int GdkPixbufGetHeight(nint pixbuf);
+
+    [LibraryImport(GdkPixbuf, EntryPoint = "gdk_pixbuf_get_n_channels")]
+    internal static partial int GdkPixbufGetNChannels(nint pixbuf);
+
+    /// <summary>pixbuf 是否带 alpha（gboolean → int）。</summary>
+    [LibraryImport(GdkPixbuf, EntryPoint = "gdk_pixbuf_get_has_alpha")]
+    internal static partial int GdkPixbufGetHasAlpha(nint pixbuf);
+
     [LibraryImport(Gtk, EntryPoint = "gtk_status_icon_set_tooltip_text", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void GtkStatusIconSetTooltipText(nint statusIcon, string text);
 
@@ -709,6 +725,48 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_store")]
     internal static partial void GtkClipboardStore(nint clipboard);
 
+    /// <summary>读剪贴板里的图片（同步阻塞，与 <c>wait_for_text</c> 同一性质）；没有图片时返回 0。</summary>
+    /// <remarks>返回的 <c>GdkPixbuf</c> 是**新引用**，调用方负责 <c>g_object_unref</c>。</remarks>
+    [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_wait_for_image")]
+    internal static partial nint GtkClipboardWaitForImage(nint clipboard);
+
+    /// <summary>把 pixbuf 设为剪贴板内容（GTK 内部会自己持有引用）。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_set_image")]
+    internal static partial void GtkClipboardSetImage(nint clipboard, nint pixbuf);
+
+    /// <summary>
+    /// 以"多目标"方式声明剪贴板内容（HTML、纯文本、敏感标记都靠它）。
+    /// </summary>
+    /// <param name="clipboard">剪贴板。</param>
+    /// <param name="targets"><see cref="GtkTargetEntry"/> 数组（非托管内存，调用方负责释放）。</param>
+    /// <param name="targetCount">目标个数。</param>
+    /// <param name="getFunc">对方请求数据时的回调（<c>GtkClipboardGetFunc</c>）。</param>
+    /// <param name="clearFunc">所有权失去时的回调（<c>GtkClipboardClearFunc</c>）。</param>
+    /// <param name="userData">传给两个回调的状态指针。</param>
+    /// <remarks>
+    /// <b>回调必须在 GTK 的主线程上跑</b>，而且它们的生命周期比这次调用长——
+    /// 目标表、目标名字符串与状态都得留在非托管内存里，直到 <paramref name="clearFunc"/> 被调用。
+    /// 见 <c>LinuxPlatformBackend</c> 里 <c>ClipboardOffer</c> 的说明。
+    /// </remarks>
+    [LibraryImport(Gtk, EntryPoint = "gtk_clipboard_set_with_data")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static unsafe partial bool GtkClipboardSetWithData(
+        nint clipboard,
+        nint targets,
+        uint targetCount,
+        delegate* unmanaged[Cdecl]<nint, nint, uint, nint, void> getFunc,
+        delegate* unmanaged[Cdecl]<nint, nint, void> clearFunc,
+        nint userData);
+
+    /// <summary>在一次选择请求里填入数据（<c>format</c> 传 8 = 按字节）。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_selection_data_set")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool GtkSelectionDataSet(nint selectionData, nint target, int format, nint data, int length);
+
+    /// <summary>取这次请求的目标 atom（回应时要原样回填给 <c>gtk_selection_data_set</c>）。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_selection_data_get_target")]
+    internal static partial nint GtkSelectionDataGetTarget(nint selectionData);
+
     // ---- GObject / Glib ----
 
     [LibraryImport(GOject, EntryPoint = "g_signal_connect_data", StringMarshalling = StringMarshalling.Utf8)]
@@ -1103,4 +1161,25 @@ internal struct GdkEventConfigure
 
     /// <summary>高度（设备像素）。</summary>
     public int Height;
+}
+
+/// <summary>
+/// GTK 的剪贴板目标描述（<c>GtkTargetEntry</c>）。
+/// </summary>
+/// <remarks>
+/// 布局必须与 C 侧逐字段一致：<c>gchar *target; guint flags; guint info;</c>——
+/// 64 位上是 16 字节（指针 8 + 两个 4）。<see cref="Info"/> 就是回调里拿到的
+/// <c>info</c>，本库用它当"目标序号"（见 <c>LinuxPlatformBackend.ClipboardOffer</c>）。
+/// </remarks>
+[StructLayout(LayoutKind.Sequential)]
+internal struct GtkTargetEntry
+{
+    /// <summary>目标名（如 <c>text/html</c>），指向非托管 UTF-8 字符串。</summary>
+    public nint Target;
+
+    /// <summary>标志位（0 = 无）。</summary>
+    public uint Flags;
+
+    /// <summary>回调里用来区分目标的编号。</summary>
+    public uint Info;
 }

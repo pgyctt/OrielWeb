@@ -37,6 +37,13 @@ public sealed class PlatformCommandTests
     [InlineData("notification.removeActive")]
     [InlineData("notification.removeAllActive")]
     [InlineData("notification.actionSupport")]
+    [InlineData("clipboard.readText")]
+    [InlineData("clipboard.writeText")]
+    [InlineData("clipboard.clear")]
+    [InlineData("clipboard.readImage")]
+    [InlineData("clipboard.writeImage")]
+    [InlineData("clipboard.writeHtml")]
+    [InlineData("clipboard.writeSecret")]
     [InlineData("autostart.isEnabled")]
     [InlineData("autostart.enable")]
     [InlineData("autostart.disable")]
@@ -58,6 +65,10 @@ public sealed class PlatformCommandTests
     [InlineData("notification.cancelAll")]
     [InlineData("notification.removeActive")]
     [InlineData("notification.removeAllActive")]
+    [InlineData("clipboard.readImage")]
+    [InlineData("clipboard.writeImage")]
+    [InlineData("clipboard.writeHtml")]
+    [InlineData("clipboard.writeSecret")]
     [InlineData("autostart.enable")]
     [InlineData("autostart.disable")]
     public void PlatformCommandsAreNotAlwaysAllowed(string name)
@@ -323,6 +334,80 @@ public sealed class PlatformCommandTests
     [Fact]
     public void RemoveAllActiveIsZeroWithoutABackend()
         => Assert.Equal(0, Invoke<int>("notification.removeAllActive", new { }));
+
+    // ---- clipboard：图片 / HTML / 敏感文本（B19）----
+
+    [Fact]
+    public void ReadImageWithoutABackendIsNull()
+        => Assert.Null(Invoke<object?>("clipboard.readImage", new { }));
+
+    [Fact]
+    public void WriteImageRejectsUnknownShape()
+    {
+        OrielIpcException ex = Assert.Throws<OrielIpcException>(
+            () => Invoke("clipboard.writeImage", new { image = new { rgba = "AAAA" } }));
+
+        Assert.Equal(OrielIpcErrorCodes.InvalidArgument, ex.Code);
+        Assert.Contains("{ path }", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WriteImageRejectsNonBase64Bytes()
+    {
+        OrielIpcException ex = Assert.Throws<OrielIpcException>(
+            () => Invoke("clipboard.writeImage", new { image = new { bytes = "这不是 base64!" } }));
+
+        Assert.Equal(OrielIpcErrorCodes.InvalidArgument, ex.Code);
+        Assert.Contains("base64", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WriteImageRejectsBytesThatAreNotAnImage()
+    {
+        string notAnImage = Convert.ToBase64String("hello"u8.ToArray());
+
+        OrielIpcException ex = Assert.Throws<OrielIpcException>(
+            () => Invoke("clipboard.writeImage", new { image = new { bytes = notAnImage } }));
+
+        Assert.Equal(OrielIpcErrorCodes.InvalidArgument, ex.Code);
+    }
+
+    [Fact]
+    public void WriteImageAcceptsValidPngButFailsWithoutABackend()
+    {
+        // PNG 直接透传给后端（不解码再编码）；没有后端时返回 false
+        byte[] png = OrielPngEncoder.Encode([255, 0, 0, 255], 1, 1);
+        string base64 = Convert.ToBase64String(png);
+
+        Assert.False(Invoke<bool>("clipboard.writeImage", new { image = new { bytes = base64 } }));
+    }
+
+    [Fact]
+    public void WriteImageRejectsMissingPath()
+    {
+        OrielIpcException ex = Assert.Throws<OrielIpcException>(
+            () => Invoke("clipboard.writeImage", new { image = new { path = "不存在/这张图.png" } }));
+
+        Assert.Equal(OrielIpcErrorCodes.InvalidArgument, ex.Code);
+        Assert.Contains("读不到", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WriteHtmlRequiresHtml()
+    {
+        OrielIpcException ex = Assert.Throws<OrielIpcException>(
+            () => Invoke("clipboard.writeHtml", new { altText = "只有回退文本" }));
+
+        Assert.Equal(OrielIpcErrorCodes.MissingArgument, ex.Code);
+    }
+
+    [Fact]
+    public void WriteHtmlWithoutABackendReturnsFalse()
+        => Assert.False(Invoke<bool>("clipboard.writeHtml", new { html = "<b>x</b>", altText = "x" }));
+
+    [Fact]
+    public void WriteSecretWithoutABackendReturnsFalse()
+        => Assert.False(Invoke<bool>("clipboard.writeSecret", new { text = "hunter2" }));
 
     // ---- autostart ----
 

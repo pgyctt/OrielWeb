@@ -227,6 +227,227 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
         return true;
     }
 
+    // ---- 剪贴板：图片 / HTML / 敏感文本（B19）----
+
+    /// <summary>
+    /// 读剪贴板里的图片，返回 PNG 字节。
+    /// </summary>
+    /// <remarks>
+    /// 两条路，按"谁已经给我编码好的数据"排序：
+    /// <list type="number">
+    ///   <item><description><c>public.png</c> 直接用——浏览器、多数编辑器的复制图片都给这个。</description></item>
+    ///   <item><description>否则取 <c>public.tiff</c>，交给 <c>NSBitmapImageRep</c> 转成 PNG。
+    ///     系统截图（⌘⇧4）走的正是这条。</description></item>
+    /// </list>
+    /// 不自己碰像素布局：AppKit 的位图表示有预乘 alpha、通道顺序、色彩空间几种变体，
+    /// 手工解析在"看起来对了"与"边缘发黑"之间没有可验证的界线。
+    /// </remarks>
+    public byte[]? ReadClipboardImage()
+    {
+        nint pasteboard = GeneralPasteboard();
+        if (pasteboard == 0)
+        {
+            return null;
+        }
+
+        nint png = ObjCRuntime.SendIdObj(
+            pasteboard, ObjCRuntime.Sel("dataForType:"), ObjCRuntime.MakeNSString("public.png"));
+        if (png != 0)
+        {
+            return ReadNsData(png);
+        }
+
+        nint tiff = ObjCRuntime.SendIdObj(
+            pasteboard, ObjCRuntime.Sel("dataForType:"), ObjCRuntime.MakeNSString("public.tiff"));
+        if (tiff == 0)
+        {
+            return null;
+        }
+
+        nint rep = ObjCRuntime.SendIdObj(
+            ObjCRuntime.SendId(ObjCRuntime.GetClassOrThrow("NSBitmapImageRep"), ObjCRuntime.Sel("alloc")),
+            ObjCRuntime.Sel("initWithData:"),
+            tiff);
+        if (rep == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            const nint NSBitmapImageFileTypePNG = 4;
+            nint properties = ObjCRuntime.SendId(
+                ObjCRuntime.GetClassOrThrow("NSDictionary"), ObjCRuntime.Sel("dictionary"));
+
+            return ReadNsData(ObjCRuntime.SendIdNintObj(
+                rep, ObjCRuntime.Sel("representationUsingType:properties:"), NSBitmapImageFileTypePNG, properties));
+        }
+        finally
+        {
+            // alloc/init 出来的是我们持有的，不能等自动释放池
+            ObjCRuntime.SendVoid(rep, ObjCRuntime.Sel("release"));
+        }
+    }
+
+    /// <summary>把 PNG 写进剪贴板（<c>NSImage</c> 负责解码，写进去的是 <c>public.png</c> + TIFF 两种表示）。</summary>
+    /// <remarks>
+    /// <c>writeObjects:</c> 让 AppKit 自己决定往粘贴板里放哪些表示（PNG、TIFF 都会有），
+    /// 比手工 <c>setData:forType:</c> 更省事也更完整。
+    /// </remarks>
+    public bool WriteClipboardImage(byte[] png)
+    {
+        ArgumentNullException.ThrowIfNull(png);
+
+        nint pasteboard = GeneralPasteboard();
+        if (pasteboard == 0)
+        {
+            return false;
+        }
+
+        nint data = CreateNsData(png);
+        if (data == 0)
+        {
+            return false;
+        }
+
+        nint image = ObjCRuntime.SendIdObj(
+            ObjCRuntime.SendId(ObjCRuntime.GetClassOrThrow("NSImage"), ObjCRuntime.Sel("alloc")),
+            ObjCRuntime.Sel("initWithData:"),
+            data);
+        if (image == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            _ = ObjCRuntime.SendId(pasteboard, ObjCRuntime.Sel("clearContents"));
+
+            nint array = ObjCRuntime.SendIdObj(
+                ObjCRuntime.GetClassOrThrow("NSArray"), ObjCRuntime.Sel("arrayWithObject:"), image);
+
+            return ObjCRuntime.SendIntObj(pasteboard, ObjCRuntime.Sel("writeObjects:"), array) != 0;
+        }
+        finally
+        {
+            ObjCRuntime.SendVoid(image, ObjCRuntime.Sel("release"));
+        }
+    }
+
+    /// <summary>写 HTML + 纯文本回退（<c>public.html</c> / <c>public.utf8-plain-text</c>）。</summary>
+    public bool WriteClipboardHtml(string html, string? altText)
+    {
+        ArgumentNullException.ThrowIfNull(html);
+
+        nint pasteboard = GeneralPasteboard();
+        if (pasteboard == 0)
+        {
+            return false;
+        }
+
+        _ = ObjCRuntime.SendId(pasteboard, ObjCRuntime.Sel("clearContents"));
+
+        // setString:forType: 会自己 declareType，不需要额外的 declareTypes:owner: 调用
+        bool ok = ObjCRuntime.SendIntObjObj(
+            pasteboard,
+            ObjCRuntime.Sel("setString:forType:"),
+            ObjCRuntime.MakeNSString(html),
+            ObjCRuntime.MakeNSString("public.html")) != 0;
+
+        ok &= ObjCRuntime.SendIntObjObj(
+            pasteboard,
+            ObjCRuntime.Sel("setString:forType:"),
+            ObjCRuntime.MakeNSString(altText ?? html),
+            ObjCRuntime.MakeNSString(NSPasteboardTypeString)) != 0;
+
+        return ok;
+    }
+
+    /// <summary>
+    /// 写敏感文本：文本 + <c>org.nspasteboard.ConcealedType</c> 标记。
+    /// </summary>
+    /// <remarks>
+    /// <c>ConcealedType</c> 是 nspasteboard.org 的约定（密码管理器与剪贴板工具都认它）。
+    /// 它是**请求**：不认这个约定的工具照样会记录内容。
+    /// </remarks>
+    public bool WriteClipboardSecret(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        nint pasteboard = GeneralPasteboard();
+        if (pasteboard == 0)
+        {
+            return false;
+        }
+
+        _ = ObjCRuntime.SendId(pasteboard, ObjCRuntime.Sel("clearContents"));
+
+        nint empty = CreateNsData(ReadOnlySpan<byte>.Empty);
+        if (empty != 0)
+        {
+            _ = ObjCRuntime.SendIntObjObj(
+                pasteboard,
+                ObjCRuntime.Sel("setData:forType:"),
+                empty,
+                ObjCRuntime.MakeNSString("org.nspasteboard.ConcealedType"));
+        }
+
+        return ObjCRuntime.SendIntObjObj(
+            pasteboard,
+            ObjCRuntime.Sel("setString:forType:"),
+            ObjCRuntime.MakeNSString(text),
+            ObjCRuntime.MakeNSString(NSPasteboardTypeString)) != 0;
+    }
+
+    /// <summary>把一段字节包成 <c>NSData</c>（用 <c>NSMutableData</c> 预分配再拷贝，避免多一层编码）。</summary>
+    private static unsafe nint CreateNsData(ReadOnlySpan<byte> bytes)
+    {
+        nint data = ObjCRuntime.SendIdNint(
+            ObjCRuntime.GetClassOrThrow("NSMutableData"), ObjCRuntime.Sel("dataWithLength:"), bytes.Length);
+        if (data == 0 || bytes.Length == 0)
+        {
+            return data;
+        }
+
+        nint target = ObjCRuntime.SendId(data, ObjCRuntime.Sel("mutableBytes"));
+        if (target == 0)
+        {
+            return 0;
+        }
+
+        fixed (byte* source = bytes)
+        {
+            Buffer.MemoryCopy(source, (void*)target, bytes.Length, bytes.Length);
+        }
+
+        return data;
+    }
+
+    /// <summary>把 <c>NSData</c> 复制成托管字节数组。</summary>
+    private static byte[]? ReadNsData(nint data)
+    {
+        if (data == 0)
+        {
+            return null;
+        }
+
+        long length = (long)ObjCRuntime.SendNint(data, ObjCRuntime.Sel("length"));
+        if (length <= 0 || length > int.MaxValue)
+        {
+            return null;
+        }
+
+        nint bytes = ObjCRuntime.SendId(data, ObjCRuntime.Sel("bytes"));
+        if (bytes == 0)
+        {
+            return null;
+        }
+
+        var result = new byte[length];
+        Marshal.Copy(bytes, result, 0, result.Length);
+        return result;
+    }
+
     public void RunMessageLoop()
     {
         if (Interlocked.Exchange(ref _ran, 1) == 1)

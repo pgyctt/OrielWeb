@@ -11,6 +11,29 @@
 
 ### 新增
 
+- **剪贴板补齐（B19）：`readImage` / `writeImage` / `writeHtml` / `writeSecret`**——
+  `@orielweb/plugin-clipboard-manager` 的 7 个导出至此全部实现。
+  - **图片**：`readImage()` 返回 `Image`（与 `@orielweb/api/image` 同一个类），
+    剪贴板里没有图片时 **reject**（与 Tauri 一致）；`writeImage()` 收路径 / `Image` /
+    **编码字节**（PNG/ICO），**不收裸 RGBA**——裸像素没有随行尺寸，猜一个只会得到错图。
+    宿主侧读到的位图统一编码成 PNG 回来：Windows 读 `CF_DIB` 后用新增的
+    `OrielPngEncoder`（纯托管、`ZLibStream` + CRC32，AOT 安全），macOS 取 `public.png`
+    或把 `public.tiff` 交给 AppKit 转，Linux 从 `GdkPixbuf` 读裸像素再编码
+    （`gdk_pixbuf_save_to_buffer` 是变参函数，没法直接 P/Invoke）。
+  - **HTML**：Windows 写 `CF_HTML`（UTF-8 字节偏移头，`OrielClipboardHtml` 统一构造；
+    偏移写错的后果是**静默**粘出乱码，所以单测把产物按偏移切回去逐段比对），
+    macOS 写 `public.html` + `public.utf8-plain-text`，Linux 用
+    `gtk_clipboard_set_with_data` 注册 `text/html` + `UTF8_STRING`。
+  - **敏感文本**：Windows 三个标记格式（`CanIncludeInClipboardHistory=0` /
+    `CanUploadToCloudClipboard=0` / `ExcludeClipboardContentFromMonitorProcessing`），
+    macOS `org.nspasteboard.ConcealedType`，Linux `x-kde-passwordManagerHint=secret`。
+    **都是请求不是保证**（不认约定的剪贴板管理器照样会存）。
+  - C# 侧对应：`app.ReadClipboardImage()` / `WriteClipboardImage(png)` /
+    `WriteClipboardHtml(html, altText)` / `WriteClipboardSecret(text)`。
+  - 对齐账本的 clipboard 缺口清零（4 项）。
+
+### 新增
+
 - **通知登记表、排期与回传（B18）**：`@orielweb/api/notification` 补齐了桌面端可做的那一面。
   - **登记表**：`active()` / `pending()` / `cancel()` / `cancelAll()` / `removeActive()` /
     `removeAllActive()`，宿主侧是一张 `OrielNotificationRegistry`（id 单调递增、永不复用；

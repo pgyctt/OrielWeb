@@ -1,4 +1,6 @@
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Text;
 using OrielWeb.Platform.Linux.Interop;
 
 namespace OrielWeb.Platform.Linux;
@@ -344,6 +346,341 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
         GtkNative.GtkClipboardSetText(clipboard, "", -1);
         GtkNative.GtkClipboardStore(clipboard);
         return true;
+    }
+
+    // ---- 剪贴板：图片 / HTML / 敏感文本（B19）----
+
+    /// <summary>
+    /// 读剪贴板里的图片并编码成 PNG。
+    /// </summary>
+    /// <remarks>
+    /// <c>gtk_clipboard_wait_for_image</c> 与 <c>wait_for_text</c> 同一性质：同步阻塞、
+    /// 跑一个内嵌 main loop、必须在主线程调用（见 <see cref="ReadClipboardText"/> 的说明）。
+    /// <para>
+    /// 不用 <c>gdk_pixbuf_save_to_buffer</c> 直接要 PNG：那是**变参函数**
+    /// （<c>(pixbuf, &amp;buffer, &amp;size, "png", &amp;error, NULL)</c>），
+    /// 而 C# 的源生成 P/Invoke 不支持变参。所以这里读裸像素、自己编码
+    /// （<see cref="OrielPngEncoder"/>），顺带把"通道数 3 还是 4"这件事显式处理掉。
+    /// </para>
+    /// </remarks>
+    public unsafe byte[]? ReadClipboardImage()
+    {
+        nint clipboard = GtkNative.GtkClipboardGet(GdkSelectionClipboard);
+        if (clipboard == 0)
+        {
+            return null;
+        }
+
+        nint pixbuf = GtkNative.GtkClipboardWaitForImage(clipboard);
+        if (pixbuf == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            int width = GtkNative.GdkPixbufGetWidth(pixbuf);
+            int height = GtkNative.GdkPixbufGetHeight(pixbuf);
+            int stride = GtkNative.GdkPixbufGetRowstride(pixbuf);
+            int channels = GtkNative.GdkPixbufGetNChannels(pixbuf);
+
+            if (width <= 0 || height <= 0 || (channels != 3 && channels != 4) || stride < width * channels)
+            {
+                return null;
+            }
+
+            byte* pixels = (byte*)GtkNative.GdkPixbufGetPixels(pixbuf);
+            if (pixels is null)
+            {
+                return null;
+            }
+
+            var rgba = new byte[width * height * 4];
+            for (int y = 0; y < height; y++)
+            {
+                byte* row = pixels + (y * stride);
+                int target = y * width * 4;
+
+                for (int x = 0; x < width; x++)
+                {
+                    int s = x * channels;
+                    int t = target + (x * 4);
+                    rgba[t] = row[s];
+                    rgba[t + 1] = row[s + 1];
+                    rgba[t + 2] = row[s + 2];
+                    rgba[t + 3] = channels == 4 ? row[s + 3] : (byte)255;
+                }
+            }
+
+            return OrielPngEncoder.Encode(rgba, width, height);
+        }
+        finally
+        {
+            // wait_for_image 返回的是新引用，必须自己放
+            GtkNative.GObjectUnref(pixbuf);
+        }
+    }
+
+    /// <summary>把 PNG 写进剪贴板（解码成 pixbuf 后交给 GTK）。</summary>
+    public unsafe bool WriteClipboardImage(byte[] png)
+    {
+        ArgumentNullException.ThrowIfNull(png);
+
+        OrielImage image;
+        try
+        {
+            image = OrielImage.FromBytes(png);
+        }
+        catch (OrielImageFormatException)
+        {
+            return false;
+        }
+
+        nint clipboard = GtkNative.GtkClipboardGet(GdkSelectionClipboard);
+        if (clipboard == 0)
+        {
+            return false;
+        }
+
+        int width = image.Width;
+        int height = image.Height;
+
+        // data 传 0 = pixbuf 自己分配缓冲（见 GdkPixbufNewFromData 的说明）
+        nint pixbuf = GtkNative.GdkPixbufNewFromData(0, 0, 1, 8, width, height, width * 4, 0, 0);
+        if (pixbuf == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            byte* pixels = (byte*)GtkNative.GdkPixbufGetPixels(pixbuf);
+            if (pixels is null)
+            {
+                return false;
+            }
+
+            ReadOnlySpan<byte> source = image.Rgba.Span;
+            for (int y = 0; y < height; y++)
+            {
+                source.Slice(y * width * 4, width * 4)
+                      .CopyTo(new Span<byte>(pixels + (y * width * 4), width * 4));
+            }
+
+            GtkNative.GtkClipboardSetImage(clipboard, pixbuf);
+            GtkNative.GtkClipboardStore(clipboard);
+            return true;
+        }
+        finally
+        {
+            // set_image 会自己持有引用，这里放掉我们这份
+            GtkNative.GObjectUnref(pixbuf);
+        }
+    }
+
+    /// <summary>写 HTML（<c>text/html</c> + UTF-8 纯文本两个目标）。</summary>
+    /// <remarks>
+    /// GTK 没有"直接设置 HTML"的入口：<c>gtk_clipboard_set_text</c> 只认纯文本，
+    /// 多目标必须走 <c>gtk_clipboard_set_with_data</c>（它要求调用方在对方请求时**回调**提供数据）。
+    /// 回调的生命周期比这次调用长，所以目标表、目标名与状态都放在非托管内存里
+    /// （见 <see cref="ClipboardOffer"/> 的说明）。
+    /// </remarks>
+    public bool WriteClipboardHtml(string html, string? altText)
+    {
+        ArgumentNullException.ThrowIfNull(html);
+
+        byte[] htmlBytes = Encoding.UTF8.GetBytes(html);
+        byte[] textBytes = Encoding.UTF8.GetBytes(altText ?? html);
+
+        return OfferTargets(
+        [
+            ("text/html", htmlBytes),
+            ("UTF8_STRING", textBytes),
+            ("text/plain;charset=utf-8", textBytes),
+        ]);
+    }
+
+    /// <summary>写敏感文本：文本 + <c>x-kde-passwordManagerHint=secret</c>。</summary>
+    /// <remarks>
+    /// <c>x-kde-passwordManagerHint</c> 是 KDE 发起、被 klipper / GPaste 等剪贴板管理器认的约定。
+    /// 与 macOS 的 ConcealedType 一样，它只是**请求**。
+    /// </remarks>
+    public bool WriteClipboardSecret(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        byte[] bytes = Encoding.UTF8.GetBytes(text);
+        return OfferTargets(
+        [
+            ("UTF8_STRING", bytes),
+            ("text/plain;charset=utf-8", bytes),
+            ("x-kde-passwordManagerHint", "secret"u8.ToArray()),
+        ]);
+    }
+
+    /// <summary>以多目标方式声明剪贴板内容。</summary>
+    private static unsafe bool OfferTargets((string Target, byte[] Data)[] items)
+    {
+        nint clipboard = GtkNative.GtkClipboardGet(GdkSelectionClipboard);
+        if (clipboard == 0)
+        {
+            return false;
+        }
+
+        ClipboardOffer offer = ClipboardOffer.Create(items);
+
+        bool claimed = GtkNative.GtkClipboardSetWithData(
+            clipboard,
+            offer.Targets,
+            (uint)items.Length,
+            &OnClipboardGet,
+            &OnClipboardClear,
+            offer.UserData);
+
+        if (!claimed)
+        {
+            offer.Release();
+            return false;
+        }
+
+        GtkNative.GtkClipboardStore(clipboard);
+        return true;
+    }
+
+    /// <summary>GTK 在对方请求数据时调用：按 <paramref name="info"/> 取对应的那段字节。</summary>
+    /// <remarks>
+    /// <c>[UnmanagedCallersOnly]</c> 的方法里**不能让托管异常逃出去**（那会直接终止进程），
+    /// 所以整段包在 try/catch 里，失败只进诊断日志。
+    /// </remarks>
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    private static unsafe void OnClipboardGet(nint clipboard, nint selectionData, uint info, nint userData)
+    {
+        try
+        {
+            if (GCHandle.FromIntPtr(userData).Target is not ClipboardOffer offer
+                || info >= (uint)offer.Items.Length)
+            {
+                return;
+            }
+
+            byte[] data = offer.Items[(int)info].Data;
+            nint target = GtkNative.GtkSelectionDataGetTarget(selectionData);
+
+            fixed (byte* pointer = data)
+            {
+                _ = GtkNative.GtkSelectionDataSet(selectionData, target, 8, (nint)pointer, data.Length);
+            }
+        }
+        catch (Exception ex)
+        {
+            OrielDiagnostics.Report($"[OrielWeb] 剪贴板取数回调失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>GTK 在剪贴板所有权失去时调用：释放在 <see cref="ClipboardOffer"/> 里的非托管内存。</summary>
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    private static void OnClipboardClear(nint clipboard, nint userData)
+    {
+        try
+        {
+            if (GCHandle.FromIntPtr(userData).Target is ClipboardOffer offer)
+            {
+                offer.Release();
+            }
+        }
+        catch (Exception ex)
+        {
+            OrielDiagnostics.Report($"[OrielWeb] 剪贴板清理回调失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 一次"多目标剪贴板内容"的非托管状态（目标表 + 目标名 + 数据）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// GTK 保存的是**指针**：目标表的每一条指向一个 C 字符串，回调里的 <c>userData</c>
+    /// 指向这份状态。它们在所有权失去（<c>clearFunc</c>）之前必须一直有效——
+    /// 所以全部放在非托管内存里，并用 <see cref="GCHandle"/> 把托管对象钉住。
+    /// </para>
+    /// <para>
+    /// <see cref="Release"/> 是**幂等**的：GTK 可能先调 clear 再让我们自己在失败路径里收尾，
+    /// 两处都调不能变成 double free。
+    /// </para>
+    /// </remarks>
+    private sealed class ClipboardOffer
+    {
+        private readonly nint[] _strings;
+        private GCHandle _handle;
+        private bool _released;
+
+        private ClipboardOffer((string Target, byte[] Data)[] items)
+        {
+            Items = items;
+            _strings = new nint[items.Length];
+        }
+
+        /// <summary>目标与对应的字节。</summary>
+        public (string Target, byte[] Data)[] Items { get; }
+
+        /// <summary><c>GtkTargetEntry[]</c> 的非托管地址。</summary>
+        public nint Targets { get; private set; }
+
+        /// <summary>传给 GTK 的 <c>userData</c>（GCHandle 指针）。</summary>
+        public nint UserData { get; private set; }
+
+        public static ClipboardOffer Create((string Target, byte[] Data)[] items)
+        {
+            var offer = new ClipboardOffer(items);
+            int size = Marshal.SizeOf<GtkTargetEntry>();
+
+            offer.Targets = Marshal.AllocHGlobal(size * items.Length);
+            for (int i = 0; i < items.Length; i++)
+            {
+                offer._strings[i] = Marshal.StringToCoTaskMemUTF8(items[i].Target);
+                var entry = new GtkTargetEntry
+                {
+                    Target = offer._strings[i],
+                    Flags = 0,
+                    Info = (uint)i,
+                };
+
+                Marshal.StructureToPtr(entry, offer.Targets + (i * size), fDeleteOld: false);
+            }
+
+            offer._handle = GCHandle.Alloc(offer);
+            offer.UserData = GCHandle.ToIntPtr(offer._handle);
+            return offer;
+        }
+
+        public void Release()
+        {
+            if (_released)
+            {
+                return;
+            }
+
+            _released = true;
+
+            foreach (nint text in _strings)
+            {
+                if (text != 0)
+                {
+                    Marshal.FreeCoTaskMem(text);
+                }
+            }
+
+            if (Targets != 0)
+            {
+                Marshal.FreeHGlobal(Targets);
+                Targets = 0;
+            }
+
+            if (_handle.IsAllocated)
+            {
+                _handle.Free();
+            }
+        }
     }
 
     public void Quit() => GtkNative.GtkMainQuit();

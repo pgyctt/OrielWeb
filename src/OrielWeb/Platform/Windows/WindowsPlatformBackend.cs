@@ -412,6 +412,432 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         }
     }
 
+    // ---- 剪贴板：图片 / HTML / 敏感文本（B19）----
+
+    /// <summary>
+    /// 读剪贴板里的位图（<c>CF_DIB</c>）并编码成 PNG。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 只认 <b>BI_RGB 的 24/32 位</b>：那是截图工具、画图、浏览器复制图片时实际会放的形态。
+    /// 其它（调色板位图、RLE、JPEG/PNG 私有格式）如实返回 <c>null</c>——
+    /// 硬猜格式的后果是给出一张颜色错乱的图，而调用方无从判断。
+    /// </para>
+    /// <para>
+    /// <b>32 位 DIB 的 alpha 常常全是 0</b>（<c>CF_DIB</c> 不带 alpha 语义）：直接按原值转换会得到
+    /// 一张全透明的图。所以这里检查一遍——全 0 就当作不透明。
+    /// </para>
+    /// </remarks>
+    public byte[]? ReadClipboardImage()
+    {
+        if (!Win32Clipboard.IsClipboardFormatAvailable(Win32Clipboard.CF_DIB))
+        {
+            return null;
+        }
+
+        if (!TryOpenClipboard())
+        {
+            return null;
+        }
+
+        try
+        {
+            nint handle = Win32Clipboard.GetClipboardData(Win32Clipboard.CF_DIB);
+            if (handle == 0)
+            {
+                return null;
+            }
+
+            nint pointer = Win32Clipboard.GlobalLock(handle);
+            if (pointer == 0)
+            {
+                return null;
+            }
+
+            try
+            {
+                int size = (int)Win32Clipboard.GlobalSize(handle);
+                if (size <= 0)
+                {
+                    return null;
+                }
+
+                return DecodeDibToPng(new ReadOnlySpan<byte>((void*)pointer, size));
+            }
+            finally
+            {
+                _ = Win32Clipboard.GlobalUnlock(handle);
+            }
+        }
+        finally
+        {
+            _ = Win32Clipboard.CloseClipboard();
+        }
+    }
+
+    /// <summary>
+    /// 把 PNG 写进剪贴板：<c>CF_DIB</c>（兼容性最好）+ 注册格式 <c>PNG</c>（保留 alpha）。
+    /// </summary>
+    /// <remarks>
+    /// 两种格式都给：<c>CF_DIB</c> 是老程序的共同语言（画图、Word、资源管理器），
+    /// 而 <c>PNG</c> 是浏览器与新编辑器优先取的（带 alpha，且不用我们来选色深）。
+    /// 只给其中一种会让另一半粘贴目标拿到一张透明/失真或根本没有的图。
+    /// </remarks>
+    public bool WriteClipboardImage(byte[] png)
+    {
+        ArgumentNullException.ThrowIfNull(png);
+
+        OrielImage image;
+        try
+        {
+            image = OrielImage.FromBytes(png);
+        }
+        catch (OrielImageFormatException)
+        {
+            // 命令层应当已经校验过；走到这里说明调用方绕过了它
+            return false;
+        }
+
+        byte[] dib = BuildDib(image.Rgba.Span, image.Width, image.Height);
+
+        if (!TryOpenClipboard())
+        {
+            return false;
+        }
+
+        try
+        {
+            if (!Win32Clipboard.EmptyClipboard())
+            {
+                return false;
+            }
+
+            bool ok = TrySetClipboardBytes(Win32Clipboard.CF_DIB, dib);
+
+            uint pngFormat = Win32Clipboard.RegisterClipboardFormat("PNG");
+            if (pngFormat != 0)
+            {
+                ok |= TrySetClipboardBytes(pngFormat, png);
+            }
+
+            return ok;
+        }
+        finally
+        {
+            _ = Win32Clipboard.CloseClipboard();
+        }
+    }
+
+    /// <summary>写 CF_HTML + 纯文本回退。</summary>
+    public bool WriteClipboardHtml(string html, string? altText)
+    {
+        ArgumentNullException.ThrowIfNull(html);
+
+        uint htmlFormat = Win32Clipboard.RegisterClipboardFormat("HTML Format");
+        if (htmlFormat == 0)
+        {
+            return false;
+        }
+
+        byte[] payload = OrielClipboardHtml.Build(html);
+
+        if (!TryOpenClipboard())
+        {
+            return false;
+        }
+
+        try
+        {
+            if (!Win32Clipboard.EmptyClipboard())
+            {
+                return false;
+            }
+
+            bool ok = TrySetClipboardBytes(htmlFormat, payload);
+
+            // 纯文本回退：记事本、终端、不支持 HTML 的输入框拿到的是这个
+            ok |= TrySetClipboardText(altText ?? html);
+            return ok;
+        }
+        finally
+        {
+            _ = Win32Clipboard.CloseClipboard();
+        }
+    }
+
+    /// <summary>
+    /// 写敏感文本：先放三个"别记录"的标记格式，再放文本。
+    /// </summary>
+    /// <remarks>
+    /// 标记格式来自 Windows 10 的剪贴板历史/云同步协议（<c>CanIncludeInClipboardHistory</c>、
+    /// <c>CanUploadToCloudClipboard</c>、<c>ExcludeClipboardContentFromMonitorProcessing</c>）。
+    /// 三个都要给：前两个管"历史与云同步"，第三个管"别被剪贴板查看器抓"。
+    /// 它们都只是**请求**——系统或第三方剪贴板管理器可以不理（与 Tauri 的说明一致）。
+    /// </remarks>
+    public bool WriteClipboardSecret(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        if (!TryOpenClipboard())
+        {
+            return false;
+        }
+
+        try
+        {
+            if (!Win32Clipboard.EmptyClipboard())
+            {
+                return false;
+            }
+
+            uint history = Win32Clipboard.RegisterClipboardFormat("CanIncludeInClipboardHistory");
+            if (history != 0)
+            {
+                _ = TrySetClipboardDwordZero(history);
+            }
+
+            uint cloud = Win32Clipboard.RegisterClipboardFormat("CanUploadToCloudClipboard");
+            if (cloud != 0)
+            {
+                _ = TrySetClipboardDwordZero(cloud);
+            }
+
+            uint exclude = Win32Clipboard.RegisterClipboardFormat("ExcludeClipboardContentFromMonitorProcessing");
+            if (exclude != 0)
+            {
+                _ = TrySetClipboardDwordZero(exclude);
+            }
+
+            return TrySetClipboardText(text);
+        }
+        finally
+        {
+            _ = Win32Clipboard.CloseClipboard();
+        }
+    }
+
+    /// <summary>把一段字节放进剪贴板（调用方已 <c>OpenClipboard</c> 且 <c>EmptyClipboard</c>）。</summary>
+    /// <remarks>
+    /// <c>SetClipboardData</c> 成功后那块 <c>GMEM_MOVEABLE</c> 内存的**所有权归系统**，
+    /// 不能再释放——释放了系统在粘贴时会读到已释放的内存。所以只有失败路径才 <c>GlobalFree</c>。
+    /// </remarks>
+    private static bool TrySetClipboardBytes(uint format, ReadOnlySpan<byte> data)
+    {
+        nint handle = Win32Clipboard.GlobalAlloc(Win32Clipboard.GMEM_MOVEABLE, (nuint)data.Length);
+        if (handle == 0)
+        {
+            return false;
+        }
+
+        bool transferred = false;
+        try
+        {
+            nint pointer = Win32Clipboard.GlobalLock(handle);
+            if (pointer == 0)
+            {
+                return false;
+            }
+
+            try
+            {
+                data.CopyTo(new Span<byte>((void*)pointer, data.Length));
+            }
+            finally
+            {
+                _ = Win32Clipboard.GlobalUnlock(handle);
+            }
+
+            if (Win32Clipboard.SetClipboardData(format, handle) == 0)
+            {
+                return false;
+            }
+
+            transferred = true;
+            return true;
+        }
+        finally
+        {
+            if (!transferred)
+            {
+                _ = Win32Clipboard.GlobalFree(handle);
+            }
+        }
+    }
+
+    /// <summary>把文本（UTF-16、NUL 结尾）放进剪贴板。</summary>
+    private static bool TrySetClipboardText(string text)
+    {
+        // +1 是 NUL 结尾
+        nuint bytes = (nuint)((text.Length + 1) * sizeof(char));
+        nint handle = Win32Clipboard.GlobalAlloc(Win32Clipboard.GMEM_MOVEABLE, bytes);
+        if (handle == 0)
+        {
+            return false;
+        }
+
+        bool transferred = false;
+        try
+        {
+            nint pointer = Win32Clipboard.GlobalLock(handle);
+            if (pointer == 0)
+            {
+                return false;
+            }
+
+            try
+            {
+                fixed (char* source = text)
+                {
+                    Buffer.MemoryCopy(source, (void*)pointer, bytes, (nuint)(text.Length * sizeof(char)));
+                }
+
+                // 自己补 NUL：MemoryCopy 只搬了 text.Length 个字符
+                Marshal.WriteInt16(pointer, text.Length * sizeof(char), 0);
+            }
+            finally
+            {
+                _ = Win32Clipboard.GlobalUnlock(handle);
+            }
+
+            if (Win32Clipboard.SetClipboardData(Win32Clipboard.CF_UNICODETEXT, handle) == 0)
+            {
+                return false;
+            }
+
+            transferred = true;
+            return true;
+        }
+        finally
+        {
+            if (!transferred)
+            {
+                _ = Win32Clipboard.GlobalFree(handle);
+            }
+        }
+    }
+
+    /// <summary>往剪贴板里放一个值为 0 的 DWORD（剪贴板历史/云同步的"允许"开关用）。</summary>
+    private static bool TrySetClipboardDwordZero(uint format)
+    {
+        Span<byte> zero = stackalloc byte[4];
+        return TrySetClipboardBytes(format, zero);
+    }
+
+    /// <summary>
+    /// <c>CF_DIB</c> → PNG。只认 BI_RGB 的 24/32 位（见 <see cref="ReadClipboardImage"/>）。
+    /// </summary>
+    private static byte[]? DecodeDibToPng(ReadOnlySpan<byte> dib)
+    {
+        if (dib.Length < 40)
+        {
+            return null;
+        }
+
+        int headerSize = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(dib[..4]);
+        if (headerSize < 40 || dib.Length < headerSize)
+        {
+            return null;
+        }
+
+        int rawWidth = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(dib[4..8]);
+        int rawHeight = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(dib[8..12]);
+        ushort bitCount = System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(dib[14..16]);
+        uint compression = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(dib[16..20]);
+
+        bool topDown = rawHeight < 0;
+        int width = rawWidth;
+        int height = Math.Abs(rawHeight);
+
+        if (width <= 0 || height <= 0 || compression != 0 || (bitCount != 24 && bitCount != 32))
+        {
+            return null;
+        }
+
+        int bytesPerPixel = bitCount / 8;
+        int sourceStride = ((width * bitCount + 31) / 32) * 4;
+        if (dib.Length < (long)headerSize + ((long)sourceStride * height))
+        {
+            return null;
+        }
+
+        var rgba = new byte[width * height * 4];
+        bool anyAlpha = false;
+
+        for (int y = 0; y < height; y++)
+        {
+            int sourceRow = topDown ? y : height - 1 - y;
+            int source = headerSize + (sourceRow * sourceStride);
+            int target = y * width * 4;
+
+            for (int x = 0; x < width; x++)
+            {
+                int s = source + (x * bytesPerPixel);
+                byte b = dib[s];
+                byte g = dib[s + 1];
+                byte r = dib[s + 2];
+                byte a = bytesPerPixel == 4 ? dib[s + 3] : (byte)255;
+
+                if (a != 0)
+                {
+                    anyAlpha = true;
+                }
+
+                rgba[target + (x * 4)] = r;
+                rgba[target + (x * 4) + 1] = g;
+                rgba[target + (x * 4) + 2] = b;
+                rgba[target + (x * 4) + 3] = a;
+            }
+        }
+
+        if (bytesPerPixel == 4 && !anyAlpha)
+        {
+            // CF_DIB 不携带 alpha 语义：全 0 表示"没给"，不是"全透明"
+            for (int i = 3; i < rgba.Length; i += 4)
+            {
+                rgba[i] = 255;
+            }
+        }
+
+        return OrielPngEncoder.Encode(rgba, width, height);
+    }
+
+    /// <summary>RGBA → <c>CF_DIB</c>（40 字节头 + 自下而上的 BGRA/BGR 行）。</summary>
+    /// <remarks>
+    /// 一律写 32 位：24 位要按 4 字节对齐补位，除了省一点内存没有任何好处，
+    /// 而 32 位是所有粘贴目标都认的形态。
+    /// </remarks>
+    private static byte[] BuildDib(ReadOnlySpan<byte> rgba, int width, int height)
+    {
+        int stride = width * 4;
+        var dib = new byte[40 + (stride * height)];
+
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(dib.AsSpan(0, 4), 40);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(dib.AsSpan(4, 4), width);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(dib.AsSpan(8, 4), height); // 正数 = 自下而上
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(dib.AsSpan(12, 2), 1);    // planes
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(dib.AsSpan(14, 2), 32);   // bpp
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(dib.AsSpan(16, 4), 0);    // BI_RGB
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(dib.AsSpan(20, 4), stride * height);
+
+        for (int y = 0; y < height; y++)
+        {
+            int source = y * stride;
+            int target = 40 + ((height - 1 - y) * stride);
+
+            for (int x = 0; x < width; x++)
+            {
+                int s = source + (x * 4);
+                int t = target + (x * 4);
+                dib[t] = rgba[s + 2];      // B
+                dib[t + 1] = rgba[s + 1];  // G
+                dib[t + 2] = rgba[s];      // R
+                dib[t + 3] = rgba[s + 3];  // A
+            }
+        }
+
+        return dib;
+    }
+
     /// <summary>
     /// 打开剪贴板，失败时重试几次。
     /// </summary>

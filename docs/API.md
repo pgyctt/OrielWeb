@@ -1068,7 +1068,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 | `opener` | `openUrl` / `openPath` / `revealItemInDir` |
 | `notification` | `isPermissionGranted` / `requestPermission` / `sendNotification`（含 `schedule` 排期）+ 登记表 `active` / `pending` / `cancel` / `cancelAll` / `removeActive` / `removeAllActive` + `Schedule` / `ScheduleEvery` + `onNotificationReceived`（真事件）/ `onAction`（订阅时抛 `not_supported`，见该模块一节） |
 | `autostart` | `isEnabled` / `enable` / `disable` |
-| `clipboard` | `readText` / `writeText` / `clear`（纯文本） |
+| `clipboard` | `readText` / `writeText` / `clear` + `readImage` / `writeImage`（PNG）/ `writeHtml`（HTML + 纯文本回退）/ `writeSecret`（请求不进历史） |
 | `dialog` | `open` / `save` / `message` / `ask` / `confirm` |
 | `dpi` | `LogicalSize` / `PhysicalSize` / `LogicalPosition` / `PhysicalPosition` + 归一与换算（`toPhysical` / `toLogical`） |
 | `image` | `Image`（`fromPath` / `fromBytes` / `new`）+ `transformImage`。**与 Tauri 的本质分歧**：Tauri 的 `Image` 是资源表 handle（持 `rid`、有 `close()`），本库没有资源表——它是**页面侧字节容器**，因此**没有 `close()`**（迁移代码里的 `await image.close()` 会抛 `TypeError`，宁可当场炸也不要带着错误的心智模型继续写）。`rgba()` / `size()` 是本地值，但签名仍是 `Promise`（`await` 照样能跑）。尺寸解析（PNG 的 IHDR、ICO 的 `ICONDIRENTRY`，其中宽高字段的 **0 表示 256**）在页面侧完成；解码**像素**才请宿主（`window.decodeImage`），结果缓存 |
@@ -1186,11 +1186,29 @@ if (await confirm('确定删除？', { okLabel: '删除' })) { /* ... */ }
 ### 系统剪贴板：`clipboard`
 
 ```js
-import { readText, writeText, clear } from '@orielweb/api/clipboard';
+import {
+    readText, writeText, clear,
+    readImage, writeImage, writeHtml, writeSecret,
+} from '@orielweb/api/clipboard';
 
 await writeText('内容');        // → boolean（写成功与否）
 const text = await readText();  // → string | null（null = 剪贴板里没有文本）
 await clear();                  // → boolean
+
+// 图片：读回来是 Image（与 @orielweb/api/image 同一个类）
+const image = await readImage();               // 剪贴板里没有图片时 reject
+const { width, height } = await image.size();
+const rgba = await image.rgba();
+
+await writeImage('C:/shots/a.png');            // 路径
+await writeImage(await Image.fromPath('a.png')); // Image 实例
+await writeImage(pngBytes);                    // PNG/ICO 的**编码字节**
+
+// 富文本：HTML + 纯文本回退
+await writeHtml('<b>加粗</b>', '加粗');
+
+// 敏感文本（密码/密钥）：请求系统别记进历史、别云同步
+await writeSecret('correct horse battery staple');
 ```
 
 需要能力声明（读写都是能力：写能覆盖用户已复制的内容，读可能读到密码管理器刚放进去的东西）：
@@ -1210,9 +1228,17 @@ c.Allow("clipboard.*");   // 或逐条 Allow("clipboard.readText") 等
 平台实现：Windows 走 Win32 剪贴板 API、Linux 走 GTK `GtkClipboard`、macOS 走 `NSPasteboard`。
 **Linux 与 macOS 的实现未在真机验证**（已记入 CHANGELOG 的"已知限制"）。
 
-**刻意不做**：`writeHtml`（Windows 上是 CF_HTML，带字节偏移头的私有格式，
-**偏移写错会让粘贴目标是乱码或截断**，且在"看起来成功了"的情况下静默发生）、
-`writeImage` / `readImage`（要图像句柄模型）、`writeSecret`（macOS 专有标记）。
+#### 图片与富文本（B19）
+
+| 要点 | 说明 |
+|---|---|
+| **图片只走 PNG** | 宿主读到的位图统一编码成 PNG 回来（Windows 读 `CF_DIB` 后用本库的 `OrielPngEncoder`），页面侧 `Image` 持有的正是编码字节。写图片时 PNG 直接透传，ICO 先解码再重编码成 PNG——ICO 只有 Windows 那边的解码器可靠 |
+| **不收裸 RGBA** | `writeImage(Uint8Array)` 一律按**编码字节**解释。裸像素没有随行尺寸，猜一个只会得到一张错图（Tauri 的 JS 文档里那个"红绿两个像素"的示例，在它的 Rust 侧同样解不出来） |
+| **空剪贴板会 reject** | `readImage()` 在剪贴板里没有图片时抛错（与 Tauri 一致），而不是给一个空 `Image` |
+| **HTML 是 CF_HTML** | Windows 上带 UTF-8 字节偏移头（`StartHTML`/`EndHTML`/`StartFragment`/`EndFragment`），偏移写错会**静默**粘出乱码。头部由 `OrielClipboardHtml` 统一构造，单测把产物按偏移切回去逐段比对 |
+| **只在 Windows 有 `CF_HTML`** | macOS 写 `public.html` + `public.utf8-plain-text`；Linux 用 `gtk_clipboard_set_with_data` 注册 `text/html` + `UTF8_STRING`（GTK 没有"直接设 HTML"的入口） |
+| **`writeSecret` 只是请求** | Windows 三个标记格式（历史/云同步/监视器）、macOS `org.nspasteboard.ConcealedType`、Linux `x-kde-passwordManagerHint=secret`。不认这些约定的剪贴板管理器照样会存下来 |
+| **读回来没有 `readHtml()`** | 与 Tauri 一致：富文本的读取在各平台都没有稳定接口，读回来的是纯文本 |
 
 > ⚠️ **`--selftest api` 会真写一次系统剪贴板**（写进去、读回来、再清空）——
 > 因为它改不了系统状态、也不弹窗口，而"写进去再读回来"是唯一能证明三个平台的原生实现
