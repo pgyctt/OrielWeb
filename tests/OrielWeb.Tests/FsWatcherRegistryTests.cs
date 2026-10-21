@@ -274,7 +274,7 @@ public sealed class FsWatcherRegistryTests : IDisposable
 
         // 同一路径在窗口里被合并成一条（写入两次 = create + changed，合并后只剩最后那条）。
         // 只针对被写的那个文件：目录自身的 mtime 也会变，那是另一条路径，理应各算一条
-        Assert.Single(harness.Snapshot().Where(e => e.Id == id && e.Payload.Contains("debounced.txt")));
+        Assert.Single(harness.Snapshot(), e => e.Id == id && e.Payload.Contains("debounced.txt"));
     }
 
     [Fact]
