@@ -11,6 +11,37 @@
 
 ### 新增
 
+- **通知登记表、排期与回传（B18）**：`@orielweb/api/notification` 补齐了桌面端可做的那一面。
+  - **登记表**：`active()` / `pending()` / `cancel()` / `cancelAll()` / `removeActive()` /
+    `removeAllActive()`，宿主侧是一张 `OrielNotificationRegistry`（id 单调递增、永不复用；
+    活动列表上限 256 条，超出淘汰最早的）。语义是**本应用发过的通知**，不是系统通知中心；
+    `removeActive()` **不撤下系统里已显示的那条**（投递走短命子进程，投递完就拿不到系统侧句柄）。
+  - **排期**：`Schedule`（`at` / `interval` / `every`）+ `ScheduleEvery`，`sendNotification`
+    带 `schedule` 时是排期。**桌面端真的排期**——Tauri 的桌面端忽略 `schedule`、立即显示
+    （"Scheduling is only supported on mobile"），本库是超集；代价是**应用退出即止**
+    （调度器在宿主进程内，没有系统级调度）。`at` 必须是将来，`at`/`interval`/`every`
+    **恰好一个**，配置错了在**登记之前**报 `invalid_argument`。`interval` 的规则：
+    给了的字段都相等、更细的未设定字段按 0（`{ hour: 9 }` = 每天 09:00:00，
+    `{ second: 30 }` = 每分钟第 30 秒）。
+  - **回传**：`onNotificationReceived` 是**真事件**（宿主每次成功投递时推
+    `notification.received`，载荷 `{ id, title, body }`）；`onAction` **订阅时抛
+    `not_supported`**——三平台投递机制都拿不到点击（未打包的 Windows toast 要 AUMID +
+    COM 激活器，macOS 的 osascript 与 Linux 的 notify-send 都没有回调入口）。给一个永不触发的
+    订阅比报错更糟：调用方只会在运行时才发现收不到。
+  - C# 侧对应：`app.ScheduleNotification(options, schedule)`、`ActiveNotifications`、
+    `PendingNotifications`、`Cancel{All,}ScheduledNotifications`、
+    `Remove{All,}ActiveNotifications`；`Dispose` 时停掉所有定时器（待发的随进程消失）。
+  - 移动端专有的 8 个导出（`Importance` / `Visibility` / `channels` ×4 / `registerActionTypes`）
+    **不做**：桌面上没有对应概念。对齐账本的 notification 缺口从 18 项降到 8 项。
+
+### 修复
+
+- **取消排期后定时器仍会触发**：`CancellationTokenSource.Dispose()` 只释放资源、**不会**取消令牌，
+  只 Dispose 的话已排进队列的回调照样跑（症状是"取消了的通知仍然弹出来"）。改为先 `Cancel()`
+  再 `Dispose()`，并用测试钉住（`CancelRemovesPendingAndStopsTheTimerCallback`）。
+
+### 新增
+
 - **fs 句柄族（B17）：`open` / `create` / `FileHandle` / `SeekMode` / `readTextFileLines`**。
   宿主侧新增一张**应用级 id 句柄表**（`OrielFileHandleRegistry`，对标 Tauri 的资源表；
   id 单调递增、永不复用，应用 `Dispose` 时统一关闭并落盘）。命令面：

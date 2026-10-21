@@ -701,7 +701,7 @@ builder.SingleInstance("com.example.myapp", win => { /* 首实例被唤醒 */ })
 | 能力 | 用法 | 说明 |
 |---|---|---|
 | 托盘 | `builder.AddTray(o => { o.Tooltip = "…"; o.MenuOnClick = true; })` → `app.Tray` | 菜单项复用同一套 `OrielMenuItem`；`MenuOnClick` 让左键也弹菜单（手动验证时有用） |
-| 通知 | `app.ShowNotification(title, body)` | 返回 `bool`：**提交失败**才是实现问题，"已提交但没显示"是系统设置问题。点击回调**不提供**（三平台都拿不到） |
+| 通知 | `app.ShowNotification(title, body)` / `app.ScheduleNotification(options, schedule)` | 返回 `bool`：**提交失败**才是实现问题，"已提交但没显示"是系统设置问题。**点击回调不提供**（三平台都拿不到，页面侧 `onAction` 订阅时抛 `not_supported`）；`ActiveNotifications` / `PendingNotifications` / `CancelScheduledNotifications` / `RemoveActiveNotifications` 是页面对应函数的宿主侧入口 |
 | 窗口上下文菜单 | `window.ShowContextMenu(items)` | 三平台都支持（Windows 阻塞、另两个异步）；菜单构建按平台抽成共享类 |
 | Shell | `app.OpenExternal(url)`、`app.RevealInFileManager(path)`、`app.OpenWithDefaultApp(path)` | **默认拒绝式的 scheme 白名单**（`http`/`https`/`mailto`），可 `UseShell` 扩展；被拒或不支持时返回 `false` |
 | 开机自启 | `app.EnableAutoStart(arguments = null)` / `app.DisableAutoStart()` / `app.IsAutoStartEnabled` | Windows 写 HKCU 的 Run 键、macOS 写 LaunchAgent plist（不调 `launchctl load`，避免立刻又拉起一个）、Linux 写 autostart `.desktop`。标识默认取可执行文件名，`UseAutoStartId` 覆盖（多份构建共用一个标识会互相串） |
@@ -797,6 +797,11 @@ builder.SingleInstance("com.example.myapp", win => { /* 首实例被唤醒 */ })
 |---|---|
 | `Title` / `Body` / `IconPath` | 标题（多平台加粗显示，不可为空）/ 正文 / 附加图标（部分平台忽略） |
 | `Id` | 通知身份（Windows 上是 toast 的 `Tag`）。**不用于点击回传**——点击上报功能已整体移除 |
+
+排期（`OrielNotificationSchedule`，`ScheduleNotification` 的第二个参数）：`AtDate` + `AtRepeating`、
+`Interval`（`OrielScheduleInterval` 的日历匹配）、`Every` + `EveryCount`（`OrielScheduleEvery` 的单位）
+**三者恰好一个**；`AllowWhileIdle` 是 Android 概念，桌面上接受并忽略。
+调度器在宿主进程内——**应用退出即止**。
 
 shell（`OrielShellOptions`）：`AllowedSchemes`（默认 `http` / `https` / `mailto`）、静态 `DefaultSchemes`、
 链式 `WithScheme(string)`。
@@ -1061,7 +1066,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 | `app` | `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`（只读元信息，**无需能力声明**）；`exit` / `show` / `hide`（**需要显式 `Allow`**，见 §4 的能力表） |
 | `fs` | `readTextFile` / `writeTextFile` / `readFile` / `writeFile` / `exists` / `size` / `readDir` / `stat` / `lstat` / `mkdir` / `remove` / `rename` / `copyFile` / `truncate`（**两道关都必过**，见下） |
 | `opener` | `openUrl` / `openPath` / `revealItemInDir` |
-| `notification` | `isPermissionGranted` / `requestPermission` / `sendNotification`（桌面子集） |
+| `notification` | `isPermissionGranted` / `requestPermission` / `sendNotification`（含 `schedule` 排期）+ 登记表 `active` / `pending` / `cancel` / `cancelAll` / `removeActive` / `removeAllActive` + `Schedule` / `ScheduleEvery` + `onNotificationReceived`（真事件）/ `onAction`（订阅时抛 `not_supported`，见该模块一节） |
 | `autostart` | `isEnabled` / `enable` / `disable` |
 | `clipboard` | `readText` / `writeText` / `clear`（纯文本） |
 | `dialog` | `open` / `save` / `message` / `ask` / `confirm` |
@@ -1238,9 +1243,62 @@ import { isEnabled, enable } from '@orielweb/api/autostart';
 | `opener.openWith`（用指定程序打开） | ⛔ **明确拒绝**（`not_supported`）——那是任意程序执行，需要"允许哪些程序"的授权模型 | ✅ |
 | `opener.revealItemInDir` 返回值 | `boolean`（**全部**成功才为 true） | `void` |
 | `sendNotification` | **异步**（走宿主命令，三平台都是原生通知） | 同步（桌面端用 `window.Notification`） |
-| `notification` 的通知管理 | ⛔ 不提供（要通知句柄表：`active`/`pending`/`cancel`/`cancelAll`/`removeActive`） | ✅ |
-| `notification` 的渠道与调度 | ⛔ 不提供（`channels`/`Importance`/`Visibility` 是 Android 概念；`Schedule` 要常驻定时器） | ✅ |
-| `notification.onAction` / `onNotificationReceived` | ⛔ 不提供（要把通知点击回传到页面） | ✅ |
+| `notification` 的通知管理 | ✅ `active` / `pending` / `cancel` / `cancelAll` / `removeActive` / `removeAllActive`（宿主侧登记表）。语义是**本应用发过的通知**，不是系统通知中心；移除不撤下系统里那条 | 桌面端**不支持**（`active`/`pending` 只在移动端） |
+| `notification` 的调度 | ✅ `Schedule` / `ScheduleEvery`，**桌面端真的排期**（调度器在宿主进程内，应用退出即止） | 桌面端**忽略** `schedule`、立即显示（"Scheduling is only supported on mobile"） |
+| `notification.onNotificationReceived` | ✅ 真事件：宿主每次**成功投递**（含排期到点）触发 | 桌面端无对应实现 |
+| `notification.onAction` | ⛔ **订阅时抛 `not_supported`**（三平台投递机制都拿不到点击） | 移动端 ✅ |
+| `notification` 的渠道与等级 | ⛔ 不提供（`channels` / `Importance` / `Visibility` / `registerActionTypes` 是 Android/iOS 概念） | ✅ |
+
+### 通知的登记表与排期（B18）
+
+```js
+import {
+    sendNotification, active, pending, cancel, cancelAll,
+    removeActive, removeAllActive, Schedule, ScheduleEvery,
+    onNotificationReceived, onAction,
+} from '@orielweb/api/notification';
+
+await sendNotification({ title: '导出完成', body: '共 128 条' });          // 立刻发
+
+await sendNotification({                                                   // 十分钟后一次
+    title: '休息一下',
+    schedule: Schedule.at(new Date(Date.now() + 600_000)),
+});
+
+await sendNotification({                                                   // 每天 09:00:00
+    title: '早报',
+    schedule: Schedule.interval({ hour: 9, minute: 0 }),
+});
+
+await sendNotification({                                                   // 每两小时一次
+    title: '喝水',
+    schedule: Schedule.every(ScheduleEvery.Hour, 2),
+});
+
+const scheduled = await pending();                       // [{ id, title, body, schedule }]
+await cancel(scheduled.map((n) => n.id));                // 取消待发（可靠：定时器在宿主里）
+
+const shown = await active();                            // 本应用发过、未被移除的
+await removeActive(shown.map((n) => ({ id: n.id })));    // 只清记账（见下）
+```
+
+三条语义必须记牢：
+
+1. **`active()` 是本库的记账，不是系统通知中心。** 别的应用发的、用户在系统里手动清掉的，
+   本库都看不到（三平台都没有"列出通知中心"的 API）。容量上限 256 条，超出淘汰最早的。
+2. **`removeActive()` 不撤下系统里已显示的那条。** 投递走的是短命子进程（Windows PowerShell /
+   macOS osascript / Linux `notify-send`），投递完就拿不到系统侧句柄。`active()` 里消失 ≠
+   通知横幅消失。
+3. **排期在宿主进程内**，所以**应用退出即止**。`at` / `interval` / `every` 恰好给一个，
+   `at.date` 必须是将来——配置错了在**登记之前**报 `invalid_argument`，不会"永远不响"。
+   要跨进程可靠请用系统的计划任务 / systemd timer / launchd。
+
+`interval` 的规则：**给了的字段都要相等，更细的未设定字段按 0**——`{ hour: 9 }` 是每天
+09:00:00，`{ second: 30 }` 是每分钟第 30 秒。
+
+`onNotificationReceived` 是**真事件**（宿主成功投递时触发，载荷 `{ id, title, body }`）。
+`onAction` 订阅时**立刻抛 `not_supported`**（`error.code`）：三平台都拿不到"用户点了通知"，
+给一个永不触发的订阅只会让人在运行时才发现收不到。要点击回传得先进 .app bundle / AUMID 打包。
 
 > **`opener.openWith` 为什么明确拒绝而不是静默忽略**：静默忽略会让调用方以为
 > "我指定了用某个程序打开"，实际按系统默认打开——一次静默的行为降级，而调用方不会发现。

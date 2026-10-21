@@ -30,6 +30,13 @@ public sealed class PlatformCommandTests
     [InlineData("notification.isPermissionGranted")]
     [InlineData("notification.requestPermission")]
     [InlineData("notification.sendNotification")]
+    [InlineData("notification.active")]
+    [InlineData("notification.pending")]
+    [InlineData("notification.cancel")]
+    [InlineData("notification.cancelAll")]
+    [InlineData("notification.removeActive")]
+    [InlineData("notification.removeAllActive")]
+    [InlineData("notification.actionSupport")]
     [InlineData("autostart.isEnabled")]
     [InlineData("autostart.enable")]
     [InlineData("autostart.disable")]
@@ -45,6 +52,12 @@ public sealed class PlatformCommandTests
     [InlineData("opener.openPath")]
     [InlineData("opener.revealItemInDir")]
     [InlineData("notification.sendNotification")]
+    [InlineData("notification.active")]
+    [InlineData("notification.pending")]
+    [InlineData("notification.cancel")]
+    [InlineData("notification.cancelAll")]
+    [InlineData("notification.removeActive")]
+    [InlineData("notification.removeAllActive")]
     [InlineData("autostart.enable")]
     [InlineData("autostart.disable")]
     public void PlatformCommandsAreNotAlwaysAllowed(string name)
@@ -204,6 +217,112 @@ public sealed class PlatformCommandTests
         // 一条通知的正文类型不对不该让整条通知发不出去。
         Assert.False(Invoke<bool>("notification.sendNotification", new { title = "t", body = 42 }));
     }
+
+    // ---- notification 的登记表（B18）----
+
+    [Fact]
+    public void ActiveAndPendingAreEmptyWithoutABackend()
+    {
+        // 登记表挂在 OrielApp 上（不是后端），所以"宿主还没起来"时它们是空列表而不是抛错——
+        // 页面在启动早期问一次不该炸。
+        Assert.Equal(0, Invoke<JsonElement>("notification.active", new { }).GetArrayLength());
+        Assert.Equal(0, Invoke<JsonElement>("notification.pending", new { }).GetArrayLength());
+    }
+
+    [Fact]
+    public void ActionSupportIsFalseOnEveryDesktopPlatform()
+    {
+        // 三平台都拿不到通知点击（见 OrielApp 里同处的说明）；页面侧 onAction 据此抛 not_supported。
+        Assert.False(Invoke<bool>("notification.actionSupport", new { }));
+    }
+
+    [Fact]
+    public void SendNotificationWithPastScheduleIsInvalidArgument()
+    {
+        OrielIpcException ex = Assert.Throws<OrielIpcException>(() => Invoke("notification.sendNotification", new
+        {
+            title = "t",
+            schedule = new { at = new { date = DateTimeOffset.Now.AddMinutes(-1).ToString("O") } },
+        }));
+
+        Assert.Equal(OrielIpcErrorCodes.InvalidArgument, ex.Code);
+        Assert.Contains("将来", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SendNotificationRejectsScheduleWithTwoTriggers()
+    {
+        OrielIpcException ex = Assert.Throws<OrielIpcException>(() => Invoke("notification.sendNotification", new
+        {
+            title = "t",
+            schedule = new
+            {
+                at = new { date = DateTimeOffset.Now.AddHours(1).ToString("O") },
+                every = new { interval = "hour", count = 1 },
+            },
+        }));
+
+        Assert.Equal(OrielIpcErrorCodes.InvalidArgument, ex.Code);
+        Assert.Contains("三者之一", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SendNotificationWithScheduleReturnsFalseWithoutABackend()
+    {
+        // 没有后端 → 排期不会真的发生（返回 false，与立即投递同一姿态）
+        Assert.False(Invoke<bool>("notification.sendNotification", new
+        {
+            title = "t",
+            schedule = new { at = new { date = DateTimeOffset.Now.AddHours(1).ToString("O") } },
+        }));
+    }
+
+    [Fact]
+    public void SendNotificationAcceptsUnixMillisecondsForScheduleDate()
+    {
+        // 页面侧传 Date 时桥接层会给 ISO 字符串；但裸数字（Unix 毫秒）也收——
+        // 少一条"为什么我的日期没生效"的排查路径。
+        Assert.False(Invoke<bool>("notification.sendNotification", new
+        {
+            title = "t",
+            schedule = new { at = new { date = DateTimeOffset.Now.AddHours(1).ToUnixTimeMilliseconds() } },
+        }));
+    }
+
+    [Fact]
+    public void CancelAcceptsNumbersAndIdObjects()
+    {
+        // Tauri 的 cancel 收 number[]、removeActive 收 { id }[]；两种元素都收，避免迁移时踩空。
+        Assert.Equal(0, Invoke<int>("notification.cancel", new
+        {
+            notifications = new object[] { 1, new { id = 2 } },
+        }));
+    }
+
+    [Fact]
+    public void CancelRejectsNonIntegerIds()
+    {
+        OrielIpcException ex = Assert.Throws<OrielIpcException>(() => Invoke("notification.cancel", new
+        {
+            notifications = new object[] { "1" },
+        }));
+
+        Assert.Equal(OrielIpcErrorCodes.InvalidArgument, ex.Code);
+        Assert.Contains("必须是整数", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CancelRequiresTheNotificationsArray()
+    {
+        OrielIpcException ex = Assert.Throws<OrielIpcException>(
+            () => Invoke("notification.cancel", new { ids = new object[] { 1 } }));
+
+        Assert.Equal(OrielIpcErrorCodes.MissingArgument, ex.Code);
+    }
+
+    [Fact]
+    public void RemoveAllActiveIsZeroWithoutABackend()
+        => Assert.Equal(0, Invoke<int>("notification.removeAllActive", new { }));
 
     // ---- autostart ----
 

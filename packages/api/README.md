@@ -32,7 +32,7 @@ import { invoke } from '@orielweb/api/core';
 | `dialog` | ✅ `open` / `save` / `message` / `ask` / `confirm` |
 | `clipboard` | ✅ `readText` / `writeText` / `clear`（纯文本；`label` 明确拒绝） |
 | `opener` | ✅ `openUrl` / `openPath` / `revealItemInDir`（`openWith` 明确拒绝） |
-| `notification` | ✅ `isPermissionGranted` / `requestPermission` / `sendNotification`（桌面子集） |
+| `notification` | ✅ `isPermissionGranted` / `requestPermission` / `sendNotification`（含 `schedule` 排期）+ `Schedule` / `ScheduleEvery` + 登记表（`active` / `pending` / `cancel` / `cancelAll` / `removeActive` / `removeAllActive`）+ `onNotificationReceived`（真事件）/ `onAction`（订阅时抛 `not_supported`）。移动端的渠道与等级 8 项不做 |
 | `autostart` | ✅ `isEnabled` / `enable` / `disable` |
 | `image` | ✅ `Image`（`fromPath` / `fromBytes` / `new`）+ `transformImage`。`close()` 是**补壳**（B14）：没有资源可释放，调用不报错、debug 下打警告 |
 | `mocks` | ✅ `mockIPC` / `mockWindows` / `mockEmit` / `mockConvertFileSrc` / `clearMocks` |

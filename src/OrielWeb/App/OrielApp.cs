@@ -34,6 +34,15 @@ public sealed class OrielApp : IDisposable
             builder.AssetHost);
         Dispatcher = new OrielCommandDispatcher(builder.TargetFactories, builder.JsonContext, Guard);
 
+        // 通知登记表：定时器在应用级（不是窗口级），投递走的是同一个后端调用。
+        // `arm` 用 System.Threading.Timer 的一次性模式：每次触发后由登记表决定下一次
+        // （固定周期 / 日历匹配 / 不再重复），而不是让 Timer 自己按固定周期跑——
+        // 后者在"错过一整段"（机器睡眠）之后会挤出一串迟到的通知。
+        Notifications = new OrielNotificationRegistry(
+            static () => DateTimeOffset.Now,
+            static (delay, callback) => _ = new Timer(_ => callback(), null, delay, Timeout.InfiniteTimeSpan),
+            DeliverScheduledNotification);
+
         // 单实例判定在这里（= Build() 期间）而不是 Run()：宿主往往要在 Run() 之前装配配置、数据库、
         // 设备连接，判定太晚会把第二实例的副作用先跑一遍（下游反馈 2026-10-11 的 P0-2：第二实例
         // 已经连上同一台 PLC 并向同一个库写了记录）。Run() 只剩"是第二实例 → 打印标记并退出"。
@@ -107,6 +116,15 @@ public sealed class OrielApp : IDisposable
     /// </para>
     /// </remarks>
     internal OrielFileHandleRegistry FileHandles { get; } = new();
+
+    /// <summary>
+    /// 通知登记表（B18）：本应用发过的通知与排期中的通知（对标 Tauri 的"通知句柄表"）。
+    /// </summary>
+    /// <remarks>
+    /// 应用级而不是窗口级——通知不属于任何窗口，而 <c>active()</c> / <c>cancel()</c> 是
+    /// 应用级的操作（Tauri 的插件也是进程级）。
+    /// </remarks>
+    internal OrielNotificationRegistry Notifications { get; }
 
     /// <summary>
     /// 入站 IPC 被门禁拒绝时触发（来源 / 令牌 / 命令授权三层都有）。
@@ -1390,11 +1408,13 @@ public sealed class OrielApp : IDisposable
     /// <summary>本平台是否支持系统通知（不支持时 <see cref="ShowNotification(OrielNotificationOptions)"/> 是空操作）。</summary>
     public bool NotificationsSupported => _backend?.NotificationsSupported ?? false;
 
-    // 通知点击上报**已移除**（原 `NotificationClicked` 事件）。
-    // 三个平台都拿不到点击：未打包应用的 toast 激活需要开始菜单快捷方式携带 AUMID 并注册 COM 激活器
-    // （打包器的职责），Linux 的 notify-send 与 macOS 的 osascript 则根本没有回调入口。
-    // 原先三处都是"显式空实现"，看起来像是如实标注——但**订阅一个永不触发的事件不会编译报错**，
-    // 调用方只会在运行时才发现收不到。删掉它，让"不支持"变成编译错误，这才是对的信号。
+    // 通知的**回传**（B18）：
+    //   * `onNotificationReceived` 是**真事件**——宿主成功投递时推 `notification.received`；
+    //   * `onAction`（用户点了通知本体或通知上的按钮）**三平台都拿不到**：未打包应用的 toast 激活
+    //     需要开始菜单快捷方式携带 AUMID 并注册 COM 激活器（打包器的职责），macOS 的 osascript
+    //     没有回调入口，Linux 的 notify-send 同样没有。页面侧因此在**订阅时**就收到
+    //     `not_supported`，而不是拿到一个永不触发的订阅——后者不会编译报错，调用方只会在运行时
+    //     才发现收不到（这正是 0.3.x 删掉 `NotificationClicked` 的理由）。
     // 详见 API.md。
 
     /// <summary>
@@ -1446,17 +1466,135 @@ public sealed class OrielApp : IDisposable
     /// 通知设置与专注助手（Windows 上可在「设置 → 系统 → 通知」里按应用名关闭；
     /// macOS 上未打包运行的通知归属于 Script Editor）。失败不抛异常，返回 <c>false</c>。
     /// </returns>
+    /// <remarks>
+    /// 投递成功后会记进通知登记表（页面侧 <c>active()</c> 能看到），并给所有窗口推一条
+    /// <c>notification.received</c> 事件。**投递失败的不记账**：它没出现在系统里，
+    /// 也就不该出现在 active 列表里。
+    /// </remarks>
     public bool ShowNotification(OrielNotificationOptions notification)
     {
         ArgumentNullException.ThrowIfNull(notification);
         ArgumentException.ThrowIfNullOrWhiteSpace(notification.Title);
         var backend = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
-        return backend.ShowNotification(notification, NotificationAppId);
+
+        bool delivered = backend.ShowNotification(notification, NotificationAppId);
+        if (delivered)
+        {
+            BroadcastNotificationReceived(Notifications.TrackDelivered(notification));
+        }
+
+        return delivered;
     }
 
     /// <summary>发送一条系统通知（便捷重载）；返回值语义见 <see cref="ShowNotification(OrielNotificationOptions)"/>。</summary>
     public bool ShowNotification(string title, string? body = null)
         => ShowNotification(new OrielNotificationOptions { Title = title, Body = body });
+
+    // ---------------------------------------------------------------- 通知登记表（B18）
+
+    /// <summary>本应用发出、仍在登记表里的通知（页面侧 <c>active()</c>）。</summary>
+    /// <remarks>
+    /// <b>不是"系统通知中心里的全部"</b>：别的应用发的、用户手动清掉的，本库都看不到
+    /// （三平台都没有列出通知中心的 API）。语义与"移除不撤下系统里那条"写在 docs/API.md。
+    /// </remarks>
+    public IReadOnlyList<OrielNotificationRecord> ActiveNotifications => Notifications.Active();
+
+    /// <summary>已排期、尚未到点的通知（页面侧 <c>pending()</c>）。</summary>
+    public IReadOnlyList<OrielNotificationRecord> PendingNotifications => Notifications.Pending();
+
+    /// <summary>取消待发通知；返回真正取消掉的条数（活动通知不在 cancel 的语义里）。</summary>
+    public int CancelScheduledNotifications(IEnumerable<long> ids) => Notifications.Cancel(ids);
+
+    /// <summary>取消全部待发通知；返回条数。</summary>
+    public int CancelAllScheduledNotifications() => Notifications.CancelAll();
+
+    /// <summary>从活动列表里移除通知（**不撤系统里那条**）；返回条数。</summary>
+    public int RemoveActiveNotifications(IEnumerable<long> ids) => Notifications.RemoveActive(ids);
+
+    /// <summary>清空活动列表；返回条数。</summary>
+    public int RemoveAllActiveNotifications() => Notifications.RemoveAllActive();
+
+    /// <summary>
+    /// 发一条通知并**排期**：到点（或按周期/日历规则）才投递。
+    /// </summary>
+    /// <returns>本库分配的编号（可用于 <see cref="CancelScheduledNotifications"/>）。</returns>
+    /// <exception cref="ArgumentException">
+    /// 排期配置非法（at/interval/every 三者不是恰好一个、时刻已过去、日历组合永不成立……）。
+    /// 在**登记之前**就报错，而不是等到"通知永远不来"。
+    /// </exception>
+    /// <remarks>
+    /// <b>调度器在宿主进程里</b>，所以应用退出后就不再响——要跨进程可靠请用系统的计划任务 /
+    /// systemd timer / launchd。这条差异（以及 Tauri 桌面端忽略 schedule、本库真的排期）
+    /// 写进了 docs/API.md 的差异表。
+    /// </remarks>
+    public long ScheduleNotification(OrielNotificationOptions notification, OrielNotificationSchedule schedule)
+    {
+        ArgumentNullException.ThrowIfNull(notification);
+        ArgumentException.ThrowIfNullOrWhiteSpace(notification.Title);
+        ArgumentNullException.ThrowIfNull(schedule);
+        _ = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
+
+        if (schedule.Validate(DateTimeOffset.Now) is string problem)
+        {
+            throw new ArgumentException(problem, nameof(schedule));
+        }
+
+        return Notifications.Schedule(notification, schedule);
+    }
+
+    /// <summary>页面侧接收"通知已投递"事件的名称。</summary>
+    internal const string NotificationReceivedEventName = "notification.received";
+
+    /// <summary>把"这条通知已投递"推给所有窗口的页面。</summary>
+    /// <remarks>
+    /// 投递可能发生在定时器线程上；各平台的 <c>EmitEvent</c> 自己会切回 UI 线程
+    /// （见 <c>LinuxWindowHost.PushEventOnUi</c> 的说明），所以这里不用再编组。
+    /// </remarks>
+    private void BroadcastNotificationReceived(OrielNotificationRecord record)
+    {
+        string payload = "{\"id\":" + record.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + ",\"title\":" + JsonText.EncodeString(record.Title)
+            + ",\"body\":" + JsonText.EncodeString(record.Body) + "}";
+
+        foreach (WebviewWindow window in _windows.ToArray())
+        {
+            try
+            {
+                window.EmitEvent(NotificationReceivedEventName, payload);
+            }
+            catch (Exception ex)
+            {
+                // 窗口正在销毁 / 页面还没就绪：事件送不到不是投递失败，记一条诊断即可
+                OrielDiagnostics.Report($"[OrielWeb] 推送 {NotificationReceivedEventName} 失败：{ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>登记表到点时的投递（定时器线程调用）。</summary>
+    private bool DeliverScheduledNotification(OrielNotificationRecord record)
+    {
+        IPlatformBackend? backend = _backend;
+        if (backend is null)
+        {
+            return false;
+        }
+
+        var options = new OrielNotificationOptions
+        {
+            Title = record.Title,
+            Body = record.Body,
+            Id = record.Tag,
+            IconPath = record.IconPath,
+        };
+
+        bool delivered = backend.ShowNotification(options, NotificationAppId);
+        if (delivered)
+        {
+            BroadcastNotificationReceived(record);
+        }
+
+        return delivered;
+    }
 
     /// <summary>
     /// 通知的"应用标识"：Windows 上即 AUMID，Linux 上是 <c>notify-send --app-name</c>。
@@ -1770,6 +1908,10 @@ public sealed class OrielApp : IDisposable
         // 放在后端 Dispose 之前：文件 I/O 不依赖消息循环，但它产生的异常不该
         // 让后端的清理被跳过。
         FileHandles.Dispose();
+
+        // 排期定时器：先停（否则最后一次回调可能在后端已释放之后再投递一次）。
+        // 待发的通知随进程一起消失——没有系统级调度器，这是如实的行为（见 API.md）。
+        Notifications.Dispose();
         _backend?.Dispose();
     }
 }

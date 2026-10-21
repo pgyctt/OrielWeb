@@ -109,6 +109,8 @@ const CONST_OBJECTS = [
     { module: '../src/path.js', theirs: '@tauri-apps/api/path', name: 'BaseDirectory' },
     // B17：SeekMode 是句柄族的位置枚举，迁移代码会直接写 SeekMode.End
     { module: '../src/fs.js', theirs: '@tauri-apps/plugin-fs', name: 'SeekMode' },
+    // B18：ScheduleEvery 是字符串枚举（Year = 'year' …），迁移代码会直接写 ScheduleEvery.Hour
+    { module: '../src/notification.js', theirs: '@tauri-apps/plugin-notification', name: 'ScheduleEvery' },
 ];
 
 /**
@@ -167,24 +169,22 @@ const GAPS = {
     },
     opener: {},
     notification: {
-        Importance: 'Android 的通知重要级',
-        Schedule: '定时通知；要常驻定时器',
-        ScheduleEvery: '同上',
-        Visibility: 'Android 的通知可见性',
-        active: '活动通知列表；要通知句柄表',
-        cancel: '取消通知；同上',
-        cancelAll: '同上',
-        channels: 'Android 通知渠道',
+        // B18 之后只剩**移动端专有的 8 个**（决策见 TAURI2-ALIGNMENT-DECISIONS §1.6）。
+        // 桌面端没有通知渠道 / 重要级 / 可见性 / 动作类型这些概念：Android 的 channel 模型与
+        // iOS 的 action type 在桌面上没有对应物，造出来只能是空壳。
+        //
+        // 已实现（不再列在这里）：active / pending / cancel / cancelAll / removeActive /
+        // removeAllActive（宿主侧登记表）、onNotificationReceived（真事件）、
+        // onAction（订阅时抛 not_supported，理由见 notification.js）、
+        // Schedule / ScheduleEvery（宿主进程内的调度器）。
+        Importance: 'Android 的通知重要级（桌面无对应概念）',
+        Visibility: 'Android 的通知可见性（同上）',
+        channels: 'Android 的通知渠道（同上）',
         createChannel: '同上',
         deleteChannel: '同上',
         listChannels: '同上',
-        onAction: '通知点击回传；要把动作送回页面',
-        onNotificationReceived: '同上',
-        pending: '待发通知列表；要句柄表',
-        registerActionTypes: '通知动作类型（移动端为主）',
-        removeActive: '同上',
-        removeAllActive: '同上',
-        removeChannel: 'Android 通知渠道',
+        removeChannel: '同上',
+        registerActionTypes: 'iOS / Android 的通知动作类型（同上）',
     },
     autostart: {},
     tray: {
