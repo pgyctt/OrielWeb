@@ -11,6 +11,24 @@
 
 ### 新增
 
+- **fs 句柄族（B17）：`open` / `create` / `FileHandle` / `SeekMode` / `readTextFileLines`**。
+  宿主侧新增一张**应用级 id 句柄表**（`OrielFileHandleRegistry`，对标 Tauri 的资源表；
+  id 单调递增、永不复用，应用 `Dispose` 时统一关闭并落盘）。命令面：
+  `fs.open` / `fs.create` / `fs.read` / `fs.write` / `fs.seek` / `fs.fstat` /
+  `fs.ftruncate` / `fs.close` / `fs.readTextFileLines`。
+  **scope 只在 `open` / `create` 时判**——拿到句柄后的读写不再看路径（与 Tauri 一致；
+  句柄代表"已经过授权的那个打开的文件"）。选项语义照 Rust 的 `OpenOptions`：
+  `read`/`write`/`append` 至少一个（`truncate` 缺写权限、`createNew` 与 `create` 互斥，
+  冲突组合在打开文件**之前**就报错——猜错意图会截断数据或意外建文件）。`read` 到 EOF 给
+  `null` 而非空数组（两者在页面侧语义不同），单次上限 8 MiB；`write` 不逐次落盘（`close` 时落盘）；
+  `fstat` 走**描述符**（文件改名/挪走后仍给得出元信息，`isSymlink` 恒 false）。
+  **`readTextFileLines` 不是流式**：迭代契约与 Tauri 一致，但宿主整文件读入再切行，
+  内存 = 文件大小——大文件请用 `open` + 分块 `read`。
+- **`packages/api/README.md` 的状态表**补齐过期行：`fs` 加句柄族、`image.close()` 标为
+  补壳、`menu` / `tray` 从"未提供前端包"更正为已提供（B6a/B12 之后就该改的）。
+
+### 新增
+
 - **webview 级能力（B16）：`window.setZoom` / `window.clearAllBrowsingData`**，
   落在 `@orielweb/api/webviewWindow` 的 `WebviewWindow` 上（Tauri 把它们放在 `Webview`
   侧，本库窗口即 webview）。三平台都是**真实现**、语义一致：

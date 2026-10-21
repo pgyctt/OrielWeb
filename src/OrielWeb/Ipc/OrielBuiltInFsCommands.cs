@@ -15,11 +15,11 @@ namespace OrielWeb.Ipc;
 /// 也不像 <c>path.*</c> 那样"只做运算所以安全"。
 /// </para>
 /// <para>
-/// <b>本族不含句柄式 API</b>（Tauri 的 <c>open</c> / <c>create</c> / <c>FileHandle</c> /
-/// <c>seek</c> / <c>read</c> / <c>write</c> / <c>readTextFileLines</c> / <c>watch</c>）。
-/// 那些靠一张 <c>rid</c> 句柄表，而本库**没有句柄表**（见 packages/api/README 的说明）——
-/// 加它是一整套新机制（分配/回收/跨调用生命周期），不该混在"文件操作"这一批里做。
-/// 整文件读写覆盖了 webview 界面里绝大多数场景。
+/// <b>句柄族自 B17 起提供</b>（Tauri 的 <c>open</c> / <c>create</c> / <c>FileHandle</c> /
+/// <c>seek</c> / <c>read</c> / <c>write</c> / <c>readTextFileLines</c>）：宿主侧有一张
+/// <see cref="OrielFileHandleRegistry"/> 的 id 句柄表（应用级，对标 Tauri 的资源表）。
+/// <b>scope 只在 <c>open</c>/<c>create</c> 时判</b>——拿到 id 之后的读写不再看路径，
+/// 与 Tauri 相同（理由见句柄表的说明）。<c>watch</c> 仍不提供（要常驻 watcher，属 B20）。
 /// </para>
 /// <para>
 /// <b>二进制走 JSON 数字数组</b>：<c>readFile</c> 返回 <c>byte[]</c>（页面侧
@@ -215,10 +215,317 @@ internal static class OrielBuiltInFsCommands
                 };
                 return true;
 
+            // ---- 句柄式（B17，对标 Tauri 的 open / create / FileHandle / SeekMode）----
+            //
+            // **scope 只在 open / create 时判**：拿到 id 之后的读写不再看路径——句柄代表
+            // "已经过授权的那个打开的文件"，反复按路径重判既无意义（路径可能已变），
+            // 也会把"文件改名后就读不了"变成常态。见 OrielFileHandleRegistry 的说明。
+
+            case "fs.open":
+                handler = static (window, command, args) =>
+                {
+                    string target = AuthorizePath(window, command, args, out _);
+                    FileStream stream = OpenHandleStream(
+                        target,
+                        read: ReadBool(args, "read", fallback: false),
+                        write: ReadBool(args, "write", fallback: false),
+                        append: ReadBool(args, "append", fallback: false),
+                        truncate: ReadBool(args, "truncate", fallback: false),
+                        create: ReadBool(args, "create", fallback: false),
+                        createNew: ReadBool(args, "createNew", fallback: false));
+
+                    return window.App.FileHandles.Add(stream, target);
+                };
+                return true;
+
+            case "fs.create":
+                handler = static (window, command, args) =>
+                {
+                    // create = 读 + 写 + 建（不存在时）+ 截断（存在时），与 Tauri 的
+                    // CreateOptions 语义一致。父目录**自动创建**——与本库 writeTextFile
+                    // 的既有约定对齐：同一个库里两种"新建文件"对父目录的姿态不该不同。
+                    string target = AuthorizePath(window, command, args, out _);
+                    EnsureParentDirectory(target);
+                    FileStream stream = OpenHandleStream(
+                        target,
+                        read: true, write: true, append: false,
+                        truncate: true, create: true, createNew: false);
+
+                    return window.App.FileHandles.Add(stream, target);
+                };
+                return true;
+
+            case "fs.read":
+                handler = static (window, command, args) =>
+                {
+                    long id = OrielJson.GetRequiredArg<long>(args, "id", null);
+                    int length = OrielJson.GetRequiredArg<int>(args, "length", null);
+
+                    if (length <= 0 || length > MaxReadChunk)
+                    {
+                        throw new OrielIpcException(
+                            $"fs.read: length 必须在 1..{MaxReadChunk} 之间（实际 {length}）。" +
+                            "块大小由调用方决定，库只挡「一次读一个 G」这类意外。")
+                        {
+                            Code = OrielIpcErrorCodes.InvalidArgument,
+                        };
+                    }
+
+                    FileStream stream = window.App.FileHandles.Get(id, command).Stream;
+                    byte[] buffer = new byte[length];
+                    int read = stream.Read(buffer, 0, length);
+
+                    // EOF 返回 null（Tauri 的 read 同样是 number | null）：
+                    // 返回空数组会让"读到 0 字节"与"读完了"无法区分。
+                    if (read == 0)
+                    {
+                        return null;
+                    }
+
+                    return read == length ? buffer : buffer[..read];
+                };
+                return true;
+
+            case "fs.write":
+                handler = static (window, command, args) =>
+                {
+                    long id = OrielJson.GetRequiredArg<long>(args, "id", null);
+                    JsonElement data = OrielJson.RequireArgElement(args, "data");
+                    byte[] bytes = ReadBytes(data);
+
+                    FileStream stream = window.App.FileHandles.Get(id, command).Stream;
+                    stream.Write(bytes, 0, bytes.Length);
+
+                    // **不逐次 Flush**：Tauri 的 write_all 也不 flush（缓冲由操作系统管），
+                    // 每次 flush 会让"逐块写大文件"慢一个数量级。同一个流里的
+                    // write → seek → read 是缓冲一致的；跨句柄的可见性靠 close 时的落盘。
+                    return bytes.Length;
+                };
+                return true;
+
+            case "fs.seek":
+                handler = static (window, command, args) =>
+                {
+                    long id = OrielJson.GetRequiredArg<long>(args, "id", null);
+                    long offset = OrielJson.GetRequiredArg<long>(args, "offset", null);
+
+                    // 缺省 = 0（Start）。GetOptionalArg<int> 在"没给"时直接回落 0，
+                    // 正好是我们要的默认值。
+                    int whence = OrielJson.GetOptionalArg<int>(args, "whence", null);
+
+                    SeekOrigin origin = whence switch
+                    {
+                        0 => SeekOrigin.Begin,
+                        1 => SeekOrigin.Current,
+                        2 => SeekOrigin.End,
+                        _ => throw new OrielIpcException(
+                            $"fs.seek: whence 只认 0（Start）/ 1（Current）/ 2（End），实际 {whence}。")
+                        {
+                            Code = OrielIpcErrorCodes.InvalidArgument,
+                        },
+                    };
+
+                    return window.App.FileHandles.Get(id, command).Stream.Seek(offset, origin);
+                };
+                return true;
+
+            case "fs.fstat":
+                handler = static (window, command, args) =>
+                {
+                    long id = OrielJson.GetRequiredArg<long>(args, "id", null);
+                    return StatOfHandle(window.App.FileHandles.Get(id, command));
+                };
+                return true;
+
+            case "fs.ftruncate":
+                handler = static (window, command, args) =>
+                {
+                    long id = OrielJson.GetRequiredArg<long>(args, "id", null);
+                    FileStream stream = window.App.FileHandles.Get(id, command).Stream;
+
+                    // len 缺省 = 截到**当前读写位置**（与 Tauri 的 FileHandle.truncate 一致）。
+                    // 这里不能用 GetOptionalArg<long>：它在"没给"时给 0，而 0 是一个
+                    // 有意义的截断长度（清空文件），两者必须分开。
+                    long? explicitLength = args.ValueKind == JsonValueKind.Object
+                        && args.TryGetProperty("len", out JsonElement lenElement)
+                        && lenElement.ValueKind == JsonValueKind.Number
+                        && lenElement.TryGetInt64(out long parsedLength)
+                            ? parsedLength
+                            : null;
+                    long length = explicitLength ?? stream.Position;
+
+                    if (length < 0)
+                    {
+                        throw new OrielIpcException($"fs.ftruncate: 截断长度不能为负（{length}）。")
+                        {
+                            Code = OrielIpcErrorCodes.InvalidArgument,
+                        };
+                    }
+
+                    stream.SetLength(length);
+                    return null;
+                };
+                return true;
+
+            case "fs.close":
+                handler = static (window, command, args) =>
+                {
+                    long id = OrielJson.GetRequiredArg<long>(args, "id", null);
+                    window.App.FileHandles.Close(id, command);
+                    return null;
+                };
+                return true;
+
+            case "fs.readTextFileLines":
+                handler = static (window, command, args) =>
+                {
+                    // **整文件读入再切行**，不是流式（返回的是 string[]，不是 Channel）。
+                    // 理由与取舍：本库 IPC 是纯 JSON，真正的流式要占用一条 Channel
+                    // 并按行回传——那是 B7 的机制、可以后加，但会让"读个日志文件"
+                    // 变成需要理解通道语义的事。代价写进文档：内存 = 文件大小。
+                    string target = AuthorizePath(window, command, args, out _);
+                    return SplitLines(File.ReadAllText(target, Utf8NoBom));
+                };
+                return true;
+
             default:
                 handler = null!;
                 return false;
         }
+    }
+
+    /// <summary>单次 <c>fs.read</c> 的最大字节数（防止页面一句 invoke 分配掉进程内存）。</summary>
+    private const int MaxReadChunk = 8 * 1024 * 1024;
+
+    /// <summary>
+    /// 按 <c>FileStream</c> 打开一个文件；校验选项组合并映射到 <see cref="FileMode"/>/<see cref="FileAccess"/>。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 选项语义照 Tauri 的 <c>OpenOptions</c>（实为 Rust <c>std::fs::OpenOptions</c>）：
+    /// 三个访问位（read/write/append）至少要有一个；<c>truncate</c> 需要写权限；
+    /// <c>createNew</c> 与 <c>create</c> 互斥。冲突组合**当场报错**而不是猜一个意图——
+    /// 猜错的后果是数据被截断或文件被意外创建。
+    /// </para>
+    /// <para>
+    /// <c>FileShare.ReadWrite | FileShare.Delete</c>：与 Rust 默认的共享模式一致
+    /// （Windows 上 Rust 默认允许别人读写删）。用 <c>FileShare.None</c> 会让
+    /// "一边写日志一边被查看"直接失败，那不是调用方想要的。
+    /// </para>
+    /// </remarks>
+    private static FileStream OpenHandleStream(
+        string target, bool read, bool write, bool append, bool truncate, bool create, bool createNew)
+    {
+        // **先判更具体的那条**：`{truncate: true}` 同时命中"没有访问位"与"truncate 需要写权限"，
+        // 而调用方明确表达了截断意图——告诉它"缺写权限"比"三者全 false"有用得多。
+        bool writable = write || append;
+        if (truncate && !writable)
+        {
+            throw new OrielIpcException(
+                "fs.open: truncate 需要写权限（write 或 append 为 true）——" +
+                "只读地截断一个文件不是有意义的操作。")
+            {
+                Code = OrielIpcErrorCodes.InvalidArgument,
+            };
+        }
+
+        if (!read && !write && !append)
+        {
+            throw new OrielIpcException(
+                "fs.open: read / write / append 至少要有一个为 true——三者全 false 时" +
+                "打开文件没有意义（Rust 的 OpenOptions 在这组参数上同样报错）。")
+            {
+                Code = OrielIpcErrorCodes.InvalidArgument,
+            };
+        }
+
+        if (createNew && create)
+        {
+            throw new OrielIpcException(
+                "fs.open: createNew 与 create 不能同时为 true——前者要求「必须不存在」、" +
+                "后者允许「已存在就打开」，两者同时给出是矛盾的。")
+            {
+                Code = OrielIpcErrorCodes.InvalidArgument,
+            };
+        }
+
+        FileAccess access = read && writable ? FileAccess.ReadWrite : writable ? FileAccess.Write : FileAccess.Read;
+
+        // 顺序有意义：createNew 要求文件不存在；append 要求只能追加（写入位置固定在末尾）；
+        // truncate 要清空已有内容；create 允许新建或打开已有。都不给时按"必须已存在"打开。
+        FileMode mode = createNew ? FileMode.CreateNew
+            : append ? FileMode.Append
+            : truncate ? FileMode.Create
+            : create ? FileMode.OpenOrCreate
+            : FileMode.Open;
+
+        // Append 模式只接受 Write 访问（FileStream 的构造约束）。
+        if (mode == FileMode.Append)
+        {
+            access = FileAccess.Write;
+        }
+
+        return new FileStream(target, mode, access, FileShare.ReadWrite | FileShare.Delete, bufferSize: 4096);
+    }
+
+    /// <summary>
+    /// 从**打开的句柄**读元信息（<c>fs.fstat</c>），形状与 <c>fs.stat</c> 一致。
+    /// </summary>
+    /// <remarks>
+    /// 尺寸取 <see cref="FileStream.Length"/>（句柄自己知道）；时间戳走
+    /// <c>File.GetLastWriteTimeUtc(SafeFileHandle)</c> 一族——它们作用于
+    /// **文件描述符**而不是路径，所以文件被改名/挪走后仍然给得出正确的值
+    /// （路径版的 <c>FileInfo</c> 在那个场景下会抛"找不到文件"）。
+    /// <c>isSymlink</c> 恒为 <c>false</c>：句柄已经跟随过链接，回答"打开的这个东西
+    /// 是不是链接"无从谈起——与 Rust 的 <c>File::metadata()</c> 一致。
+    /// </remarks>
+    private static JsonElement StatOfHandle(OrielFileHandle handle)
+    {
+        FileStream stream = handle.Stream;
+        return Parse(
+            "{\"isFile\":true,\"isDirectory\":false,\"isSymlink\":false,\"size\":" +
+            stream.Length.ToString(CultureInfo.InvariantCulture) +
+            ",\"mtime\":" + new DateTimeOffset(File.GetLastWriteTimeUtc(stream.SafeFileHandle))
+                .ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture) +
+            ",\"atime\":" + new DateTimeOffset(File.GetLastAccessTimeUtc(stream.SafeFileHandle))
+                .ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture) +
+            ",\"birthtime\":" + new DateTimeOffset(File.GetCreationTimeUtc(stream.SafeFileHandle))
+                .ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture) +
+            "}");
+    }
+
+    /// <summary>
+    /// 把整段文本切成行（<c>fs.readTextFileLines</c> 的切分规则）。
+    /// </summary>
+    /// <remarks>
+    /// 按 <c>\n</c> 切、去掉紧随的 <c>\r</c>（CRLF 与 LF 都支持，单独出现的 <c>\r</c>
+    /// 不切——那是老 Mac 换行，与 Tauri 的 TextLineStream 行为一致）。
+    /// 末尾换行不产生一个空行；文件中间的空行照常保留（那是内容）。
+    /// </remarks>
+    private static string[] SplitLines(string text)
+    {
+        var lines = new List<string>();
+        int start = 0;
+
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (text[i] != '\n')
+            {
+                continue;
+            }
+
+            int end = i > start && text[i - 1] == '\r' ? i - 1 : i;
+            lines.Add(text[start..end]);
+            start = i + 1;
+        }
+
+        // 末尾没有换行时，最后一个字符之后还剩一行；以换行结尾时没有"尾随空行"。
+        if (start < text.Length)
+        {
+            lines.Add(text[start..]);
+        }
+
+        return [.. lines];
     }
 
     // ---------------------------------------------------------------- 路径授权

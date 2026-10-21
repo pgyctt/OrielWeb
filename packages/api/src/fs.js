@@ -1,4 +1,4 @@
-// 对标 `@tauri-apps/plugin-fs` 的**整文件**部分。
+// 对标 `@tauri-apps/plugin-fs`：整文件族 + 句柄族（B17 起）。
 //
 // 本模块每个函数都要过**两道关**：宿主侧的命令授权（`Allow("fs.readTextFile")`）
 // 与**路径 scope**（`Allow("fs.readTextFile", s => s.AllowPath("$APPDATA/**"))`）。
@@ -7,13 +7,18 @@
 //
 // 与 Tauri 的差别（如实标注，不假装一致）：
 //
-//   * **没有句柄式 API**：`open` / `create` / `FileHandle` / `seek` / `read` / `write` /
-//     `readTextFileLines` / `watch` 都不提供。那些靠一张 `rid` 句柄表，而本库没有句柄表——
-//     加它是一整套新机制（分配/回收/跨调用生命周期），不该混在"文件操作"里做。
-//     整文件读写覆盖了 webview 界面里绝大多数场景。
+//   * **句柄族是 B17 新增的**：`open` / `create` / `FileHandle` / `SeekMode` 已提供，
+//     宿主侧有一张 id 句柄表（对标 Tauri 的资源表，见 OrielFileHandleRegistry）。
+//     **scope 只在 open/create 时判**——拿到句柄后的读写不再看路径（与 Tauri 相同）。
+//     句柄的参数面（read/write/seek/fstat/ftruncate/close）是三平台一致的文件 I/O，
+//     没有平台落点差异。
+//   * **`readTextFileLines` 不流式**：返回的是一个 async 迭代器，但宿主侧是
+//     "整文件读入 → 切行"（本库 IPC 是纯 JSON，真流式要占一条 Channel）。
+//     迭代契约与 Tauri 一致，代价是内存 = 文件大小；大文件请用 `open` + 分块 `read`。
 //   * **二进制走 JSON 数字数组**：`readFile` 给 `Uint8Array`、`writeFile` 收 `Uint8Array`，
 //     但通道是 JSON，所以一个字节要变成两三个字符。几十 MB 级别的文件不适用。
 //     Tauri 用 `invoke` 的二进制 body 传，本库的 IPC 是纯 JSON，没有那条路。
+//     `FileHandle.read` 的块大小因此有上限（8 MiB/次），见该方法的说明。
 //   * **`lstat` 与 `stat` 的差别只在"链接自身算不算"**：.NET 对符号链接会跟随，
 //     所以两者返回的元数据相同、只是 `isSymlink` 如实报告。
 
@@ -327,4 +332,258 @@ export function truncate(path, len, options) {
     // 注意参数位置：Tauri 的签名是 `truncate(path, len?, options?)`。
     // 若照"第二个参数就是 options"的印象写校验，会把长度当选项拒掉。
     return invokeWithOptions('truncate', 'fs.truncate', { path, len }, options);
+}
+
+// ---------------------------------------------------------------------------
+// 句柄族（B17，对标 Tauri 的 open / create / FileHandle / SeekMode）
+// ---------------------------------------------------------------------------
+//
+// 宿主侧有一张 **id 句柄表**（应用级，对标 Tauri 的资源表）。
+// **scope 只在 open / create 时判**：拿到句柄后的读写不再看路径——句柄代表
+// "已经过授权的那个打开的文件"，反复按路径重判既无意义（路径可能已经变了），
+// 也会把"同一文件换了名字就打不开"变成常态。这与 Tauri 一致。
+
+/**
+ * 定位方式（对标 Tauri 的 `SeekMode`）。
+ *
+ * @readonly
+ * @remarks 取值与 Tauri 的 TS 枚举逐键一致（`Start` = 0 / `Current` = 1 / `End` = 2）。
+ * 反向映射（`0: 'Start'` 这类）也一并给：Tauri 的数值枚举在运行期就有它们，
+ * 迁移代码里两种写法都可能出现（与 `BaseDirectory` 同一理由）。
+ */
+export const SeekMode = Object.freeze({
+    Start: 0,
+    Current: 1,
+    End: 2,
+    // 反向映射
+    0: 'Start',
+    1: 'Current',
+    2: 'End',
+});
+
+/**
+ * 一个打开的文件句柄（对标 Tauri 的 `FileHandle`）。
+ *
+ * @remarks
+ * 用 {@link open} / {@link create} 取得。**用完要 `close()`**——句柄占着操作系统的
+ * 文件描述符，应用退出时会由宿主统一关闭（`OrielApp.Dispose` 里的句柄表清理），
+ * 但长跑的应用自己关才是正确的做法。
+ *
+ * 本类没有 `disk` 之类的属性；`rid` 是**补壳**（返回句柄 id）——Tauri 那边它是
+ * 资源表里的编号，本库没有通用资源表，id 就是句柄号，语义上正好对得上。
+ */
+export class FileHandle {
+    /**
+     * @param {number} id 宿主分配的句柄 id（内部用；页面侧从 open/create 得到实例）。
+     */
+    constructor(id) {
+        /** @type {number} */
+        this.id = id;
+    }
+
+    /**
+     * 句柄编号（对标 `Resource.rid`）。
+     *
+     * @returns {number}
+     */
+    get rid() {
+        return this.id;
+    }
+
+    /**
+     * 从当前读写位置读一段字节，**填进传入的缓冲区**（与 Tauri 一致）。
+     *
+     * @param {Uint8Array} buffer 要填的缓冲区；读多少由它的长度决定。
+     * @returns {Promise<number | null>} 实际读到的字节数；**已到文件末尾返回 `null`**。
+     * @remarks
+     * 返回 `null`（而不是 0）是为了与"读到了 0 字节"区分开——Tauri 同样是
+     * `number | null`。单次最多 8 MiB（本库 IPC 是纯 JSON，一次读一大块没有意义；
+     * 需要更大范围请分块循环）。
+     *
+     * 缓冲区长度为 0 时直接返回 0，不发 IPC。
+     */
+    async read(buffer) {
+        if (!(buffer instanceof Uint8Array)) {
+            throw new TypeError('FileHandle.read: 需要 Uint8Array 作为缓冲区。');
+        }
+
+        if (buffer.length === 0) {
+            return 0;
+        }
+
+        /** @type {number[] | null} */
+        const bytes = await invoke('fs.read', { id: this.id, length: buffer.length });
+        if (bytes === null || bytes === undefined) {
+            return null;
+        }
+
+        const chunk = bytes instanceof Uint8Array ? bytes : Uint8Array.from(bytes);
+        buffer.set(chunk, 0);
+        return chunk.length;
+    }
+
+    /**
+     * 从当前读写位置写入一段字节。
+     *
+     * @param {Uint8Array | number[]} data
+     * @returns {Promise<number>} 写入的字节数。
+     * @remarks
+     * **不逐次落盘**：缓冲交给操作系统（Tauri 的 `write_all` 同样不 flush）。
+     * 同一个句柄里的 write → seek → read 是缓冲一致的；要确保别的进程/句柄
+     * 立刻看到内容，请 `close()`（关闭时会落盘）。
+     */
+    async write(data) {
+        /** @type {number[] | null} */
+        const bytes = data instanceof Uint8Array ? Array.from(data)
+            : Array.isArray(data) ? data
+            : null;
+        if (bytes === null) {
+            throw new TypeError('FileHandle.write: data 必须是 Uint8Array 或 number[]。');
+        }
+
+        return invoke('fs.write', { id: this.id, data: bytes });
+    }
+
+    /**
+     * 移动读写位置。
+     *
+     * @param {number} offset 偏移量（字节，可为负——负值从 End/Current 往回退）。
+     * @param {number} [whence] 定位方式，见 {@link SeekMode}；缺省 `SeekMode.Start`。
+     * @returns {Promise<number>} 新的绝对位置（从文件头算）。
+     * @remarks 移到文件头之前是错误（宿主会抛，而不是静默钳到 0）。
+     */
+    async seek(offset, whence = SeekMode.Start) {
+        if (typeof offset !== 'number' || !Number.isFinite(offset)) {
+            throw new TypeError('FileHandle.seek: offset 必须是有限数字。');
+        }
+
+        return invoke('fs.seek', { id: this.id, offset, whence });
+    }
+
+    /**
+     * 这个打开文件的元信息（形状与 {@link stat} 一致）。
+     *
+     * @returns {Promise<{ isFile: boolean, isDirectory: boolean, isSymlink: boolean,
+     *   size: number, mtime: number, atime: number, birthtime: number }>}
+     * @remarks 取的是**描述符**上的元信息：文件被改名/挪走之后仍然给得出正确值
+     * （`fs.stat` 按路径查，那种场景会报"找不到文件"）。
+     * `isSymlink` 恒为 `false`——句柄已经跟随过链接，与 Rust 的 `File::metadata()` 一致。
+     * `size` 是句柄看到的**当前**长度。
+     */
+    stat() {
+        return invoke('fs.fstat', { id: this.id });
+    }
+
+    /**
+     * 把文件截断（或扩展到）指定长度。
+     *
+     * @param {number} [len] 目标长度；**省略时截到当前读写位置**（与 Tauri 一致）。
+     * @returns {Promise<void>}
+     */
+    async truncate(len) {
+        /** @type {Record<string, unknown>} */
+        const args = { id: this.id };
+        if (len !== undefined) {
+            args.len = len;
+        }
+
+        await invoke('fs.ftruncate', args);
+    }
+
+    /**
+     * 关闭句柄（触发落盘并释放文件描述符）。
+     *
+     * @returns {Promise<void>}
+     * @remarks **不可重复关闭**：第二次 `close()` 会报"句柄不存在或已关闭"
+     * （与 Tauri 的 Resource 语义一致）。关闭后的读写同样报这个错。
+     */
+    async close() {
+        await invoke('fs.close', { id: this.id });
+    }
+}
+
+/**
+ * 打开一个已存在的文件（或按选项创建），拿到句柄（对标 Tauri 的 `open`）。
+ *
+ * @param {string} path
+ * @param {{ read?: boolean, write?: boolean, append?: boolean, truncate?: boolean,
+ *   create?: boolean, createNew?: boolean, baseDir?: number }} [options]
+ * @returns {Promise<FileHandle>}
+ * @remarks
+ * 选项语义与 Tauri（Rust 的 `OpenOptions`）一致：
+ * `read` / `write` / `append` **至少要有一个为 `true`**（全 false 打开没有意义，宿主会报错）；
+ * `truncate` 需要写权限；`createNew`（必须不存在）与 `create`（允许已存在）互斥。
+ * 冲突组合**当场报错**而不是猜一个意图——猜错会截断数据或意外建文件。
+ *
+ * 需要能力声明（`fs.open`）与**路径 scope**。
+ */
+export async function open(path, options) {
+    const flags = ['read', 'write', 'append', 'truncate', 'create', 'createNew'];
+    const problem = checkOptions('open', options, flags);
+    if (problem !== null) {
+        throw problem;
+    }
+
+    const opts = /** @type {Record<string, unknown> | null | undefined} */ (options);
+    /** @type {Record<string, unknown>} */
+    const args = { path };
+    for (const key of flags) {
+        const value = opts?.[key];
+        if (value !== undefined) {
+            args[key] = value;
+        }
+    }
+
+    args.path = await resolveAgainstBase('open', path, opts);
+
+    const id = await invoke('fs.open', args);
+    return new FileHandle(id);
+}
+
+/**
+ * 创建一个文件（已存在则清空）并打开句柄（对标 Tauri 的 `create`）。
+ *
+ * @param {string} path
+ * @param {{ baseDir?: number }} [options]
+ * @returns {Promise<FileHandle>}
+ * @remarks 等价于 `open(path, { write: true, create: true, truncate: true, read: true })`。
+ * **父目录会自动创建**——与本库 `writeTextFile` 的既有约定一致。
+ *
+ * 需要能力声明（`fs.create`）与**路径 scope**。
+ */
+export async function create(path, options) {
+    const id = await invokeWithOptions('create', 'fs.create', { path }, options);
+    return new FileHandle(id);
+}
+
+/**
+ * 逐行读一个文本文件（UTF-8），返回异步迭代器（对标 Tauri 的 `readTextFileLines`）。
+ *
+ * @param {string} path
+ * @param {{ baseDir?: number }} [options]
+ * @returns {Promise<AsyncIterableIterator<string>>}
+ * @remarks
+ * ```js
+ * for await (const line of await readTextFileLines('app.log')) {
+ *     console.log(line);
+ * }
+ * ```
+ * **迭代契约与 Tauri 一致，但不是流式**：宿主侧整文件读入再切行（本库的 IPC
+ * 是纯 JSON，真流式要占一条 Channel）。代价是内存 = 文件大小——大文件请用
+ * {@link open} + 分块 {@link FileHandle.read} 自己处理。
+ *
+ * 切分规则：按 `\n` 切、去掉紧随的 `\r`（CRLF/LF 都支持）；末尾换行不产生空行，
+ * 文件中间的空行照常保留。空文件给零行。
+ *
+ * 需要能力声明（`fs.readTextFileLines`）与**路径 scope**。
+ */
+export async function readTextFileLines(path, options) {
+    /** @type {string[]} */
+    const lines = await invokeWithOptions('readTextFileLines', 'fs.readTextFileLines', { path }, options);
+
+    return (async function* () {
+        for (const line of lines) {
+            yield line;
+        }
+    })();
 }

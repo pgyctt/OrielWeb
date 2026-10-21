@@ -1319,12 +1319,44 @@ c.Allow("fs.writeTextFile", s => s.AllowPath("$APPDATA/reports/**").DenyPath("$A
 
 | 项 | 本库 | Tauri |
 |---|---|---|
-| 句柄式 API（`open`/`FileHandle`/`seek`/`watch`…） | ⛔ 不提供（没有 rid 句柄表） | ✅ |
-| 二进制通道 | JSON 数字数组（几十 MB 的文件不适用） | `invoke` 的二进制 body |
+| 句柄式 API（`open`/`FileHandle`/`seek`） | ✅ B17 起提供（`watch` 仍无，属 B20） | ✅ |
+| `readTextFileLines` | ✅ 迭代契约一致，但**不流式**（整文件读入再切行） | ✅ 流式 |
+| 二进制通道 | JSON 数字数组（几十 MB 的文件不适用；单次 `read` 上限 8 MiB） | `invoke` 的二进制 body |
 | `stat` 的时间 | 毫秒时间戳（数字） | `Date` |
 | `requireLiteralLeadingDot` | ⛔ 未实现（默认为 false，与我们的行为一致） | ✅ |
 | 变量名大小写 | **不敏感**（`$appdata` 也能用） | 敏感 |
 | 大小写敏感性 | 跟随文件系统（Linux 敏感） | 固定 |
+
+**句柄族（B17）**——`open` / `create` / `FileHandle` / `SeekMode`：
+
+```js
+import { open, create, SeekMode } from '@orielweb/api/fs';
+
+const file = await open('data/log.bin', { read: true, write: true });
+await file.seek(0, SeekMode.End);
+await file.write(new Uint8Array([1, 2, 3]));
+const size = (await file.stat()).size;   // 8（缓冲里的写入已计入长度）
+await file.seek(0);
+const buffer = new Uint8Array(4);
+const n = await file.read(buffer);        // 4；EOF 时是 null（不是 0）
+await file.truncate();                    // 省略长度 = 截到当前位置
+await file.close();
+```
+
+- **scope 只在 `open` / `create` 时判**：拿到句柄后的读写不再看路径——句柄代表
+  "已经过授权的那个打开的文件"（与 Tauri 相同）。**这也是它唯一的安全边界**：
+  路径必须在 `fs.open` / `fs.create` 条目的 scope 内。
+- **句柄是应用级的**（不是窗口级）：一个窗口打开的句柄，另一个窗口拿到 id 也能读写。
+  与 Tauri 的进程级资源表同一姿态；`rid` 是 id 的别名（补壳）。
+- **选项组合冲突当场报错**：`read`/`write`/`append` 至少一个；`truncate` 需要写权限；
+  `createNew`（必须不存在）与 `create`（允许已存在）互斥。猜错意图会截断数据或意外建文件。
+- **`write` 不逐次落盘**（`close` 时落盘，与 Tauri 的 `write_all` 一致）；
+  `read` 单次最多 **8 MiB**（JSON 通道的固有代价）。
+- **`fstat` 走描述符**：文件改名/挪走后仍给得出正确元信息（`stat` 按路径查，那种场景报错）；
+  `isSymlink` 恒 `false`（句柄已跟随链接，与 Rust 的 `File::metadata()` 一致）。
+- **`readTextFileLines` 不是流式**：返回 async 迭代器、切分规则与 Tauri 一致
+  （`\n` 切、去 `\r`、末尾换行不产生空行），但宿主整文件读入——内存 = 文件大小。
+  大文件请用 `open` + 分块 `read`。
 
 **`writeTextFile` 不写 BOM**（Tauri 亦然）：用 `Encoding.UTF8` 写文件会带上
 `EF BB BF`，后果是"写 5 个汉字得到 18 字节"，且下游的 JSON/CSV/shell 解析器

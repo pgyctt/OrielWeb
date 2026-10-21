@@ -107,6 +107,8 @@ const CONST_OBJECTS = [
     { module: '../src/window.js', theirs: '@tauri-apps/api/window', name: 'EffectState' },
     // BaseDirectory 的键值同样是迁移代码会直接引用的（BaseDirectory.AppData = 14）
     { module: '../src/path.js', theirs: '@tauri-apps/api/path', name: 'BaseDirectory' },
+    // B17：SeekMode 是句柄族的位置枚举，迁移代码会直接写 SeekMode.End
+    { module: '../src/fs.js', theirs: '@tauri-apps/plugin-fs', name: 'SeekMode' },
 ];
 
 /**
@@ -150,11 +152,7 @@ const GAPS = {
     mocks: {},
     fs: {
         // BaseDirectory 已补（B13，从 path re-export）。
-        FileHandle: '文件句柄类；B17 计划补（句柄表）',
-        SeekMode: '配合 FileHandle',
-        create: '句柄式创建；本库只做整文件读写',
-        open: '句柄式打开；同上',
-        readTextFileLines: '句柄式逐行读；同上',
+        // FileHandle / SeekMode / create / open / readTextFileLines 已补（B17 句柄族）。
         startAccessingSecurityScopedResource: 'macOS 沙箱的 security-scoped bookmark；本库还没有',
         stopAccessingSecurityScopedResource: '同上',
         watch: '文件系统监视；要常驻 watcher',

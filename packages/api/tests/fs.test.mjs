@@ -28,6 +28,11 @@ import {
     rename,
     copyFile,
     truncate,
+    open,
+    create,
+    readTextFileLines,
+    FileHandle,
+    SeekMode,
     BaseDirectory,
 } from '../src/fs.js';
 import { clearMocks } from '../src/mocks.js';
@@ -441,5 +446,159 @@ test('模块顶层导入不发任何命令', async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.deepEqual(calls, []);
+    clearMocks();
+});
+
+// ---- B17：句柄族 ----
+
+test('open 把访问位原样发给宿主，返回 FileHandle', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({ 'fs.open': 7 });
+    setTransportOverride(transport);
+
+    const handle = await open('/tmp/a.bin', { read: true, write: true });
+
+    assert.ok(handle instanceof FileHandle);
+    assert.equal(handle.id, 7);
+    assert.equal(handle.rid, 7, 'rid 是 id 的补壳（Tauri 那边是资源号）');
+    assert.deepEqual(calls, [['fs.open', { path: '/tmp/a.bin', read: true, write: true }]]);
+
+    clearMocks();
+});
+
+test('open 不认识的选项当场拒（不让宿主静默忽略）', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({ 'fs.open': 1 });
+    setTransportOverride(transport);
+
+    await assert.rejects(() => open('/tmp/a', { read: true, nope: 1 }), /不支持的选项/);
+    assert.deepEqual(calls, []);
+
+    clearMocks();
+});
+
+test('create 走 fs.create，只带 path 与 baseDir 语义', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({ 'fs.create': 3 });
+    setTransportOverride(transport);
+
+    const handle = await create('/tmp/new.txt');
+    assert.equal(handle.id, 3);
+    assert.deepEqual(calls, [['fs.create', { path: '/tmp/new.txt' }]]);
+
+    clearMocks();
+});
+
+test('FileHandle.read 把宿主给的数字数组填进缓冲区', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({ 'fs.read': [1, 2, 3] });
+    setTransportOverride(transport);
+
+    const handle = new FileHandle(9);
+    const buffer = new Uint8Array(8);
+    const n = await handle.read(buffer);
+
+    assert.equal(n, 3, '返回实际读到的字节数');
+    assert.deepEqual([...buffer.subarray(0, 3)], [1, 2, 3], '填进前 3 个字节');
+    assert.deepEqual(calls, [['fs.read', { id: 9, length: 8 }]]);
+
+    clearMocks();
+});
+
+test('FileHandle.read 在 EOF 给 null（与"读到 0 字节"区分）', async () => {
+    clearMocks();
+    const { transport } = makeTransport({ 'fs.read': null });
+    setTransportOverride(transport);
+
+    assert.equal(await new FileHandle(1).read(new Uint8Array(4)), null);
+
+    clearMocks();
+});
+
+test('FileHandle.read 的零长缓冲区不发 IPC', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport();
+    setTransportOverride(transport);
+
+    assert.equal(await new FileHandle(1).read(new Uint8Array(0)), 0);
+    assert.deepEqual(calls, []);
+
+    clearMocks();
+});
+
+test('FileHandle.write 只收 Uint8Array / number[]，其余当场拒', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({ 'fs.write': 2 });
+    setTransportOverride(transport);
+
+    const handle = new FileHandle(5);
+    assert.equal(await handle.write(new Uint8Array([7, 8])), 2);
+    assert.deepEqual(calls.at(-1), ['fs.write', { id: 5, data: [7, 8] }]);
+
+    await assert.rejects(() => handle.write(/** @type {any} */ ('text')), TypeError);
+
+    clearMocks();
+});
+
+test('FileHandle.seek 默认 Start，whence 可显式给', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({ 'fs.seek': 4 });
+    setTransportOverride(transport);
+
+    const handle = new FileHandle(2);
+    assert.equal(await handle.seek(4), 4);
+    assert.deepEqual(calls.at(-1), ['fs.seek', { id: 2, offset: 4, whence: SeekMode.Start }]);
+
+    await handle.seek(-2, SeekMode.End);
+    assert.deepEqual(calls.at(-1), ['fs.seek', { id: 2, offset: -2, whence: 2 }]);
+
+    await assert.rejects(() => handle.seek(NaN), TypeError);
+
+    clearMocks();
+});
+
+test('SeekMode 的键值与反向映射都与 Tauri 的数值枚举一致', () => {
+    assert.equal(SeekMode.Start, 0);
+    assert.equal(SeekMode.Current, 1);
+    assert.equal(SeekMode.End, 2);
+    assert.equal(/** @type {any} */ (SeekMode)[0], 'Start');
+    assert.equal(/** @type {any} */ (SeekMode)[2], 'End');
+});
+
+test('FileHandle.stat / truncate / close 的命令与参数', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({ 'fs.fstat': { size: 0 } });
+    setTransportOverride(transport);
+
+    const handle = new FileHandle(11);
+    await handle.stat();
+    assert.deepEqual(calls.at(-1), ['fs.fstat', { id: 11 }]);
+
+    await handle.truncate();
+    assert.deepEqual(calls.at(-1), ['fs.ftruncate', { id: 11 }], 'len 省略时不带那个字段（截到当前位置）');
+
+    await handle.truncate(0);
+    assert.deepEqual(calls.at(-1), ['fs.ftruncate', { id: 11, len: 0 }], 'len=0 是一个有意义的长度，必须发出去');
+
+    await handle.close();
+    assert.deepEqual(calls.at(-1), ['fs.close', { id: 11 }]);
+
+    clearMocks();
+});
+
+test('readTextFileLines 返回的迭代器逐行给出，末尾空行不产生', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({ 'fs.readTextFileLines': ['a', 'b', ''] });
+    setTransportOverride(transport);
+
+    const iterator = await readTextFileLines('/tmp/x.txt');
+    const lines = [];
+    for await (const line of iterator) {
+        lines.push(line);
+    }
+
+    assert.deepEqual(lines, ['a', 'b', ''], '宿主给什么就给什么（空行是内容）');
+    assert.deepEqual(calls, [['fs.readTextFileLines', { path: '/tmp/x.txt' }]]);
+
     clearMocks();
 });

@@ -28,15 +28,16 @@ import { invoke } from '@orielweb/api/core';
 | `dpi` | ✅ 四个类 + 归一 + `toPhysical` / `toLogical` 换算 |
 | `path` | ✅ `sep` / `delimiter`（同步）+ 7 个路径运算 + 24 个目录解析（由宿主算） |
 | `app` | ✅ `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`（只读元信息，无需能力声明） |
-| `fs` | ✅ 整文件读写一族（`readTextFile` / `writeTextFile` / `readFile` / `writeFile` / `exists` / `size` / `readDir` / `stat` / `lstat` / `mkdir` / `remove` / `rename` / `copyFile` / `truncate`）——**命令授权 + 路径 scope 两道关都必过** |
+| `fs` | ✅ 整文件族（`readTextFile` / `writeTextFile` / `readFile` / `writeFile` / `exists` / `size` / `readDir` / `stat` / `lstat` / `mkdir` / `remove` / `rename` / `copyFile` / `truncate`）+ **句柄族**（`open` / `create` / `FileHandle` / `SeekMode` / `readTextFileLines`，B17）——**命令授权 + 路径 scope 两道关都必过**；句柄的 scope 只在 open/create 时判 |
 | `dialog` | ✅ `open` / `save` / `message` / `ask` / `confirm` |
 | `clipboard` | ✅ `readText` / `writeText` / `clear`（纯文本；`label` 明确拒绝） |
 | `opener` | ✅ `openUrl` / `openPath` / `revealItemInDir`（`openWith` 明确拒绝） |
 | `notification` | ✅ `isPermissionGranted` / `requestPermission` / `sendNotification`（桌面子集） |
 | `autostart` | ✅ `isEnabled` / `enable` / `disable` |
-| `image` | ✅ `Image`（`fromPath` / `fromBytes` / `new`）+ `transformImage`。**没有 `close()`**——本库没有资源表，它是页面侧字节容器 |
+| `image` | ✅ `Image`（`fromPath` / `fromBytes` / `new`）+ `transformImage`。`close()` 是**补壳**（B14）：没有资源可释放，调用不报错、debug 下打警告 |
 | `mocks` | ✅ `mockIPC` / `mockWindows` / `mockEmit` / `mockConvertFileSrc` / `clearMocks` |
-| `menu` / `tray` | 未提供前端包（宿主侧的托盘 API 见 `oriel.tray`，不走这个包） |
+| `menu` | ✅ 菜单树（`Menu` / `MenuItem` / `PredefinedMenuItem` / `Submenu` / `CheckMenuItem` / `IconMenuItem`）+ `popup` / `setAsAppMenu` / `setAsWindowMenu` |
+| `tray` | ✅ `TrayIcon`（B12，静态 3 + 实例 8），形状与 Tauri 一致 |
 
 ## 关闭接管：语义与 Tauri **相反**
 

@@ -94,6 +94,21 @@ public sealed class OrielApp : IDisposable
     internal OrielIpcGuard Guard { get; }
 
     /// <summary>
+    /// 句柄式 fs（B17）的宿主侧句柄表：<c>fs.open</c> / <c>fs.create</c> 分配的 id → 打开的文件。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 应用级而不是窗口级——与 Tauri 的进程级资源表同一姿态（理由见
+    /// <see cref="OrielFileHandleRegistry"/> 的说明）。
+    /// </para>
+    /// <para>
+    /// 为什么不放到命令类里做静态字段：静态表活不过 Dispose、也与"每个应用一份"的
+    /// 令牌/门禁模型不一致；测试里多个应用实例并行跑时还会互相污染。
+    /// </para>
+    /// </remarks>
+    internal OrielFileHandleRegistry FileHandles { get; } = new();
+
+    /// <summary>
     /// 入站 IPC 被门禁拒绝时触发（来源 / 令牌 / 命令授权三层都有）。
     /// </summary>
     /// <remarks>
@@ -1750,6 +1765,11 @@ public sealed class OrielApp : IDisposable
         }
 
         _trays.Clear();
+
+        // 句柄式 fs 的清理：关掉所有打开的 FileStream（未 close 的句柄在这里落盘）。
+        // 放在后端 Dispose 之前：文件 I/O 不依赖消息循环，但它产生的异常不该
+        // 让后端的清理被跳过。
+        FileHandles.Dispose();
         _backend?.Dispose();
     }
 }
