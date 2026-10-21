@@ -115,10 +115,16 @@ internal interface IWindowBackend
 
     /// <summary>当前是否有系统装饰（标题栏与边框）。</summary>
     /// <remarks>
-    /// 与 <see cref="IsResizable"/> 那几条一样取**创建时的选项**（<c>Frameless</c> 的取反）：
-    /// 它在窗口生命期内不变，而三平台从原生读回它的代价与可靠性都不一样
-    /// （Windows 上是我们的 <c>WM_NCCALCSIZE</c> 处理，读样式位读不出这个意图；
-    /// GTK 的 getter 报的是**请求值**，Wayland 下合成器可能无视它）。
+    /// <para>
+    /// 初值来自创建选项（<c>Frameless</c> 的取反），但**运行期可被
+    /// <see cref="SetDecorations"/> 改**（B22 起），所以它读的是"当前状态"而不是选项。
+    /// </para>
+    /// <para>
+    /// 三平台的取法不同：Windows 读宿主记下的状态（原生样式位里有 <c>WS_CAPTION</c> 也
+    /// 不代表有装饰——本库的 frameless 靠 <c>WM_NCCALCSIZE</c> 把客户区铺满整个窗口），
+    /// macOS 读 <c>styleMask</c> 的 Titled 位，Linux 读宿主记下的状态（GTK 的 getter 报的是
+    /// **请求值**，Wayland 下合成器可能无视它）。
+    /// </para>
     /// </remarks>
     bool IsDecorated { get; }
 
@@ -332,6 +338,208 @@ internal interface IWindowBackend
     /// </para>
     /// </remarks>
     void StartResizeDragging(OrielResizeDirection direction);
+
+    // ---- 平台开关 / 特效 / 任务栏（B22）----
+    //
+    // 19 个方法对应 Tauri 2 的 Window 上的同名 API。**支持矩阵逐平台不同**，而且这次
+    // "做"的方式是统一的：**能做的平台真做，做不了的抛 NotSupportedException**
+    // （命令层翻成 not_supported），不做静默 no-op——这一批的护栏与 B21 同一套。
+    //
+    // | 方法                        | Windows                   | macOS                      | Linux                        |
+    // |-----------------------------|---------------------------|----------------------------|------------------------------|
+    // | SetSkipTaskbar              | ✅ ITaskbarList::DeleteTab | ⛔ Tauri 同样不支持        | ✅ gtk_window_set_skip_taskbar_hint |
+    // | SetVisibleOnAllWorkspaces   | ⛔ 无公开入口              | ✅ collectionBehavior       | ✅ gtk_window_stick / unstick |
+    // | SetContentProtected         | ✅ SetWindowDisplayAffinity | ✅ sharingType             | ⛔ 无对应协议                |
+    // | SetSimpleFullscreen         | ✅ = SetFullscreen         | ✅ 独立于原生全屏          | ✅ = SetFullscreen            |
+    // | SetFullscreenOnMonitor      | ✅ 移到该屏再全屏           | ✅ 移到该屏再全屏          | ✅ gtk_window_fullscreen_on_monitor |
+    // | SetTitleBarStyle            | ⛔ 用 Frameless 表达       | ✅ titlebarAppearsTransparent | ⛔ 无对应概念             |
+    // | SetShadow                   | ✅ DWMWA_NCRENDERING_POLICY | ✅ hasShadow              | ⛔ GTK 无阴影 API            |
+    // | SetAlwaysOnBottom           | ✅ HWND_BOTTOM              | ✅ window.level            | ✅ gtk_window_set_keep_below |
+    // | SetFocusable                | ✅ WS_EX_NOACTIVATE         | ⛔ 只有私有 API            | ✅ set_accept_focus / can_focus |
+    // | SetDecorations              | ✅ 改样式位 + FRAMECHANGED  | ✅ styleMask               | ✅ gtk_window_set_decorated  |
+    // | SetEffects / ClearEffects   | ✅ Mica/Acrylic/Blur/Tabbed | ✅ NSVisualEffectView      | ⛔ 无桌面无关的材质 API      |
+    // | SetProgressBar              | ✅ ITaskbarList3            | ⛔ Tauri 同样不实现        | ⛔ 需 libunity，本库不链接   |
+    // | SetOverlayIcon              | ✅ ITaskbarList3            | ⛔                         | ⛔                           |
+    // | SetBadgeCount / SetBadgeLabel | ⛔ 用 SetOverlayIcon 代替 | ✅ NSDockTile              | ⛔ 需 libunity，本库不链接   |
+    //
+    // 为什么 macOS 的 SetSkipTaskbar 是 ⛔ 而 Linux 是 ✅：Tauri 文档明写 macOS Unsupported
+    // （macOS 没有"任务栏"这个概念，Dock 里的是整个应用），而 Linux 的
+    // gtk_window_set_skip_taskbar_hint 是真实存在且被主流 WM 尊重的。
+
+    /// <summary>是否在任务栏/Dock 里隐藏这个窗口（<c>setSkipTaskbar</c>）。</summary>
+    /// <remarks>
+    /// <b>macOS 抛 <see cref="NotSupportedException"/></b>：Dock 里显示的是整个应用，
+    /// 没有"按窗口隐藏"这回事（Tauri 同样标注 macOS 不支持）。
+    /// Linux 的 <c>gtk_window_set_skip_taskbar_hint</c> 是**提示**，Wayland 下由合成器决定。
+    /// </remarks>
+    void SetSkipTaskbar(bool skip);
+
+    /// <summary>是否在所有工作区/虚拟桌面上可见（<c>setVisibleOnAllWorkspaces</c>）。</summary>
+    /// <remarks>
+    /// <b>Windows 抛 <see cref="NotSupportedException"/></b>：Win32 没有公开的
+    /// "加入所有虚拟桌面"接口（Tauri 同样标注 Windows 不支持）。
+    /// Linux 走 <c>gtk_window_stick</c>（X11 的 <c>_NET_WM_STATE_STICKY</c>）；
+    /// Wayland 下该 hint 不被协议覆盖，主流合成器会忽略——文档写明。
+    /// </remarks>
+    void SetVisibleOnAllWorkspaces(bool visible);
+
+    /// <summary>是否阻止窗口内容被别的应用截取（<c>setContentProtected</c>）。</summary>
+    /// <remarks>
+    /// Windows 是 <c>SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)</c>（Win10 2004+；
+    /// 更早的系统退回 <c>WDA_MONITOR</c>，那会让窗口在截屏里显示为黑块），
+    /// macOS 是 <c>NSWindow.sharingType = NSWindowSharingNone</c>。
+    /// <b>Linux 抛 <see cref="NotSupportedException"/></b>：X11 没有这个能力，
+    /// Wayland 的相关协议 GTK3 不暴露。
+    /// </remarks>
+    void SetContentProtected(bool contentProtected);
+
+    /// <summary>简化全屏（macOS 的"不占新 Space 的全屏"，<c>setSimpleFullscreen</c>）。</summary>
+    /// <remarks>
+    /// <b>只有 macOS 有独立语义</b>：改 <c>styleMask</c> 去掉标题栏并把窗口铺满当前屏幕，
+    /// 不创建新的 Space（Lion 之前的全屏就是这样）。**Windows / Linux 上等同于
+    /// <see cref="SetFullscreen"/>**——这与 Tauri 的文档一致（"On other platforms,
+    /// this is the same as setFullscreen"）。
+    /// </remarks>
+    void SetSimpleFullscreen(bool fullscreen);
+
+    /// <summary>在包含给定物理坐标的那台显示器上全屏（<c>setFullscreenOnMonitor</c>）。</summary>
+    /// <param name="x">屏幕**物理**像素横坐标（取显示器矩形内的任意一点，通常是左上角）。</param>
+    /// <param name="y">屏幕物理像素纵坐标。</param>
+    /// <remarks>
+    /// <para>
+    /// 与 Tauri 一致：**该坐标不在任何显示器上时什么都不做**（不是错误）。
+    /// 落点分两步：先把窗口移到那台显示器，再进入全屏——三平台的全屏都以
+    /// "窗口当前所在显示器"为准，没有"直接指定显示器全屏"的通用入口
+    /// （GTK 有 <c>gtk_window_fullscreen_on_monitor</c>，那一步用它一次到位）。
+    /// </para>
+    /// <para>
+    /// 全屏状态下改显示器由平台各自处理：Windows 先退出全屏再移动再进入，
+    /// macOS 只能"退出全屏 → 移动 → 再进入"（原生全屏切换是异步动画）。
+    /// </para>
+    /// </remarks>
+    void SetFullscreenOnMonitor(int x, int y);
+
+    /// <summary>标题栏样式（<c>setTitleBarStyle</c>）。</summary>
+    /// <remarks>
+    /// <b>只有 macOS 实现</b>：<see cref="OrielTitleBarStyle.Transparent"/> 设
+    /// <c>titlebarAppearsTransparent</c>，<see cref="OrielTitleBarStyle.Overlay"/> 再加
+    /// <c>titleVisibility = hidden</c> + <c>fullSizeContentView</c>。
+    /// Windows/Linux 抛 <see cref="NotSupportedException"/>——那边的等价能力是
+    /// "创建时 <see cref="OrielWindowOptions.Frameless"/> + 页面自绘"，没有运行期切换。
+    /// </remarks>
+    void SetTitleBarStyle(OrielTitleBarStyle style);
+
+    /// <summary>是否给窗口画阴影（<c>setShadow</c>）。</summary>
+    /// <remarks>
+    /// <para>
+    /// Windows 落点是 DWM 的非客户区渲染策略（<c>DWMWA_NCRENDERING_POLICY</c>）。
+    /// 与 Tauri 文档一致的两条平台事实：**装饰窗口关不掉阴影**（DWM 总会画边框阴影），
+    /// 而给无边框窗口打开阴影会在 Win11 上带来圆角与 1px 边框。
+    /// </para>
+    /// <para>
+    /// <b>Linux 抛 <see cref="NotSupportedException"/></b>：GTK 没有阴影 API，
+    /// 阴影由合成器按窗口类型给（<c>_GTK_FRAME_EXTENTS</c> 那套），应用改不了。
+    /// </para>
+    /// </remarks>
+    void SetShadow(bool enable);
+
+    /// <summary>是否永远压在别的窗口之下（<c>setAlwaysOnBottom</c>）。</summary>
+    /// <remarks>
+    /// Windows 是 <c>SetWindowPos(HWND_BOTTOM)</c>（只在**置顶关闭**时有意义：
+    /// 两者同时开时后设的那个赢），macOS 把 <c>window.level</c> 降到普通窗口之下，
+    /// Linux 是 <c>gtk_window_set_keep_below</c>（同样是 WM 提示）。
+    /// </remarks>
+    void SetAlwaysOnBottom(bool alwaysOnBottom);
+
+    /// <summary>窗口能否获得焦点（<c>setFocusable</c>）。</summary>
+    /// <remarks>
+    /// <b>macOS 抛 <see cref="NotSupportedException"/></b>：AppKit 没有公开的
+    /// "这个窗口不能成为 key window"的入口（只有私有的 <c>_setPreventsActivation</c>，
+    /// 用它等于把自己绑到未公开 API 上）。
+    /// Windows 切 <c>WS_EX_NOACTIVATE</c>，Linux 走 <c>gtk_window_set_accept_focus</c>
+    /// + <c>gtk_widget_set_can_focus</c>（Wayland 下同样只是提示）。
+    /// </remarks>
+    void SetFocusable(bool focusable);
+
+    /// <summary>是否显示系统装饰（标题栏与边框，<c>setDecorations</c>）。</summary>
+    /// <remarks>
+    /// <para>
+    /// 运行期切换，三平台都做：Windows 改样式位后必须
+    /// <c>SetWindowPos(SWP_FRAMECHANGED)</c> 让非客户区重算（否则"改了但看着没变"），
+    /// macOS 切 <c>NSWindowStyleMaskTitled</c>，Linux 是 <c>gtk_window_set_decorated</c>
+    /// （Wayland 下由合成器决定，通常会被尊重）。
+    /// </para>
+    /// <para>
+    /// <b>与创建期的 <see cref="OrielWindowOptions.Frameless"/> 是两件事</b>：
+    /// 后者决定宿主自己的 <c>WM_NCCALCSIZE</c> 分支与拖拽热区，创建后不再变；
+    /// 这个方法只改原生装饰，不影响页面的自绘标题栏。
+    /// </para>
+    /// </remarks>
+    void SetDecorations(bool decorations);
+
+    /// <summary>应用一组窗口材质（<c>setEffects</c>）。</summary>
+    /// <param name="effects">材质列表 + 状态/圆角/色调（见 <see cref="OrielEffects"/>）。</param>
+    /// <remarks>
+    /// <para>
+    /// <b>取列表里第一个本平台支持的那个，其余忽略</b>（与 Tauri 一致），所以一份代码
+    /// 可以同时列 Windows 与 macOS 的材质。**一个都不支持时抛
+    /// <see cref="NotSupportedException"/>**，消息里列出本平台支持的取值——
+    /// "设了没生效"必须能被看见。
+    /// </para>
+    /// <para>
+    /// <b>Linux 抛 <see cref="NotSupportedException"/></b>：窗口材质是 Windows DWM 与
+    /// macOS AppKit 的概念，GTK3 没有对应 API（GTK4 的 <c>GtkWindow</c> 也没有；
+    /// 各桌面环境自己的模糊协议不在 GTK3 里）。
+    /// </para>
+    /// <para>
+    /// <b>需要页面自己是透明的</b>：材质画在 webview 之后，页面不透明就什么也看不见。
+    /// macOS 上本库会把窗口与 webview 的背景放开（与 Tauri 的 <c>transparent: true</c>
+    /// 同一姿态），Windows 上 DWM 材质由系统画在客户区之后，页面需要有透明区域才可见。
+    /// </para>
+    /// </remarks>
+    void SetEffects(OrielEffects effects);
+
+    /// <summary>清掉已应用的材质（<c>clearEffects</c>）。</summary>
+    /// <remarks>
+    /// 没设过时是**空操作**（不报错、不抛异常）：清一个不存在的状态不该失败。
+    /// Linux 上同样抛 <see cref="NotSupportedException"/>（与 <see cref="SetEffects"/> 一致：
+    /// 那个能力整个不存在，而不是"清的时候才不存在"）。
+    /// </remarks>
+    void ClearEffects();
+
+    /// <summary>任务栏进度条（<c>setProgressBar</c>）。</summary>
+    /// <param name="status">状态；<see cref="OrielProgressBarStatus.None"/> 表示隐藏。</param>
+    /// <param name="progress">0–100 的百分比；<c>null</c> 表示不给数值（不确定状态或隐藏）。</param>
+    /// <remarks>
+    /// <b>只有 Windows 实现</b>（<c>ITaskbarList3::SetProgressState</c> /
+    /// <c>SetProgressValue</c>）。macOS 的 Dock 磁贴没有进度条 API（Tauri 同样不实现），
+    /// Linux 需要 <c>libunity</c> 的 LauncherEntry（本库不链接那个库，不假装支持）。
+    /// 两者都抛 <see cref="NotSupportedException"/>。
+    /// </remarks>
+    void SetProgressBar(OrielProgressBarStatus status, double? progress);
+
+    /// <summary>任务栏图标上的角标覆盖图（<c>setOverlayIcon</c>）。</summary>
+    /// <param name="icon">16×16 的图标（PNG/ICO 字节经 <see cref="OrielImage"/> 解码）；<c>null</c> 表示清除。</param>
+    /// <remarks>
+    /// <b>只有 Windows 有这个概念</b>（<c>ITaskbarList3::SetOverlayIcon</c>）。
+    /// macOS 的等价物是 Dock 徽标（<see cref="SetBadgeCount"/> / <see cref="SetBadgeLabel"/>），
+    /// 形状不同，不互相顶替；Linux 两个都没有。两者都抛 <see cref="NotSupportedException"/>。
+    /// </remarks>
+    void SetOverlayIcon(OrielImage? icon);
+
+    /// <summary>Dock 徽标上的数字（<c>setBadgeCount</c>）。</summary>
+    /// <param name="count">要显示的数字；<c>null</c> 或 0 表示清除。</param>
+    /// <remarks>
+    /// <b>只有 macOS 实现</b>（<c>NSApp.dockTile.badgeLabel</c>，**应用级**而不是按窗口）。
+    /// Windows 没有徽标概念（用 <see cref="SetOverlayIcon"/> 代替），
+    /// Linux 需要 <c>libunity</c>（本库不链接）。两者都抛 <see cref="NotSupportedException"/>。
+    /// </remarks>
+    void SetBadgeCount(int? count);
+
+    /// <summary>Dock 徽标上的短文本（<c>setBadgeLabel</c>）。</summary>
+    /// <param name="label">要显示的文本；<c>null</c> 表示清除。</param>
+    /// <remarks><b>只有 macOS 实现</b>（与 <see cref="SetBadgeCount"/> 同一个落点）。</remarks>
+    void SetBadgeLabel(string? label);
 
     /// <summary>
     /// 请求用户注意（任务栏闪烁 / Dock 弹跳）。

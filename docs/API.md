@@ -226,6 +226,22 @@ WebviewWindow? again = app.GetWindow("settings");   // 按 label 取回（不存
 | `SetCursorPosition(double x, double y)` | 把光标移到**客户区**内的某点（逻辑像素，左上原点）。物理→逻辑的换算在宿主侧做（它知道缩放比），页面侧不要预换算 |
 | `SetIgnoreCursorEvents(bool ignore)` | 点击穿透。**Linux 仅 X11 有效**，Wayland 抛 `NotSupportedException`（GTK 的 input shape 在 Wayland 下是 no-op） |
 | `StartResizeDragging(OrielResizeDirection direction)` | 从某条边/角开始 resize 拖动。**macOS 抛 `NotSupportedException`**（AppKit 没有公开入口）；Windows/Linux 会进入跟着鼠标的模态循环，**必须在鼠标按下期间调用**（页面通常在 `mousedown` 里发这条命令） |
+| **平台开关 / 特效 / 任务栏（B22）**（写操作，**均不在标题栏白名单里**，需显式 `Allow`） | |
+| `SetSkipTaskbar(bool skip)` | 在任务栏里隐藏这个窗口。**macOS 抛 `NotSupportedException`**（Dock 里的是整个应用）。Windows `ITaskbarList::DeleteTab`/`AddTab`；Linux `gtk_window_set_skip_taskbar_hint`（Wayland 由合成器决定） |
+| `SetVisibleOnAllWorkspaces(bool visible)` | **Windows 抛 `NotSupportedException`**（没有公开的虚拟桌面 API）。macOS 切 `collectionBehavior` 的 `canJoinAllSpaces`（保留其它位）；Linux `gtk_window_stick`/`unstick` |
+| `SetContentProtected(bool protected)` | 阻止内容被别的应用截取。**Linux 抛 `NotSupportedException`**。Windows `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`，Win10 2004 之前退回 `WDA_MONITOR`（截屏里显示为黑块）并记诊断；macOS `sharingType = none` |
+| `SetSimpleFullscreen(bool fullscreen)` | **只有 macOS 有独立语义**（不占新 Space，铺满当前屏幕）。Windows/Linux 等同 `SetFullscreen`（与 Tauri 的文档一致） |
+| `SetFullscreenOnMonitor(int x, int y)` | 在包含该**屏幕物理坐标**的显示器上全屏；**坐标不在任何显示器上时什么都不做**（与 Tauri 一致）。三平台都是"先搬到那台屏，再进全屏" |
+| `SetTitleBarStyle(OrielTitleBarStyle style)` | **只有 macOS 实现**（`visible`/`transparent`/`overlay`）。Windows/Linux 抛 `NotSupportedException`——那边的等价能力是创建时 `Frameless` + 页面自绘 |
+| `SetShadow(bool enable)` | **Linux 抛 `NotSupportedException`**（GTK 无阴影 API）。Windows 走 DWM 非客户区渲染策略：**装饰窗口关不掉阴影**，给无边框窗口打开阴影在 Win11 上会带来圆角与 1px 边框（与 Tauri 的说明一致）；macOS `hasShadow` |
+| `SetAlwaysOnBottom(bool alwaysOnBottom)` | 三平台都做。与 `SetOnTop` **互斥**（后设的赢，本库在置底时会先取消置顶）。macOS 把 `window.level` 降到 -1（低于所有普通窗口、仍可交互，不是桌面级） |
+| `SetFocusable(bool focusable)` | **macOS 抛 `NotSupportedException`**（只有私有的 `_setPreventsActivation`）。Windows 切 `WS_EX_NOACTIVATE`；Linux `set_accept_focus` + `can_focus`（Wayland 下只是提示） |
+| `SetDecorations(bool decorations)` | **运行期切换，三平台都做**。与创建期的 `OrielWindowOptions.Frameless` 是两件事：后者决定宿主的命中测试与拖拽热区，创建后不变（`IsDecorated` 从 B22 起反映运行期状态） |
+| `SetEffects(OrielEffects effects)` | 应用窗口材质。**取列表里第一个本平台支持的，其余忽略**；**一个都不支持时抛 `NotSupportedException`**（消息里列出本平台支持的取值）。**Linux 整条命令抛**。详见下节的材质表 |
+| `ClearEffects()` | 清掉材质；没设过是空操作。**Linux 同样抛**（能力整个不存在） |
+| `SetProgressBar(OrielProgressBarStatus status, double? progress)` | **只有 Windows 实现**（`ITaskbarList3`）。macOS 的 Dock 磁贴没有进度条 API，Linux 需要 `libunity`（本库不链接）——两者抛 `NotSupportedException` |
+| `SetOverlayIcon(OrielImage? icon)` | 任务栏图标上的角标覆盖图，**只有 Windows 有**（`ITaskbarList3::SetOverlayIcon`）；`null` 清除。传入的 HICON 由宿主持有，换/清/窗口销毁时销毁 |
+| `SetBadgeCount(int? count)` / `SetBadgeLabel(string? label)` | **只有 macOS 实现**（`NSApp.dockTile.badgeLabel`，**应用级**：所有窗口改的是同一个 Dock 图标）。Windows 用 `SetOverlayIcon` 代替；Linux 需要 `libunity` |
 | **几何与外观** | |
 | `SetTitle(string title)` / `SetResizable(bool enabled)` | — |
 | `SetMinSize(int width, int height)` | 客户区最小尺寸（逻辑像素，传 0 表示不限制） |
@@ -324,6 +340,53 @@ WebviewWindow? again = app.GetWindow("settings");   // 按 label 取回（不存
 
 **`NotSupportedException` 在页面侧就是 `not_supported` 错误码**（分发器统一翻译），
 所以迁移代码可以直接 `if (e.code === 'not_supported')` 分支——不需要按平台字符串判断。
+
+#### 平台开关 / 特效 / 任务栏的逐平台支持（B22）
+
+十九项里**没有一项是三平台同形的**，所以支持矩阵直接给全表。`✅` = 真实现，`⛔` = 抛
+`not_supported`（页面侧错误码），`=` 表示与同行的另一个方法等价。
+
+| 方法 | Windows | macOS | Linux |
+|---|---|---|---|
+| `setSkipTaskbar` | ✅ `ITaskbarList::DeleteTab` | ⛔（Dock 是应用级） | ✅ `set_skip_taskbar_hint` |
+| `setVisibleOnAllWorkspaces` | ⛔（无公开 API） | ✅ `collectionBehavior` | ✅ `gtk_window_stick` |
+| `setContentProtected` | ✅ `SetWindowDisplayAffinity` | ✅ `sharingType` | ⛔（无对应协议） |
+| `setSimpleFullscreen` | = `setFullscreen` | ✅ 独立语义 | = `setFullscreen` |
+| `setFullscreenOnMonitor` | ✅ 搬屏 + 全屏 | ✅ 搬屏 + 全屏 | ✅ 搬屏 + 全屏 |
+| `setTitleBarStyle` | ⛔（用 `Frameless`） | ✅ `titlebarAppearsTransparent` | ⛔ |
+| `setShadow` | ✅ `DWMWA_NCRENDERING_POLICY` | ✅ `hasShadow` | ⛔（GTK 无阴影 API） |
+| `setAlwaysOnBottom` | ✅ `HWND_BOTTOM` | ✅ `window.level = -1` | ✅ `set_keep_below` |
+| `setFocusable` | ✅ `WS_EX_NOACTIVATE` | ⛔（只有私有 API） | ✅ `set_accept_focus` |
+| `setDecorations` | ✅ 样式位 + `FRAMECHANGED` | ✅ `styleMask` | ✅ `set_decorated` |
+| `setEffects` / `clearEffects` | ✅ Mica/Acrylic/Blur/Tabbed | ✅ `NSVisualEffectView` | ⛔ |
+| `setProgressBar` | ✅ `ITaskbarList3` | ⛔（Dock 无进度条） | ⛔（需 libunity） |
+| `setOverlayIcon` | ✅ `ITaskbarList3` | ⛔ | ⛔ |
+| `setBadgeCount` / `setBadgeLabel` | ⛔（用 overlay 代替） | ✅ `NSDockTile` | ⛔（需 libunity） |
+
+**材质（`Effect`）的逐平台映射**。一份代码可以同时列两边的材质——
+"第一个本平台支持的生效"（与 Tauri 一致）：
+
+| Windows 取值 | 落点 |
+|---|---|
+| `mica` | `DWMWA_SYSTEMBACKDROP_TYPE = DWMSBT_MAINWINDOW`（Win11 22H2+） |
+| `acrylic` | `DWMSBT_TRANSIENTWINDOW`；Win10 1803–Win11 21H2 退回强调色策略 `ACCENT_ENABLE_ACRYLICBLURBEHIND` |
+| `tabbed` / `tabbedDark` / `tabbedLight` | `DWMSBT_TABBEDWINDOW`；后两个顺带切非客户区的深浅色 |
+| `blur` | 强调色策略 `ACCENT_ENABLE_BLURBEHIND`（未文档化的 `SetWindowCompositionAttribute`，与 Tauri/tao 同一入口） |
+
+| macOS 取值 | `NSVisualEffectMaterial` |
+|---|---|
+| `appearanceBased` / `light` / `dark` / `mediumLight` / `ultraDark` | 0 / 1 / 2 / 8 / 9（10.14 起废弃，但仍是合法取值） |
+| `titlebar` / `selection` / `menu` / `popover` / `sidebar` | 3 / 4 / 5 / 6 / 7 |
+| `headerView` / `sheet` / `windowBackground` / `hudWindow` | 10 / 11 / 12 / 13 |
+| `fullScreenUI` / `tooltip` / `contentBackground` | 15 / 17 / 18 |
+| `underWindowBackground` / `underPageBackground` | 21 / 22 |
+| `liquidGlassRegular` / `liquidGlassClear` | ⛔ 需要 macOS 26 的 `NSGlassEffectView`，本库未实现 |
+
+> **材质需要页面自己是透明的**：材质视图画在 webview **之后**。macOS 上本库会把窗口与
+> webview 的背景放开（`drawsBackground` 走 KVC，且**先用运行时 API 确认那个键存在**——
+> 否则 `NSUndefinedKeyException` 会直接带走进程），Windows 上 DWM 材质画在客户区之后，
+> 页面需要有透明区域才看得见。**本库没有 `transparent` 窗口选项**（Tauri 有），
+> 所以"页面背景不透明 → 材质看不见"是当前的真实边界，写在 CHANGELOG 的已知限制里。
 
 ### 关闭管线：宿主否决 → 页面接管 → 放行
 
@@ -1105,7 +1168,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 |---|---|
 | `core` | `invoke` / `isTauri` / `convertFileSrc`（同步；宿主侧查 `asset.read` 的 scope）/ `Channel`（流式回传，见 §11.3） |
 | `event` | `listen` / `once` / `emit` / `emitTo` / `TauriEvent`（`listen` 返回**函数**，同时是 thenable：`const un = listen(...)`、`await listen(...)`、`listen(...).then(fn => ...)` 三种写法都成立；差别只剩 `instanceof Promise === false`） |
-| `window` | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow` + `Window` 类（含静态方法 `Window.getFocusedWindow()`；M5 的状态查询与外观开关：`isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop` / `isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `isEnabled` / `theme`；`setEnabled` / `setMaximizable` / `setMinimizable` / `setClosable` / `setMaxSize` / `setSizeConstraints` / `requestUserAttention` / `setIcon` / `setBackgroundColor`；`onThemeChanged` / `onScaleChanged` / `onDragDropEvent`；显示器 `availableMonitors` / `primaryMonitor` / `currentMonitor` / `monitorFromPoint` / `cursorPosition`；光标 `setCursorGrab` / `setCursorVisible` / `setCursorIcon` / `setCursorPosition` / `setIgnoreCursorEvents` / `startResizeDragging`） |
+| `window` | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow` + `Window` 类（含静态方法 `Window.getFocusedWindow()`；M5 的状态查询与外观开关：`isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop` / `isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `isEnabled` / `theme`；`setEnabled` / `setMaximizable` / `setMinimizable` / `setClosable` / `setMaxSize` / `setSizeConstraints` / `requestUserAttention` / `setIcon` / `setBackgroundColor`；`onThemeChanged` / `onScaleChanged` / `onDragDropEvent`；显示器 `availableMonitors` / `primaryMonitor` / `currentMonitor` / `monitorFromPoint` / `cursorPosition`；光标 `setCursorGrab` / `setCursorVisible` / `setCursorIcon` / `setCursorPosition` / `setIgnoreCursorEvents` / `startResizeDragging`；平台开关 `setSkipTaskbar` / `setVisibleOnAllWorkspaces` / `setContentProtected` / `setSimpleFullscreen` / `setFullscreenOnMonitor` / `setTitleBarStyle` / `setShadow` / `setAlwaysOnBottom` / `setFocusable` / `setDecorations`；材质 `setEffects` / `clearEffects` + `Effect` / `EffectState`；任务栏 `setProgressBar` / `setOverlayIcon` / `setBadgeCount` / `setBadgeLabel` + `ProgressBarStatus`；以及 `TitleBarStyle` / `Effects` / `ProgressBarState` 三个类型） |
 | `webviewWindow` | `WebviewWindow`（`extends Window`）/ `getCurrentWebviewWindow` / `getAllWebviewWindows`。**页面建窗**：`new WebviewWindow(label, options)` 后 `await w.created`，或 `await WebviewWindow.create(...)`。与 Tauri 的差别是"创建结果走 `created` 而不是 `tauri://created` 事件"（见该模块一节） |
 | `path` | `sep` / `delimiter`（**同步**）+ `join` / `normalize` / `dirname` / `extname` / `basename` / `isAbsolute` / `resolve` |
 | `app` | `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`（只读元信息，**无需能力声明**）；`exit` / `show` / `hide`（**需要显式 `Allow`**，见 §4 的能力表） |

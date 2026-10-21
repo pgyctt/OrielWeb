@@ -967,3 +967,207 @@ test('光标命令作用于实例自己的 label', async () => {
 
     clearMocks();
 });
+
+// ---- 平台开关 / 特效 / 任务栏（B22）----
+//
+// 十条平台开关的形状完全一致（`{ label, value }`），逐条断言命令名就够了：
+// **映射写错的表现**是"调了没反应"或"报未知命令"，而那在真机上一时看不出来。
+
+test('十条平台开关各自发对命令，且都是 { label, value } 形状', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main');
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    /** @type {Array<[string, (w: Window) => Promise<void>]>} */
+    const cases = [
+        ['window.setSkipTaskbar', (w) => w.setSkipTaskbar(true)],
+        ['window.setVisibleOnAllWorkspaces', (w) => w.setVisibleOnAllWorkspaces(true)],
+        ['window.setContentProtected', (w) => w.setContentProtected(true)],
+        ['window.setSimpleFullscreen', (w) => w.setSimpleFullscreen(true)],
+        ['window.setTitleBarStyle', (w) => w.setTitleBarStyle('overlay')],
+        ['window.setShadow', (w) => w.setShadow(false)],
+        ['window.setAlwaysOnBottom', (w) => w.setAlwaysOnBottom(true)],
+        ['window.setFocusable', (w) => w.setFocusable(false)],
+        ['window.setDecorations', (w) => w.setDecorations(false)],
+    ];
+
+    for (const [expected, run] of cases) {
+        await run(win);
+        assert.equal(calls.at(-1)[0], expected);
+        assert.equal(calls.at(-1)[1].label, 'main');
+        assert.ok('value' in calls.at(-1)[1], `${expected} 应当把参数放在 value 里`);
+    }
+
+    // setFullscreenOnMonitor 的参数是坐标（物理像素），形状不同，单独断言
+    await win.setFullscreenOnMonitor(new PhysicalPosition(1920, 0));
+    assert.equal(calls.at(-1)[0], 'window.setFullscreenOnMonitor');
+    assert.equal(calls.at(-1)[1].label, 'main');
+    // 逐个字段断言而不是 deepEqual：PhysicalPosition 是类实例，与字面量对象的原型不同，
+    // strict deepEqual 会因为原型而失败（那种失败看起来像"值错了"，其实是测试写法的问题）
+    // 只发 x/y：这个参数**永远是屏幕物理坐标**，带不带 type 都一样
+    // （主机按物理像素找显示器，不做逻辑坐标换算）。
+    assert.deepEqual(calls.at(-1)[1].value, { x: 1920, y: 0 });
+
+    await win.setFullscreenOnMonitor([100, 200]);
+    assert.deepEqual(calls.at(-1)[1].value, { x: 100, y: 200 });
+
+    clearMocks();
+});
+
+test('平台开关的参数类型不对时当场拒，且不发 IPC', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main');
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    assert.throws(() => win.setSkipTaskbar(/** @type {any} */ ('true')), TypeError);
+    assert.throws(() => win.setShadow(/** @type {any} */ (1)), TypeError);
+    assert.throws(() => win.setDecorations(/** @type {any} */ (null)), TypeError);
+    assert.throws(() => win.setTitleBarStyle(/** @type {any} */ ('hidden')), TypeError);
+
+    assert.deepEqual(calls, []);
+    clearMocks();
+});
+
+test('setEffects 把 { effects, state, radius, color, interactive } 原样交给宿主', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main');
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    await win.setEffects({
+        effects: ['mica', 'sidebar'],
+        state: 'active',
+        radius: 8,
+        color: [255, 0, 0, 128],
+        interactive: false,
+    });
+
+    assert.deepEqual(calls.at(-1), ['window.setEffects', {
+        label: 'main',
+        value: {
+            effects: ['mica', 'sidebar'],
+            state: 'active',
+            radius: 8,
+            color: [255, 0, 0, 128],
+            interactive: false,
+        },
+    }]);
+
+    // 只给 effects 时不该凭空补几个字段（宿主会把"没给"与"给了默认值"当成两件事）
+    await win.setEffects({ effects: ['acrylic'] });
+    assert.deepEqual(calls.at(-1)[1].value, { effects: ['acrylic'] });
+
+    clearMocks();
+});
+
+test('setEffects 的非法输入当场拒：空列表、未知材质、未知 state、负 radius', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main');
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    assert.throws(() => win.setEffects(/** @type {any} */ ({})), /非空数组/);
+    assert.throws(() => win.setEffects({ effects: [] }), /非空数组/);
+    assert.throws(() => win.setEffects({ effects: ['blurry'] }), /未知的材质/);
+    assert.throws(
+        () => win.setEffects(/** @type {any} */ ({ effects: ['mica'], state: 'on' })), /未知的 state/);
+    assert.throws(() => win.setEffects({ effects: ['mica'], radius: -1 }), /radius/);
+
+    assert.deepEqual(calls, [], '被拒的调用不该发出命令');
+    clearMocks();
+});
+
+test('clearEffects 不带参数（清一个不存在的状态不该失败）', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main');
+    setTransportOverride(transport);
+
+    await new Window('main').clearEffects();
+
+    assert.deepEqual(calls, [['window.clearEffects', { label: 'main' }]]);
+    clearMocks();
+});
+
+test('setProgressBar 收对象与状态字符串两种形状', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main');
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    await win.setProgressBar({ status: 'normal', progress: 50 });
+    assert.deepEqual(calls.at(-1)[1].value, { status: 'normal', progress: 50 });
+
+    await win.setProgressBar('indeterminate');
+    assert.deepEqual(calls.at(-1)[1].value, { status: 'indeterminate' });
+
+    assert.throws(() => win.setProgressBar(/** @type {any} */ ('done')), /未知的 status/);
+    assert.throws(
+        () => win.setProgressBar({ status: 'normal', progress: /** @type {any} */ ('50') }), /progress/);
+
+    clearMocks();
+});
+
+test('setOverlayIcon：不传是清除，路径与字节分别走 path / bytes', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main');
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    await win.setOverlayIcon();
+    assert.deepEqual(calls.at(-1), ['window.setOverlayIcon', { label: 'main' }]);
+
+    await win.setOverlayIcon('/tmp/badge.png');
+    assert.deepEqual(calls.at(-1)[1].value, { path: '/tmp/badge.png' });
+
+    // 一个最小的 PNG 头就够 assertImageFormat 通过
+    const png = new Uint8Array([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+    await win.setOverlayIcon(png);
+    assert.equal(typeof calls.at(-1)[1].value.bytes, 'string');
+
+    assert.throws(() => win.setOverlayIcon(/** @type {any} */ (42)), TypeError);
+    clearMocks();
+});
+
+test('setBadgeCount / setBadgeLabel：不传是清除，数字四舍五入', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main');
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    await win.setBadgeCount();
+    assert.deepEqual(calls.at(-1), ['window.setBadgeCount', { label: 'main' }]);
+
+    await win.setBadgeCount(3.6);
+    assert.equal(calls.at(-1)[1].value, 4);
+
+    await win.setBadgeLabel('新');
+    assert.equal(calls.at(-1)[1].value, '新');
+
+    await win.setBadgeLabel();
+    assert.deepEqual(calls.at(-1), ['window.setBadgeLabel', { label: 'main' }]);
+
+    assert.throws(() => win.setBadgeCount(/** @type {any} */ ('5')), TypeError);
+    assert.throws(() => win.setBadgeLabel(/** @type {any} */ (5)), TypeError);
+
+    clearMocks();
+});
+
+test('B22 的命令都作用于实例自己的 label', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main');
+    setTransportOverride(transport);
+
+    await new Window('settings').setSkipTaskbar(true);
+
+    assert.equal(calls[0][1].label, 'settings');
+    clearMocks();
+});

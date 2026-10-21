@@ -661,6 +661,213 @@ export class Window {
      */
     startResizeDragging(direction: ResizeDirection): Promise<void>;
     /**
+     * 是否在任务栏里隐藏这个窗口（对标 Tauri 的 `setSkipTaskbar`）。
+     *
+     * @param {boolean} skip
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setSkipTaskbar")`。
+     *
+     * **macOS 抛 `not_supported`**：Dock 里显示的是整个应用，没有"按窗口隐藏"这回事。
+     * Windows 走 `ITaskbarList::DeleteTab`/`AddTab`；Linux 是
+     * `gtk_window_set_skip_taskbar_hint`（Wayland 下由合成器决定）。
+     */
+    setSkipTaskbar(skip: boolean): Promise<void>;
+    /**
+     * 是否在所有工作区/虚拟桌面上可见（对标 Tauri 的 `setVisibleOnAllWorkspaces`）。
+     *
+     * @param {boolean} visible
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setVisibleOnAllWorkspaces")`。
+     *
+     * **Windows 抛 `not_supported`**（Win32 没有公开的虚拟桌面接口）；
+     * macOS 切 `collectionBehavior` 的 `canJoinAllSpaces`；Linux 是
+     * `gtk_window_stick`（X11 的 `_NET_WM_STATE_STICKY`）。
+     */
+    setVisibleOnAllWorkspaces(visible: boolean): Promise<void>;
+    /**
+     * 是否阻止窗口内容被别的应用截取（对标 Tauri 的 `setContentProtected`）。
+     *
+     * @param {boolean} contentProtected
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setContentProtected")`。
+     *
+     * Windows 是 `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`（Win10 2004+，
+     * 更早的系统退回 `WDA_MONITOR`：截屏里显示为黑块），macOS 是
+     * `NSWindow.sharingType = none`。**Linux 抛 `not_supported`**。
+     */
+    setContentProtected(contentProtected: boolean): Promise<void>;
+    /**
+     * 简化全屏（对标 Tauri 的 `setSimpleFullscreen`）。
+     *
+     * @param {boolean} fullscreen
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setSimpleFullscreen")`。
+     *
+     * **只有 macOS 有独立语义**：不创建新的 Space，靠"去掉标题栏 + 铺满当前屏幕"实现
+     * （Lion 之前的全屏形态）。**Windows / Linux 上等同 `setFullscreen`**——与 Tauri 的
+     * 文档一致（"On other platforms, this is the same as setFullscreen"）。
+     */
+    setSimpleFullscreen(fullscreen: boolean): Promise<void>;
+    /**
+     * 在包含给定**物理**坐标的那台显示器上全屏（对标 Tauri 的 `setFullscreenOnMonitor`）。
+     *
+     * @param {{ x: number, y: number } | [number, number]} position 屏幕物理像素坐标
+     *   （通常直接传 `(await availableMonitors())[i].position`）。
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setFullscreenOnMonitor")`。
+     *
+     * **该坐标不在任何显示器上时什么都不做**（与 Tauri 一致，不是错误）。
+     * 落点分两步：先把窗口移到那台显示器，再进入全屏。
+     */
+    setFullscreenOnMonitor(position: {
+        x: number;
+        y: number;
+    } | [number, number]): Promise<void>;
+    /**
+     * 标题栏样式（对标 Tauri 的 `setTitleBarStyle`）。
+     *
+     * @param {TitleBarStyle} style `'visible'` / `'transparent'` / `'overlay'`。
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setTitleBarStyle")`。**只有 macOS 实现**，Windows/Linux 抛
+     * `not_supported`（那边的等价能力是"创建时 Frameless + 页面自绘标题栏"）。
+     *
+     * `overlay` 会把页面延伸到标题栏下方、只留红绿灯——记得给它们留位置，
+     * 并用 `startDragging()` 划一块可拖动区域。
+     */
+    setTitleBarStyle(style: TitleBarStyle): Promise<void>;
+    /**
+     * 是否给窗口画阴影（对标 Tauri 的 `setShadow`）。
+     *
+     * @param {boolean} enable
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setShadow")`。
+     *
+     * **Linux 抛 `not_supported`**（GTK 没有阴影 API，阴影由合成器给）。
+     * Windows 落点是 DWM 的非客户区渲染策略：**装饰窗口关不掉阴影**，
+     * 而给无边框窗口打开阴影在 Win11 上会带来圆角与 1px 边框。
+     */
+    setShadow(enable: boolean): Promise<void>;
+    /**
+     * 是否永远压在别的窗口之下（对标 Tauri 的 `setAlwaysOnBottom`）。
+     *
+     * @param {boolean} alwaysOnBottom
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setAlwaysOnBottom")`。
+     *
+     * 与 `setAlwaysOnTop` **互斥**：两者同时开时后设的那个赢（本库在设置底时会先取消置顶）。
+     * 三平台都做（Linux 是 `gtk_window_set_keep_below`，Wayland 下只是提示）。
+     */
+    setAlwaysOnBottom(alwaysOnBottom: boolean): Promise<void>;
+    /**
+     * 窗口能否获得焦点（对标 Tauri 的 `setFocusable`）。
+     *
+     * @param {boolean} focusable
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setFocusable")`。
+     *
+     * **macOS 抛 `not_supported`**（AppKit 没有公开入口，只有私有的
+     * `_setPreventsActivation`，用它等于把自己绑到未公开 API 上）。
+     * Windows 切 `WS_EX_NOACTIVATE`，Linux 是 `set_accept_focus` + `can_focus`。
+     */
+    setFocusable(focusable: boolean): Promise<void>;
+    /**
+     * 是否显示系统装饰（标题栏与边框，对标 Tauri 的 `setDecorations`）。
+     *
+     * @param {boolean} decorations
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setDecorations")`。
+     *
+     * **运行期切换，三平台都做**。与本库的 `OrielWindowOptions.Frameless` 是两件事：
+     * 后者决定宿主自己的命中测试与拖拽热区，创建后不变；这个方法只改原生装饰。
+     */
+    setDecorations(decorations: boolean): Promise<void>;
+    /**
+     * 应用一组窗口材质（对标 Tauri 的 `setEffects`）。
+     *
+     * @param {Effects} effects
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setEffects")`。
+     *
+     * **取列表里第一个本平台支持的那个，其余忽略**（与 Tauri 一致），所以一份代码可以
+     * 同时列 Windows 与 macOS 的材质。**一个都不支持时抛 `not_supported`**——"设了没生效"
+     * 必须能被看见。
+     *
+     * **Linux 整条命令抛 `not_supported`**：窗口材质是 DWM 与 AppKit 的概念。
+     *
+     * 需要页面自己是透明的（材质画在 webview 之后）；macOS 上本库会把窗口与 webview 的
+     * 背景放开，Windows 上 DWM 材质由系统画在客户区之后。
+     *
+     * @example
+     * await win.setEffects({ effects: [Effect.Mica, Effect.Sidebar], state: EffectState.Active });
+     */
+    setEffects(effects: Effects): Promise<void>;
+    /**
+     * 清掉已应用的材质（对标 Tauri 的 `clearEffects`）。
+     *
+     * @returns {Promise<void>}
+     * @remarks
+     * 与 `setEffects` 共用同一个能力（`Allow("window.setEffects")`）。
+     * 没设过时是空操作；**Linux 同样抛 `not_supported`**（能力整个不存在）。
+     */
+    clearEffects(): Promise<void>;
+    /**
+     * 任务栏进度条（对标 Tauri 的 `setProgressBar`）。
+     *
+     * @param {ProgressBarState | string} state `{ status, progress? }`，或直接给状态字符串。
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setProgressBar")`。
+     *
+     * **只有 Windows 实现**（`ITaskbarList3`）。macOS 的 Dock 磁贴没有进度条 API，
+     * Linux 需要 `libunity`（本库不链接）——两者都抛 `not_supported`。
+     *
+     * `progress` 是 0–100 的百分比；`none` 表示隐藏（此时 `progress` 无意义）。
+     */
+    setProgressBar(state: ProgressBarState | string): Promise<void>;
+    /**
+     * 任务栏图标上的角标覆盖图（对标 Tauri 的 `setOverlayIcon`）。
+     *
+     * @param {import('./image.js').JsImage} [icon] 路径、PNG/ICO 字节或 `Image` 实例；
+     *   **不传 / `null` 表示清除**。
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setOverlayIcon")`。**只有 Windows 有这个概念**；
+     * macOS 的等价物是 Dock 徽标（`setBadgeCount` / `setBadgeLabel`），两者形状不同、不互相顶替。
+     */
+    setOverlayIcon(icon?: import("./image.js").JsImage): Promise<void>;
+    /**
+     * Dock 徽标上的数字（对标 Tauri 的 `setBadgeCount`）。
+     *
+     * @param {number} [count] 要显示的数字；**不传或 0 表示清除**。
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setBadgeCount")`。**只有 macOS 实现**，而且是**应用级**的
+     * （所有窗口调它都改同一个 Dock 图标）。Windows 用 `setOverlayIcon` 代替；
+     * Linux 需要 `libunity`（本库不链接）——两者都抛 `not_supported`。
+     */
+    setBadgeCount(count?: number): Promise<void>;
+    /**
+     * Dock 徽标上的短文本（对标 Tauri 的 `setBadgeLabel`）。
+     *
+     * @param {string} [label] 要显示的文本；**不传表示清除**。
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setBadgeLabel")`。**只有 macOS 实现**（应用级）。
+     * 与 `setBadgeCount` 是同一个落点（`NSApp.dockTile.badgeLabel`），后者只是把数字转成文本。
+     */
+    setBadgeLabel(label?: string): Promise<void>;
+    /**
      * 设置**客户区**最小尺寸（对标 Tauri 的 `setMinSize`）。
      *
      * @param {{ type?: string, width: number, height: number } | [number, number] | null} size
@@ -870,6 +1077,53 @@ export type CursorIcon = "default" | "crosshair" | "hand" | "arrow" | "move" | "
  * resize 拖动的起始边/角（对标 Tauri 的 `ResizeDirection`）。
  */
 export type ResizeDirection = "East" | "North" | "NorthEast" | "NorthWest" | "South" | "SouthEast" | "SouthWest" | "West";
+/**
+ * 标题栏样式（对标 Tauri 的 `TitleBarStyle`）。
+ */
+export type TitleBarStyle = "visible" | "transparent" | "overlay";
+/**
+ * `setEffects` 的参数（对标 Tauri 的 `Effects`）。
+ */
+export type Effects = {
+    /**
+     * 材质列表（`Effect` 的取值）。**第一个本平台支持的生效**，其余忽略。
+     */
+    effects: string[];
+    /**
+     * 激活状态（`EffectState` 的取值）。**仅 macOS**；Windows 上被忽略（会记诊断）。
+     */
+    state?: string | undefined;
+    /**
+     * 材质视图的圆角。**仅 macOS**。
+     */
+    radius?: number | undefined;
+    /**
+     * 特效色调。**Windows** 只影响 `blur`/`acrylic`（Win10 1903+）；macOS 只影响液态玻璃（本库未实现）。
+     */
+    color?: [number, number, number] | [number, number, number, number] | {
+        red: number;
+        green: number;
+        blue: number;
+        alpha?: number;
+    } | undefined;
+    /**
+     * 交互式玻璃（macOS 26+）。本库未实现，接受但忽略。
+     */
+    interactive?: boolean | undefined;
+};
+/**
+ * `setProgressBar` 的参数（对标 Tauri 的 `ProgressBarState`）。
+ */
+export type ProgressBarState = {
+    /**
+     * `ProgressBarStatus` 的取值。
+     */
+    status?: string | undefined;
+    /**
+     * 0–100 的百分比。
+     */
+    progress?: number | undefined;
+};
 import { PhysicalPosition } from './dpi.js';
 import { PhysicalSize } from './dpi.js';
 export { LogicalSize, LogicalPosition, PhysicalSize, PhysicalPosition } from "./dpi.js";

@@ -819,6 +819,217 @@ internal static class WindowSelfTest
             // 还原形状：设回 default，避免自检结束后光标一直是十字
             await AskMainAsync(
                 "window.setCursorIcon", SelfTestJson.Object(("icon", SelfTestJson.String("default"))));
+
+            // ---- 12. 平台开关 / 特效 / 任务栏（B22）----
+            //
+            // 这一批三平台的**支持矩阵不同**，所以每条都按平台分两路：能做的平台验
+            // "命令被接受"，不支持的平台验"明确报 not_supported"。后者比前者更重要——
+            // 这一批最想排除的失败形态就是"静默 no-op"。
+            //
+            // 全部改动都还原：自检可能跑在别人的桌面上，留下一个被隐藏的任务栏按钮、
+            // 一个永远在最底层的窗口、或者一个没有装饰的窗口都是很糟的副作用。
+            bool isWindows = OperatingSystem.IsWindows();
+            bool isMac = OperatingSystem.IsMacOS();
+
+            // --- 阴影：Linux 没有这个概念 ---
+            if (IsLinux)
+            {
+                JsonElement? shadow = await TryAskMainAsync(
+                    "window.setShadow", SelfTestJson.Object(("value", SelfTestJson.Bool(true))));
+                Check(
+                    shadow is null && (LastError ?? string.Empty).StartsWith("not_supported", StringComparison.Ordinal),
+                    $"Linux 上 setShadow 应当明确报 not_supported（实际：{(shadow is null ? LastError : "成功")}）");
+            }
+            else
+            {
+                await AskMainAsync("window.setShadow", SelfTestJson.Object(("value", SelfTestJson.Bool(false))));
+                await AskMainAsync("window.setShadow", SelfTestJson.Object(("value", SelfTestJson.Bool(true))));
+                Console.WriteLine("[window-selftest] OK: window.setShadow 关再开");
+            }
+
+            // --- 全工作区可见：Windows 没有公开入口 ---
+            if (isWindows)
+            {
+                JsonElement? allSpaces = await TryAskMainAsync(
+                    "window.setVisibleOnAllWorkspaces", SelfTestJson.Object(("value", SelfTestJson.Bool(true))));
+                Check(
+                    allSpaces is null && (LastError ?? string.Empty).StartsWith("not_supported", StringComparison.Ordinal),
+                    $"Windows 上 setVisibleOnAllWorkspaces 应当明确报 not_supported（实际：{(allSpaces is null ? LastError : "成功")}）");
+            }
+            else
+            {
+                await AskMainAsync(
+                    "window.setVisibleOnAllWorkspaces", SelfTestJson.Object(("value", SelfTestJson.Bool(true))));
+                await AskMainAsync(
+                    "window.setVisibleOnAllWorkspaces", SelfTestJson.Object(("value", SelfTestJson.Bool(false))));
+                Console.WriteLine("[window-selftest] OK: window.setVisibleOnAllWorkspaces 开关都成功");
+            }
+
+            // --- 截屏保护：Linux 没有对应协议 ---
+            if (IsLinux)
+            {
+                JsonElement? protect = await TryAskMainAsync(
+                    "window.setContentProtected", SelfTestJson.Object(("value", SelfTestJson.Bool(true))));
+                Check(
+                    protect is null && (LastError ?? string.Empty).StartsWith("not_supported", StringComparison.Ordinal),
+                    $"Linux 上 setContentProtected 应当明确报 not_supported（实际：{(protect is null ? LastError : "成功")}）");
+            }
+            else
+            {
+                await AskMainAsync(
+                    "window.setContentProtected", SelfTestJson.Object(("value", SelfTestJson.Bool(true))));
+                await AskMainAsync(
+                    "window.setContentProtected", SelfTestJson.Object(("value", SelfTestJson.Bool(false))));
+                Console.WriteLine("[window-selftest] OK: window.setContentProtected 开关都成功");
+            }
+
+            // --- 可聚焦：macOS 只有私有 API ---
+            if (isMac)
+            {
+                JsonElement? focusable = await TryAskMainAsync(
+                    "window.setFocusable", SelfTestJson.Object(("value", SelfTestJson.Bool(false))));
+                Check(
+                    focusable is null && (LastError ?? string.Empty).StartsWith("not_supported", StringComparison.Ordinal),
+                    $"macOS 上 setFocusable 应当明确报 not_supported（实际：{(focusable is null ? LastError : "成功")}）");
+            }
+            else
+            {
+                await AskMainAsync("window.setFocusable", SelfTestJson.Object(("value", SelfTestJson.Bool(false))));
+                await AskMainAsync("window.setFocusable", SelfTestJson.Object(("value", SelfTestJson.Bool(true))));
+                Console.WriteLine("[window-selftest] OK: window.setFocusable 关再开");
+            }
+
+            // --- 隐藏任务栏按钮：macOS 是应用级概念 ---
+            if (isMac)
+            {
+                JsonElement? skip = await TryAskMainAsync(
+                    "window.setSkipTaskbar", SelfTestJson.Object(("value", SelfTestJson.Bool(true))));
+                Check(
+                    skip is null && (LastError ?? string.Empty).StartsWith("not_supported", StringComparison.Ordinal),
+                    $"macOS 上 setSkipTaskbar 应当明确报 not_supported（实际：{(skip is null ? LastError : "成功")}）");
+            }
+            else
+            {
+                await AskMainAsync("window.setSkipTaskbar", SelfTestJson.Object(("value", SelfTestJson.Bool(true))));
+                await AskMainAsync("window.setSkipTaskbar", SelfTestJson.Object(("value", SelfTestJson.Bool(false))));
+                Console.WriteLine("[window-selftest] OK: window.setSkipTaskbar 摘掉再挂回");
+            }
+
+            // --- 置底：三平台都做 ---
+            await AskMainAsync("window.setAlwaysOnBottom", SelfTestJson.Object(("value", SelfTestJson.Bool(true))));
+            await AskMainAsync("window.setAlwaysOnBottom", SelfTestJson.Object(("value", SelfTestJson.Bool(false))));
+            Console.WriteLine("[window-selftest] OK: window.setAlwaysOnBottom 压到底再抬起来");
+
+            // --- 标题栏样式：只有 macOS 有 ---
+            if (isMac)
+            {
+                // 只切 transparent / visible：overlay 会动 styleMask（fullSizeContentView），
+                // 那会改变页面的布局尺寸，而这条自检不该让页面重排一次。
+                await AskMainAsync(
+                    "window.setTitleBarStyle", SelfTestJson.Object(("value", SelfTestJson.String("transparent"))));
+                await AskMainAsync(
+                    "window.setTitleBarStyle", SelfTestJson.Object(("value", SelfTestJson.String("visible"))));
+                Console.WriteLine("[window-selftest] OK: window.setTitleBarStyle transparent 再还原");
+            }
+            else
+            {
+                JsonElement? style = await TryAskMainAsync(
+                    "window.setTitleBarStyle", SelfTestJson.Object(("value", SelfTestJson.String("overlay"))));
+                Check(
+                    style is null && (LastError ?? string.Empty).StartsWith("not_supported", StringComparison.Ordinal),
+                    $"{(isWindows ? "Windows" : "Linux")} 上 setTitleBarStyle 应当明确报 not_supported"
+                    + $"（实际：{(style is null ? LastError : "成功")}）");
+            }
+
+            // --- 特效：Linux 整组不存在 ---
+            if (IsLinux)
+            {
+                JsonElement? effects = await TryAskMainAsync(
+                    "window.setEffects",
+                    SelfTestJson.Object(("value", SelfTestJson.Object(
+                        ("effects", "[" + SelfTestJson.String("mica") + "]")))));
+                Check(
+                    effects is null && (LastError ?? string.Empty).StartsWith("not_supported", StringComparison.Ordinal),
+                    $"Linux 上 setEffects 应当明确报 not_supported（实际：{(effects is null ? LastError : "成功")}）");
+
+                JsonElement? cleared = await TryAskMainAsync(
+                    "window.clearEffects", SelfTestJson.Object());
+                Check(
+                    cleared is null && (LastError ?? string.Empty).StartsWith("not_supported", StringComparison.Ordinal),
+                    $"Linux 上 clearEffects 应当明确报 not_supported（实际：{(cleared is null ? LastError : "成功")}）");
+            }
+            else
+            {
+                // Windows 用 blur（强调色策略，Win10 1803+ 就有）；macOS 用 sidebar（材质）。
+                // 这里**不用 mica**：它要 Windows 11 22H2+，CI 的 Server 镜像上会失败——
+                // 那验的是环境而不是库。
+                string material = isWindows ? "blur" : "sidebar";
+                await AskMainAsync(
+                    "window.setEffects",
+                    SelfTestJson.Object(("value", SelfTestJson.Object(
+                        ("effects", "[" + SelfTestJson.String(material) + "]")))));
+                await AskMainAsync("window.clearEffects", SelfTestJson.Object());
+                Console.WriteLine($"[window-selftest] OK: window.setEffects({material}) 应用后 clearEffects 清掉");
+            }
+
+            // --- 任务栏进度条 / 覆盖图标：只有 Windows 有 ---
+            if (isWindows)
+            {
+                await AskMainAsync(
+                    "window.setProgressBar",
+                    SelfTestJson.Object(("value", SelfTestJson.Object(
+                        ("status", SelfTestJson.String("normal")),
+                        ("progress", SelfTestJson.Number(42))))));
+                await AskMainAsync(
+                    "window.setProgressBar",
+                    SelfTestJson.Object(("value", SelfTestJson.Object(
+                        ("status", SelfTestJson.String("none"))))));
+                Console.WriteLine("[window-selftest] OK: window.setProgressBar 42% 再隐藏");
+
+                // 覆盖图标：只验"清除"这条路（设图标要先有 16x16 的图，
+                // 而真正的观感只有人眼能判）。清除同样会走一遍 ITaskbarList3。
+                await AskMainAsync("window.setOverlayIcon", SelfTestJson.Object());
+                Console.WriteLine("[window-selftest] OK: window.setOverlayIcon 清除");
+            }
+            else
+            {
+                JsonElement? progress = await TryAskMainAsync(
+                    "window.setProgressBar",
+                    SelfTestJson.Object(("value", SelfTestJson.Object(("status", SelfTestJson.String("normal"))))));
+                Check(
+                    progress is null && (LastError ?? string.Empty).StartsWith("not_supported", StringComparison.Ordinal),
+                    $"{(isMac ? "macOS" : "Linux")} 上 setProgressBar 应当明确报 not_supported"
+                    + $"（实际：{(progress is null ? LastError : "成功")}）");
+            }
+
+            // --- Dock 徽标：只有 macOS 有 ---
+            if (isMac)
+            {
+                await AskMainAsync("window.setBadgeCount", SelfTestJson.Object(("value", SelfTestJson.Number(3))));
+                await AskMainAsync("window.setBadgeCount", SelfTestJson.Object());
+                Console.WriteLine("[window-selftest] OK: window.setBadgeCount 设 3 再清空");
+            }
+            else
+            {
+                JsonElement? badge = await TryAskMainAsync(
+                    "window.setBadgeCount", SelfTestJson.Object(("value", SelfTestJson.Number(3))));
+                Check(
+                    badge is null && (LastError ?? string.Empty).StartsWith("not_supported", StringComparison.Ordinal),
+                    $"{(isWindows ? "Windows" : "Linux")} 上 setBadgeCount 应当明确报 not_supported"
+                    + $"（实际：{(badge is null ? LastError : "成功")}）");
+            }
+
+            // --- 简化全屏：三平台都做（非 macOS 等同 setFullscreen）---
+            await AskMainAsync("window.setSimpleFullscreen", SelfTestJson.Object(("value", SelfTestJson.Bool(true))));
+            await AskMainAsync("window.setSimpleFullscreen", SelfTestJson.Object(("value", SelfTestJson.Bool(false))));
+            Console.WriteLine("[window-selftest] OK: window.setSimpleFullscreen 进全屏再退出");
+
+            // --- 装饰：**放在最后**（它要重算非客户区，别的断言都做完了再动）---
+            await AskMainAsync("window.setDecorations", SelfTestJson.Object(("value", SelfTestJson.Bool(false))));
+            Check(!main.IsDecorated, "setDecorations(false) 之后 isDecorated 应当为 false");
+            await AskMainAsync("window.setDecorations", SelfTestJson.Object(("value", SelfTestJson.Bool(true))));
+            Check(main.IsDecorated, "setDecorations(true) 之后 isDecorated 应当为 true");
+            Console.WriteLine("[window-selftest] OK: window.setDecorations 去掉再装回（isDecorated 跟着变）");
         }
         catch (Exception ex)
         {

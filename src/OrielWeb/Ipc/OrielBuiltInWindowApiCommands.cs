@@ -366,6 +366,310 @@ internal static class OrielBuiltInWindowApiCommands
                 };
                 return true;
 
+            // ---- 平台开关 / 特效 / 任务栏（B22）----
+            //
+            // 十九条，参数形状与 Tauri 一致：单参数的命令都收 `{ label, value }`
+            // （Tauri 的 JS 就是这么发的），同时兼容按语义命名（`{ skip: true }`）——
+            // 两种写法都出现在迁移代码里，认形状比让调用方改代码便宜。
+            //
+            // **十九条都要求显式 Allow**（都不在标题栏白名单里）：隐藏任务栏按钮、改截屏保护、
+            // 把窗口压到底、在任务栏上画进度条…没有一条是"画标题栏非要不可"的能力。
+            // 被注入的页面若能随手改这些，用户会以为应用坏了（甚至以为中了招）。
+
+            case "window.setSkipTaskbar":
+                handler = static (sender, args) =>
+                {
+                    bool skip = BoolValue(args, "skip", "window.setSkipTaskbar");
+                    Resolve(sender, args).SetSkipTaskbar(skip);
+                    return null;
+                };
+                return true;
+
+            case "window.setVisibleOnAllWorkspaces":
+                handler = static (sender, args) =>
+                {
+                    bool visible = BoolValue(args, "visible", "window.setVisibleOnAllWorkspaces");
+                    Resolve(sender, args).SetVisibleOnAllWorkspaces(visible);
+                    return null;
+                };
+                return true;
+
+            case "window.setContentProtected":
+                handler = static (sender, args) =>
+                {
+                    bool contentProtected = BoolValue(args, "contentProtected", "window.setContentProtected");
+                    Resolve(sender, args).SetContentProtected(contentProtected);
+                    return null;
+                };
+                return true;
+
+            case "window.setSimpleFullscreen":
+                handler = static (sender, args) =>
+                {
+                    bool fullscreen = BoolValue(args, "fullscreen", "window.setSimpleFullscreen");
+                    Resolve(sender, args).SetSimpleFullscreen(fullscreen);
+                    return null;
+                };
+                return true;
+
+            case "window.setFullscreenOnMonitor":
+                handler = static (sender, args) =>
+                {
+                    // 形状：`{ value: { x, y, type? } }`（Tauri 发的是 Monitor.position，
+                    // 一个 PhysicalPosition）。**物理坐标**直接进来、不做缩放换算：
+                    // "在哪块屏幕上"与页面布局无关。
+                    JsonElement source = OrielJson.TryGetArgElement(args, "value", out JsonElement value)
+                        ? value
+                        : args;
+
+                    double x = RequiredDouble(source, "x", "window.setFullscreenOnMonitor");
+                    double y = RequiredDouble(source, "y", "window.setFullscreenOnMonitor");
+
+                    Resolve(sender, args).SetFullscreenOnMonitor((int)Math.Round(x), (int)Math.Round(y));
+                    return null;
+                };
+                return true;
+
+            case "window.setTitleBarStyle":
+                handler = static (sender, args) =>
+                {
+                    string name = OrielJson.GetRequiredArg<string>(args, "value", null);
+                    if (!OrielEffectNames.TryParseTitleBarStyle(name, out OrielTitleBarStyle style))
+                    {
+                        throw new OrielIpcException(
+                            $"window.setTitleBarStyle: 未知的 style「{name}」（只认 visible / transparent / overlay）。")
+                        {
+                            Code = OrielIpcErrorCodes.InvalidArgument,
+                        };
+                    }
+
+                    Resolve(sender, args).SetTitleBarStyle(style);
+                    return null;
+                };
+                return true;
+
+            case "window.setShadow":
+                handler = static (sender, args) =>
+                {
+                    bool enable = BoolValue(args, "enable", "window.setShadow");
+                    Resolve(sender, args).SetShadow(enable);
+                    return null;
+                };
+                return true;
+
+            case "window.setAlwaysOnBottom":
+                handler = static (sender, args) =>
+                {
+                    bool alwaysOnBottom = BoolValue(args, "alwaysOnBottom", "window.setAlwaysOnBottom");
+                    Resolve(sender, args).SetAlwaysOnBottom(alwaysOnBottom);
+                    return null;
+                };
+                return true;
+
+            case "window.setFocusable":
+                handler = static (sender, args) =>
+                {
+                    bool focusable = BoolValue(args, "focusable", "window.setFocusable");
+                    Resolve(sender, args).SetFocusable(focusable);
+                    return null;
+                };
+                return true;
+
+            case "window.setDecorations":
+                handler = static (sender, args) =>
+                {
+                    bool decorations = BoolValue(args, "decorations", "window.setDecorations");
+                    Resolve(sender, args).SetDecorations(decorations);
+                    return null;
+                };
+                return true;
+
+            case "window.setEffects":
+                handler = static (sender, args) =>
+                {
+                    JsonElement source = OrielJson.TryGetArgElement(args, "value", out JsonElement value)
+                        ? value
+                        : args;
+
+                    if (source.ValueKind != JsonValueKind.Object)
+                    {
+                        throw new OrielIpcException(
+                            "window.setEffects: 参数必须是对象 { effects: [...], state?, radius?, color?, interactive? }。")
+                        {
+                            Code = OrielIpcErrorCodes.InvalidArgument,
+                        };
+                    }
+
+                    var effects = new List<OrielEffect>();
+                    if (source.TryGetProperty("effects", out JsonElement list)
+                        && list.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (JsonElement item in list.EnumerateArray())
+                        {
+                            string? name = item.ValueKind == JsonValueKind.String ? item.GetString() : null;
+                            if (!OrielEffectNames.TryParseEffect(name, out OrielEffect effect))
+                            {
+                                throw new OrielIpcException(
+                                    $"window.setEffects: 未知的材质「{name}」。取值见 docs/API.md 的材质表。")
+                                {
+                                    Code = OrielIpcErrorCodes.InvalidArgument,
+                                };
+                            }
+
+                            effects.Add(effect);
+                        }
+                    }
+
+                    if (effects.Count == 0)
+                    {
+                        throw new OrielIpcException(
+                            "window.setEffects: effects 不能为空（要清掉材质请用 clearEffects）。")
+                        {
+                            Code = OrielIpcErrorCodes.InvalidArgument,
+                        };
+                    }
+
+                    OrielEffectState state = OrielEffectState.FollowsWindowActiveState;
+                    if (source.TryGetProperty("state", out JsonElement stateElement)
+                        && stateElement.ValueKind == JsonValueKind.String)
+                    {
+                        if (!OrielEffectNames.TryParseEffectState(stateElement.GetString(), out state))
+                        {
+                            throw new OrielIpcException(
+                                $"window.setEffects: 未知的 state「{stateElement.GetString()}」"
+                                + "（只认 followsWindowActiveState / active / inactive）。")
+                            {
+                                Code = OrielIpcErrorCodes.InvalidArgument,
+                            };
+                        }
+                    }
+
+                    double? radius = source.TryGetProperty("radius", out JsonElement radiusElement)
+                        && radiusElement.ValueKind == JsonValueKind.Number
+                            ? radiusElement.GetDouble()
+                            : null;
+
+                    bool interactive = source.TryGetProperty("interactive", out JsonElement interactiveElement)
+                        && interactiveElement.ValueKind is JsonValueKind.True or JsonValueKind.False
+                        && interactiveElement.GetBoolean();
+
+                    Resolve(sender, args).SetEffects(new OrielEffects(
+                        effects, state, radius, ReadEffectColor(source), interactive));
+
+                    return null;
+                };
+                return true;
+
+            case "window.clearEffects":
+                handler = static (sender, args) =>
+                {
+                    Resolve(sender, args).ClearEffects();
+                    return null;
+                };
+                return true;
+
+            case "window.setProgressBar":
+                handler = static (sender, args) =>
+                {
+                    // 形状：`{ value: { status, progress? } }`；也认直接给状态字符串。
+                    JsonElement source = OrielJson.TryGetArgElement(args, "value", out JsonElement value)
+                        ? value
+                        : args;
+
+                    string? statusName;
+                    double? progress = null;
+
+                    if (source.ValueKind == JsonValueKind.String)
+                    {
+                        statusName = source.GetString();
+                    }
+                    else if (source.ValueKind == JsonValueKind.Object)
+                    {
+                        statusName = source.TryGetProperty("status", out JsonElement statusElement)
+                            && statusElement.ValueKind == JsonValueKind.String
+                                ? statusElement.GetString()
+                                : null;
+
+                        if (source.TryGetProperty("progress", out JsonElement progressElement)
+                            && progressElement.ValueKind == JsonValueKind.Number)
+                        {
+                            progress = progressElement.GetDouble();
+                        }
+                    }
+                    else
+                    {
+                        throw new OrielIpcException(
+                            "window.setProgressBar: 参数必须是 { status, progress? } 或状态字符串。")
+                        {
+                            Code = OrielIpcErrorCodes.InvalidArgument,
+                        };
+                    }
+
+                    if (!OrielEffectNames.TryParseProgressBarStatus(statusName, out OrielProgressBarStatus status))
+                    {
+                        throw new OrielIpcException(
+                            $"window.setProgressBar: 未知的 status「{statusName}」"
+                            + "（只认 none / normal / indeterminate / paused / error）。")
+                        {
+                            Code = OrielIpcErrorCodes.InvalidArgument,
+                        };
+                    }
+
+                    Resolve(sender, args).SetProgressBar(status, progress);
+                    return null;
+                };
+                return true;
+
+            case "window.setOverlayIcon":
+                handler = static (sender, args) =>
+                {
+                    // `{ value: <icon> | null }`：icon 与 setIcon 同形（路径 / base64 字节 / RGBA）。
+                    // **缺省或 null 都表示清除**（Tauri 的 `undefined` 在 JSON 里就是没有这个键）。
+                    OrielImage? icon = null;
+                    if (OrielJson.TryGetArgElement(args, "value", out JsonElement value)
+                        && value.ValueKind == JsonValueKind.Object)
+                    {
+                        icon = DecodeImageArgument(value, "window.setOverlayIcon");
+                    }
+                    else if (value.ValueKind == JsonValueKind.String)
+                    {
+                        icon = OrielImage.FromFile(value.GetString()!);
+                    }
+
+                    Resolve(sender, args).SetOverlayIcon(icon);
+                    return null;
+                };
+                return true;
+
+            case "window.setBadgeCount":
+                handler = static (sender, args) =>
+                {
+                    JsonElement source = OrielJson.TryGetArgElement(args, "value", out JsonElement value)
+                        ? value
+                        : default;
+
+                    int? count = source.ValueKind == JsonValueKind.Number
+                        ? (int?)Math.Round(source.GetDouble())
+                        : null;
+
+                    Resolve(sender, args).SetBadgeCount(count);
+                    return null;
+                };
+                return true;
+
+            case "window.setBadgeLabel":
+                handler = static (sender, args) =>
+                {
+                    JsonElement source = OrielJson.TryGetArgElement(args, "value", out JsonElement value)
+                        ? value
+                        : default;
+
+                    string? label = source.ValueKind == JsonValueKind.String ? source.GetString() : null;
+                    Resolve(sender, args).SetBadgeLabel(label);
+                    return null;
+                };
+                return true;
+
             // ---- 请求用户注意（M5-6）----
             //
             // type 为 null / 缺省 → 取消已发出的请求（与 Tauri 一致）。
@@ -1085,6 +1389,143 @@ internal static class OrielBuiltInWindowApiCommands
            && element.ValueKind == JsonValueKind.String
             ? element.GetString()
             : null;
+
+    /// <summary>
+    /// 读一个布尔参数：先认 <c>value</c>（Tauri 的 JS 形状），再认语义名。
+    /// </summary>
+    /// <remarks>
+    /// 两种形状都要认：Tauri 的 JS 统一发 <c>{ label, value }</c>，而手写迁移代码与
+    /// 本库早期的风格是 <c>{ label, skip: true }</c>。命令层认形状比让调用方改代码便宜，
+    /// 而且认错形状的表现（"缺少布尔参数"）本身就把两种写法都提示出来了。
+    /// </remarks>
+    private static bool BoolValue(JsonElement args, string property, string commandName)
+        => OptionalBoolAt(args, "value")
+           ?? OptionalBoolAt(args, property)
+           ?? throw new OrielIpcException($"命令 '{commandName}' 缺少布尔参数 '{property}'。");
+
+    private static bool? OptionalBoolAt(JsonElement args, string property)
+        => args.ValueKind == JsonValueKind.Object
+           && args.TryGetProperty(property, out JsonElement element)
+           && element.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? element.GetBoolean()
+            : null;
+
+    /// <summary>
+    /// 解析 <c>setEffects</c> 的 <c>color</c>（Tauri 的 <c>Color</c>：<c>[r,g,b]</c> /
+    /// <c>[r,g,b,a]</c> / <c>{ red, green, blue, alpha? }</c>）。
+    /// </summary>
+    /// <returns>ARGB（<c>0xAARRGGBB</c>）；没给或形状不认时 <c>null</c>。</returns>
+    private static uint? ReadEffectColor(JsonElement source)
+    {
+        if (!source.TryGetProperty("color", out JsonElement color))
+        {
+            return null;
+        }
+
+        if (color.ValueKind == JsonValueKind.Array)
+        {
+            var channels = new List<int>();
+            foreach (JsonElement channel in color.EnumerateArray())
+            {
+                if (channel.ValueKind != JsonValueKind.Number)
+                {
+                    return null;
+                }
+
+                channels.Add((int)Math.Round(channel.GetDouble()));
+            }
+
+            return channels.Count is 3 or 4 ? PackArgb(channels) : null;
+        }
+
+        if (color.ValueKind == JsonValueKind.Object)
+        {
+            int? Read(string name) => color.TryGetProperty(name, out JsonElement e)
+                && e.ValueKind == JsonValueKind.Number
+                    ? (int)Math.Round(e.GetDouble())
+                    : null;
+
+            if (Read("red") is int r && Read("green") is int g && Read("blue") is int b)
+            {
+                return PackArgb([r, g, b, Read("alpha") ?? 255]);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>把 [r,g,b] 或 [r,g,b,a] 打包成 ARGB（逐通道钳制到 0–255）。</summary>
+    private static uint PackArgb(List<int> channels)
+    {
+        static uint Channel(int value) => (uint)Math.Clamp(value, 0, 255);
+
+        uint r = Channel(channels[0]);
+        uint g = Channel(channels[1]);
+        uint b = Channel(channels[2]);
+        uint a = channels.Count > 3 ? Channel(channels[3]) : 255;
+        return (a << 24) | (r << 16) | (g << 8) | b;
+    }
+
+    /// <summary>
+    /// 把 <c>setIcon</c> 那三种图标形状（<c>bytes</c> / <c>rgba</c>+尺寸 / 路径）解成
+    /// <see cref="OrielImage"/>。
+    /// </summary>
+    /// <remarks>
+    /// 与 <c>window.setIcon</c> 走同一套约定：二进制一律 base64（同一个 32x32 PNG 用数字
+    /// 数组要四倍体积，而 IPC 是 JSON 文本）。<b>不在这里落地成 HICON</b>：那是平台侧的事。
+    /// </remarks>
+    private static OrielImage DecodeImageArgument(JsonElement source, string commandName)
+    {
+        if (source.TryGetProperty("path", out JsonElement pathElement)
+            && pathElement.ValueKind == JsonValueKind.String)
+        {
+            return OrielImage.FromFile(pathElement.GetString()!);
+        }
+
+        if (source.TryGetProperty("bytes", out JsonElement bytesElement)
+            && bytesElement.ValueKind == JsonValueKind.String)
+        {
+            byte[] decoded;
+            try
+            {
+                decoded = Convert.FromBase64String(bytesElement.GetString()!);
+            }
+            catch (FormatException ex)
+            {
+                throw new OrielIpcException($"{commandName} 的 bytes 不是合法的 base64：{ex.Message}");
+            }
+
+            return OrielImage.FromBytes(decoded);
+        }
+
+        if (source.TryGetProperty("rgba", out JsonElement rgbaElement)
+            && rgbaElement.ValueKind == JsonValueKind.String)
+        {
+            byte[] rgba;
+            try
+            {
+                rgba = Convert.FromBase64String(rgbaElement.GetString()!);
+            }
+            catch (FormatException ex)
+            {
+                throw new OrielIpcException($"{commandName} 的 rgba 不是合法的 base64：{ex.Message}");
+            }
+
+            int width = RequiredInt(source, "width", commandName);
+            int height = RequiredInt(source, "height", commandName);
+            if (width <= 0 || height <= 0 || rgba.Length != width * height * 4)
+            {
+                throw new OrielIpcException(
+                    $"{commandName} 的 rgba 长度与尺寸不符：{width}x{height} 需要 {width * height * 4} 字节，"
+                    + $"收到 {rgba.Length} 字节。");
+            }
+
+            return new OrielImage(rgba, width, height);
+        }
+
+        throw new OrielIpcException(
+            $"{commandName} 的图标需要 path、bytes 或 rgba+width+height 其中之一。");
+    }
 
     private static bool RequiredBool(JsonElement args, string property, string commandName)
         => OptionalBool(args, property)

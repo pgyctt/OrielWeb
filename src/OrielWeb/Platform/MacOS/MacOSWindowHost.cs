@@ -323,8 +323,10 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     /// <summary>是否置顶（取库记住的状态，见 <see cref="IWindowBackend.IsAlwaysOnTop"/>）。</summary>
     public bool IsAlwaysOnTop => _isOnTop;
 
-    /// <summary>是否有系统装饰（取创建时的选项，见 <see cref="IWindowBackend.IsDecorated"/>）。</summary>
-    public bool IsDecorated => !_options.Frameless;
+    /// <summary>是否有系统装饰（读原生 styleMask：<see cref="SetDecorations"/> 会改它）。</summary>
+    public bool IsDecorated
+        => _nsWindow != 0
+            && ((nuint)ObjCRuntime.SendNint(_nsWindow, ObjCRuntime.Sel("styleMask")) & StyleTitled) != 0;
 
     /// <summary>是否可缩放（原生读，见 <see cref="IWindowBackend.IsResizable"/>）。</summary>
     public bool IsResizable => (CurrentStyleMask() & StyleResizable) != 0;
@@ -580,6 +582,609 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
             "macOS 不支持 startResizeDragging：AppKit 没有公开的" +
             "\"以编程方式开始 resize 拖动\"入口（performWindowDragWithEvent: 只能移动窗口）。" +
             "需要该能力时请用可拖动的自绘边框配合 window.dragStart 之类的做法。");
+
+    // ------------------------------------------------------------------
+    // 平台开关 / 特效 / 任务栏（B22）
+    // ------------------------------------------------------------------
+
+    /// <summary>进简化全屏前的 <c>styleMask</c>（退出时还原）。</summary>
+    private nuint _styleMaskBeforeSimpleFullscreen;
+
+    /// <summary>进简化全屏前的窗口矩形（Cocoa 点），退出时还原。</summary>
+    private (double X, double Y, double Width, double Height)? _frameBeforeSimpleFullscreen;
+
+    /// <summary>当前是否处于简化全屏（见 <see cref="SetSimpleFullscreen"/>）。</summary>
+    private bool _isSimpleFullscreen;
+
+    /// <summary>B22 的材质视图（<c>NSVisualEffectView</c>）；0 = 没有。</summary>
+    private nint _effectView;
+
+    /// <inheritdoc />
+    public void SetSkipTaskbar(bool skip)
+        => throw new NotSupportedException(
+            "macOS 不支持 setSkipTaskbar：Dock 里显示的是整个应用，没有\"按窗口隐藏\"这回事"
+            + "（要从 Dock 消失得改 NSApplication 的 activationPolicy，那是应用级决定）。"
+            + "Tauri 在 macOS 上同样不支持。");
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 只切 <c>NSWindowCollectionBehaviorCanJoinAllSpaces</c> 这一位，**保留**窗口已有的其它
+    /// collectionBehavior（全屏窗口的 <c>FullScreenPrimary</c> 就在同一字段里）：整段覆盖会把
+    /// 它们一起清掉，"刚设过全工作区"的全屏窗口于是行为变了。
+    /// </remarks>
+    public void SetVisibleOnAllWorkspaces(bool visible)
+    {
+        if (_nsWindow == 0)
+        {
+            return;
+        }
+
+        const nuint CanJoinAllSpaces = 1 << 0;
+        nuint behavior = (nuint)ObjCRuntime.SendNint(_nsWindow, ObjCRuntime.Sel("collectionBehavior"));
+        behavior = visible ? behavior | CanJoinAllSpaces : behavior & ~CanJoinAllSpaces;
+        ObjCRuntime.SendVoidNint(_nsWindow, ObjCRuntime.Sel("setCollectionBehavior:"), (nint)behavior);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <c>NSWindowSharingNone = 0</c>（不可被截取）、<c>NSWindowSharingReadOnly = 1</c>（默认）。
+    /// </remarks>
+    public void SetContentProtected(bool contentProtected)
+    {
+        if (_nsWindow == 0)
+        {
+            return;
+        }
+
+        ObjCRuntime.SendVoidNint(
+            _nsWindow, ObjCRuntime.Sel("setSharingType:"), contentProtected ? 0 : 1);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <para>
+    /// 与原生全屏的区别：**不创建新的 Space**，靠"去掉标题栏 + 窗口铺满所在屏幕"实现
+    /// （Lion 之前的全屏形态）。所以用户不会被带到另一张桌面、别的窗口也不会被推走。
+    /// </para>
+    /// <para>
+    /// 进出都保存/还原 <c>styleMask</c> 与窗口矩形——退出后窗口回到原来的位置与大小。
+    /// 与原生全屏互斥：已经处于原生全屏时先退出它，否则两个模式打架、窗口卡在半屏。
+    /// </para>
+    /// </remarks>
+    public void SetSimpleFullscreen(bool fullscreen)
+    {
+        if (_nsWindow == 0 || fullscreen == _isSimpleFullscreen)
+        {
+            return;
+        }
+
+        if (fullscreen)
+        {
+            if (IsFullscreen)
+            {
+                SetFullscreen(false);
+            }
+
+            _styleMaskBeforeSimpleFullscreen =
+                (nuint)ObjCRuntime.SendNint(_nsWindow, ObjCRuntime.Sel("styleMask"));
+            _frameBeforeSimpleFullscreen = ReadFrame();
+
+            nint screen = ScreenOfWindow();
+            (double sx, double sy, double sw, double sh) = ScreenFrame(screen);
+
+            // 去掉标题栏：borderless 才能铺满到菜单栏下方（原生保留圆角与阴影）
+            ObjCRuntime.SendVoidNint(
+                _nsWindow,
+                ObjCRuntime.Sel("setStyleMask:"),
+                (nint)(_styleMaskBeforeSimpleFullscreen & ~StyleTitled));
+
+            ObjCRuntime.SendVoidDouble4Bool(
+                _nsWindow, ObjCRuntime.Sel("setFrame:display:"), sx, sy, sw, sh, true);
+
+            _isSimpleFullscreen = true;
+            return;
+        }
+
+        ObjCRuntime.SendVoidNint(
+            _nsWindow, ObjCRuntime.Sel("setStyleMask:"), (nint)_styleMaskBeforeSimpleFullscreen);
+
+        if (_frameBeforeSimpleFullscreen is { } f)
+        {
+            ObjCRuntime.SendVoidDouble4Bool(
+                _nsWindow, ObjCRuntime.Sel("setFrame:display:"), f.X, f.Y, f.Width, f.Height, true);
+        }
+
+        _frameBeforeSimpleFullscreen = null;
+        _isSimpleFullscreen = false;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 参数是**屏幕物理像素**（与 <c>Monitor.position</c> 同口径）。Cocoa 的屏幕坐标是
+    /// "点 + 左下原点"，所以先按主屏缩放比与主屏高度把它翻过来再比对——不翻的话副屏上
+    /// 会挑错屏幕（上下颠倒的那一块）。点不在任何屏幕上时什么都不做（与 Tauri 一致）。
+    /// </remarks>
+    public void SetFullscreenOnMonitor(int x, int y)
+    {
+        if (_nsWindow == 0)
+        {
+            return;
+        }
+
+        nint target = ScreenForPhysicalPoint(x, y);
+        if (target == 0)
+        {
+            return;
+        }
+
+        (double sx, double sy, double sw, double sh) = ScreenFrame(target);
+
+        bool wasFullscreen = IsFullscreen;
+        bool wasSimple = _isSimpleFullscreen;
+        if (wasFullscreen)
+        {
+            SetFullscreen(false);
+        }
+
+        if (wasSimple)
+        {
+            SetSimpleFullscreen(false);
+        }
+
+        // 全屏切换本身会把窗口铺满所在屏幕，这里只需要"把它搬到那台屏幕上"
+        ObjCRuntime.SendVoidDouble4Bool(
+            _nsWindow, ObjCRuntime.Sel("setFrame:display:"), sx, sy, sw, sh, true);
+
+        if (wasSimple)
+        {
+            SetSimpleFullscreen(true);
+        }
+        else if (wasFullscreen)
+        {
+            SetFullscreen(true);
+        }
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 三档的落点：
+    /// <list type="bullet">
+    ///   <item><c>visible</c>：<c>titlebarAppearsTransparent = NO</c>、标题可见、
+    ///     去掉 <c>fullSizeContentView</c>（内容从标题栏下方开始）。</item>
+    ///   <item><c>transparent</c>：标题栏透明，其余同上。</item>
+    ///   <item><c>overlay</c>：透明 + 标题隐藏 + <c>fullSizeContentView</c>——
+    ///     页面延伸到标题栏下方，只剩红绿灯浮在上面（与 Tauri 的说明一致）。</item>
+    /// </list>
+    /// </remarks>
+    public void SetTitleBarStyle(OrielTitleBarStyle style)
+    {
+        if (_nsWindow == 0)
+        {
+            return;
+        }
+
+        bool transparent = style != OrielTitleBarStyle.Visible;
+        bool overlay = style == OrielTitleBarStyle.Overlay;
+
+        ObjCRuntime.SendVoidBool(
+            _nsWindow, ObjCRuntime.Sel("setTitlebarAppearsTransparent:"), transparent);
+        ObjCRuntime.SendVoidNint(
+            _nsWindow,
+            ObjCRuntime.Sel("setTitleVisibility:"),
+            overlay ? NSWindowTitleHidden : 0);
+
+        // 改 styleMask 会让 AppKit 重画标题栏；先记再改，避免把别的位一起抹掉
+        nuint mask = (nuint)ObjCRuntime.SendNint(_nsWindow, ObjCRuntime.Sel("styleMask"));
+        mask = overlay ? mask | StyleFullSizeContentView : mask & ~StyleFullSizeContentView;
+        ObjCRuntime.SendVoidNint(_nsWindow, ObjCRuntime.Sel("setStyleMask:"), (nint)mask);
+    }
+
+    /// <inheritdoc />
+    public void SetShadow(bool enable)
+    {
+        if (_nsWindow == 0)
+        {
+            return;
+        }
+
+        ObjCRuntime.SendVoidBool(_nsWindow, ObjCRuntime.Sel("setHasShadow:"), enable);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 落点是 <c>window.level</c>：普通窗口是 0，这里降到 <b>-1</b>——低于所有普通窗口、
+    /// 但远高于桌面（<c>kCGDesktopWindowLevel</c> 在 -20 亿那一档，降到那里窗口会跑到壁纸
+    /// 后面、而且通常再也拿不到焦点）。所以本库的"置底"是"比普通窗口都低、仍可交互"。
+    /// </remarks>
+    public void SetAlwaysOnBottom(bool alwaysOnBottom)
+    {
+        if (_nsWindow == 0)
+        {
+            return;
+        }
+
+        ObjCRuntime.SendVoidNint(
+            _nsWindow, ObjCRuntime.Sel("setLevel:"), alwaysOnBottom ? -1 : 0);
+    }
+
+    /// <inheritdoc />
+    public void SetFocusable(bool focusable)
+        => throw new NotSupportedException(
+            "macOS 不支持 setFocusable：AppKit 没有公开的\"这个窗口不能成为 key window\"入口"
+            + "（只有私有的 _setPreventsActivation，用它等于把自己绑到未公开 API 上）。"
+            + "需要\"点了不抢焦点\"的窗口得用 nonactivating 的 NSPanel，本库不提供那种窗口类型。");
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 只切 <c>NSWindowStyleMaskTitled</c>。它**不会**顺手补 <c>fullSizeContentView</c>
+    /// 或重置标题可见性——那是 <see cref="SetTitleBarStyle"/> 的事，两个方法各管一段。
+    /// </remarks>
+    public void SetDecorations(bool decorations)
+    {
+        if (_nsWindow == 0)
+        {
+            return;
+        }
+
+        nuint mask = (nuint)ObjCRuntime.SendNint(_nsWindow, ObjCRuntime.Sel("styleMask"));
+        mask = decorations ? mask | StyleTitled : mask & ~StyleTitled;
+        ObjCRuntime.SendVoidNint(_nsWindow, ObjCRuntime.Sel("setStyleMask:"), (nint)mask);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <para>
+    /// 落点是 <c>NSVisualEffectView</c>：一个插在 contentView 里、**位于 webview 之下**的
+    /// 材质视图。材质编号见 <see cref="ToVisualEffectMaterial"/>（<c>NSVisualEffectMaterial</c>）。
+    /// </para>
+    /// <para>
+    /// <b>必须把窗口与 webview 的背景放开</b>，否则材质永远看不到：这里同时做三件事——
+    /// 窗口 <c>opaque = NO</c> + 背景清空、webview 的 <c>drawsBackground</c> 置 NO
+    /// （<c>WKWebView</c> 上那个属性是私有的，走 KVC；Tauri/tao 用的也是这条路）。
+    /// 页面自己仍需要有透明背景——本库不改页面的 CSS。
+    /// </para>
+    /// <para>
+    /// <c>liquidGlassRegular / liquidGlassClear</c> 要 macOS 26 的 NSGlassEffectView，
+    /// 本库不实现：列表里只有它们时抛 <see cref="NotSupportedException"/>。
+    /// </para>
+    /// </remarks>
+    public void SetEffects(OrielEffects effects)
+    {
+        if (_nsWindow == 0 || _webview == 0)
+        {
+            return;
+        }
+
+        int material = -1;
+        foreach (OrielEffect effect in effects.Effects)
+        {
+            int candidate = ToVisualEffectMaterial(effect);
+            if (candidate >= 0)
+            {
+                material = candidate;
+                break;
+            }
+        }
+
+        if (material < 0)
+        {
+            throw new NotSupportedException(
+                "macOS 没有可用的材质：支持 sidebar / headerView / sheet / windowBackground / "
+                + "hudWindow / fullScreenUI / tooltip / contentBackground / underWindowBackground / "
+                + "underPageBackground / titlebar / selection / menu / popover / appearanceBased / "
+                + "light / dark / mediumLight / ultraDark；"
+                + "liquidGlassRegular / liquidGlassClear 需要 macOS 26 的 NSGlassEffectView，本库未实现"
+                + "（mica / acrylic / blur / tabbed 是 Windows 材质）。");
+        }
+
+        RemoveEffectView();
+
+        // 1) 窗口与 webview 放开背景：不透明的话材质被挡在下面，什么都看不到
+        ObjCRuntime.SendVoidBool(_nsWindow, ObjCRuntime.Sel("setOpaque:"), false);
+        nint clear = ObjCRuntime.SendId(
+            ObjCRuntime.GetClassOrThrow("NSColor"), ObjCRuntime.Sel("clearColor"));
+        if (clear != 0)
+        {
+            ObjCRuntime.SendVoidObj(_nsWindow, ObjCRuntime.Sel("setBackgroundColor:"), clear);
+        }
+
+        SetWebviewDrawsBackground(false);
+
+        // 2) 造材质视图，插到 contentView 的最底层（webview 与 dropView 之下）
+        nint contentView = ObjCRuntime.SendId(_nsWindow, ObjCRuntime.Sel("contentView"));
+        (double _, double _, double width, double height) = ReadRect(contentView, "bounds");
+
+        nint effectClass = ObjCRuntime.GetClassOrThrow("NSVisualEffectView");
+        _effectView = ObjCRuntime.SendIdDouble4(
+            ObjCRuntime.SendId(effectClass, ObjCRuntime.Sel("alloc")),
+            ObjCRuntime.Sel("initWithFrame:"),
+            0, 0, width, height);
+        ObjCRuntime.objc_retain(_effectView);
+
+        ObjCRuntime.SendVoidNint(_effectView, ObjCRuntime.Sel("setMaterial:"), material);
+        ObjCRuntime.SendVoidNint(
+            _effectView,
+            ObjCRuntime.Sel("setState:"),
+            effects.State switch
+            {
+                OrielEffectState.Active => 1,   // NSVisualEffectStateActive
+                OrielEffectState.Inactive => 2, // NSVisualEffectStateInactive
+                _ => 0,                          // NSVisualEffectStateFollowsWindowActiveState
+            });
+
+        // NSVisualEffectBlendingModeBehindWindow = 0：材质取窗口**后面**的内容
+        ObjCRuntime.SendVoidNint(_effectView, ObjCRuntime.Sel("setBlendingMode:"), 0);
+        ObjCRuntime.SendVoidNint(
+            _effectView,
+            ObjCRuntime.Sel("setAutoresizingMask:"),
+            NSViewWidthSizable | NSViewHeightSizable);
+
+        // NSWindowBelow = -1：插在参照视图（dropView）之下；dropView 不存在时插到 contentView 底下
+        ObjCRuntime.SendVoidObjNintObj(
+            contentView,
+            ObjCRuntime.Sel("addSubview:positioned:relativeTo:"),
+            _effectView,
+            -1,
+            _dropView);
+
+        // 3) 圆角（Tauri 的 radius，macOS only）：走 layer.cornerRadius
+        if (effects.Radius is { } radius && radius > 0)
+        {
+            ObjCRuntime.SendVoidBool(_effectView, ObjCRuntime.Sel("setWantsLayer:"), true);
+            nint layer = ObjCRuntime.SendId(_effectView, ObjCRuntime.Sel("layer"));
+            if (layer != 0)
+            {
+                ObjCRuntime.SendVoidDouble(layer, ObjCRuntime.Sel("setCornerRadius:"), radius);
+                ObjCRuntime.SendVoidBool(layer, ObjCRuntime.Sel("setMasksToBounds:"), true);
+            }
+        }
+
+        if (effects.Interactive)
+        {
+            OrielDiagnostics.Report(
+                "[OrielWeb] setEffects：interactive 需要 macOS 26 的液态玻璃，本库未实现，已忽略。");
+        }
+    }
+
+    /// <inheritdoc />
+    public void ClearEffects()
+    {
+        if (_nsWindow == 0)
+        {
+            return;
+        }
+
+        RemoveEffectView();
+
+        // 还原窗口与 webview 的背景：材质没了之后，不透明窗口比"漏底"更接近默认观感
+        ObjCRuntime.SendVoidBool(_nsWindow, ObjCRuntime.Sel("setOpaque:"), true);
+        _runtimeBackgroundArgb = null;
+        ApplyBackgroundColor();
+        SetWebviewDrawsBackground(true);
+    }
+
+    /// <summary>把材质视图摘掉并释放（幂等）。</summary>
+    private void RemoveEffectView()
+    {
+        if (_effectView == 0)
+        {
+            return;
+        }
+
+        ObjCRuntime.SendVoid(_effectView, ObjCRuntime.Sel("removeFromSuperview"));
+        ObjCRuntime.objc_release(_effectView);
+        _effectView = 0;
+    }
+
+    /// <summary>
+    /// 开关 webview 的背景绘制（<c>drawsBackground</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>这是私有属性，走 KVC。</b>WKWebView 没有公开的"透明背景"入口，而材质要透出来
+    /// 就必须让它别画那层不透明的底——macOS 上除了这条路没有别的办法（Tauri/tao 同样如此）。
+    /// </para>
+    /// <para>
+    /// <b>调之前必须确认 KVC 不会抛。</b>KVC 对"既没有 setter、也没有同名 ivar"的键会抛
+    /// <c>NSUndefinedKeyException</c>，而那是 ObjC 异常、托管侧接不住——一次 setEffects
+    /// 就能让整个应用消失。所以先用运行时 API 问两个问题：类上有没有
+    /// <c>setDrawsBackground:</c>、有没有 <c>_drawsBackground</c> ivar。任一存在，KVC 就
+    /// 走得到；都不存在（将来的 WebKit 改了实现）就跳过并记一条诊断——
+    /// 那种情况下材质看不见，但应用不会挂。
+    /// </para>
+    /// </remarks>
+    private void SetWebviewDrawsBackground(bool draws)
+    {
+        if (_webview == 0)
+        {
+            return;
+        }
+
+        nint cls = ObjCRuntime.object_getClass(_webview);
+        bool kvcSafe = ObjCRuntime.class_getInstanceMethod(cls, "setDrawsBackground:") != 0
+            || ObjCRuntime.class_getInstanceVariable(cls, "_drawsBackground") != 0;
+
+        if (!kvcSafe)
+        {
+            OrielDiagnostics.Report(
+                "[OrielWeb] setEffects：这个系统上的 WKWebView 没有 drawsBackground，"
+                + "webview 仍会画不透明底色——材质可能看不见（页面背景透不出来）。");
+            return;
+        }
+
+        nint key = ObjCRuntime.MakeNSString("drawsBackground");
+        nint boxed = ObjCRuntime.SendIdNint(
+            ObjCRuntime.GetClassOrThrow("NSNumber"), ObjCRuntime.Sel("numberWithBool:"), draws ? 1 : 0);
+        ObjCRuntime.SendVoidObjObj(_webview, ObjCRuntime.Sel("setValue:forKey:"), boxed, key);
+    }
+
+    /// <summary>把 Tauri 的 <c>Effect</c> 映射到 <c>NSVisualEffectMaterial</c>；不支持的返回 -1。</summary>
+    /// <remarks>
+    /// 编号来自 AppKit 的 <c>NSVisualEffectMaterial</c>（10.14 的取值集合）。前五个是 10.14
+    /// 起废弃的旧材质，但仍然是合法取值——老系统上它们才是能用的那几个。
+    /// </remarks>
+    private static int ToVisualEffectMaterial(OrielEffect effect) => effect switch
+    {
+        OrielEffect.AppearanceBased => 0,
+        OrielEffect.Light => 1,
+        OrielEffect.Dark => 2,
+        OrielEffect.Titlebar => 3,
+        OrielEffect.Selection => 4,
+        OrielEffect.Menu => 5,
+        OrielEffect.Popover => 6,
+        OrielEffect.Sidebar => 7,
+        OrielEffect.MediumLight => 8,
+        OrielEffect.UltraDark => 9,
+        OrielEffect.HeaderView => 10,
+        OrielEffect.Sheet => 11,
+        OrielEffect.WindowBackground => 12,
+        OrielEffect.HudWindow => 13,
+        OrielEffect.FullScreenUi => 15,
+        OrielEffect.Tooltip => 17,
+        OrielEffect.ContentBackground => 18,
+        OrielEffect.UnderWindowBackground => 21,
+        OrielEffect.UnderPageBackground => 22,
+
+        // Windows 材质与 macOS 26 的液态玻璃：本平台没有对应物
+        _ => -1,
+    };
+
+    /// <inheritdoc />
+    public void SetProgressBar(OrielProgressBarStatus status, double? progress)
+        => throw new NotSupportedException(
+            "macOS 不支持 setProgressBar：NSDockTile 没有进度条 API（要塞进度得把整个磁贴内容"
+            + "接管成自绘视图）。Tauri 在 macOS 上同样不实现。");
+
+    /// <inheritdoc />
+    public void SetOverlayIcon(OrielImage? icon)
+        => throw new NotSupportedException(
+            "macOS 没有任务栏覆盖图标：用 setBadgeCount / setBadgeLabel 在 Dock 图标上显示数字或短文本。");
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <c>NSApp.dockTile.badgeLabel</c> 收字符串：<c>null</c> 或 0 清空，正数写十进制文本。
+    /// **应用级**——所有窗口调它都是改同一个 Dock 图标（AppKit 的事实）。
+    /// </remarks>
+    public void SetBadgeCount(int? count)
+    {
+        if (count is null or <= 0)
+        {
+            SetBadgeLabel(null);
+            return;
+        }
+
+        SetBadgeLabel(count.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    /// <inheritdoc />
+    public void SetBadgeLabel(string? label)
+    {
+        nint app = SharedApplication();
+        if (app == 0)
+        {
+            return;
+        }
+
+        nint dockTile = ObjCRuntime.SendId(app, ObjCRuntime.Sel("dockTile"));
+        if (dockTile == 0)
+        {
+            return;
+        }
+
+        nint text = label is null ? 0 : ObjCRuntime.MakeNSString(label);
+        ObjCRuntime.SendVoidObj(dockTile, ObjCRuntime.Sel("setBadgeLabel:"), text);
+    }
+
+    /// <summary>取窗口所在的 <c>NSScreen</c>（取不到时退回主屏）。</summary>
+    private nint ScreenOfWindow()
+    {
+        nint screen = _nsWindow == 0 ? 0 : ObjCRuntime.SendId(_nsWindow, ObjCRuntime.Sel("screen"));
+        return screen != 0
+            ? screen
+            : ObjCRuntime.SendId(ObjCRuntime.GetClassOrThrow("NSScreen"), ObjCRuntime.Sel("mainScreen"));
+    }
+
+    /// <summary>取某个 <c>NSScreen</c> 的矩形（Cocoa 点，左下原点）。</summary>
+    private static (double X, double Y, double Width, double Height) ScreenFrame(nint screen)
+        => screen == 0 ? (0, 0, 0, 0) : ReadRect(screen, "frame");
+
+    /// <summary>
+    /// 按 KVC + <c>getValue:</c> 读一个 NSRect 属性（key 形如 <c>frame</c> / <c>bounds</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <b>不直取返回值</b>：NSRect 是结构体，x86_64 上要走 <c>objc_msgSend_stret</c>、
+    /// arm64 上是普通返回——一个 P/Invoke 表达不了两套 ABI。本库读窗口 frame 的既有做法
+    /// 就是这个（见 <c>ReadFrame</c>），这里抽成通用版本给 NSScreen / NSView 复用。
+    /// </remarks>
+    private static (double X, double Y, double Width, double Height) ReadRect(nint obj, string key)
+    {
+        if (obj == 0)
+        {
+            return (0, 0, 0, 0);
+        }
+
+        nint boxed = ObjCRuntime.SendIdObj(obj, ObjCRuntime.Sel("valueForKey:"), ObjCRuntime.MakeNSString(key));
+        if (boxed == 0)
+        {
+            return (0, 0, 0, 0);
+        }
+
+        nint buffer = Marshal.AllocHGlobal(4 * sizeof(double));
+        try
+        {
+            ObjCRuntime.SendVoidObj(boxed, ObjCRuntime.Sel("getValue:"), buffer);
+            return (
+                BitConverter.Int64BitsToDouble(Marshal.ReadInt64(buffer, 0)),
+                BitConverter.Int64BitsToDouble(Marshal.ReadInt64(buffer, 8)),
+                BitConverter.Int64BitsToDouble(Marshal.ReadInt64(buffer, 16)),
+                BitConverter.Int64BitsToDouble(Marshal.ReadInt64(buffer, 24)));
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    /// <summary>按屏幕**物理像素**坐标找屏幕；找不到返回 0。</summary>
+    private static nint ScreenForPhysicalPoint(int x, int y)
+    {
+        nint cls = ObjCRuntime.GetClassOrThrow("NSScreen");
+        nint main = ObjCRuntime.SendId(cls, ObjCRuntime.Sel("mainScreen"));
+        if (main == 0)
+        {
+            return 0;
+        }
+
+        // 物理像素 → 点：主屏的缩放比；y 还要相对主屏高度翻转（Cocoa 是左下原点）
+        double scale = ObjCRuntime.SendDouble(main, ObjCRuntime.Sel("backingScaleFactor"));
+        if (scale <= 0)
+        {
+            scale = 1;
+        }
+
+        (double _, double _, double _, double mainHeight) = ScreenFrame(main);
+        double px = x / scale;
+        double py = mainHeight - (y / scale);
+
+        nint screens = ObjCRuntime.SendId(cls, ObjCRuntime.Sel("screens"));
+        if (screens == 0)
+        {
+            return main;
+        }
+
+        nint count = ObjCRuntime.SendNint(screens, ObjCRuntime.Sel("count"));
+        for (nint i = 0; i < count; i++)
+        {
+            nint screen = ObjCRuntime.SendIdNint(screens, ObjCRuntime.Sel("objectAtIndex:"), i);
+            (double sx, double sy, double sw, double sh) = ScreenFrame(screen);
+            if (px >= sx && px < sx + sw && py >= sy && py < sy + sh)
+            {
+                return screen;
+            }
+        }
+
+        return 0;
+    }
 
     /// <summary>设置最大尺寸（见 <see cref="IWindowBackend.SetMaxSize"/>）。</summary>
     /// <remarks>

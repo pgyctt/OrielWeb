@@ -77,6 +77,54 @@ const RESIZE_DIRECTIONS = new Set([
 ]);
 
 /**
+ * 标题栏样式（对标 Tauri 的 `TitleBarStyle`）。
+ *
+ * @remarks **仅 macOS 生效**：`overlay` 会把页面延伸到标题栏下方、只留红绿灯。
+ * Windows/Linux 上 `setTitleBarStyle` 抛 `not_supported`。
+ *
+ * @typedef {'visible' | 'transparent' | 'overlay'} TitleBarStyle
+ */
+
+/**
+ * `setEffects` 的参数（对标 Tauri 的 `Effects`）。
+ *
+ * @typedef {object} Effects
+ * @property {string[]} effects 材质列表（`Effect` 的取值）。**第一个本平台支持的生效**，其余忽略。
+ * @property {string} [state] 激活状态（`EffectState` 的取值）。**仅 macOS**；Windows 上被忽略（会记诊断）。
+ * @property {number} [radius] 材质视图的圆角。**仅 macOS**。
+ * @property {[number, number, number] | [number, number, number, number]
+ *   | { red: number, green: number, blue: number, alpha?: number }} [color]
+ *   特效色调。**Windows** 只影响 `blur`/`acrylic`（Win10 1903+）；macOS 只影响液态玻璃（本库未实现）。
+ * @property {boolean} [interactive] 交互式玻璃（macOS 26+）。本库未实现，接受但忽略。
+ */
+
+/**
+ * `setProgressBar` 的参数（对标 Tauri 的 `ProgressBarState`）。
+ *
+ * @typedef {object} ProgressBarState
+ * @property {string} [status] `ProgressBarStatus` 的取值。
+ * @property {number} [progress] 0–100 的百分比。
+ */
+
+/** @type {ReadonlySet<string>} */
+const TITLE_BAR_STYLES = new Set(['visible', 'transparent', 'overlay']);
+
+/** @type {ReadonlySet<string>} */
+const EFFECTS = new Set([
+    'appearanceBased', 'light', 'dark', 'mediumLight', 'ultraDark', 'titlebar', 'selection',
+    'menu', 'popover', 'sidebar', 'headerView', 'sheet', 'windowBackground', 'hudWindow',
+    'fullScreenUI', 'tooltip', 'contentBackground', 'underWindowBackground',
+    'underPageBackground', 'liquidGlassRegular', 'liquidGlassClear', 'mica', 'blur',
+    'acrylic', 'tabbed', 'tabbedDark', 'tabbedLight',
+]);
+
+/** @type {ReadonlySet<string>} */
+const EFFECT_STATES = new Set(['followsWindowActiveState', 'active', 'inactive']);
+
+/** @type {ReadonlySet<string>} */
+const PROGRESS_STATUSES = new Set(['none', 'normal', 'indeterminate', 'paused', 'error']);
+
+/**
  * 把宿主返回的尺寸对象包成 {@link LogicalSize} 实例。
  *
  * @param {unknown} raw
@@ -1187,6 +1235,437 @@ export class Window {
         }
 
         await invoke('window.startResizeDragging', { label: this.label, direction });
+    }
+
+    // ---- 平台开关 / 特效 / 任务栏（B22）----
+    //
+    // 十六条方法 + 三个类型。**支持矩阵逐平台不同**，而且这一批的语义是统一的：
+    // 能做的平台真做，做不了的抛 `not_supported`（错误码），不做静默 no-op。
+    // 逐方法的平台事实见 docs/API.md 的 B22 支持矩阵。
+    //
+    // 参数的严格校验放在页面侧：传错形状时给一句能看懂的 TypeError，比让宿主回
+    // invalid_argument 更早、也更具体（同一个理由见上面光标那组）。
+
+    /**
+     * 是否在任务栏里隐藏这个窗口（对标 Tauri 的 `setSkipTaskbar`）。
+     *
+     * @param {boolean} skip
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setSkipTaskbar")`。
+     *
+     * **macOS 抛 `not_supported`**：Dock 里显示的是整个应用，没有"按窗口隐藏"这回事。
+     * Windows 走 `ITaskbarList::DeleteTab`/`AddTab`；Linux 是
+     * `gtk_window_set_skip_taskbar_hint`（Wayland 下由合成器决定）。
+     */
+    setSkipTaskbar(skip) {
+        if (typeof skip !== 'boolean') {
+            throw new TypeError('setSkipTaskbar: skip 必须是布尔值');
+        }
+
+        return invoke('window.setSkipTaskbar', { label: this.label, value: skip });
+    }
+
+    /**
+     * 是否在所有工作区/虚拟桌面上可见（对标 Tauri 的 `setVisibleOnAllWorkspaces`）。
+     *
+     * @param {boolean} visible
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setVisibleOnAllWorkspaces")`。
+     *
+     * **Windows 抛 `not_supported`**（Win32 没有公开的虚拟桌面接口）；
+     * macOS 切 `collectionBehavior` 的 `canJoinAllSpaces`；Linux 是
+     * `gtk_window_stick`（X11 的 `_NET_WM_STATE_STICKY`）。
+     */
+    setVisibleOnAllWorkspaces(visible) {
+        if (typeof visible !== 'boolean') {
+            throw new TypeError('setVisibleOnAllWorkspaces: visible 必须是布尔值');
+        }
+
+        return invoke('window.setVisibleOnAllWorkspaces', { label: this.label, value: visible });
+    }
+
+    /**
+     * 是否阻止窗口内容被别的应用截取（对标 Tauri 的 `setContentProtected`）。
+     *
+     * @param {boolean} contentProtected
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setContentProtected")`。
+     *
+     * Windows 是 `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`（Win10 2004+，
+     * 更早的系统退回 `WDA_MONITOR`：截屏里显示为黑块），macOS 是
+     * `NSWindow.sharingType = none`。**Linux 抛 `not_supported`**。
+     */
+    setContentProtected(contentProtected) {
+        if (typeof contentProtected !== 'boolean') {
+            throw new TypeError('setContentProtected: contentProtected 必须是布尔值');
+        }
+
+        return invoke('window.setContentProtected', { label: this.label, value: contentProtected });
+    }
+
+    /**
+     * 简化全屏（对标 Tauri 的 `setSimpleFullscreen`）。
+     *
+     * @param {boolean} fullscreen
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setSimpleFullscreen")`。
+     *
+     * **只有 macOS 有独立语义**：不创建新的 Space，靠"去掉标题栏 + 铺满当前屏幕"实现
+     * （Lion 之前的全屏形态）。**Windows / Linux 上等同 `setFullscreen`**——与 Tauri 的
+     * 文档一致（"On other platforms, this is the same as setFullscreen"）。
+     */
+    setSimpleFullscreen(fullscreen) {
+        if (typeof fullscreen !== 'boolean') {
+            throw new TypeError('setSimpleFullscreen: fullscreen 必须是布尔值');
+        }
+
+        return invoke('window.setSimpleFullscreen', { label: this.label, value: fullscreen });
+    }
+
+    /**
+     * 在包含给定**物理**坐标的那台显示器上全屏（对标 Tauri 的 `setFullscreenOnMonitor`）。
+     *
+     * @param {{ x: number, y: number } | [number, number]} position 屏幕物理像素坐标
+     *   （通常直接传 `(await availableMonitors())[i].position`）。
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setFullscreenOnMonitor")`。
+     *
+     * **该坐标不在任何显示器上时什么都不做**（与 Tauri 一致，不是错误）。
+     * 落点分两步：先把窗口移到那台显示器，再进入全屏。
+     */
+    setFullscreenOnMonitor(position) {
+        const normalized = normalizePosition(position);
+
+        return invoke('window.setFullscreenOnMonitor', {
+            label: this.label,
+            value: { x: normalized.x, y: normalized.y },
+        });
+    }
+
+    /**
+     * 标题栏样式（对标 Tauri 的 `setTitleBarStyle`）。
+     *
+     * @param {TitleBarStyle} style `'visible'` / `'transparent'` / `'overlay'`。
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setTitleBarStyle")`。**只有 macOS 实现**，Windows/Linux 抛
+     * `not_supported`（那边的等价能力是"创建时 Frameless + 页面自绘标题栏"）。
+     *
+     * `overlay` 会把页面延伸到标题栏下方、只留红绿灯——记得给它们留位置，
+     * 并用 `startDragging()` 划一块可拖动区域。
+     */
+    setTitleBarStyle(style) {
+        if (typeof style !== 'string' || !TITLE_BAR_STYLES.has(style)) {
+            throw new TypeError(
+                `setTitleBarStyle: 未知的 style ${JSON.stringify(style)}（只认 visible / transparent / overlay）。`);
+        }
+
+        return invoke('window.setTitleBarStyle', { label: this.label, value: style });
+    }
+
+    /**
+     * 是否给窗口画阴影（对标 Tauri 的 `setShadow`）。
+     *
+     * @param {boolean} enable
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setShadow")`。
+     *
+     * **Linux 抛 `not_supported`**（GTK 没有阴影 API，阴影由合成器给）。
+     * Windows 落点是 DWM 的非客户区渲染策略：**装饰窗口关不掉阴影**，
+     * 而给无边框窗口打开阴影在 Win11 上会带来圆角与 1px 边框。
+     */
+    setShadow(enable) {
+        if (typeof enable !== 'boolean') {
+            throw new TypeError('setShadow: enable 必须是布尔值');
+        }
+
+        return invoke('window.setShadow', { label: this.label, value: enable });
+    }
+
+    /**
+     * 是否永远压在别的窗口之下（对标 Tauri 的 `setAlwaysOnBottom`）。
+     *
+     * @param {boolean} alwaysOnBottom
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setAlwaysOnBottom")`。
+     *
+     * 与 `setAlwaysOnTop` **互斥**：两者同时开时后设的那个赢（本库在设置底时会先取消置顶）。
+     * 三平台都做（Linux 是 `gtk_window_set_keep_below`，Wayland 下只是提示）。
+     */
+    setAlwaysOnBottom(alwaysOnBottom) {
+        if (typeof alwaysOnBottom !== 'boolean') {
+            throw new TypeError('setAlwaysOnBottom: alwaysOnBottom 必须是布尔值');
+        }
+
+        return invoke('window.setAlwaysOnBottom', { label: this.label, value: alwaysOnBottom });
+    }
+
+    /**
+     * 窗口能否获得焦点（对标 Tauri 的 `setFocusable`）。
+     *
+     * @param {boolean} focusable
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setFocusable")`。
+     *
+     * **macOS 抛 `not_supported`**（AppKit 没有公开入口，只有私有的
+     * `_setPreventsActivation`，用它等于把自己绑到未公开 API 上）。
+     * Windows 切 `WS_EX_NOACTIVATE`，Linux 是 `set_accept_focus` + `can_focus`。
+     */
+    setFocusable(focusable) {
+        if (typeof focusable !== 'boolean') {
+            throw new TypeError('setFocusable: focusable 必须是布尔值');
+        }
+
+        return invoke('window.setFocusable', { label: this.label, value: focusable });
+    }
+
+    /**
+     * 是否显示系统装饰（标题栏与边框，对标 Tauri 的 `setDecorations`）。
+     *
+     * @param {boolean} decorations
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setDecorations")`。
+     *
+     * **运行期切换，三平台都做**。与本库的 `OrielWindowOptions.Frameless` 是两件事：
+     * 后者决定宿主自己的命中测试与拖拽热区，创建后不变；这个方法只改原生装饰。
+     */
+    setDecorations(decorations) {
+        if (typeof decorations !== 'boolean') {
+            throw new TypeError('setDecorations: decorations 必须是布尔值');
+        }
+
+        return invoke('window.setDecorations', { label: this.label, value: decorations });
+    }
+
+    /**
+     * 应用一组窗口材质（对标 Tauri 的 `setEffects`）。
+     *
+     * @param {Effects} effects
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setEffects")`。
+     *
+     * **取列表里第一个本平台支持的那个，其余忽略**（与 Tauri 一致），所以一份代码可以
+     * 同时列 Windows 与 macOS 的材质。**一个都不支持时抛 `not_supported`**——"设了没生效"
+     * 必须能被看见。
+     *
+     * **Linux 整条命令抛 `not_supported`**：窗口材质是 DWM 与 AppKit 的概念。
+     *
+     * 需要页面自己是透明的（材质画在 webview 之后）；macOS 上本库会把窗口与 webview 的
+     * 背景放开，Windows 上 DWM 材质由系统画在客户区之后。
+     *
+     * @example
+     * await win.setEffects({ effects: [Effect.Mica, Effect.Sidebar], state: EffectState.Active });
+     */
+    setEffects(effects) {
+        if (effects === null || typeof effects !== 'object') {
+            throw new TypeError(
+                'setEffects: 参数必须是对象 { effects: [...], state?, radius?, color?, interactive? }');
+        }
+
+        const list = effects.effects;
+        if (!Array.isArray(list) || list.length === 0) {
+            throw new TypeError('setEffects: effects 必须是非空数组（要清掉材质请用 clearEffects）');
+        }
+
+        for (const name of list) {
+            if (typeof name !== 'string' || !EFFECTS.has(name)) {
+                throw new TypeError(
+                    `setEffects: 未知的材质 ${JSON.stringify(name)}。取值见 docs/API.md 的材质表。`);
+            }
+        }
+
+        if (effects.state !== undefined
+            && (typeof effects.state !== 'string' || !EFFECT_STATES.has(effects.state))) {
+            throw new TypeError(
+                `setEffects: 未知的 state ${JSON.stringify(effects.state)}`
+                + '（只认 followsWindowActiveState / active / inactive）');
+        }
+
+        if (effects.radius !== undefined
+            && (typeof effects.radius !== 'number' || !Number.isFinite(effects.radius) || effects.radius < 0)) {
+            throw new TypeError('setEffects: radius 必须是非负有限数');
+        }
+
+        if (effects.interactive !== undefined && typeof effects.interactive !== 'boolean') {
+            throw new TypeError('setEffects: interactive 必须是布尔值');
+        }
+
+        /** @type {Effects} */
+        const payload = { effects: [...list] };
+        if (effects.state !== undefined) {
+            payload.state = effects.state;
+        }
+
+        if (effects.radius !== undefined) {
+            payload.radius = effects.radius;
+        }
+
+        if (effects.interactive !== undefined) {
+            payload.interactive = effects.interactive;
+        }
+
+        // 颜色三种形状原样交给宿主（数组 / 对象；字符串 hex Tauri 也不收）
+        if (effects.color !== undefined) {
+            payload.color = effects.color;
+        }
+
+        return invoke('window.setEffects', { label: this.label, value: payload });
+    }
+
+    /**
+     * 清掉已应用的材质（对标 Tauri 的 `clearEffects`）。
+     *
+     * @returns {Promise<void>}
+     * @remarks
+     * 与 `setEffects` 共用同一个能力（`Allow("window.setEffects")`）。
+     * 没设过时是空操作；**Linux 同样抛 `not_supported`**（能力整个不存在）。
+     */
+    clearEffects() {
+        return invoke('window.clearEffects', { label: this.label });
+    }
+
+    /**
+     * 任务栏进度条（对标 Tauri 的 `setProgressBar`）。
+     *
+     * @param {ProgressBarState | string} state `{ status, progress? }`，或直接给状态字符串。
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setProgressBar")`。
+     *
+     * **只有 Windows 实现**（`ITaskbarList3`）。macOS 的 Dock 磁贴没有进度条 API，
+     * Linux 需要 `libunity`（本库不链接）——两者都抛 `not_supported`。
+     *
+     * `progress` 是 0–100 的百分比；`none` 表示隐藏（此时 `progress` 无意义）。
+     */
+    setProgressBar(state) {
+        const payload = typeof state === 'string' ? { status: state } : state;
+
+        if (payload === null || typeof payload !== 'object') {
+            throw new TypeError('setProgressBar: 参数必须是 { status, progress? } 或状态字符串');
+        }
+
+        if (payload.status !== undefined
+            && (typeof payload.status !== 'string' || !PROGRESS_STATUSES.has(payload.status))) {
+            throw new TypeError(
+                `setProgressBar: 未知的 status ${JSON.stringify(payload.status)}`
+                + '（只认 none / normal / indeterminate / paused / error）');
+        }
+
+        if (payload.progress !== undefined
+            && (typeof payload.progress !== 'number' || !Number.isFinite(payload.progress))) {
+            throw new TypeError('setProgressBar: progress 必须是有限数字（0–100）');
+        }
+
+        return invoke('window.setProgressBar', { label: this.label, value: payload });
+    }
+
+    /**
+     * 任务栏图标上的角标覆盖图（对标 Tauri 的 `setOverlayIcon`）。
+     *
+     * @param {import('./image.js').JsImage} [icon] 路径、PNG/ICO 字节或 `Image` 实例；
+     *   **不传 / `null` 表示清除**。
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setOverlayIcon")`。**只有 Windows 有这个概念**；
+     * macOS 的等价物是 Dock 徽标（`setBadgeCount` / `setBadgeLabel`），两者形状不同、不互相顶替。
+     */
+    setOverlayIcon(icon) {
+        if (icon === undefined || icon === null) {
+            return invoke('window.setOverlayIcon', { label: this.label });
+        }
+
+        if (typeof icon === 'string') {
+            if (icon === '') {
+                throw new TypeError('setOverlayIcon: 路径不能是空字符串');
+            }
+
+            return invoke('window.setOverlayIcon', { label: this.label, value: { path: icon } });
+        }
+
+        if (isImageLike(icon)) {
+            const image = /** @type {import('./image.js').Image} */ (icon);
+            if (image.hasEncodedBytes === false) {
+                return invoke('window.setOverlayIcon', {
+                    label: this.label,
+                    value: {
+                        rgba: bytesToBase64(image.rgbaBytes),
+                        width: image.width,
+                        height: image.height,
+                    },
+                });
+            }
+
+            return invoke('window.setOverlayIcon', {
+                label: this.label,
+                value: { bytes: bytesToBase64(image.bytes) },
+            });
+        }
+
+        const bytes = toImageBytes(icon);
+        if (bytes !== null) {
+            assertImageFormat(bytes, 'setOverlayIcon');
+            return invoke('window.setOverlayIcon', {
+                label: this.label,
+                value: { bytes: bytesToBase64(bytes) },
+            });
+        }
+
+        throw new TypeError(
+            'setOverlayIcon: icon 必须是文件路径、PNG/ICO 字节，或 @orielweb/api/image 的 Image 实例'
+            + '（不传表示清除覆盖图标）。');
+    }
+
+    /**
+     * Dock 徽标上的数字（对标 Tauri 的 `setBadgeCount`）。
+     *
+     * @param {number} [count] 要显示的数字；**不传或 0 表示清除**。
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setBadgeCount")`。**只有 macOS 实现**，而且是**应用级**的
+     * （所有窗口调它都改同一个 Dock 图标）。Windows 用 `setOverlayIcon` 代替；
+     * Linux 需要 `libunity`（本库不链接）——两者都抛 `not_supported`。
+     */
+    setBadgeCount(count) {
+        if (count === undefined || count === null) {
+            return invoke('window.setBadgeCount', { label: this.label });
+        }
+
+        if (typeof count !== 'number' || !Number.isFinite(count)) {
+            throw new TypeError('setBadgeCount: count 必须是有限数字（不传表示清除徽标）');
+        }
+
+        return invoke('window.setBadgeCount', { label: this.label, value: Math.round(count) });
+    }
+
+    /**
+     * Dock 徽标上的短文本（对标 Tauri 的 `setBadgeLabel`）。
+     *
+     * @param {string} [label] 要显示的文本；**不传表示清除**。
+     * @returns {Promise<void>}
+     * @remarks
+     * 需要 `Allow("window.setBadgeLabel")`。**只有 macOS 实现**（应用级）。
+     * 与 `setBadgeCount` 是同一个落点（`NSApp.dockTile.badgeLabel`），后者只是把数字转成文本。
+     */
+    setBadgeLabel(label) {
+        if (label === undefined || label === null) {
+            return invoke('window.setBadgeLabel', { label: this.label });
+        }
+
+        if (typeof label !== 'string') {
+            throw new TypeError('setBadgeLabel: label 必须是字符串（不传表示清除徽标）');
+        }
+
+        return invoke('window.setBadgeLabel', { label: this.label, value: label });
     }
 
     /**

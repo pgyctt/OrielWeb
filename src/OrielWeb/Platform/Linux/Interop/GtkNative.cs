@@ -399,6 +399,32 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gtk, EntryPoint = "gtk_window_set_keep_above")]
     internal static partial void GtkWindowSetKeepAbove(nint window, [MarshalAs(UnmanagedType.Bool)] bool above);
 
+    // ---- 平台开关（B22）----
+
+    /// <summary>把窗口从任务栏摘掉（X11 的 <c>_NET_WM_STATE_SKIP_TASKBAR</c>）。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_window_set_skip_taskbar_hint")]
+    internal static partial void GtkWindowSetSkipTaskbarHint(nint window, [MarshalAs(UnmanagedType.Bool)] bool setting);
+
+    /// <summary>让窗口出现在所有工作区（X11 的 <c>_NET_WM_STATE_STICKY</c>）。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_window_stick")]
+    internal static partial void GtkWindowStick(nint window);
+
+    /// <summary>取消"出现在所有工作区"。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_window_unstick")]
+    internal static partial void GtkWindowUnstick(nint window);
+
+    /// <summary>永远压在别的窗口之下（<c>_NET_WM_STATE_BELOW</c>）。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_window_set_keep_below")]
+    internal static partial void GtkWindowSetKeepBelow(nint window, [MarshalAs(UnmanagedType.Bool)] bool below);
+
+    /// <summary>窗口是否愿意接受焦点（WM 提示；Wayland 下由合成器决定）。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_window_set_accept_focus")]
+    internal static partial void GtkWindowSetAcceptFocus(nint window, [MarshalAs(UnmanagedType.Bool)] bool setting);
+
+    /// <summary>部件能否获得焦点（与 <see cref="GtkWindowSetAcceptFocus"/> 是两层：这个在 GTK 内部）。</summary>
+    [LibraryImport(Gtk, EntryPoint = "gtk_widget_set_can_focus")]
+    internal static partial void GtkWidgetSetCanFocus(nint widget, [MarshalAs(UnmanagedType.Bool)] bool canFocus);
+
     [LibraryImport(Gtk, EntryPoint = "gtk_window_move")]
     internal static partial void GtkWindowMove(nint window, int x, int y);
 

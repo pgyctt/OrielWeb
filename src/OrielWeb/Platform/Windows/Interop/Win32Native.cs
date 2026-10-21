@@ -270,6 +270,64 @@ internal static class Win32Constants
     /// <summary>Win10 1809/1903 上对应的旧属性名（值 20 在那些版本上返回 E_INVALIDARG）。</summary>
     public const int DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1 = 19;
 
+    // ---- DWM：阴影与系统背板（B22）----
+
+    /// <summary>DWM 属性：非客户区渲染策略（决定 DWM 是否画边框阴影）。</summary>
+    public const int DWMWA_NCRENDERING_POLICY = 2;
+    /// <summary>DWM 属性：系统背板类型（Win11 22H2+，Mica/Acrylic/Tabbed 的落点）。</summary>
+    public const int DWMWA_SYSTEMBACKDROP_TYPE = 38;
+
+    /// <summary>非客户区渲染策略：按窗口样式（默认）。</summary>
+    public const int DWMNCRP_USEWINDOWSTYLE = 0;
+    /// <summary>非客户区渲染策略：关闭（无阴影、无边框）。</summary>
+    public const int DWMNCRP_DISABLED = 1;
+    /// <summary>非客户区渲染策略：强制开启。</summary>
+    public const int DWMNCRP_ENABLED = 2;
+
+    /// <summary>系统背板：无。</summary>
+    public const int DWMSBT_NONE = 1;
+    /// <summary>系统背板：Mica（Win11 22H2+）。</summary>
+    public const int DWMSBT_MAINWINDOW = 2;
+    /// <summary>系统背板：Acrylic（Win11 22H2+）。</summary>
+    public const int DWMSBT_TRANSIENTWINDOW = 3;
+    /// <summary>系统背板：Tabbed（Win11 22H2+）。</summary>
+    public const int DWMSBT_TABBEDWINDOW = 4;
+
+    // ---- 截屏保护（B22）----
+
+    /// <summary><c>SetWindowDisplayAffinity</c>：不保护。</summary>
+    public const uint WDA_NONE = 0x00000000;
+    /// <summary>窗口在截屏里显示为黑块（Win7+，内容仍可被 DWM 捕获，只是不显示出来）。</summary>
+    public const uint WDA_MONITOR = 0x00000001;
+    /// <summary>窗口不出现在任何截屏/录屏里（Win10 2004+）；更早的系统会返回失败。</summary>
+    public const uint WDA_EXCLUDEFROMCAPTURE = 0x00000011;
+
+    // ---- 窗口样式（B22 运行期切换用）----
+
+    /// <summary>窗口不接收激活（点了也不成为前台窗口）——<c>setFocusable(false)</c> 的落点。</summary>
+    public const int WS_EX_NOACTIVATE = 0x08000000;
+
+    /// <summary><c>SetWindowPos</c> 的"放到 z 序最底"。</summary>
+    public static readonly nint HWND_BOTTOM = 1;
+    /// <summary><c>SetWindowPos</c> 的"不改变 z 序"（与 <see cref="SWP_NOZORDER"/> 配 <c>HWND_BOTTOM</c> 时互斥）。</summary>
+    public const uint SWP_NOCOPYBITS = 0x0100;
+
+    // ---- 未文档化的窗口合成属性（B22 的 blur/acrylic 在 Win10 上的落点）----
+    //
+    // `SetWindowCompositionAttribute` 在 user32 里导出、但不在任何公开头文件里。
+    // Tauri/tao 走的是同一入口——Win10 上除了它没有别的"整窗模糊"手段
+    // （DWM 的系统背板属性是 Win11 22H2 才有的）。用它而不是假装不支持，
+    // 是因为这条 API 自 Win10 15063 起行为稳定，且失败会被如实上报（见宿主实现）。
+
+    /// <summary><c>SetWindowCompositionAttribute</c> 的属性号：强调色策略（整窗模糊）。</summary>
+    public const int WCA_ACCENT_POLICY = 19;
+    /// <summary>强调色状态：关闭。</summary>
+    public const int ACCENT_DISABLED = 0;
+    /// <summary>强调色状态：模糊（Win10 的"毛玻璃"，性能好）。</summary>
+    public const int ACCENT_ENABLE_BLURBEHIND = 3;
+    /// <summary>强调色状态：亚克力（Win10 1803+；Win11 上性能明显变差）。</summary>
+    public const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;
+
     /// <summary><see cref="Win32.SetWindowThemeAttribute"/> 的属性类别：非客户区。</summary>
     public const int WTA_NONCLIENT = 1;
     /// <summary>让标题栏跟着应用主题画（而不是总是浅色）。</summary>
@@ -390,6 +448,31 @@ internal struct WTA_NONCLIENT_PARAMS
     public uint Flags;
     public uint Mask;
     public int Reserved;
+}
+
+/// <summary>
+/// <c>SetWindowCompositionAttribute</c> 的参数块（未文档化，布局取自社区逆向结果，
+/// 与 Tauri/tao 使用的一致）：属性号 + 数据指针 + 数据字节数。
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct WINDOWCOMPOSITIONATTRIBDATA
+{
+    public int Attribute;
+    public void* Data;
+    public int SizeOfData;
+}
+
+/// <summary>
+/// 强调色策略（<c>WCA_ACCENT_POLICY</c> 的数据）。<c>GradientColor</c> 是 **ABGR**，
+/// 与 Win32 常见的 ARGB 相反——写反了会得到"红蓝互换"的底色，很难一眼看出来。
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct ACCENTPOLICY
+{
+    public int AccentState;
+    public int AccentFlags;
+    public uint GradientColor;
+    public int AnimationId;
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -691,6 +774,46 @@ internal static unsafe partial class Win32
     [LibraryImport("uxtheme")]
     internal static partial int SetWindowThemeAttribute(
         nint hwnd, int attribute, ref WTA_NONCLIENT_PARAMS value, int size);
+
+    // ---- 阴影 / 背板 / 截屏保护（B22）----
+
+    /// <summary>
+    /// 设置窗口内容的"显示亲和性"：是否允许被别的进程截取。
+    /// </summary>
+    /// <remarks>
+    /// 取值见 <see cref="Win32Constants.WDA_EXCLUDEFROMCAPTURE"/>。**Win10 2004 之前
+    /// 不认识那个值**，调用会失败——调用方据此退回 <see cref="Win32Constants.WDA_MONITOR"/>
+    /// （那会让窗口在截屏里显示为黑块，是那个年代唯一的保护形态）。
+    /// </remarks>
+    [LibraryImport("user32", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool SetWindowDisplayAffinity(nint hwnd, uint affinity);
+
+    /// <summary>
+    /// 设置窗口的合成属性（未文档化，Win10 15063+）。用于整窗模糊/亚克力。
+    /// </summary>
+    /// <remarks>
+    /// <c>data-&gt;Data</c> 指向 <see cref="ACCENTPOLICY"/>，大小由 <c>SizeOfData</c> 给。
+    /// 返回 0 表示失败（罕见，通常是没有 DWM 会话）。
+    /// </remarks>
+    [LibraryImport("user32")]
+    internal static partial int SetWindowCompositionAttribute(
+        nint hwnd, ref WINDOWCOMPOSITIONATTRIBDATA data);
+
+    // ---- COM：任务栏列表（B22）----
+    //
+    // ITaskbarList3 是本库第一个"只调用、不实现"的 COM 接口。本库没有 ComWrappers
+    // 基建（见 Win32DropTarget 的说明），所以这里直接走 CoCreateInstance + vtable 调用：
+    // 槽位号写在 Win32TaskbarList 里，附接口声明顺序的出处。
+
+    /// <summary>创建 COM 对象；<paramref name="iid"/> 是请求的接口。</summary>
+    [LibraryImport("ole32")]
+    internal static partial int CoCreateInstance(
+        Guid* clsid, nint outerUnknown, uint classContext, Guid* iid, out nint instance);
+
+    /// <summary><c>CLSCTX_INPROC_SERVER</c>：任务栏列表是进程内组件。</summary>
+    internal const uint CLSCTX_INPROC_SERVER = 0x1;
+
 
     // ---- user32 ----
 

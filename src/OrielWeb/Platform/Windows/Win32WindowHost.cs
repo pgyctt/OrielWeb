@@ -198,7 +198,12 @@ internal partial class Win32WindowHost : IWindowBackend
         _isVisible = !options.Hidden;
         if (options.MinWidth is int minWidth) _minWidth = minWidth;
         if (options.MinHeight is int minHeight) _minHeight = minHeight;
+        // 运行期可改（SetDecorations），但初值来自创建选项——所以记一份而不是每次读 options
+        _decorations = !options.Frameless;
     }
+
+    /// <summary>句柄是否还在（窗口销毁后清零）。迟到的后端调用据此直接放弃。</summary>
+    private bool WindowAlive => _hwnd != 0;
 
     public nint NativeWindowHandle => _hwnd;
 
@@ -1015,7 +1020,7 @@ internal partial class Win32WindowHost : IWindowBackend
                 // 边框整个压没，且全客户区下 DefWindowProc 对 WM_NCHITTEST 只回 HTCLIENT，
                 // 原生边缘 resize 一并丢失——Linux（gtk_window_set_decorated）与 macOS
                 // （StyleTitled）的 framed 模式都是原生装饰，这里对齐。
-                if (!_options.Frameless)
+                if (_decorations)
                 {
                     break;
                 }
@@ -1062,7 +1067,7 @@ internal partial class Win32WindowHost : IWindowBackend
                 // 组合宿主下 WebView 不再是子窗口，系统终于会把这条消息送到本窗口。
                 // 无边框窗口的客户区铺满整个窗口，边缘的调整大小语义必须在此显式补回；
                 // framed 窗口的 NC 区与命中测试由 DefWindowProc 原生处理，不进这个分支。
-                if (_options.Frameless && _options.Resizable)
+                if (!_decorations && _options.Resizable)
                 {
                     nint hit = HitTestResizeBorder(lParam);
                     if (hit != 0)
@@ -1300,6 +1305,15 @@ internal partial class Win32WindowHost : IWindowBackend
         _dcompTarget = null;
         _dcompDevice = null;
 
+        // 任务栏覆盖图标是本对象持有的 HICON（B22）：窗口没了就没人再认它，必须自己销毁。
+        // 任务栏那边拷贝过一份，销毁这里不影响它已经画出来的东西；而窗口都销毁了，
+        // 那个按钮也不在了。
+        if (_overlayIcon != 0)
+        {
+            _ = Win32.DestroyIcon(_overlayIcon);
+            _overlayIcon = 0;
+        }
+
         // 只有已在 Create 里交付给应用的窗口才触发这两件事：创建期失败的清理路径也走这里
         // （DestroyWindow → WM_DESTROY），但那时后端计数还没自增、应用也没见过这个窗口。
         if (_handedOff)
@@ -1505,6 +1519,506 @@ internal partial class Win32WindowHost : IWindowBackend
 
         _ = Win32.SendMessageW(_hwnd, Win32Constants.WM_NCLBUTTONDOWN, (nuint)hit, 0);
     }
+
+    // ------------------------------------------------------------------
+    // 平台开关 / 特效 / 任务栏（B22）
+    // ------------------------------------------------------------------
+    //
+    // 十条平台开关 + 两条特效 + 任务栏四条。**Windows 是这一批里最全的平台**
+    // （任务栏/进度条/覆盖图标/系统背板都只有 Windows 有），所以这里没有一条是空壳。
+    // 两条明确不支持的（全工作区可见、标题栏样式）抛 NotSupportedException，
+    // 理由写在各方法上，见 IPlatformBackend 的 B22 支持矩阵。
+
+    /// <summary>当前是否显示系统装饰；<c>SetDecorations</c> 会改它。</summary>
+    /// <remarks>
+    /// 与创建期的 <see cref="OrielWindowOptions.Frameless"/> **分开记**：后者决定
+    /// <c>WM_NCCALCSIZE</c> 一开始走哪条分支，而这条会被运行期改。
+    /// </remarks>
+    private bool _decorations;
+
+    /// <summary>是否已把窗口从任务栏摘掉（见 <see cref="SetSkipTaskbar"/>）。</summary>
+    private bool _skipTaskbar;
+
+    /// <summary>任务栏上当前设置的覆盖图标（HICON；本对象持有，换/清时销毁）。</summary>
+    private nint _overlayIcon;
+
+    /// <summary>当前是否设置了"永远在底部"（见 <see cref="SetAlwaysOnBottom"/>）。</summary>
+    private bool _alwaysOnBottom;
+
+    /// <inheritdoc />
+    public void SetSkipTaskbar(bool skip)
+    {
+        if (!WindowAlive || skip == _skipTaskbar)
+        {
+            return;
+        }
+
+        // ITaskbarList 是**会话级**组件：没有 Explorer（Server Core、服务会话）时建不出来。
+        // 那种情况下"隐藏任务栏按钮"没有意义也没有替代手段，如实报错而不是静默。
+        bool ok = skip ? Win32TaskbarList.DeleteTab(_hwnd) : Win32TaskbarList.AddTab(_hwnd);
+        if (!ok)
+        {
+            throw new InvalidOperationException(
+                "window.setSkipTaskbar：任务栏列表不可用（当前会话没有 Explorer 的任务栏）。"
+                + "这不是平台不支持，而是这个运行环境里没有任务栏可隐藏。");
+        }
+
+        _skipTaskbar = skip;
+    }
+
+    /// <inheritdoc />
+    public void SetVisibleOnAllWorkspaces(bool visible)
+        => throw new NotSupportedException(
+            "Windows 不支持 setVisibleOnAllWorkspaces：Win32 没有公开的\"把窗口加入所有虚拟桌面\"接口"
+            + "（虚拟桌面归 Explorer 管，没有对外的 COM/Win32 API）。Tauri 在 Windows 上同样不支持。");
+
+    /// <inheritdoc />
+    public void SetContentProtected(bool contentProtected)
+    {
+        if (!WindowAlive)
+        {
+            return;
+        }
+
+        if (!contentProtected)
+        {
+            _ = Win32.SetWindowDisplayAffinity(_hwnd, Win32Constants.WDA_NONE);
+            return;
+        }
+
+        if (Win32.SetWindowDisplayAffinity(_hwnd, Win32Constants.WDA_EXCLUDEFROMCAPTURE))
+        {
+            return;
+        }
+
+        // Win10 2004 之前不认识 WDA_EXCLUDEFROMCAPTURE。退回 WDA_MONITOR：
+        // 效果是"截屏里显示为黑块"，比"完全不保护"接近意图，但确实不是同一件事。
+        if (Win32.SetWindowDisplayAffinity(_hwnd, Win32Constants.WDA_MONITOR))
+        {
+            OrielDiagnostics.Report(
+                "[OrielWeb] setContentProtected：本系统不支持 WDA_EXCLUDEFROMCAPTURE，"
+                + "已退回 WDA_MONITOR（截屏时窗口显示为黑块而不是消失）。");
+            return;
+        }
+
+        throw new InvalidOperationException(
+            "window.setContentProtected：SetWindowDisplayAffinity 失败（Win7 以下的系统没有这个能力）。");
+    }
+
+    /// <inheritdoc />
+    public void SetSimpleFullscreen(bool fullscreen) => SetFullscreen(fullscreen);
+
+    /// <inheritdoc />
+    public void SetFullscreenOnMonitor(int x, int y)
+    {
+        if (!WindowAlive)
+        {
+            return;
+        }
+
+        // 点不在任何显示器上 → 什么都不做（与 Tauri 一致）
+        nint monitor = Win32.MonitorFromPoint(
+            new POINT(x, y), (uint)Win32Constants.MONITOR_DEFAULTTONULL);
+        if (monitor == 0)
+        {
+            return;
+        }
+
+        var info = new MONITORINFO { cbSize = (uint)Marshal.SizeOf<MONITORINFO>() };
+        if (!Win32.GetMonitorInfo(monitor, ref info))
+        {
+            return;
+        }
+
+        // 先退出全屏再搬（全屏窗口的 SetWindowPos 会被系统忽略），搬完再进全屏
+        bool wasFullscreen = _isFullscreen;
+        if (wasFullscreen)
+        {
+            SetFullscreen(false);
+        }
+
+        _ = Win32.SetWindowPos(
+            _hwnd, 0, info.rcMonitor.Left, info.rcMonitor.Top, 0, 0,
+            Win32Constants.SWP_NOSIZE | Win32Constants.SWP_NOZORDER | Win32Constants.SWP_NOACTIVATE);
+
+        if (wasFullscreen)
+        {
+            SetFullscreen(true);
+        }
+    }
+
+    /// <inheritdoc />
+    public void SetTitleBarStyle(OrielTitleBarStyle style)
+        => throw new NotSupportedException(
+            "Windows 不支持 setTitleBarStyle：Win32 没有\"标题栏透明/覆盖\"这种样式位，"
+            + "等价能力是创建时用 Frameless + 页面自绘标题栏（本库的 OrielWindowOptions.Frameless）。"
+            + "Tauri 在 Windows 上同样不支持。");
+
+    /// <inheritdoc />
+    public void SetShadow(bool enable)
+    {
+        if (!WindowAlive)
+        {
+            return;
+        }
+
+        int policy = enable ? Win32Constants.DWMNCRP_ENABLED : Win32Constants.DWMNCRP_DISABLED;
+        int hr = Win32.DwmSetWindowAttribute(
+            _hwnd, Win32Constants.DWMWA_NCRENDERING_POLICY, ref policy, sizeof(int));
+
+        if (hr < 0)
+        {
+            OrielDiagnostics.Report(
+                $"[OrielWeb] setShadow：DwmSetWindowAttribute(NCRENDERING_POLICY) 失败（HRESULT=0x{hr:X8}）。");
+        }
+
+        // 改完必须让 DWM 重算非客户区，否则"改了但看着没变"
+        _ = Win32.SetWindowPos(
+            _hwnd, 0, 0, 0, 0, 0,
+            Win32Constants.SWP_NOMOVE | Win32Constants.SWP_NOSIZE | Win32Constants.SWP_NOZORDER
+            | Win32Constants.SWP_NOACTIVATE | Win32Constants.SWP_FRAMECHANGED);
+    }
+
+    /// <inheritdoc />
+    public void SetAlwaysOnBottom(bool alwaysOnBottom)
+    {
+        if (!WindowAlive || alwaysOnBottom == _alwaysOnBottom)
+        {
+            return;
+        }
+
+        if (alwaysOnBottom && _isOnTop)
+        {
+            // 置顶与置底互斥：后设的赢（Tauri 也是先取消置顶再压到底）
+            SetOnTop(false);
+        }
+
+        _alwaysOnBottom = alwaysOnBottom;
+
+        // 取消置底时用 HWND_TOP：把窗口放回普通 z 序的顶部（相当于"刚被激活"的位置）。
+        // 没有"还原到原来的 z 序位置"的入口——那个位置本来就已经不存在了。
+        _ = Win32.SetWindowPos(
+            _hwnd,
+            alwaysOnBottom ? Win32Constants.HWND_BOTTOM : 0,
+            0, 0, 0, 0,
+            Win32Constants.SWP_NOMOVE | Win32Constants.SWP_NOSIZE | Win32Constants.SWP_NOACTIVATE
+            | (alwaysOnBottom ? 0 : Win32Constants.SWP_NOZORDER));
+    }
+
+    /// <inheritdoc />
+    public void SetFocusable(bool focusable)
+    {
+        if (!WindowAlive)
+        {
+            return;
+        }
+
+        nint style = Win32.GetWindowLongPtrW(_hwnd, Win32Constants.GWL_EXSTYLE);
+        nint updated = focusable
+            ? style & ~(nint)Win32Constants.WS_EX_NOACTIVATE
+            : style | Win32Constants.WS_EX_NOACTIVATE;
+
+        _ = Win32.SetWindowLongPtrW(_hwnd, Win32Constants.GWL_EXSTYLE, updated);
+    }
+
+    /// <inheritdoc />
+    public void SetDecorations(bool decorations)
+    {
+        if (!WindowAlive || decorations == _decorations)
+        {
+            return;
+        }
+
+        nint style = Win32.GetWindowLongPtrW(_hwnd, Win32Constants.GWL_STYLE);
+        if (decorations)
+        {
+            // 只补标题栏与可缩放边：最小化/最大化/系统菜单在创建期就已按选项带上了，
+            // 这里不擅自把它们加回来（那是 SetMaximizable / SetMinimizable 的事）。
+            style |= (nint)(Win32Constants.WS_CAPTION | Win32Constants.WS_THICKFRAME);
+        }
+        else
+        {
+            style &= ~(nint)(Win32Constants.WS_CAPTION | Win32Constants.WS_THICKFRAME);
+        }
+
+        _ = Win32.SetWindowLongPtrW(_hwnd, Win32Constants.GWL_STYLE, style);
+        _decorations = decorations;
+
+        // 样式位改了必须 FRAMECHANGED，否则非客户区不会重算
+        _ = Win32.SetWindowPos(
+            _hwnd, 0, 0, 0, 0, 0,
+            Win32Constants.SWP_NOMOVE | Win32Constants.SWP_NOSIZE | Win32Constants.SWP_NOZORDER
+            | Win32Constants.SWP_NOACTIVATE | Win32Constants.SWP_FRAMECHANGED);
+    }
+
+    // ---- 特效 ----
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <para>
+    /// 取值映射（与 Tauri 的 Windows 侧同一组落点）：
+    /// <c>mica</c> → <c>DWMSBT_MAINWINDOW</c>、<c>acrylic</c> → <c>DWMSBT_TRANSIENTWINDOW</c>、
+    /// <c>tabbed/tabbedDark/tabbedLight</c> → <c>DWMSBT_TABBEDWINDOW</c>（后两个顺带切
+    /// 非客户区的深浅色）。这四个走 Win11 22H2+ 的系统背板属性。
+    /// <c>blur</c> / 不满足 22H2 的 <c>acrylic</c> 走 <c>SetWindowCompositionAttribute</c>
+    /// 的强调色策略（未文档化，但与 Tauri/tao 同一入口）。
+    /// </para>
+    /// <para>
+    /// <b>一项都应用不了时抛错</b>：消息里列出 Windows 支持的取值——macOS 材质
+    /// （<c>sidebar</c>、<c>hudWindow</c>…）在 Windows 上没有对应物，静默成功会让
+    /// "材质没出现"变成无法解释的现象。
+    /// </para>
+    /// </remarks>
+    public void SetEffects(OrielEffects effects)
+    {
+        if (!WindowAlive)
+        {
+            return;
+        }
+
+        // EffectState 只有 macOS 有意义（见 IWindowBackend.SetEffects）
+        if (effects.State != OrielEffectState.FollowsWindowActiveState)
+        {
+            OrielDiagnostics.Report(
+                $"[OrielWeb] setEffects：state「{effects.State}」在 Windows 上被忽略——"
+                + "DWM 材质本身跟随窗口激活态，没有强制激活/非激活的入口。");
+        }
+
+        int lastHr = 0;
+        bool attempted = false;
+
+        foreach (OrielEffect effect in effects.Effects)
+        {
+            if (TryApplyWindowsEffect(effect, effects.ColorArgb, out int hr))
+            {
+                return;
+            }
+
+            if (hr != 0)
+            {
+                attempted = true;
+                lastHr = hr;
+            }
+        }
+
+        if (attempted)
+        {
+            throw new InvalidOperationException(
+                $"window.setEffects：材质应用失败（最后一次 HRESULT=0x{lastHr:X8}）。"
+                + "Mica/Acrylic/Tabbed 需要 Windows 11 22H2 及以上。");
+        }
+
+        throw new NotSupportedException(
+            "Windows 只支持这些材质：mica / acrylic / blur / tabbed / tabbedDark / tabbedLight。"
+            + "传入的列表里没有一个是 Windows 的材质（macOS 的 vibrancy 材质在 Windows 上没有对应物）。");
+    }
+
+    /// <summary>应用一个 Windows 材质；返回是否成功。<paramref name="hr"/> 非 0 表示"是 Windows 材质但系统拒绝了"。</summary>
+    private bool TryApplyWindowsEffect(OrielEffect effect, uint? colorArgb, out int hr)
+    {
+        hr = 0;
+
+        switch (effect)
+        {
+            case OrielEffect.Mica:
+                return TrySetBackdrop(Win32Constants.DWMSBT_MAINWINDOW, null, out hr);
+
+            case OrielEffect.Acrylic:
+                // Win11 22H2+ 用系统背板；更早的系统退回强调色策略（Win10 1803+）
+                if (TrySetBackdrop(Win32Constants.DWMSBT_TRANSIENTWINDOW, colorArgb, out hr))
+                {
+                    return true;
+                }
+
+                return TrySetAccent(Win32Constants.ACCENT_ENABLE_ACRYLICBLURBEHIND, colorArgb);
+
+            case OrielEffect.Tabbed:
+            case OrielEffect.TabbedDark:
+            case OrielEffect.TabbedLight:
+            {
+                if (effect != OrielEffect.Tabbed)
+                {
+                    // Tabbed 的深浅由非客户区的深浅色决定（tabbedDark 只在系统是深色时才"深"，
+                    // tabbedLight 强制浅色——与 Tauri 的说明一致）
+                    int dark = effect == OrielEffect.TabbedDark ? 1 : 0;
+                    _ = Win32.DwmSetWindowAttribute(
+                        _hwnd, Win32Constants.DWMWA_USE_IMMERSIVE_DARK_MODE, ref dark, sizeof(int));
+                }
+
+                return TrySetBackdrop(Win32Constants.DWMSBT_TABBEDWINDOW, null, out hr);
+            }
+
+            case OrielEffect.Blur:
+                return TrySetAccent(Win32Constants.ACCENT_ENABLE_BLURBEHIND, colorArgb);
+
+            default:
+                // macOS 材质：不是"系统拒绝"，是"Windows 没有这个概念"（hr 保持 0）
+                return false;
+        }
+    }
+
+    /// <summary>设置 DWM 系统背板（Win11 22H2+）；失败时 <paramref name="hr"/> 带 HRESULT。</summary>
+    private bool TrySetBackdrop(int backdrop, uint? colorArgb, out int hr)
+    {
+        int value = backdrop;
+        hr = Win32.DwmSetWindowAttribute(
+            _hwnd, Win32Constants.DWMWA_SYSTEMBACKDROP_TYPE, ref value, sizeof(int));
+
+        if (hr < 0)
+        {
+            // 老系统（Win10 / Win11 21H2）不认这个属性
+            return false;
+        }
+
+        hr = 0;
+
+        // 背板要求窗口的客户区能透出 DWM 画的东西：窗口本身仍是不透明的，
+        // 页面需要有透明区域才看得见（写进文档的已知前提）
+        if (colorArgb is { } argb && backdrop == Win32Constants.DWMSBT_TRANSIENTWINDOW)
+        {
+            TrySetAccent(Win32Constants.ACCENT_ENABLE_ACRYLICBLURBEHIND, argb);
+        }
+
+        return true;
+    }
+
+    /// <summary>设置强调色策略（未文档化的整窗模糊）；失败返回 false。</summary>
+    private unsafe bool TrySetAccent(int accentState, uint? colorArgb)
+    {
+        var policy = new ACCENTPOLICY
+        {
+            AccentState = accentState,
+            AccentFlags = 0,
+            GradientColor = colorArgb is { } argb ? ToAbgr(argb) : 0,
+            AnimationId = 0,
+        };
+
+        var data = new WINDOWCOMPOSITIONATTRIBDATA
+        {
+            Attribute = Win32Constants.WCA_ACCENT_POLICY,
+            Data = &policy,
+            SizeOfData = Marshal.SizeOf<ACCENTPOLICY>(),
+        };
+
+        int ok = Win32.SetWindowCompositionAttribute(_hwnd, ref data);
+        if (ok == 0)
+        {
+            OrielDiagnostics.Report("[OrielWeb] setEffects：SetWindowCompositionAttribute 失败（无 DWM 会话？）。");
+        }
+
+        return ok != 0;
+    }
+
+    /// <summary>ARGB → ABGR（强调色策略的 <c>GradientColor</c> 是 ABGR 序）。</summary>
+    private static uint ToAbgr(uint argb)
+    {
+        uint a = (argb >> 24) & 0xFF;
+        uint r = (argb >> 16) & 0xFF;
+        uint g = (argb >> 8) & 0xFF;
+        uint b = argb & 0xFF;
+        return (a << 24) | (b << 16) | (g << 8) | r;
+    }
+
+    /// <inheritdoc />
+    public void ClearEffects()
+    {
+        if (!WindowAlive)
+        {
+            return;
+        }
+
+        // 没设过也照样清：清一个不存在的状态不该失败，而"重复清"很容易发生
+        // （页面切换路由时清一次、销毁前清一次）
+        _ = TrySetBackdrop(Win32Constants.DWMSBT_NONE, null, out _);
+        _ = TrySetAccent(Win32Constants.ACCENT_DISABLED, null);
+    }
+
+    // ---- 任务栏 ----
+
+    /// <inheritdoc />
+    public void SetProgressBar(OrielProgressBarStatus status, double? progress)
+    {
+        if (!WindowAlive)
+        {
+            return;
+        }
+
+        int flag = status switch
+        {
+            OrielProgressBarStatus.None => Win32TaskbarList.TBPF_NOPROGRESS,
+            OrielProgressBarStatus.Indeterminate => Win32TaskbarList.TBPF_INDETERMINATE,
+            OrielProgressBarStatus.Paused => Win32TaskbarList.TBPF_PAUSED,
+            OrielProgressBarStatus.Error => Win32TaskbarList.TBPF_ERROR,
+            _ => Win32TaskbarList.TBPF_NORMAL,
+        };
+
+        if (!Win32TaskbarList.SetProgressState(_hwnd, flag))
+        {
+            throw new InvalidOperationException(
+                "window.setProgressBar：任务栏列表不可用（当前会话没有 Explorer 的任务栏）。");
+        }
+
+        // None 表示隐藏：状态位已经清了，值不必再写（写了也不会显示）
+        if (status == OrielProgressBarStatus.None)
+        {
+            return;
+        }
+
+        if (progress is { } value)
+        {
+            double clamped = Math.Clamp(value, 0, 100);
+            _ = Win32TaskbarList.SetProgressValue(_hwnd, (ulong)Math.Round(clamped), 100);
+        }
+    }
+
+    /// <inheritdoc />
+    public void SetOverlayIcon(OrielImage? icon)
+    {
+        if (!WindowAlive)
+        {
+            return;
+        }
+
+        nint handle = 0;
+        if (icon is not null)
+        {
+            handle = Win32IconFactory.CreateFromRgba(icon);
+            if (handle == 0)
+            {
+                throw new InvalidOperationException(
+                    $"window.setOverlayIcon：图标创建失败（{icon.Width}x{icon.Height}）。");
+            }
+        }
+
+        if (!Win32TaskbarList.SetOverlayIcon(_hwnd, handle, icon is null ? null : "覆盖图标"))
+        {
+            if (handle != 0)
+            {
+                _ = Win32.DestroyIcon(handle);
+            }
+
+            throw new InvalidOperationException(
+                "window.setOverlayIcon：任务栏列表不可用（当前会话没有 Explorer 的任务栏）。");
+        }
+
+        // 换下来的旧图标由本对象销毁（任务栏已经拷走了它需要的那份）
+        if (_overlayIcon != 0)
+        {
+            _ = Win32.DestroyIcon(_overlayIcon);
+        }
+
+        _overlayIcon = handle;
+    }
+
+    /// <inheritdoc />
+    public void SetBadgeCount(int? count)
+        => throw new NotSupportedException(
+            "Windows 没有 Dock 徽标概念：用 setOverlayIcon 在任务栏图标上叠一个小图代替。");
+
+    /// <inheritdoc />
+    public void SetBadgeLabel(string? label)
+        => throw new NotSupportedException(
+            "Windows 没有 Dock 徽标概念：用 setOverlayIcon 在任务栏图标上叠一个小图代替。");
 
     // ------------------------------------------------------------------
     // WebView2 装配（异步回调均在 UI 线程）
@@ -2578,7 +3092,7 @@ internal partial class Win32WindowHost : IWindowBackend
     public bool IsAlwaysOnTop => _isOnTop;
 
     /// <summary>是否有系统装饰（取创建时的选项，见 <see cref="IWindowBackend.IsDecorated"/>）。</summary>
-    public bool IsDecorated => !_options.Frameless;
+    public bool IsDecorated => _decorations;
 
     /// <summary>是否可缩放（原生读，见 <see cref="IWindowBackend.IsResizable"/>）。</summary>
     public bool IsResizable => (CurrentStyle() & Win32Constants.WS_THICKFRAME) != 0;

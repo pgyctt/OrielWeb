@@ -51,6 +51,18 @@ internal static unsafe partial class ObjCRuntime
     [LibraryImport(ObjCLib)]
     internal static partial nint objc_retain(nint obj);
 
+    /// <summary>取对象的类（<c>object_getClass</c>，与 <c>[obj class]</c> 的区别在 KVO 子类上）。</summary>
+    [LibraryImport(ObjCLib)]
+    internal static partial nint object_getClass(nint obj);
+
+    /// <summary>取实例方法（不存在时返回 0）。B22 用它判断"某个 selector 是否真的实现了"。</summary>
+    [LibraryImport(ObjCLib, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial nint class_getInstanceMethod(nint cls, string name);
+
+    /// <summary>取实例变量（不存在时返回 0）。B22 用它判断 KVC 能否安全地走 ivar。</summary>
+    [LibraryImport(ObjCLib, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial nint class_getInstanceVariable(nint cls, string name);
+
     [LibraryImport(ObjCLib)]
     internal static partial void objc_release(nint obj);
 
@@ -236,6 +248,28 @@ internal static unsafe partial class ObjCRuntime
 
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial void SendVoidObjNint(nint self, nint sel, nint obj, nint arg);
+
+    /// <summary>
+    /// 对象 + 整数 + 对象三个参数、返回 void 的消息，例如
+    /// <c>addSubview:positioned:relativeTo:</c>（B22 的材质视图要插到 webview 之下）。
+    /// </summary>
+    /// <remarks>
+    /// <b>不能用 <see cref="SendIdObjNintObj"/> 代用</b>：那个的返回类型是对象指针。
+    /// x64/arm64 上"忽略返回值"实际不会出事，但两处的参数寄存器口径是同一套、
+    /// 语义却不同——混用会让后来的人以为这是个有返回值的调用。
+    /// </remarks>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial void SendVoidObjNintObj(nint self, nint sel, nint obj, nint integer, nint tail);
+
+    /// <summary>
+    /// 四个 double + 一个 BOOL 的消息，例如 <c>setFrame:display:</c>（B22 的简化全屏）。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="SendVoidDouble4NuintNuintBool"/> 同一口径：4 个 double 走浮点寄存器，
+    /// BOOL 走第一个整数寄存器。
+    /// </remarks>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial void SendVoidDouble4Bool(nint self, nint sel, double a, double b, double c, double d, [MarshalAs(UnmanagedType.Bool)] bool flag);
 
     /// <summary>
     /// 四个对象/选择器参数的消息，例如

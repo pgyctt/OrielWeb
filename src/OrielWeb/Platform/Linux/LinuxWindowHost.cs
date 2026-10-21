@@ -232,6 +232,8 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         CloseInterceptEnabled = options.InterceptClose;
         if (options.MinWidth is int minWidth) _minWidth = minWidth;
         if (options.MinHeight is int minHeight) _minHeight = minHeight;
+        // 运行期可改（SetDecorations），初值来自创建选项
+        _decorations = !options.Frameless;
         _messageHandler = new LinuxWebMessageHandler(this);
     }
 
@@ -306,8 +308,8 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
     /// <summary>是否置顶（取库记住的状态，见 <see cref="IWindowBackend.IsAlwaysOnTop"/>）。</summary>
     public bool IsAlwaysOnTop => _isOnTop;
 
-    /// <summary>是否有系统装饰（取创建时的选项，见 <see cref="IWindowBackend.IsDecorated"/>）。</summary>
-    public bool IsDecorated => !_options.Frameless;
+    /// <summary>是否有系统装饰（运行期可被 <see cref="SetDecorations"/> 改；见 <see cref="IWindowBackend.IsDecorated"/>）。</summary>
+    public bool IsDecorated => _decorations;
 
     /// <summary>是否可缩放（原生读，见 <see cref="IWindowBackend.IsResizable"/>）。</summary>
     public bool IsResizable => WindowAlive && GtkNative.GtkWindowGetResizable(_gtkWindow);
@@ -1037,6 +1039,191 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
             rootY,
             0);
     }
+
+    // ------------------------------------------------------------------
+    // 平台开关 / 特效 / 任务栏（B22）
+    // ------------------------------------------------------------------
+    //
+    // Linux 是这一批里"能做的最多、能验证的最少"的那一端：GTK 把大部分平台开关都
+    // 表达成**窗口管理器提示**（skip-taskbar / stick / keep-below / accept-focus），
+    // X11 下主流 WM 都尊重，Wayland 下由合成器决定（文档写明）。
+    // 特效与任务栏徽标则整组不存在（GTK3 没有对应 API，libunity 本库不链接），
+    // 一律抛 NotSupportedException，不做静默 no-op。
+
+    /// <summary>当前是否显示装饰（<see cref="SetDecorations"/> 会改它）。</summary>
+    private bool _decorations;
+
+    /// <inheritdoc />
+    public void SetSkipTaskbar(bool skip)
+    {
+        if (!WindowAlive)
+        {
+            return;
+        }
+
+        GtkNative.GtkWindowSetSkipTaskbarHint(_gtkWindow, skip);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <c>gtk_window_stick</c> 在 X11 上写 <c>_NET_WM_STATE_STICKY</c>；Wayland 没有
+    /// "工作区"这个协议概念，合成器会直接忽略——不是本库能补的。
+    /// </remarks>
+    public void SetVisibleOnAllWorkspaces(bool visible)
+    {
+        if (!WindowAlive)
+        {
+            return;
+        }
+
+        if (visible)
+        {
+            GtkNative.GtkWindowStick(_gtkWindow);
+        }
+        else
+        {
+            GtkNative.GtkWindowUnstick(_gtkWindow);
+        }
+    }
+
+    /// <inheritdoc />
+    public void SetContentProtected(bool contentProtected)
+        => throw new NotSupportedException(
+            "Linux 不支持 setContentProtected：X11 没有\"阻止窗口被截取\"的能力，"
+            + "Wayland 的相关协议（wlr-screencopy 的排除列表）GTK3 不暴露。");
+
+    /// <inheritdoc />
+    public void SetSimpleFullscreen(bool fullscreen) => SetFullscreen(fullscreen);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 入参是**屏幕物理像素**（与 <c>Monitor.position</c> 同口径）；GTK 的
+    /// <c>gtk_window_move</c> 收应用像素，所以先按该显示器的缩放比换算。
+    /// 显示器不认识这个点时什么都不做（与 Tauri 一致）。
+    /// </remarks>
+    public void SetFullscreenOnMonitor(int x, int y)
+    {
+        if (!WindowAlive)
+        {
+            return;
+        }
+
+        OrielMonitor? monitor = _backend.Monitors.MonitorFromPoint(x, y);
+        if (monitor is null)
+        {
+            return;
+        }
+
+        double scale = monitor.ScaleFactor > 0 ? monitor.ScaleFactor : 1;
+        int left = (int)Math.Round(monitor.Position.X / scale);
+        int top = (int)Math.Round(monitor.Position.Y / scale);
+
+        // 全屏窗口的 gtk_window_move 会被 WM 忽略，先退出全屏再搬
+        bool wasFullscreen = _isFullscreen;
+        if (wasFullscreen)
+        {
+            SetFullscreen(false);
+        }
+
+        GtkNative.GtkWindowMove(_gtkWindow, left, top);
+
+        if (wasFullscreen)
+        {
+            SetFullscreen(true);
+        }
+    }
+
+    /// <inheritdoc />
+    public void SetTitleBarStyle(OrielTitleBarStyle style)
+        => throw new NotSupportedException(
+            "Linux 不支持 setTitleBarStyle：GTK 只有\"有装饰/无装饰\"两态（gtk_window_set_decorated），"
+            + "没有\"标题栏透明/覆盖\"。等价能力是创建时用 Frameless + 页面自绘标题栏。");
+
+    /// <inheritdoc />
+    public void SetShadow(bool enable)
+        => throw new NotSupportedException(
+            "Linux 不支持 setShadow：GTK 没有阴影 API，窗口阴影由合成器按窗口类型给"
+            + "（_GTK_FRAME_EXTENTS 那套），应用改不了。");
+
+    /// <inheritdoc />
+    public void SetAlwaysOnBottom(bool alwaysOnBottom)
+    {
+        if (!WindowAlive)
+        {
+            return;
+        }
+
+        // _NET_WM_STATE_BELOW：与置顶（_NET_WM_STATE_ABOVE）互斥，后设的赢
+        if (alwaysOnBottom && _isOnTop)
+        {
+            SetOnTop(false);
+        }
+
+        GtkNative.GtkWindowSetKeepBelow(_gtkWindow, alwaysOnBottom);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 两层都设：<c>gtk_window_set_accept_focus</c> 是给 WM 的提示（"别把焦点给我"），
+    /// <c>gtk_widget_set_can_focus</c> 决定 GTK 内部能不能把焦点交给它。只设一层的话，
+    /// 多窗口应用里焦点仍可能在 GTK 内部被搬过来。
+    /// </remarks>
+    public void SetFocusable(bool focusable)
+    {
+        if (!WindowAlive)
+        {
+            return;
+        }
+
+        GtkNative.GtkWindowSetAcceptFocus(_gtkWindow, focusable);
+        GtkNative.GtkWidgetSetCanFocus(_gtkWindow, focusable);
+    }
+
+    /// <inheritdoc />
+    public void SetDecorations(bool decorations)
+    {
+        if (!WindowAlive || decorations == _decorations)
+        {
+            return;
+        }
+
+        _decorations = decorations;
+        GtkNative.GtkWindowSetDecorated(_gtkWindow, decorations);
+    }
+
+    /// <inheritdoc />
+    public void SetEffects(OrielEffects effects)
+        => throw new NotSupportedException(
+            "Linux 不支持 setEffects：窗口材质是 Windows DWM 与 macOS AppKit 的概念，"
+            + "GTK3 没有对应 API（各桌面环境自己的模糊协议不在 GTK3 里）。"
+            + "Tauri 在 Linux 上同样不实现。");
+
+    /// <inheritdoc />
+    public void ClearEffects()
+        => throw new NotSupportedException(
+            "Linux 不支持 clearEffects：这个能力整个不存在（见 setEffects），"
+            + "而不是\"清的时候才不存在\"。");
+
+    /// <inheritdoc />
+    public void SetProgressBar(OrielProgressBarStatus status, double? progress)
+        => throw new NotSupportedException(
+            "Linux 不支持 setProgressBar：需要 libunity 的 LauncherEntry（D-Bus 协议），"
+            + "本库不链接那个库——只对部分桌面环境有效的能力不值得引一个运行时依赖。");
+
+    /// <inheritdoc />
+    public void SetOverlayIcon(OrielImage? icon)
+        => throw new NotSupportedException(
+            "Linux 没有任务栏覆盖图标的概念（任务栏由各桌面环境自己实现，没有统一扩展点）。");
+
+    /// <inheritdoc />
+    public void SetBadgeCount(int? count)
+        => throw new NotSupportedException(
+            "Linux 不支持 setBadgeCount：需要 libunity 的 LauncherEntry（D-Bus 协议），本库不链接那个库。");
+
+    /// <inheritdoc />
+    public void SetBadgeLabel(string? label)
+        => throw new NotSupportedException(
+            "Linux 不支持 setBadgeLabel：需要 libunity 的 LauncherEntry（D-Bus 协议），本库不链接那个库。");
 
     /// <summary>取默认 display 上的指针设备与屏幕（拿不到时返回 false）。</summary>
     private static bool TryGetPointerDevice(out nint device, out nint screen)

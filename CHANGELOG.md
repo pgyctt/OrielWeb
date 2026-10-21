@@ -11,6 +11,56 @@
 
 ### 新增
 
+- **平台开关 / 特效 / 任务栏（B22）：19 项一次补齐**——
+  `@orielweb/api/window` 的 Tauri `Window` 方法面至此**一条不缺**（`METHOD_GAP_GROUPS` 清零）。
+  这一批的形态与 B21 一致：**能做的平台真做，做不了的抛 `not_supported`**，不做静默 no-op。
+
+  - **十条平台开关**（逐平台矩阵见 docs/API.md 的 B22 支持表）：
+
+    | 方法 | Windows | macOS | Linux |
+    |---|---|---|---|
+    | `setSkipTaskbar` | ✅ `ITaskbarList::DeleteTab` | ⛔ Dock 是应用级 | ✅ `set_skip_taskbar_hint` |
+    | `setVisibleOnAllWorkspaces` | ⛔ 无公开 API | ✅ `collectionBehavior` | ✅ `gtk_window_stick` |
+    | `setContentProtected` | ✅ `SetWindowDisplayAffinity` | ✅ `sharingType` | ⛔ |
+    | `setSimpleFullscreen` | = `setFullscreen` | ✅ 独立语义 | = `setFullscreen` |
+    | `setFullscreenOnMonitor` | ✅ | ✅ | ✅ |
+    | `setTitleBarStyle` | ⛔ | ✅ | ⛔ |
+    | `setShadow` | ✅ DWM 渲染策略 | ✅ `hasShadow` | ⛔ GTK 无阴影 |
+    | `setAlwaysOnBottom` | ✅ `HWND_BOTTOM` | ✅ `level = -1` | ✅ `set_keep_below` |
+    | `setFocusable` | ✅ `WS_EX_NOACTIVATE` | ⛔ 只有私有 API | ✅ `set_accept_focus` |
+    | `setDecorations` | ✅ | ✅ | ✅ |
+
+    `setDecorations` 是**运行期**切换：Windows 上把 `_options.Frameless` 换成一个可变的
+    `_decorations`（`WM_NCCALCSIZE` / `WM_NCHITTEST` 都改判它），否则"设了但标题栏不出现"。
+    `IsDecorated` 从这一版起反映运行期状态（之前恒为创建选项）。
+  - **特效（`setEffects` / `clearEffects` + `Effect` / `EffectState`）**：
+    Windows 走 Win11 22H2+ 的 `DWMWA_SYSTEMBACKDROP_TYPE`（mica / acrylic / tabbed 系），
+    Win10 上 acrylic 与 blur 退回未文档化的 `SetWindowCompositionAttribute` 强调色策略
+    （与 Tauri/tao 同一入口）；macOS 造 `NSVisualEffectView` 插到 webview 之下，
+    材质编号逐项对应 AppKit；Linux 整条命令抛 `not_supported`。
+    **"第一个本平台支持的生效，其余忽略"**（与 Tauri 一致），一个都不支持时抛错并列出本平台取值；
+    `liquidGlassRegular/Clear` 需要 macOS 26 的 `NSGlassEffectView`，本库不实现（抛错而不是静默）。
+  - **任务栏（`setProgressBar` / `setOverlayIcon` / `setBadgeCount` / `setBadgeLabel`）**：
+    新增手写的 `ITaskbarList3` 调用（`CoCreateInstance` + vtable 槽位，本库第一个"只调用、
+    不实现"的 COM 接口），Windows 上做进度条与覆盖图标；macOS 做 Dock 徽标（数字/短文本，
+    **应用级**）；Linux 的这两个能力都要 `libunity`，本库不链接——抛 `not_supported`。
+  - **`EffectState` 在 Windows 上被忽略并记诊断**：DWM 材质本身跟随窗口激活态，
+    没有"强制激活/非激活"的入口。这一点写在文档里，而不是假装生效。
+  - 演示自检新增第 12 段：三平台各跑一遍，每条**按平台分两路**（能做的验成功、
+    不支持的验 `not_supported`），改动全部还原。
+
+  **已知限制（如实记录）**：
+  - **材质需要页面自己是透明的**。本库没有 `transparent` 窗口选项（Tauri 有），
+    所以"页面背景不透明 → 材质看不见"是真实边界。macOS 上宿主会放开窗口与 webview 的背景
+    （`drawsBackground` 走 KVC，调之前先用运行时 API 确认那个键存在——否则
+    `NSUndefinedKeyException` 会带走整个进程），但页面自己的 CSS 背景仍需要调用方处理。
+  - `setContentProtected` 在 Win10 2004 之前退回 `WDA_MONITOR`：截屏里是**黑块**而不是
+    "窗口不存在"，两者不是同一件事（已记诊断）。
+  - macOS 的 `setAlwaysOnBottom` 是 `window.level = -1`（低于所有普通窗口、仍可交互），
+    **不是**桌面级窗口（降到桌面级会让窗口跑到壁纸后面并拿不到焦点）。
+  - Linux 的 `setSkipTaskbar` / `setVisibleOnAllWorkspaces` / `setFocusable` 都是 WM 提示，
+    Wayland 下由合成器决定（主流合成器会忽略 `stick`）。
+
 - **光标控制（B21）：`setCursorGrab` / `setCursorVisible` / `setCursorIcon` /
   `setCursorPosition` / `setIgnoreCursorEvents` / `startResizeDragging`**——
   `@orielweb/api/window` 的 Tauri `Window` 方法面至此只剩平台开关/特效/任务栏那几组。

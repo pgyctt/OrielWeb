@@ -630,6 +630,76 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// </remarks>
     public void StartResizeDragging(OrielResizeDirection direction) => Backend.StartResizeDragging(direction);
 
+    // ---- 平台开关 / 特效 / 任务栏（B22）----
+    //
+    // 十九条全部转给后端；支持矩阵在 IPlatformBackend 的 B22 注释块里，
+    // 逐个方法的平台事实在各后端实现的 <remarks> 上。这里只做转发与一句话说明。
+
+    /// <summary>是否在任务栏里隐藏这个窗口（对标 Tauri 的 <c>Window.setSkipTaskbar()</c>）。</summary>
+    /// <remarks><b>macOS 不支持</b>（Dock 里的是整个应用）。见 <see cref="IWindowBackend.SetSkipTaskbar"/>。</remarks>
+    public void SetSkipTaskbar(bool skip) => Backend.SetSkipTaskbar(skip);
+
+    /// <summary>是否在所有工作区可见（对标 Tauri 的 <c>Window.setVisibleOnAllWorkspaces()</c>）。</summary>
+    /// <remarks><b>Windows 不支持</b>。见 <see cref="IWindowBackend.SetVisibleOnAllWorkspaces"/>。</remarks>
+    public void SetVisibleOnAllWorkspaces(bool visible) => Backend.SetVisibleOnAllWorkspaces(visible);
+
+    /// <summary>是否阻止内容被截屏（对标 Tauri 的 <c>Window.setContentProtected()</c>）。</summary>
+    /// <remarks><b>Linux 不支持</b>。见 <see cref="IWindowBackend.SetContentProtected"/>。</remarks>
+    public void SetContentProtected(bool contentProtected) => Backend.SetContentProtected(contentProtected);
+
+    /// <summary>简化全屏（对标 Tauri 的 <c>Window.setSimpleFullscreen()</c>）。</summary>
+    /// <remarks>只有 macOS 有独立语义，另两个平台等同 <see cref="SetFullscreen"/>。</remarks>
+    public void SetSimpleFullscreen(bool fullscreen) => Backend.SetSimpleFullscreen(fullscreen);
+
+    /// <summary>在包含给定屏幕物理坐标的显示器上全屏（对标 Tauri 的 <c>Window.setFullscreenOnMonitor()</c>）。</summary>
+    /// <remarks>坐标不在任何显示器上时什么都不做（与 Tauri 一致）。</remarks>
+    public void SetFullscreenOnMonitor(int x, int y) => Backend.SetFullscreenOnMonitor(x, y);
+
+    /// <summary>标题栏样式（对标 Tauri 的 <c>Window.setTitleBarStyle()</c>）。</summary>
+    /// <remarks><b>只有 macOS 实现</b>。见 <see cref="IWindowBackend.SetTitleBarStyle"/>。</remarks>
+    public void SetTitleBarStyle(OrielTitleBarStyle style) => Backend.SetTitleBarStyle(style);
+
+    /// <summary>是否给窗口画阴影（对标 Tauri 的 <c>Window.setShadow()</c>）。</summary>
+    /// <remarks><b>Linux 不支持</b>。见 <see cref="IWindowBackend.SetShadow"/>。</remarks>
+    public void SetShadow(bool enable) => Backend.SetShadow(enable);
+
+    /// <summary>是否永远压在别的窗口之下（对标 Tauri 的 <c>Window.setAlwaysOnBottom()</c>）。</summary>
+    public void SetAlwaysOnBottom(bool alwaysOnBottom) => Backend.SetAlwaysOnBottom(alwaysOnBottom);
+
+    /// <summary>窗口能否获得焦点（对标 Tauri 的 <c>Window.setFocusable()</c>）。</summary>
+    /// <remarks><b>macOS 不支持</b>（只有私有 API）。见 <see cref="IWindowBackend.SetFocusable"/>。</remarks>
+    public void SetFocusable(bool focusable) => Backend.SetFocusable(focusable);
+
+    /// <summary>是否显示系统装饰（对标 Tauri 的 <c>Window.setDecorations()</c>）。</summary>
+    /// <remarks>运行期切换，与创建期的 <see cref="OrielWindowOptions.Frameless"/> 无关。</remarks>
+    public void SetDecorations(bool decorations) => Backend.SetDecorations(decorations);
+
+    /// <summary>应用窗口材质（对标 Tauri 的 <c>Window.setEffects()</c>）。</summary>
+    /// <remarks>
+    /// 第一个本平台支持的材质生效，其余忽略；**一个都不支持时抛
+    /// <see cref="NotSupportedException"/>**（Linux 上整条命令都会抛）。
+    /// </remarks>
+    public void SetEffects(OrielEffects effects) => Backend.SetEffects(effects);
+
+    /// <summary>清除已应用的材质（对标 Tauri 的 <c>Window.clearEffects()</c>）。</summary>
+    public void ClearEffects() => Backend.ClearEffects();
+
+    /// <summary>任务栏进度条（对标 Tauri 的 <c>Window.setProgressBar()</c>）。</summary>
+    /// <remarks><b>只有 Windows 实现</b>。见 <see cref="IWindowBackend.SetProgressBar"/>。</remarks>
+    public void SetProgressBar(OrielProgressBarStatus status, double? progress)
+        => Backend.SetProgressBar(status, progress);
+
+    /// <summary>任务栏图标上的角标覆盖图（对标 Tauri 的 <c>Window.setOverlayIcon()</c>）。</summary>
+    /// <remarks><b>只有 Windows 实现</b>；<c>null</c> 表示清除。</remarks>
+    public void SetOverlayIcon(OrielImage? icon) => Backend.SetOverlayIcon(icon);
+
+    /// <summary>Dock 徽标数字（对标 Tauri 的 <c>Window.setBadgeCount()</c>）。</summary>
+    /// <remarks><b>只有 macOS 实现</b>（应用级）。</remarks>
+    public void SetBadgeCount(int? count) => Backend.SetBadgeCount(count);
+
+    /// <summary>Dock 徽标短文本（对标 Tauri 的 <c>Window.setBadgeLabel()</c>）。</summary>
+    /// <remarks><b>只有 macOS 实现</b>（应用级）。</remarks>
+    public void SetBadgeLabel(string? label) => Backend.SetBadgeLabel(label);
 
     /// <summary>
     /// 请求用户注意（对标 Tauri 的 `Window.requestUserAttention()`）。

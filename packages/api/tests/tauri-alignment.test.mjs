@@ -475,56 +475,21 @@ const METHOD_DIVERGENCES = {
  * @type {Array<{ reason: string, methods: string[] }>}
  */
 const METHOD_GAP_GROUPS = [
-    {
-        reason: '【A·跨平台不一致】**各自缺一半**：`setShadow` 在 Linux 上没有对应概念（GTK 无阴影 API）；' +
-            '`setAlwaysOnBottom` 同样只有 Windows/macOS 有；`setFocusable` 在 macOS 上没有公开入口' +
-            '（只有私有的 `_setPreventsActivation`，用它等于把自己绑到未公开 API 上）；' +
-            '`setBackgroundColor` **已经做了**（运行期），它是三平台一致的：'
-            + '都落到 webview 自己的底色（Windows `DefaultBackgroundColor`、'
-            + 'macOS `underPageBackgroundColor`、Linux `webkit_web_view_set_background_color`）。' +
-            '`setDecorations`：Windows 上 `ComputeStyle` 是**创建期的静态决定**，' +
-            '运行期切换要改整套样式并让 `WM_NCCALCSIZE` 的分支跟着变，而那条路我无法目视验证。',
-        methods: [
-            'window.Window#setDecorations', 'window.Window#setShadow',
-            'window.Window#setFocusable',
-            'window.Window#setAlwaysOnBottom',
-        ],
-    },
-    {
-        reason: '【A·跨平台不一致】每个平台各有一套、甚至只有一个平台有的概念（任务栏隐藏 / 全工作区可见 / ' +
-            '内容防截屏 / 简化全屏 / 指定显示器全屏 / 标题栏样式）。' +
-            '这组是**方针的直接目标**：在另两个平台上它要么没有意义（给不出来），' +
-            '要么得自造一套语义（那是设计而不是对齐）。',
-        methods: [
-            'window.Window#setSkipTaskbar', 'window.Window#setVisibleOnAllWorkspaces',
-            'window.Window#setContentProtected', 'window.Window#setSimpleFullscreen',
-            'window.Window#setFullscreenOnMonitor', 'window.Window#setTitleBarStyle',
-        ],
-    },
-    {
-        reason: '【A·跨平台不一致】窗口特效（macOS 的 vibrancy / Windows 的 Mica）。' +
-            '三平台机制差异很大，"特效"不是一个跨平台概念，要做就得先自造一套抽象模型。',
-        methods: ['window.Window#setEffects', 'window.Window#clearEffects'],
-    },
-    // 光标控制六项已补（B21）：setCursorGrab / setCursorVisible / setCursorIcon /
-    // setCursorPosition / setIgnoreCursorEvents / startResizeDragging。
-    // 支持矩阵是**逐平台不同的**，没有自造"统一语义"：
-    //   * setCursorGrab：Linux 抛 not_supported（Tauri 同样不支持）
-    //   * startResizeDragging：macOS 抛 not_supported（AppKit 没有公开入口）
-    //   * setCursorPosition / setIgnoreCursorEvents：Linux 仅 X11，Wayland 抛 not_supported
-    // 详见 docs/API.md 的降级表。
-    {
-        reason: '【A·跨平台不一致】任务栏 / Dock 的徽标与进度。Windows 要 `ITaskbarList3`（COM）、' +
-            'macOS 要 `NSDockTile`，而 **Linux 上没有对应概念**（不同桌面环境各有自己的扩展协议）。',
-        methods: [
-            'window.Window#setBadgeCount', 'window.Window#setBadgeLabel',
-            'window.Window#setProgressBar', 'window.Window#setOverlayIcon',
-        ],
-    },
-    // 【B·跨平台一致·B16 已完成】webviewWindow.WebviewWindow#setZoom 与
-    // #clearAllBrowsingData 已实现（WebView2 ZoomFactor+Profile.ClearBrowsingDataAsync /
-    // WKWebView pageZoom+WKWebsiteDataStore / WebKitGTK zoom_level+website_data_manager_clear），
-    // 从待做清单划掉——清单过期会被反向断言拦下。
+    // 【A·跨平台不一致】与【B·】两组在 B12–B22 结束**全部清空**：
+    //
+    //   * B16：setZoom / clearAllBrowsingData
+    //   * B21：六个光标控制（setCursorGrab / setCursorVisible / setCursorIcon /
+    //     setCursorPosition / setIgnoreCursorEvents / startResizeDragging）
+    //   * B22：十条平台开关 + setEffects / clearEffects + 四条任务栏
+    //     （setBadgeCount / setBadgeLabel / setProgressBar / setOverlayIcon）
+    //
+    // B22 的做法推翻了两条旧的方针判断（见 docs/TAURI2-ALIGNMENT-DECISIONS-2026-10-20.md §5）：
+    // "跨平台不一致的不做"改成"做，不支持的平台抛 not_supported"。
+    // 于是【A·】分类**不再表示"不做"**，只表示"做但平台受限"——具体矩阵在
+    // docs/API.md 的 B22 支持表里，逐平台一行。
+    //
+    // 清空之后这条清单仍然有意义：它是"零缺口"的状态快照。要往里面加项，
+    // 必须写明是【A·】还是【B·】以及批次号（下面两条测试盯着）。
 ];
 
 /** 展开成"方法 → 原因"的扁平表，供断言用。 */
@@ -637,11 +602,13 @@ test('B 组（方针下可做）必须写明批次——不许无声地留在"�
             `B 组「${group.methods[0]}…」没有写批次（reason 里要出现 B0–B9 之类的批次号）`);
     }
 
-    // 反面：A 组必须非空且明确标为"方针不做"，否则这份清单就退化成"什么都没做"
+    // 反面：清单为空是**合法状态**（B22 收口后就是空的），但一旦非空，
+    // 每条都必须带 A/B 归属——这条与上面那条测试一起，防止清单退化成
+    // "没人敢信的历史文档"，也防止有人把"其实已经实现了"的东西留在里面。
     const excluded = METHOD_GAP_GROUPS
         .filter((group) => group.reason.startsWith('【A·'))
         .flatMap((group) => group.methods);
-    assert.ok(excluded.length > 0, 'A 组（方针排除）应当列出具体项');
+    assert.ok(Array.isArray(excluded), 'A 组（跨平台受限）应当能展开成条目列表');
 });
 
 test('同名类的方法也对得上（我们缺的都在 METHOD_DIVERGENCES 里）', async (t) => {

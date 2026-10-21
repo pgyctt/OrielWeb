@@ -87,7 +87,7 @@ notification 的移动端 8 个。
 | **B19** | clipboard：readImage/writeImage/writeHtml/writeSecret | 三平台剪贴板 + `clipboard.js` + OrielImage 通路 | 无 | 中 |
 | **B20** | fs watch/watchImmediate + security-scoped | 三平台监视器（inotify/ReadDirectoryChangesW/FSEvents） | B17 | 高 |
 | **B21** | window 光标 6 项 | 三平台光标后端 | 无 | 中高 |
-| **B22** | window 平台开关 10 项 + 特效 4 项 + 任务栏 5 项 | 三平台窗口宿主（最重的一批） | B13 | **高** |
+| **B22** | window 平台开关 10 项 + 特效 4 项 + 任务栏 5 项（**已完成**，见 §6） | 三平台窗口宿主（最重的一批） | B13 | **高** |
 | **B23** | app 剩余：setDockVisibility、defaultWindowIcon、BundleType、getBundleType、数据存储 2 项、onBackButtonPress | `OrielApp` + macOS Dock + WKWebsiteDataStore | B13 | 中 |
 | **B24** | 账本收口：GAPS 清零核对、PLANNED_MODULES 更新、batch 新鲜度断言、迁移演练复跑 | `tauri-alignment.test.mjs`、`tools/migration-drill/` | B12–B23 | 低 |
 
@@ -169,3 +169,36 @@ B14 与 B22 是两块硬骨头；B12/B13/B15/B16/B23 是「一个下午一批」
 
 **账本更新**：`app.setTheme` 从 GAPS 移除、`window.Window#setTheme` 从
 `METHOD_GAP_GROUPS` 移除——两条都已落地。
+
+### B22（2026-10-21，已完成）：平台开关 10 + 特效 4 + 任务栏 5
+
+这一批把 `window.Window` 的最后 19 项补齐，`METHOD_GAP_GROUPS` 因此**清零**。
+决策层面它兑现的是 §5 第 1 条：A 组从"不做"改成"做，不支持的平台抛 `not_supported`"。
+
+**三平台各自的"最重的地方"**：
+- **Windows 补齐了三套新设施**：手写的 `ITaskbarList3` 调用（`CoCreateInstance` + vtable
+  槽位，本库第一个"只调用、不实现"的 COM 接口）、DWM 的系统背板 + 非客户区渲染策略、
+  以及未文档化的 `SetWindowCompositionAttribute`（Win10 上的 blur/acrylic 唯一入口，
+  与 Tauri/tao 同一条路）。
+- **macOS 补的是"运行时装配"**：`NSVisualEffectView` 要插到 webview **之下**、
+  窗口与 webview 的背景要放开（`drawsBackground` 走 KVC，且**调之前必须用
+  `class_getInstanceMethod` / `class_getInstanceVariable` 确认那个键存在**——
+  KVC 的 undefined key 抛的是 ObjC 异常，托管侧接不住，一次 setEffects 就能带走进程）。
+- **Linux 补的是"诚实"**：十条开关里六条是 WM 提示（`skip_taskbar` / `stick` /
+  `keep_below` / `accept_focus` 各一层），特效与任务栏徽标整组不存在——一律
+  `not_supported`，理由写在方法上（GTK 无阴影 API / 需 libunity / 无桌面无关材质）。
+
+**结构性改动**：`setDecorations` 要能运行期切，所以 Windows 宿主的
+`WM_NCCALCSIZE` / `WM_NCHITTEST` 从"判 `_options.Frameless`"改成"判 `_decorations`"；
+`IsDecorated` 三平台都改成反映运行期状态（之前恒为创建选项，文档同步更新）。
+
+**"不假装支持"的三处具体体现**：
+1. `liquidGlassRegular/Clear` 要 macOS 26 的 `NSGlassEffectView` → 抛错，不降级成别的材质。
+2. `EffectState` 在 Windows 上没有落点 → 接受但**记诊断**（不抛错：Tauri 的迁移代码常写
+   `state: Active` 却跑在 Windows 上，抛错会让"本该能跑"的应用挂掉）。
+3. Linux 的 `setProgressBar` / `setBadgeCount` 需要 `libunity` → 抛 `not_supported`，
+   不为一个只在部分桌面环境有效的能力引运行时依赖。
+
+**取证**：演示自检第 12 段按平台分两路（能做的验成功、不支持的验 `not_supported`），
+改动全部还原；C# 单测补 64 条（注册/门禁/参数校验/名字表），JS 单测补 9 条
+（命令名与形状、参数校验）。
