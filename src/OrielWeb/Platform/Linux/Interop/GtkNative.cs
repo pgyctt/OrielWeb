@@ -473,6 +473,54 @@ internal static unsafe partial class GtkNative
     [LibraryImport(Gdk, EntryPoint = "gdk_cursor_new_for_display")]
     internal static partial nint GdkCursorNewForDisplay(nint display, int cursorType);
 
+    /// <summary>
+    /// 按**名字**造一个光标。
+    /// </summary>
+    /// <param name="display">默认 display。</param>
+    /// <param name="name">CSS 的 cursor 名（<c>default</c> / <c>pointer</c> / <c>ew-resize</c> …）。</param>
+    /// <returns>新引用（调用方 <c>g_object_unref</c>）；主题里没有这个名字时返回 0。</returns>
+    /// <remarks>
+    /// 与 <see cref="GdkCursorNewForDisplay"/> 的分工：那个走 X 光标字体的固定图（形状确定、
+    /// 但只覆盖 8 个 resize 形状），这个走主题（覆盖全套 CSS 名，但形状取决于主题）。
+    /// <c>setCursorIcon</c> 要的是后者——用户设 <c>copy</c> 就该得到主题里的 copy 形状。
+    /// </remarks>
+    [LibraryImport(Gdk, EntryPoint = "gdk_cursor_new_from_name", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial nint GdkCursorNewFromName(nint display, string name);
+
+    /// <summary>取 GdkWindow 在根窗口坐标系里的原点（逻辑像素）；失败返回 0。</summary>
+    [LibraryImport(Gdk, EntryPoint = "gdk_window_get_origin")]
+    internal static partial int GdkWindowGetOrigin(nint window, out int x, out int y);
+
+    [LibraryImport(Gdk, EntryPoint = "gdk_display_get_default_screen")]
+    internal static partial nint GdkDisplayGetDefaultScreen(nint display);
+
+    /// <summary>
+    /// 把指针瞬移到屏幕坐标某点。
+    /// </summary>
+    /// <remarks>
+    /// <b>Wayland 下不生效</b>：协议不允许客户端移动指针（合成器不认这个请求）。
+    /// 所以调用前要先判 <c>IsWaylandBackend()</c> 并如实报不支持。
+    /// </remarks>
+    [LibraryImport(Gdk, EntryPoint = "gdk_device_warp")]
+    internal static partial void GdkDeviceWarp(nint device, nint screen, int x, int y);
+
+    /// <summary>造一个空区域（cairo_region_t）。作为输入形状传给部件 = 该部件不再接收任何输入。</summary>
+    [LibraryImport(Gdk, EntryPoint = "gdk_region_new")]
+    internal static partial nint GdkRegionNew();
+
+    [LibraryImport(Gdk, EntryPoint = "gdk_region_destroy")]
+    internal static partial void GdkRegionDestroy(nint region);
+
+    /// <summary>
+    /// 给部件设置输入形状。<paramref name="region"/> 传 0 = 恢复默认（接收全部输入）。
+    /// </summary>
+    /// <remarks>
+    /// <b>Wayland 下是 no-op</b>（GTK 文档明说 input shape 只在 X11 生效），
+    /// 所以 <c>setIgnoreCursorEvents</c> 在 Wayland 上必须先报不支持，而不是假装成功。
+    /// </remarks>
+    [LibraryImport(Gtk, EntryPoint = "gtk_widget_input_shape_combine_region")]
+    internal static partial void GtkWidgetInputShapeCombineRegion(nint widget, nint region);
+
     /// <summary>取事件的部件内坐标（逻辑像素）；返回 FALSE 表示该事件没有坐标（例如键盘事件）。</summary>
     [LibraryImport(Gdk, EntryPoint = "gdk_event_get_coords")]
     internal static partial int GdkEventGetCoords(nint eventPtr, out double x, out double y);

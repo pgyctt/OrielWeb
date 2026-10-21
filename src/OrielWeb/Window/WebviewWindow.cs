@@ -601,6 +601,36 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// </remarks>
     public void SetMaxSize(int width, int height) => Backend.SetMaxSize(width, height);
 
+    // ---- 光标（B21）----
+
+    /// <summary>把光标限制在窗口内（对标 Tauri 的 <c>Window.setCursorGrab()</c>）。</summary>
+    /// <remarks>
+    /// <b>Linux 不支持</b>（抛 <see cref="NotSupportedException"/>）；macOS 的形态是
+    /// "把光标锁死"而不是"限制在矩形内"。见 <see cref="IWindowBackend.SetCursorGrab"/>。
+    /// </remarks>
+    public void SetCursorGrab(bool grab) => Backend.SetCursorGrab(grab);
+
+    /// <summary>显示/隐藏光标（对标 Tauri 的 <c>Window.setCursorVisible()</c>）。</summary>
+    public void SetCursorVisible(bool visible) => Backend.SetCursorVisible(visible);
+
+    /// <summary>设置光标形状（对标 Tauri 的 <c>Window.setCursorIcon()</c>）。</summary>
+    /// <remarks>设置后页面的 CSS <c>cursor</c> 不再生效，见 <see cref="IWindowBackend.SetCursorIcon"/>。</remarks>
+    public void SetCursorIcon(OrielCursorIcon icon) => Backend.SetCursorIcon(icon);
+
+    /// <summary>把光标移到客户区内的某个位置（逻辑像素；对标 Tauri 的 <c>Window.setCursorPosition()</c>）。</summary>
+    public void SetCursorPosition(double x, double y) => Backend.SetCursorPosition(x, y);
+
+    /// <summary>设置窗口是否忽略鼠标事件（对标 Tauri 的 <c>Window.setIgnoreCursorEvents()</c>）。</summary>
+    public void SetIgnoreCursorEvents(bool ignore) => Backend.SetIgnoreCursorEvents(ignore);
+
+    /// <summary>从窗口某条边/角开始一次 resize 拖动（对标 Tauri 的 <c>Window.startResizeDragging()</c>）。</summary>
+    /// <remarks>
+    /// <b>macOS 不支持</b>；Windows/Linux 会进入模态循环，必须在鼠标按下期间调用。
+    /// 见 <see cref="IWindowBackend.StartResizeDragging"/>。
+    /// </remarks>
+    public void StartResizeDragging(OrielResizeDirection direction) => Backend.StartResizeDragging(direction);
+
+
     /// <summary>
     /// 请求用户注意（对标 Tauri 的 `Window.requestUserAttention()`）。
     /// </summary>

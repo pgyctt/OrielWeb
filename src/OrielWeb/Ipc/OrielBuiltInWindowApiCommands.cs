@@ -256,6 +256,116 @@ internal static class OrielBuiltInWindowApiCommands
                 };
                 return true;
 
+            // ---- 光标（B21）----
+            //
+            // 六条都**不在标题栏白名单**：改光标形状/可见性/位置、让窗口忽略鼠标、
+            // 或者发起 resize 拖动，都不是"画标题栏非要不可"的能力。被注入的页面若能
+            // 随手把光标锁死或让窗口点击穿透，用户会以为应用坏了。
+
+            case "window.setCursorGrab":
+                handler = static (sender, args) =>
+                {
+                    bool grab = RequiredBool(args, "grab", "window.setCursorGrab");
+                    WebviewWindow target = Resolve(sender, args);
+                    target.SetCursorGrab(grab);
+                    return null;
+                };
+                return true;
+
+            case "window.setCursorVisible":
+                handler = static (sender, args) =>
+                {
+                    bool visible = RequiredBool(args, "visible", "window.setCursorVisible");
+                    WebviewWindow target = Resolve(sender, args);
+                    target.SetCursorVisible(visible);
+                    return null;
+                };
+                return true;
+
+            case "window.setCursorIcon":
+                handler = static (sender, args) =>
+                {
+                    // 在 Resolve 之前校验名字：拼错的光标名不该先去找窗口
+                    string name = OrielJson.GetRequiredArg<string>(args, "icon", null);
+                    if (!OrielCursorNames.TryParse(name, out OrielCursorIcon icon))
+                    {
+                        throw new OrielIpcException(
+                            $"window.setCursorIcon: 未知的 icon「{name}」。" +
+                            "取值是 CSS cursor 关键字的 camelCase 形式（如 default / pointer / notAllowed / ewResize），" +
+                            "完整列表见 docs/API.md。")
+                        {
+                            Code = OrielIpcErrorCodes.InvalidArgument,
+                        };
+                    }
+
+                    WebviewWindow target = Resolve(sender, args);
+                    target.SetCursorIcon(icon);
+                    return null;
+                };
+                return true;
+
+            case "window.setCursorPosition":
+                handler = static (sender, args) =>
+                {
+                    // 两种形状都收：`{ position: { x, y, type? } }`（Tauri 的调用形状）
+                    // 与 `{ x, y }`（与 window.moveTo 一致）。JS 包发前者。
+                    JsonElement source = OrielJson.TryGetArgElement(args, "position", out JsonElement positionElement)
+                        ? positionElement
+                        : args;
+
+                    double x = RequiredDouble(source, "x", "window.setCursorPosition");
+                    double y = RequiredDouble(source, "y", "window.setCursorPosition");
+                    string? type = OptionalString(source, "type");
+
+                    WebviewWindow target = Resolve(sender, args);
+
+                    // 物理像素换算放在这里而不是页面侧：后端知道自己的缩放比，
+                    // 而把"这是哪种单位"的换算分散到每个调用点只会制造"在 Retina 上偏一倍"
+                    if (string.Equals(type, "Physical", StringComparison.Ordinal))
+                    {
+                        double factor = target.ScaleFactor;
+                        if (factor > 0)
+                        {
+                            x /= factor;
+                            y /= factor;
+                        }
+                    }
+
+                    target.SetCursorPosition(x, y);
+                    return null;
+                };
+                return true;
+
+            case "window.setIgnoreCursorEvents":
+                handler = static (sender, args) =>
+                {
+                    bool ignore = RequiredBool(args, "ignore", "window.setIgnoreCursorEvents");
+                    WebviewWindow target = Resolve(sender, args);
+                    target.SetIgnoreCursorEvents(ignore);
+                    return null;
+                };
+                return true;
+
+            case "window.startResizeDragging":
+                handler = static (sender, args) =>
+                {
+                    string name = OrielJson.GetRequiredArg<string>(args, "direction", null);
+                    if (!OrielCursorNames.TryParseDirection(name, out OrielResizeDirection direction))
+                    {
+                        throw new OrielIpcException(
+                            $"window.startResizeDragging: 未知的 direction「{name}」" +
+                            "（只认 East / North / NorthEast / NorthWest / South / SouthEast / SouthWest / West）。")
+                        {
+                            Code = OrielIpcErrorCodes.InvalidArgument,
+                        };
+                    }
+
+                    WebviewWindow target = Resolve(sender, args);
+                    target.StartResizeDragging(direction);
+                    return null;
+                };
+                return true;
+
             // ---- 请求用户注意（M5-6）----
             //
             // type 为 null / 缺省 → 取消已发出的请求（与 Tauri 一致）。

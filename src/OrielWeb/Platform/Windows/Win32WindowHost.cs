@@ -1073,6 +1073,21 @@ internal partial class Win32WindowHost : IWindowBackend
                 break; // 其余情况交给 DefWindowProcW
             }
 
+            case Win32Constants.WM_SETCURSOR:
+            {
+                // 应用显式设了图标才接管，而且只接管**客户区**：
+                // 非客户区（边框、标题栏）必须留给 DefWindowProc，否则无边框窗口边缘的
+                // resize 光标会被这里统一成箭头，拖边缘时看不出能拖。
+                if (_cursorIcon is { } icon
+                    && (nint)(lParam & 0xFFFF) == Win32Constants.HTCLIENT)
+                {
+                    _ = Win32.SetCursor(CursorHandle(icon));
+                    return 1; // TRUE = 已经设过光标，系统不要再改
+                }
+
+                break;
+            }
+
             case Win32Constants.WM_MOUSEMOVE:
             case Win32Constants.WM_LBUTTONDOWN:
             case Win32Constants.WM_LBUTTONUP:
@@ -1318,12 +1333,177 @@ internal partial class Win32WindowHost : IWindowBackend
     }
 
     /// <summary>组合宿主不接收系统的光标设置，需把 WebView 当前光标自行应用到窗口。</summary>
+    /// <remarks>
+    /// <b>应用显式设过图标时不生效</b>（见 <see cref="SetCursorIcon"/>）：否则页面每更新一次
+    /// CSS 光标就把那次设置冲掉，"设了却看不到"会变成一条无法解释的现象。
+    /// </remarks>
     private void OnCursorChanged(object? sender, object args)
     {
+        if (_cursorIcon is not null)
+        {
+            return;
+        }
+
         if (sender is ICoreWebView2CompositionController controller && controller.Cursor is { } cursor)
         {
             _ = Win32.SetCursor(cursor);
         }
+    }
+
+    // ---- 光标（B21）----
+
+    /// <summary>应用显式设置的光标形状；<c>null</c> = 跟着页面 CSS 走。</summary>
+    private OrielCursorIcon? _cursorIcon;
+
+    /// <summary>当前的显示意图（与 <c>ShowCursor</c> 的计数器配对，防止重复加减）。</summary>
+    private bool _cursorVisible = true;
+
+    /// <summary>当前是否把光标限制在窗口内（<see cref="SetCursorGrab"/>）。</summary>
+    private bool _cursorGrabbed;
+
+    /// <summary>当前是否忽略鼠标事件（<see cref="SetIgnoreCursorEvents"/>）。</summary>
+    private bool _ignoreCursorEvents;
+
+    /// <inheritdoc />
+    public unsafe void SetCursorGrab(bool grab)
+    {
+        if (grab == _cursorGrabbed)
+        {
+            return;
+        }
+
+        _cursorGrabbed = grab;
+
+        if (!grab)
+        {
+            _ = Win32.ClipCursor(null);
+            return;
+        }
+
+        // 限制在**客户区**（不是整窗）：标题栏/边框本来就不属于页面
+        if (!Win32.GetClientRect(_hwnd, out RECT client))
+        {
+            return;
+        }
+
+        var topLeft = new POINT { X = client.Left, Y = client.Top };
+        var bottomRight = new POINT { X = client.Right, Y = client.Bottom };
+        if (!Win32.ClientToScreen(_hwnd, ref topLeft) || !Win32.ClientToScreen(_hwnd, ref bottomRight))
+        {
+            return;
+        }
+
+        var clip = new RECT { Left = topLeft.X, Top = topLeft.Y, Right = bottomRight.X, Bottom = bottomRight.Y };
+        _ = Win32.ClipCursor(&clip);
+    }
+
+    /// <inheritdoc />
+    public void SetCursorVisible(bool visible)
+    {
+        if (visible == _cursorVisible)
+        {
+            return;
+        }
+
+        _cursorVisible = visible;
+
+        // ShowCursor 是**计数器**而不是开关：多减一次就要多补一次，
+        // 所以这里按状态去重（与 tao/Tauri 的做法一致）
+        _ = Win32.ShowCursor(visible ? 1 : 0);
+    }
+
+    /// <inheritdoc />
+    public void SetCursorIcon(OrielCursorIcon icon)
+    {
+        _cursorIcon = icon;
+        _ = Win32.SetCursor(CursorHandle(icon));
+    }
+
+    /// <summary>把枚举映射到系统光标句柄（没有对应形状时用最接近的那一个）。</summary>
+    /// <remarks>
+    /// <b>降级是平台事实</b>：Windows 只有十来个系统光标，<c>copy</c> / <c>zoomIn</c> 这些
+    /// 没有对应图。映射表与 docs/API.md 的降级表逐条对应——改这里要同步改文档。
+    /// </remarks>
+    private static nint CursorHandle(OrielCursorIcon icon) => icon switch
+    {
+        OrielCursorIcon.Crosshair => Win32.LoadCursorW(0, Win32Constants.IDC_CROSS),
+        OrielCursorIcon.Hand => Win32.LoadCursorW(0, Win32Constants.IDC_HAND),
+        OrielCursorIcon.Text or OrielCursorIcon.VerticalText => Win32.LoadCursorW(0, Win32Constants.IDC_IBEAM),
+        OrielCursorIcon.Wait => Win32.LoadCursorW(0, Win32Constants.IDC_WAIT),
+        OrielCursorIcon.Progress => Win32.LoadCursorW(0, Win32Constants.IDC_APPSTARTING),
+        OrielCursorIcon.Help => Win32.LoadCursorW(0, Win32Constants.IDC_HELP),
+        OrielCursorIcon.NotAllowed or OrielCursorIcon.NoDrop => Win32.LoadCursorW(0, Win32Constants.IDC_NO),
+        OrielCursorIcon.Move or OrielCursorIcon.AllScroll or OrielCursorIcon.Cell =>
+            Win32.LoadCursorW(0, Win32Constants.IDC_SIZEALL),
+        OrielCursorIcon.Grab => Win32.LoadCursorW(0, Win32Constants.IDC_HAND),
+        OrielCursorIcon.Grabbing => Win32.LoadCursorW(0, Win32Constants.IDC_HAND),
+        OrielCursorIcon.EResize or OrielCursorIcon.WResize or OrielCursorIcon.EwResize
+            or OrielCursorIcon.ColResize => Win32.LoadCursorW(0, Win32Constants.IDC_SIZEWE),
+        OrielCursorIcon.NResize or OrielCursorIcon.SResize or OrielCursorIcon.NsResize
+            or OrielCursorIcon.RowResize => Win32.LoadCursorW(0, Win32Constants.IDC_SIZENS),
+        OrielCursorIcon.NeResize or OrielCursorIcon.SwResize or OrielCursorIcon.NeswResize =>
+            Win32.LoadCursorW(0, Win32Constants.IDC_SIZENESW),
+        OrielCursorIcon.NwResize or OrielCursorIcon.SeResize or OrielCursorIcon.NwseResize =>
+            Win32.LoadCursorW(0, Win32Constants.IDC_SIZENWSE),
+
+        // default / arrow / contextMenu / alias / copy / zoomIn / zoomOut：
+        // 没有系统图，给标准箭头（写进文档的降级表）
+        _ => Win32.LoadCursorW(0, Win32Constants.IDC_ARROW),
+    };
+
+    /// <inheritdoc />
+    public void SetCursorPosition(double x, double y)
+    {
+        // 入参是**逻辑**像素；ClientToScreen 要的是物理像素（本进程是 per-monitor DPI aware）
+        double scale = CurrentScaleFactor();
+        var point = new POINT
+        {
+            X = (int)Math.Round(x * scale),
+            Y = (int)Math.Round(y * scale),
+        };
+
+        if (Win32.ClientToScreen(_hwnd, ref point))
+        {
+            _ = Win32.SetCursorPos(point.X, point.Y);
+        }
+    }
+
+    /// <inheritdoc />
+    public void SetIgnoreCursorEvents(bool ignore)
+    {
+        if (ignore == _ignoreCursorEvents)
+        {
+            return;
+        }
+
+        _ignoreCursorEvents = ignore;
+
+        nint style = Win32.GetWindowLongPtrW(_hwnd, Win32Constants.GWL_EXSTYLE);
+        nint updated = ignore
+            ? style | Win32Constants.WS_EX_TRANSPARENT
+            : style & ~Win32Constants.WS_EX_TRANSPARENT;
+
+        _ = Win32.SetWindowLongPtrW(_hwnd, Win32Constants.GWL_EXSTYLE, updated);
+    }
+
+    /// <inheritdoc />
+    public void StartResizeDragging(OrielResizeDirection direction)
+    {
+        // 与 BeginDrag 同一条路：WM_NCLBUTTONDOWN + HT* 让系统进入 resize 的模态循环。
+        // 必须在鼠标按住期间调用（页面在 mousedown 里发起）。
+        nint hit = direction switch
+        {
+            OrielResizeDirection.East => Win32Constants.HTRIGHT,
+            OrielResizeDirection.North => Win32Constants.HTTOP,
+            OrielResizeDirection.NorthEast => Win32Constants.HTTOPRIGHT,
+            OrielResizeDirection.NorthWest => Win32Constants.HTTOPLEFT,
+            OrielResizeDirection.South => Win32Constants.HTBOTTOM,
+            OrielResizeDirection.SouthEast => Win32Constants.HTBOTTOMRIGHT,
+            OrielResizeDirection.SouthWest => Win32Constants.HTBOTTOMLEFT,
+            _ => Win32Constants.HTLEFT,
+        };
+
+        _ = Win32.SendMessageW(_hwnd, Win32Constants.WM_NCLBUTTONDOWN, (nuint)hit, 0);
     }
 
     // ------------------------------------------------------------------

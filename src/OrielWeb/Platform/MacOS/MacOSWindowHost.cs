@@ -455,6 +455,132 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
             types, distantPast, 0);
     }
 
+    // ---- 光标（B21）----
+
+    /// <summary>应用显式设置的光标形状（<c>null</c> = 没设过）。</summary>
+    /// <remarks>
+    /// 记它只为诊断与"设过之后不再假装能跟着 CSS 走"的文档一致性；
+    /// macOS 没有"恢复默认"的入口，只能再设一个形状。
+    /// </remarks>
+    private OrielCursorIcon? _cursorIcon;
+
+    /// <summary>光标可见性意图（与 <c>NSCursor hide/unhide</c> 的全局计数配对）。</summary>
+    private bool _cursorVisible = true;
+
+    /// <summary>是否已断开"鼠标 → 光标"的关联（<see cref="SetCursorGrab"/>）。</summary>
+    private bool _cursorGrabbed;
+
+    /// <summary>是否设置了忽略鼠标事件。</summary>
+    private bool _ignoreCursorEvents;
+
+    /// <inheritdoc />
+    public void SetCursorGrab(bool grab)
+    {
+        if (grab == _cursorGrabbed)
+        {
+            return;
+        }
+
+        _cursorGrabbed = grab;
+
+        // connected: 0 = 断开（光标锁死），非 0 = 恢复。
+        // 这是**进程级**状态，所以窗口销毁时必须在 OnWindowWillClose 里恢复。
+        _ = CoreGraphicsNative.CGAssociateMouseAndMouseCursorPosition(grab ? 0 : 1);
+    }
+
+    /// <inheritdoc />
+    public void SetCursorVisible(bool visible)
+    {
+        if (visible == _cursorVisible)
+        {
+            return;
+        }
+
+        _cursorVisible = visible;
+
+        // NSCursor 的 hide/unhide 也是**全局计数**：多调一次 hide 就要多调一次 unhide
+        nint cursorClass = ObjCRuntime.GetClassOrThrow("NSCursor");
+        ObjCRuntime.SendVoid(cursorClass, ObjCRuntime.Sel(visible ? "unhide" : "hide"));
+    }
+
+    /// <inheritdoc />
+    public void SetCursorIcon(OrielCursorIcon icon)
+    {
+        _cursorIcon = icon;
+
+        nint cursor = ObjCRuntime.SendId(
+            ObjCRuntime.GetClassOrThrow("NSCursor"),
+            ObjCRuntime.Sel(SelectorFor(icon)));
+
+        if (cursor != 0)
+        {
+            ObjCRuntime.SendVoid(cursor, ObjCRuntime.Sel("set"));
+        }
+    }
+
+    /// <summary>枚举 → <c>NSCursor</c> 的类方法选择器（没有对应形状时用最接近的一个）。</summary>
+    /// <remarks>
+    /// <b>AppKit 只有 18 个公开光标</b>，<c>copy</c> / <c>zoomIn</c> / 对角线 resize 都没有对应形状。
+    /// 降级表与 docs/API.md 逐条对应——改这里要同步改文档。
+    /// 对角 resize 落到 <c>resizeUpDownCursor</c>/<c>resizeLeftRightCursor</c>：
+    /// 这两个至少给出"能拖"的视觉暗示，而箭头什么都不给。
+    /// </remarks>
+    private static string SelectorFor(OrielCursorIcon icon) => icon switch
+    {
+        OrielCursorIcon.Crosshair or OrielCursorIcon.Cell => "crosshairCursor",
+        OrielCursorIcon.Hand => "pointingHandCursor",
+        OrielCursorIcon.Move or OrielCursorIcon.AllScroll or OrielCursorIcon.Grab => "openHandCursor",
+        OrielCursorIcon.Grabbing => "closedHandCursor",
+        OrielCursorIcon.Text => "IBeamCursor",
+        OrielCursorIcon.VerticalText => "IBeamCursorForVerticalLayout",
+        OrielCursorIcon.NotAllowed or OrielCursorIcon.NoDrop => "operationNotAllowedCursor",
+        OrielCursorIcon.ContextMenu => "contextualMenuCursor",
+        OrielCursorIcon.Alias => "dragLinkCursor",
+        OrielCursorIcon.Copy => "dragCopyCursor",
+        OrielCursorIcon.EResize or OrielCursorIcon.WResize or OrielCursorIcon.EwResize
+            or OrielCursorIcon.ColResize or OrielCursorIcon.NwResize or OrielCursorIcon.SeResize
+            or OrielCursorIcon.NwseResize => "resizeLeftRightCursor",
+        OrielCursorIcon.NResize or OrielCursorIcon.SResize or OrielCursorIcon.NsResize
+            or OrielCursorIcon.RowResize or OrielCursorIcon.NeResize or OrielCursorIcon.SwResize
+            or OrielCursorIcon.NeswResize => "resizeUpDownCursor",
+
+        // default / arrow / wait / progress / zoomIn / zoomOut：AppKit 没有对应形状
+        _ => "arrowCursor",
+    };
+
+    /// <inheritdoc />
+    public void SetCursorPosition(double x, double y)
+    {
+        if (_nsWindow == 0)
+        {
+            return;
+        }
+
+        // CG 的全局坐标是**点**（逻辑像素），原点在主屏左上角——与 InnerPosition 同口径，
+        // 所以直接相加，不需要乘缩放比
+        OrielPosition inner = InnerPosition;
+        _ = CoreGraphicsNative.CGWarpMouseCursorPosition(new CGPoint(inner.X + x, inner.Y + y));
+    }
+
+    /// <inheritdoc />
+    public void SetIgnoreCursorEvents(bool ignore)
+    {
+        if (_nsWindow == 0 || ignore == _ignoreCursorEvents)
+        {
+            return;
+        }
+
+        _ignoreCursorEvents = ignore;
+        ObjCRuntime.SendVoidBool(_nsWindow, ObjCRuntime.Sel("setIgnoresMouseEvents:"), ignore);
+    }
+
+    /// <inheritdoc />
+    public void StartResizeDragging(OrielResizeDirection direction)
+        => throw new NotSupportedException(
+            "macOS 不支持 startResizeDragging：AppKit 没有公开的" +
+            "\"以编程方式开始 resize 拖动\"入口（performWindowDragWithEvent: 只能移动窗口）。" +
+            "需要该能力时请用可拖动的自绘边框配合 window.dragStart 之类的做法。");
+
     /// <summary>设置最大尺寸（见 <see cref="IWindowBackend.SetMaxSize"/>）。</summary>
     /// <remarks>
     /// <c>setContentMaxSize:</c> 收 <c>NSSize</c>。<b>传 0 表示不限制</b>——
@@ -1120,6 +1246,26 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
 
     internal void OnWindowWillClose()
     {
+        // 光标状态必须在这里恢复：grab 是**进程级**的（不清会让整个应用的光标不再跟随鼠标，
+        // 而应用可能还在跑），隐藏与穿透也会残留到别的窗口上。
+        if (_cursorGrabbed)
+        {
+            _cursorGrabbed = false;
+            _ = CoreGraphicsNative.CGAssociateMouseAndMouseCursorPosition(1);
+        }
+
+        if (!_cursorVisible)
+        {
+            _cursorVisible = true;
+            ObjCRuntime.SendVoid(ObjCRuntime.GetClassOrThrow("NSCursor"), ObjCRuntime.Sel("unhide"));
+        }
+
+        if (_ignoreCursorEvents && _nsWindow != 0)
+        {
+            _ignoreCursorEvents = false;
+            ObjCRuntime.SendVoidBool(_nsWindow, ObjCRuntime.Sel("setIgnoresMouseEvents:"), false);
+        }
+
         // 先清理状态注册表与委托指针，再触发 Closed——避免用户在回调里发起 IPC 时
         // 走到已销毁的宿主，也避免实例指针被复用时把事件路由到旧宿主（ABA）。
         // 注册表持有的是托管 host 的强引用，不清理则整棵对象树永不释放。

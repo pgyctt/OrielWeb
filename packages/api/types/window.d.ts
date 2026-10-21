@@ -598,6 +598,69 @@ export class Window {
         y: number;
     } | [number, number]): Promise<void>;
     /**
+     * 把光标限制在窗口内（对标 Tauri 的 `setCursorGrab`）。
+     *
+     * @param {boolean} grab `true` 抓取，`false` 释放。
+     * @returns {Promise<void>}
+     * @remarks
+     * **Linux 不支持**（抛 `not_supported`）。macOS 的形态是把光标**锁死**在原地，
+     * 并不是"限制在窗口矩形内"——这是平台能给的唯一形态。
+     */
+    setCursorGrab(grab: boolean): Promise<void>;
+    /**
+     * 显示或隐藏光标（对标 Tauri 的 `setCursorVisible`）。
+     *
+     * @param {boolean} visible
+     * @returns {Promise<void>}
+     * @remarks 隐藏是"应用到窗口/应用"的状态，窗口销毁时宿主会自动恢复。
+     */
+    setCursorVisible(visible: boolean): Promise<void>;
+    /**
+     * 设置光标形状（对标 Tauri 的 `setCursorIcon`）。
+     *
+     * @param {CursorIcon} icon
+     * @returns {Promise<void>}
+     * @remarks
+     * **设置之后页面的 CSS `cursor` 不再生效**——这是"应用显式指定"应有的语义，
+     * 但确实会盖掉文本框的 I 形光标之类的东西。三平台都没有"恢复交给 CSS"的入口，
+     * 只能再设一个形状。
+     */
+    setCursorIcon(icon: CursorIcon): Promise<void>;
+    /**
+     * 把光标移到**客户区**内的某个位置（对标 Tauri 的 `setCursorPosition`）。
+     *
+     * @param {import('./dpi.js').LogicalPosition | import('./dpi.js').PhysicalPosition
+     *   | { type?: string, x: number, y: number } | [number, number]} position
+     * @returns {Promise<void>}
+     * @remarks
+     * 与 Tauri 一致，坐标相对窗口左上角（不是屏幕）。物理/逻辑两种都收，
+     * 换算在宿主侧做（它知道缩放比）。
+     */
+    setCursorPosition(position: import("./dpi.js").LogicalPosition | import("./dpi.js").PhysicalPosition | {
+        type?: string;
+        x: number;
+        y: number;
+    } | [number, number]): Promise<void>;
+    /**
+     * 让窗口忽略鼠标事件（对标 Tauri 的 `setIgnoreCursorEvents`，即"点击穿透"）。
+     *
+     * @param {boolean} ignore
+     * @returns {Promise<void>}
+     * @remarks **Linux 只在 X11 下有效**（Wayland 抛 `not_supported`）。
+     */
+    setIgnoreCursorEvents(ignore: boolean): Promise<void>;
+    /**
+     * 从窗口某条边/角开始一次 resize 拖动（对标 Tauri 的 `startResizeDragging`）。
+     *
+     * @param {ResizeDirection} direction
+     * @returns {Promise<void>}
+     * @remarks
+     * <b>必须在鼠标按下的处理过程中调用</b>（例如 `mousedown` 里）：Windows 会进入一个
+     * 跟着鼠标的模态循环，Wayland 则依赖那次按下事件的 serial，晚一步就无效。
+     * <b>macOS 不支持</b>（抛 `not_supported`）。
+     */
+    startResizeDragging(direction: ResizeDirection): Promise<void>;
+    /**
      * 设置**客户区**最小尺寸（对标 Tauri 的 `setMinSize`）。
      *
      * @param {{ type?: string, width: number, height: number } | [number, number] | null} size
@@ -799,6 +862,14 @@ export type Monitor = {
      */
     scaleFactor: number;
 };
+/**
+ * 光标形状（对标 Tauri 的 `CursorIcon`）。
+ */
+export type CursorIcon = "default" | "crosshair" | "hand" | "arrow" | "move" | "text" | "wait" | "help" | "progress" | "notAllowed" | "contextMenu" | "cell" | "verticalText" | "alias" | "copy" | "noDrop" | "grab" | "grabbing" | "allScroll" | "zoomIn" | "zoomOut" | "eResize" | "nResize" | "neResize" | "nwResize" | "sResize" | "seResize" | "swResize" | "wResize" | "ewResize" | "nsResize" | "neswResize" | "nwseResize" | "colResize" | "rowResize";
+/**
+ * resize 拖动的起始边/角（对标 Tauri 的 `ResizeDirection`）。
+ */
+export type ResizeDirection = "East" | "North" | "NorthEast" | "NorthWest" | "South" | "SouthEast" | "SouthWest" | "West";
 import { PhysicalPosition } from './dpi.js';
 import { PhysicalSize } from './dpi.js';
 export { LogicalSize, LogicalPosition, PhysicalSize, PhysicalPosition } from "./dpi.js";

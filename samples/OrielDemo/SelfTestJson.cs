@@ -23,6 +23,17 @@ internal static class SelfTestJson
     /// <summary>JSON 布尔字面量。</summary>
     internal static string Bool(bool value) => value ? "true" : "false";
 
+    /// <summary>
+    /// JSON 数字字面量。
+    /// </summary>
+    /// <remarks>
+    /// 必须用 <see cref="System.Globalization.CultureInfo.InvariantCulture"/>：
+    /// 德语/法语环境下 <c>double.ToString()</c> 会写出 <c>1,5</c>，
+    /// 那是**非法 JSON**，而报错会出现在页面侧的 JSON.parse 上。
+    /// </remarks>
+    internal static string Number(double value)
+        => value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+
     /// <summary>拼一个对象：成员值必须是**已经编码好的 JSON 片段**。</summary>
     /// <remarks>
     /// 参数是 (键, 值片段) 而不是 (键, 任意值)：那样调用方必须显式决定怎么编码这个值，

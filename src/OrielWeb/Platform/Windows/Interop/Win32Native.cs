@@ -161,6 +161,34 @@ internal static class Win32Constants
     /// <summary>WM_NCLBUTTONDOWN 的命中值：令窗口进入标题栏拖动的模态循环（见 BeginDrag）。</summary>
     public static readonly nint HTCAPTION = 2;
 
+    /// <summary>命中测试结果"客户区"（WM_SETCURSOR 的 lParam 低字）。</summary>
+    public static readonly nint HTCLIENT = 1;
+
+    /// <summary>扩展样式索引（<c>GWL_EXSTYLE</c>）；负数，不能当成枚举。</summary>
+    public const int GWL_EXSTYLE = -20;
+
+    /// <summary>扩展样式：鼠标事件穿透到下层窗口（<c>setIgnoreCursorEvents</c> 用它）。</summary>
+    public const int WS_EX_TRANSPARENT = 0x00000020;
+
+    // ---- 系统光标 id（MAKEINTRESOURCE 的整数形式，直接当指针传进 LoadCursorW）----
+    //
+    // 与窗口类注册用的那个 IDC_ARROW（下面的 nint 版本）是同一个值，
+    // 但那个是"注册窗口类时的默认光标"，这里是"逐个形状的句柄"——类型统一成 nint，
+    // 免得调用点到处写强制转换。
+
+    public static readonly nint IDC_IBEAM = 32513;
+    public static readonly nint IDC_WAIT = 32514;
+    public static readonly nint IDC_CROSS = 32515;
+    public static readonly nint IDC_SIZENWSE = 32642;
+    public static readonly nint IDC_SIZENESW = 32643;
+    public static readonly nint IDC_SIZEWE = 32644;
+    public static readonly nint IDC_SIZENS = 32645;
+    public static readonly nint IDC_SIZEALL = 32646;
+    public static readonly nint IDC_NO = 32648;
+    public static readonly nint IDC_HAND = 32649;
+    public static readonly nint IDC_APPSTARTING = 32650;
+    public static readonly nint IDC_HELP = 32651;
+
     /// <summary>系统窗口边框厚度（不含内边距）；需配合 GetSystemMetricsForDpi 使用。</summary>
     public const int SM_CXSIZEFRAME = 32;
     public const int SM_CYSIZEFRAME = 33;
@@ -731,6 +759,28 @@ internal static unsafe partial class Win32
 
     [LibraryImport("user32")]
     internal static partial nint SetCursor(nint cursor);
+
+    /// <summary>
+    /// 把光标限制在一个屏幕矩形内；传 <c>null</c> 取消限制。
+    /// </summary>
+    /// <remarks>
+    /// 限制是**线程级**的（准确说是"调用线程所在桌面的光标"），窗口销毁时必须取消，
+    /// 否则光标会一直卡在那块矩形里——那是一个看起来像"鼠标坏了"的故障。
+    /// </remarks>
+    [LibraryImport("user32", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static unsafe partial bool ClipCursor(RECT* rect);
+
+    [LibraryImport("user32", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool SetCursorPos(int x, int y);
+
+    /// <summary>
+    /// 调整光标显示计数器并返回新值（<c>&gt;= 0</c> 时可见）。
+    /// </summary>
+    /// <remarks><b>是计数器不是开关</b>：每隐藏一次就多一个负数，必须一一配对地显示回来。</remarks>
+    [LibraryImport("user32")]
+    internal static partial int ShowCursor(int show);
 
 
 

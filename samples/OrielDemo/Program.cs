@@ -286,6 +286,13 @@ internal static class Program
                         "window.setMinimizable",
                         "window.setClosable",
                         "window.setIcon",
+                        // 光标（B21）。同样**不进白名单**：改形状/可见性/位置、开点击穿透
+                        // 都不是标题栏要做的事，让被注入的页面能锁死光标属于越权。
+                        "window.setCursorIcon",
+                        "window.setCursorVisible",
+                        "window.setCursorPosition",
+                        "window.setCursorGrab",
+                        "window.setIgnoreCursorEvents",
                         // 图像模块（@orielweb/api/image）用：把文件读成字节、把字节解码成 RGBA。
                         // 两条都放进白名单：它们只碰调用方指定的那个文件，不涉及跨窗口越权。
                         "window.readImageFile",

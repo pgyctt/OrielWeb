@@ -254,6 +254,85 @@ internal interface IWindowBackend
     /// </remarks>
     void SetMaxSize(int width, int height);
 
+    // ---- 光标（B21）----
+    //
+    // 六个方法对应对标 Tauri 的 Window 上的同名 API。**支持矩阵是逐平台不同的**，
+    // 不自造"统一语义"（那正是 B21 之前把这组登记为 A·跨平台不一致的理由）：
+    //
+    // | 方法                | Windows | macOS | Linux            |
+    // |---------------------|---------|-------|------------------|
+    // | SetCursorGrab       | ✅      | ✅    | ⛔ not_supported |
+    // | SetCursorVisible    | ✅      | ✅    | ✅               |
+    // | SetCursorIcon       | ✅      | ✅    | ✅（CSS 名）      |
+    // | SetCursorPosition   | ✅      | ✅    | ✅ X11 / ⛔ Wayland |
+    // | SetIgnoreCursorEvents | ✅    | ✅    | ✅ X11 / ⛔ Wayland |
+    // | StartResizeDragging | ✅      | ⛔    | ✅               |
+    //
+    // 不支持的一律抛 **NotSupportedException**（命令层翻成 not_supported），
+    // 不做静默 no-op：`await setCursorGrab(true)` 成功返回却什么都没发生，比报错难查得多。
+
+    /// <summary>
+    /// 把光标限制在窗口内（<c>setCursorGrab</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Linux 不支持</b>（Wayland 没有对应协议，X11 要 XGrabPointer 且会带来 grab 生命周期问题）——
+    /// Tauri 文档同样标注 Linux 不支持。这里抛 <see cref="NotSupportedException"/>。
+    /// </para>
+    /// <para>
+    /// macOS 的实现是 <c>CGAssociateMouseAndMouseCursorPosition</c>：光标会被**锁死**在原地
+    /// （连移动都不响应），不是"限制在窗口矩形内"。两者不是一回事，但这是 macOS 能给的唯一形态。
+    /// </para>
+    /// </remarks>
+    void SetCursorGrab(bool grab);
+
+    /// <summary>显示/隐藏光标（<c>setCursorVisible</c>）。</summary>
+    /// <remarks>
+    /// 三平台都靠"显示计数器"，所以宿主侧**按状态去重**：连续两次隐藏只减一次计数，
+    /// 否则一次多余的显示请求就会让光标永远回不来。
+    /// </remarks>
+    void SetCursorVisible(bool visible);
+
+    /// <summary>设置光标形状（<c>setCursorIcon</c>）。</summary>
+    /// <remarks>
+    /// <b>设置之后页面的 CSS <c>cursor</c> 不再生效</b>（Windows 上会忽略 WebView2 报来的光标、
+    /// macOS/Linux 上覆盖 webview 的光标）。这是"应用显式指定"应有的语义，但确实会盖掉
+    /// 文本框的 I 形光标之类的东西——调用方要自己想清楚再用。
+    /// </remarks>
+    void SetCursorIcon(OrielCursorIcon icon);
+
+    /// <summary>
+    /// 把光标移到窗口客户区内的某个位置（<c>setCursorPosition</c>）。
+    /// </summary>
+    /// <param name="x">客户区**逻辑**像素横坐标（左上原点）。</param>
+    /// <param name="y">客户区逻辑像素纵坐标。</param>
+    /// <remarks>
+    /// 只收逻辑像素：本库对页面只暴露逻辑坐标（见 <c>window.innerSize</c> 的说明），
+    /// 物理换算在平台后端里做（它知道自己的 DPI/缩放）。
+    /// </remarks>
+    void SetCursorPosition(double x, double y);
+
+    /// <summary>让窗口是否忽略鼠标事件（<c>setIgnoreCursorEvents</c>，即"点击穿透"）。</summary>
+    /// <remarks>
+    /// <b>Linux 只在 X11 下有效</b>：GTK3 的 <c>gtk_widget_input_shape_combine_region</c>
+    /// 在 Wayland 下是 no-op（文档明说），所以 Wayland 上抛 <see cref="NotSupportedException"/>。
+    /// </remarks>
+    void SetIgnoreCursorEvents(bool ignore);
+
+    /// <summary>从窗口某条边/角开始一次 resize 拖动（<c>startResizeDragging</c>）。</summary>
+    /// <remarks>
+    /// <para>
+    /// <b>macOS 不支持</b>：AppKit 没有公开的"以编程方式开始 resize 拖动"入口
+    /// （<c>performWindowDragWithEvent:</c> 只能移动窗口，不能改尺寸）。Tauri 同样不支持。
+    /// </para>
+    /// <para>
+    /// <b>Windows/Linux 会进入一个模态循环</b>（跟着鼠标动、松开才结束），所以必须在
+    /// 鼠标按下的处理过程中调用——从一个"稍后执行"的定时器里调用会立刻失败或卡住。
+    /// 页面侧通常是在 <c>mousedown</c> 里调。
+    /// </para>
+    /// </remarks>
+    void StartResizeDragging(OrielResizeDirection direction);
+
     /// <summary>
     /// 请求用户注意（任务栏闪烁 / Dock 弹跳）。
     /// </summary>

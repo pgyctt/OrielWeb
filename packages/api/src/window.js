@@ -39,6 +39,44 @@ import {
 export { LogicalSize, LogicalPosition, PhysicalSize, PhysicalPosition } from './dpi.js';
 
 /**
+ * 光标形状（对标 Tauri 的 `CursorIcon`）。
+ *
+ * @remarks 取值是 CSS `cursor` 关键字的 camelCase 形式。**三平台各自只能给出最接近的形状**：
+ * Windows 没有 `copy`、macOS 没有对角线 resize、GTK 取决于光标主题。完整的降级表见 docs/API.md。
+ *
+ * @typedef {'default' | 'crosshair' | 'hand' | 'arrow' | 'move' | 'text' | 'wait' | 'help'
+ *   | 'progress' | 'notAllowed' | 'contextMenu' | 'cell' | 'verticalText' | 'alias' | 'copy'
+ *   | 'noDrop' | 'grab' | 'grabbing' | 'allScroll' | 'zoomIn' | 'zoomOut' | 'eResize'
+ *   | 'nResize' | 'neResize' | 'nwResize' | 'sResize' | 'seResize' | 'swResize' | 'wResize'
+ *   | 'ewResize' | 'nsResize' | 'neswResize' | 'nwseResize' | 'colResize' | 'rowResize'} CursorIcon
+ */
+
+/**
+ * 允许的光标形状。
+ *
+ * @type {ReadonlySet<string>}
+ */
+const CURSOR_ICONS = new Set([
+    'default', 'crosshair', 'hand', 'arrow', 'move', 'text', 'wait', 'help', 'progress',
+    'notAllowed', 'contextMenu', 'cell', 'verticalText', 'alias', 'copy', 'noDrop', 'grab',
+    'grabbing', 'allScroll', 'zoomIn', 'zoomOut', 'eResize', 'nResize', 'neResize', 'nwResize',
+    'sResize', 'seResize', 'swResize', 'wResize', 'ewResize', 'nsResize', 'neswResize',
+    'nwseResize', 'colResize', 'rowResize',
+]);
+
+/**
+ * resize 拖动的起始边/角（对标 Tauri 的 `ResizeDirection`）。
+ *
+ * @typedef {'East' | 'North' | 'NorthEast' | 'NorthWest' | 'South' | 'SouthEast'
+ *   | 'SouthWest' | 'West'} ResizeDirection
+ */
+
+/** @type {ReadonlySet<string>} */
+const RESIZE_DIRECTIONS = new Set([
+    'East', 'North', 'NorthEast', 'NorthWest', 'South', 'SouthEast', 'SouthWest', 'West',
+]);
+
+/**
  * 把宿主返回的尺寸对象包成 {@link LogicalSize} 实例。
  *
  * @param {unknown} raw
@@ -1043,6 +1081,112 @@ export class Window {
         }
 
         await invoke('window.moveTo', { label: this.label, x: Math.round(x), y: Math.round(y) });
+    }
+
+    // ---- 光标（B21）----
+    //
+    // 六条都需要显式 Allow（不在标题栏白名单里）。参数的严格校验放在页面侧：
+    // 传错形状时给一句能看懂的 TypeError，比让宿主回 invalid_argument 更早也更具体。
+
+    /**
+     * 把光标限制在窗口内（对标 Tauri 的 `setCursorGrab`）。
+     *
+     * @param {boolean} grab `true` 抓取，`false` 释放。
+     * @returns {Promise<void>}
+     * @remarks
+     * **Linux 不支持**（抛 `not_supported`）。macOS 的形态是把光标**锁死**在原地，
+     * 并不是"限制在窗口矩形内"——这是平台能给的唯一形态。
+     */
+    async setCursorGrab(grab) {
+        if (typeof grab !== 'boolean') {
+            throw new TypeError(`setCursorGrab: grab 必须是布尔值，收到 ${typeof grab}。`);
+        }
+
+        await invoke('window.setCursorGrab', { label: this.label, grab });
+    }
+
+    /**
+     * 显示或隐藏光标（对标 Tauri 的 `setCursorVisible`）。
+     *
+     * @param {boolean} visible
+     * @returns {Promise<void>}
+     * @remarks 隐藏是"应用到窗口/应用"的状态，窗口销毁时宿主会自动恢复。
+     */
+    async setCursorVisible(visible) {
+        if (typeof visible !== 'boolean') {
+            throw new TypeError(`setCursorVisible: visible 必须是布尔值，收到 ${typeof visible}。`);
+        }
+
+        await invoke('window.setCursorVisible', { label: this.label, visible });
+    }
+
+    /**
+     * 设置光标形状（对标 Tauri 的 `setCursorIcon`）。
+     *
+     * @param {CursorIcon} icon
+     * @returns {Promise<void>}
+     * @remarks
+     * **设置之后页面的 CSS `cursor` 不再生效**——这是"应用显式指定"应有的语义，
+     * 但确实会盖掉文本框的 I 形光标之类的东西。三平台都没有"恢复交给 CSS"的入口，
+     * 只能再设一个形状。
+     */
+    async setCursorIcon(icon) {
+        if (typeof icon !== 'string' || !CURSOR_ICONS.has(icon)) {
+            throw new TypeError(
+                `setCursorIcon: 未知的 icon ${JSON.stringify(icon)}。`
+                + '取值是 CSS cursor 关键字的 camelCase 形式（如 default / pointer / notAllowed / ewResize）。');
+        }
+
+        await invoke('window.setCursorIcon', { label: this.label, icon });
+    }
+
+    /**
+     * 把光标移到**客户区**内的某个位置（对标 Tauri 的 `setCursorPosition`）。
+     *
+     * @param {import('./dpi.js').LogicalPosition | import('./dpi.js').PhysicalPosition
+     *   | { type?: string, x: number, y: number } | [number, number]} position
+     * @returns {Promise<void>}
+     * @remarks
+     * 与 Tauri 一致，坐标相对窗口左上角（不是屏幕）。物理/逻辑两种都收，
+     * 换算在宿主侧做（它知道缩放比）。
+     */
+    async setCursorPosition(position) {
+        await invoke('window.setCursorPosition', { label: this.label, position: normalizePosition(position) });
+    }
+
+    /**
+     * 让窗口忽略鼠标事件（对标 Tauri 的 `setIgnoreCursorEvents`，即"点击穿透"）。
+     *
+     * @param {boolean} ignore
+     * @returns {Promise<void>}
+     * @remarks **Linux 只在 X11 下有效**（Wayland 抛 `not_supported`）。
+     */
+    async setIgnoreCursorEvents(ignore) {
+        if (typeof ignore !== 'boolean') {
+            throw new TypeError(`setIgnoreCursorEvents: ignore 必须是布尔值，收到 ${typeof ignore}。`);
+        }
+
+        await invoke('window.setIgnoreCursorEvents', { label: this.label, ignore });
+    }
+
+    /**
+     * 从窗口某条边/角开始一次 resize 拖动（对标 Tauri 的 `startResizeDragging`）。
+     *
+     * @param {ResizeDirection} direction
+     * @returns {Promise<void>}
+     * @remarks
+     * <b>必须在鼠标按下的处理过程中调用</b>（例如 `mousedown` 里）：Windows 会进入一个
+     * 跟着鼠标的模态循环，Wayland 则依赖那次按下事件的 serial，晚一步就无效。
+     * <b>macOS 不支持</b>（抛 `not_supported`）。
+     */
+    async startResizeDragging(direction) {
+        if (typeof direction !== 'string' || !RESIZE_DIRECTIONS.has(direction)) {
+            throw new TypeError(
+                `startResizeDragging: 未知的 direction ${JSON.stringify(direction)}。`
+                + '只认 East / North / NorthEast / NorthWest / South / SouthEast / SouthWest / West。');
+        }
+
+        await invoke('window.startResizeDragging', { label: this.label, direction });
     }
 
     /**

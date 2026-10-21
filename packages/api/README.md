@@ -24,7 +24,7 @@ import { invoke } from '@orielweb/api/core';
 |---|---|
 | `core` | ✅ `invoke`（含逐次调用超时）/ `isTauri` / `convertFileSrc`（走宿主 `asset.read` 的 scope） |
 | `event` | ✅ `listen` / `once` / `emit` / `emitTo` + `TauriEvent`（含名字映射与按需转发，退订时对称关闭） |
-| `window` | ✅ `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow` + `Window` 类（含静态 `Window.getFocusedWindow()`；状态查询、外观开关、`onThemeChanged` / `onScaleChanged`） |
+| `window` | ✅ `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow` + `Window` 类（含静态 `Window.getFocusedWindow()`；状态查询、外观开关、光标 6 项、`onThemeChanged` / `onScaleChanged`） |
 | `dpi` | ✅ 四个类 + 归一 + `toPhysical` / `toLogical` 换算 |
 | `path` | ✅ `sep` / `delimiter`（同步）+ 7 个路径运算 + 24 个目录解析（由宿主算） |
 | `app` | ✅ `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`（只读元信息，无需能力声明） |

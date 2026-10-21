@@ -835,3 +835,135 @@ test('cursorPosition：返回 PhysicalPosition，拿不到时退到 (0,0)', asyn
 
     clearMocks();
 });
+
+// ---- B21：光标 ----
+
+test('setCursorGrab / setCursorVisible / setIgnoreCursorEvents 发对应的命令', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main');
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+    await win.setCursorGrab(true);
+    await win.setCursorVisible(false);
+    await win.setIgnoreCursorEvents(true);
+
+    assert.deepEqual(calls, [
+        ['window.setCursorGrab', { label: 'main', grab: true }],
+        ['window.setCursorVisible', { label: 'main', visible: false }],
+        ['window.setIgnoreCursorEvents', { label: 'main', ignore: true }],
+    ]);
+
+    clearMocks();
+});
+
+test('三个布尔方法的参数必须是真布尔（"false" 字符串要当场拒）', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main');
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    // "false" 是 truthy：静默接受会把"隐藏光标"变成"显示光标"
+    await assert.rejects(() => win.setCursorGrab(/** @type {any} */ ('true')), TypeError);
+    await assert.rejects(() => win.setCursorVisible(/** @type {any} */ ('false')), TypeError);
+    await assert.rejects(() => win.setIgnoreCursorEvents(/** @type {any} */ (1)), TypeError);
+
+    assert.deepEqual(calls, []);
+    clearMocks();
+});
+
+test('setCursorIcon 发 { icon }，未知形状当场拒且不发 IPC', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main');
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+    await win.setCursorIcon('ewResize');
+
+    assert.deepEqual(calls, [['window.setCursorIcon', { label: 'main', icon: 'ewResize' }]]);
+
+    // CSS 叫 pointer，Tauri 叫 hand；这里只认后者（与 Tauri 的联合类型一致）
+    await assert.rejects(() => win.setCursorIcon(/** @type {any} */ ('pointer')), TypeError);
+    await assert.rejects(() => win.setCursorIcon(/** @type {any} */ (null)), TypeError);
+
+    assert.equal(calls.length, 1, '被拒的调用不该发出命令');
+
+    clearMocks();
+});
+
+test('setCursorPosition：逻辑坐标原样发，物理坐标保留给宿主换算', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main');
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    await win.setCursorPosition({ x: 12, y: 34 });
+    assert.deepEqual(calls.at(-1), [
+        'window.setCursorPosition',
+        { label: 'main', position: { type: 'Logical', x: 12, y: 34 } },
+    ]);
+
+    // Physical 不在这里换算：宿主知道缩放比，页面侧再除一次会得到两个略有差异的舍入
+    await win.setCursorPosition(new PhysicalPosition(120, 340));
+    assert.deepEqual(calls.at(-1)[1].position, { type: 'Physical', x: 120, y: 340 });
+
+    // 数组形式（本库既有约定）
+    await win.setCursorPosition([7, 8]);
+    assert.deepEqual(calls.at(-1)[1].position, { type: 'Logical', x: 7, y: 8 });
+
+    // 不发 scaleFactor 查询：换算由宿主做
+    assert.equal(calls.some(([name]) => name === 'window.scaleFactor'), false);
+
+    clearMocks();
+});
+
+test('setCursorPosition 对非有限坐标当场拒', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main');
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+    await assert.rejects(() => win.setCursorPosition({ x: NaN, y: 0 }), /有限/);
+    await assert.rejects(() => win.setCursorPosition({ x: 0 }), /有限|y/);
+
+    assert.deepEqual(calls, []);
+    clearMocks();
+});
+
+test('startResizeDragging 收八个方向，其余当场拒', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main');
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+
+    for (const direction of [
+        'East', 'North', 'NorthEast', 'NorthWest',
+        'South', 'SouthEast', 'SouthWest', 'West',
+    ]) {
+        await win.startResizeDragging(direction);
+    }
+
+    assert.equal(calls.length, 8);
+    assert.deepEqual(calls[0], ['window.startResizeDragging', { label: 'main', direction: 'East' }]);
+
+    await assert.rejects(() => win.startResizeDragging(/** @type {any} */ ('east')), TypeError);
+    await assert.rejects(() => win.startResizeDragging(/** @type {any} */ ('left')), TypeError);
+
+    assert.equal(calls.length, 8, '被拒的调用不该发出命令');
+    clearMocks();
+});
+
+test('光标命令作用于实例自己的 label', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main');
+    setTransportOverride(transport);
+
+    await new Window('settings').setCursorIcon('wait');
+
+    assert.equal(calls[0][1].label, 'settings');
+
+    clearMocks();
+});

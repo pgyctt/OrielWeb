@@ -417,9 +417,17 @@ internal sealed class OrielCommandDispatcher
         /// 非 <see cref="OrielIpcException"/> 一律归为 <see cref="OrielIpcErrorCodes.Internal"/>：
         /// 那意味着库的实现出了问题（应用命令的正常失败应当抛 <see cref="OrielIpcException"/>）。
         /// </remarks>
-        internal static ErrorReply FromException(Exception ex, string fallbackMessage) => ex is OrielIpcException ipc
-            ? new ErrorReply(ipc.Message, ipc.Code, ipc.Details)
-            : new ErrorReply(fallbackMessage, OrielIpcErrorCodes.Internal, null);
+        internal static ErrorReply FromException(Exception ex, string fallbackMessage) => ex switch
+        {
+            OrielIpcException ipc => new ErrorReply(ipc.Message, ipc.Code, ipc.Details),
+
+            // 后端用 NotSupportedException 表达"这个能力在当前平台没有"（光标抓取在 Linux、
+            // resize 拖动在 macOS…）。不翻译的话页面只能拿到 internal，而"internal"读起来
+            // 像库有 bug，实际是平台事实、调用方应当换条路走。
+            NotSupportedException => new ErrorReply(ex.Message, OrielIpcErrorCodes.NotSupported, null),
+
+            _ => new ErrorReply(fallbackMessage, OrielIpcErrorCodes.Internal, null),
+        };
     }
 
     /// <summary>

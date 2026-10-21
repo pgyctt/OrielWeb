@@ -219,6 +219,13 @@ WebviewWindow? again = app.GetWindow("settings");   // 按 label 取回（不存
 | `RequestUserAttention(OrielUserAttention? type)` | 请求用户注意（任务栏闪烁 / Dock 弹跳）。`Critical` / `Informational` / `null`（取消）。**macOS 上两档区别最明显**（Critical 会一直弹跳到用户来看）；**Linux 上两档没有区别**（GTK 只有 `gtk_window_set_urgency_hint` 这个开/关，没有分级） |
 | `SetIcon(string path)`<br>`SetIconFromBytes(byte[] bytes)`<br>`SetIconFromRgba(byte[] rgba, int width, int height)` | 运行期换窗口图标。三平台复用**创建期图标**的代码路径（Windows `WM_SETICON`、Linux `gtk_window_set_icon`、macOS `setApplicationIconImage:`）。**Windows 上大/小两个槽位都会设**（`ICON_BIG` 给任务栏与 Alt-Tab 大视图，`ICON_SMALL` 给标题栏与 Alt-Tab 小视图——只设大图标的表现是"图标换了但标题栏那个还是旧的"）。**macOS 上没有窗口级图标**：这里设的是**应用（Dock）图标**，会影响整个应用；Linux 的 Wayland 下窗口图标由合成器决定，通常忽略本调用。解码失败**静默保持原图标**并记一条诊断（与 `LoadImageW` 返回 0 同语义），非法 base64 / RGBA 长度不符则**当场报错**（那是调用方能自己修的问题） |
 | `SetBackgroundColor(uint argb)` | 运行期窗口底色（`0xAARRGGBB`）。这是"页面透明、或内核还没加载完时露出来"的颜色，三平台都落到 **webview 自己的底色**（Windows `ICoreWebView2Controller2.DefaultBackgroundColor`、macOS `NSWindow.backgroundColor` + `WKWebView.underPageBackgroundColor`、Linux `webkit_web_view_set_background_color`）。运行期值优先，没设过时回落创建期的 `OrielWindowOptions.BackgroundColor` |
+| **光标（B21）**（写操作，**均不在标题栏白名单里**，需显式 `Allow`） | |
+| `SetCursorGrab(bool grab)` | 把光标限制在窗口内。**Linux 抛 `NotSupportedException`**（Tauri 同样不支持）；macOS 的形态是把光标**锁死**（`CGAssociateMouseAndMouseCursorPosition(0)`），不是"限制在窗口矩形内"——那是平台能给的唯一形态 |
+| `SetCursorVisible(bool visible)` | 显示/隐藏光标。三平台都是**显示计数器**语义（不是开关），宿主按状态去重，避免多减一次之后光标永远回不来 |
+| `SetCursorIcon(OrielCursorIcon icon)` | 设置形状。**设置之后页面的 CSS `cursor` 不再生效**：Windows 上会忽略 WebView2 报来的光标、macOS/Linux 上覆盖 webview 的光标。三平台都没有"交还给 CSS"的入口，只能再设一个形状 |
+| `SetCursorPosition(double x, double y)` | 把光标移到**客户区**内的某点（逻辑像素，左上原点）。物理→逻辑的换算在宿主侧做（它知道缩放比），页面侧不要预换算 |
+| `SetIgnoreCursorEvents(bool ignore)` | 点击穿透。**Linux 仅 X11 有效**，Wayland 抛 `NotSupportedException`（GTK 的 input shape 在 Wayland 下是 no-op） |
+| `StartResizeDragging(OrielResizeDirection direction)` | 从某条边/角开始 resize 拖动。**macOS 抛 `NotSupportedException`**（AppKit 没有公开入口）；Windows/Linux 会进入跟着鼠标的模态循环，**必须在鼠标按下期间调用**（页面通常在 `mousedown` 里发这条命令） |
 | **几何与外观** | |
 | `SetTitle(string title)` / `SetResizable(bool enabled)` | — |
 | `SetMinSize(int width, int height)` | 客户区最小尺寸（逻辑像素，传 0 表示不限制） |
@@ -279,6 +286,44 @@ WebviewWindow? again = app.GetWindow("settings");   // 按 label 取回（不存
 > 且拿不到窗口位置（`window.screenX` 在多屏与 HiDPI 下三平台行为不一致）。
 
 `OrielMessageBoxIcon`：`Info`（默认）/ `Warning` / `Error` / `Question`。
+
+#### 光标形状的逐平台降级（B21）
+
+35 个形状里，只有一部分在三个平台都有**原生对应图**。没有的那些用"最接近的一个"，
+而不是编一个自定义光标（那需要一整套光标资源，也正是 B21 之前把这组登记为
+"跨平台不一致"的原因）。**这张表就是实现**——`Win32WindowHost.CursorHandle`、
+`MacOSWindowHost.SelectorFor`、`OrielCursorNames.ToGdkName` 三处与它逐行对应。
+
+| 形状 | Windows | macOS | Linux（GTK，按 CSS 名交给主题） |
+|---|---|---|---|
+| `default` / `arrow` | `IDC_ARROW` | `arrowCursor` | `default` |
+| `crosshair` | `IDC_CROSS` | `crosshairCursor` | `crosshair` |
+| `hand` | `IDC_HAND` | `pointingHandCursor` | `pointer` |
+| `move` / `allScroll` | `IDC_SIZEALL` | `openHandCursor` | `move` / `all-scroll` |
+| `cell` | `IDC_SIZEALL` | `crosshairCursor` | `cell` |
+| `text` | `IDC_IBEAM` | `IBeamCursor` | `text` |
+| `verticalText` | `IDC_IBEAM` | `IBeamCursorForVerticalLayout` | `vertical-text` |
+| `wait` | `IDC_WAIT` | `arrowCursor`（AppKit 无等待光标） | `wait` |
+| `progress` | `IDC_APPSTARTING` | `arrowCursor` | `progress` |
+| `help` | `IDC_HELP` | `arrowCursor`（无问号光标） | `help` |
+| `notAllowed` / `noDrop` | `IDC_NO` | `operationNotAllowedCursor` | `not-allowed` / `no-drop` |
+| `contextMenu` | `IDC_ARROW` | `contextualMenuCursor` | `context-menu` |
+| `alias` | `IDC_ARROW` | `dragLinkCursor` | `alias` |
+| `copy` | `IDC_ARROW` | `dragCopyCursor` | `copy` |
+| `grab` | `IDC_HAND` | `openHandCursor` | `grab` |
+| `grabbing` | `IDC_HAND` | `closedHandCursor` | `grabbing` |
+| `zoomIn` / `zoomOut` | `IDC_ARROW` | `arrowCursor` | `zoom-in` / `zoom-out` |
+| `eResize` / `wResize` / `ewResize` / `colResize` | `IDC_SIZEWE` | `resizeLeftRightCursor` | `e-resize` / `w-resize` / `ew-resize` / `col-resize` |
+| `nResize` / `sResize` / `nsResize` / `rowResize` | `IDC_SIZENS` | `resizeUpDownCursor` | `n-resize` / `s-resize` / `ns-resize` / `row-resize` |
+| `neResize` / `swResize` / `neswResize` | `IDC_SIZENESW` | `resizeUpDownCursor` | `ne-resize` / `sw-resize` / `nesw-resize` |
+| `nwResize` / `seResize` / `nwseResize` | `IDC_SIZENWSE` | `resizeLeftRightCursor` | `nw-resize` / `se-resize` / `nwse-resize` |
+
+> **Linux 那一列取决于光标主题**：`gdk_cursor_new_from_name` 名字解析不到时宿主会退回
+> `default` 并记一条诊断（"设了 copy 却看到箭头"必须能被解释，而不是静默）。
+> **macOS 的对角线 resize 没有原生形状**：落到左右/上下双箭头，至少给出"能拖"的暗示。
+
+**`NotSupportedException` 在页面侧就是 `not_supported` 错误码**（分发器统一翻译），
+所以迁移代码可以直接 `if (e.code === 'not_supported')` 分支——不需要按平台字符串判断。
 
 ### 关闭管线：宿主否决 → 页面接管 → 放行
 
@@ -1060,7 +1105,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 |---|---|
 | `core` | `invoke` / `isTauri` / `convertFileSrc`（同步；宿主侧查 `asset.read` 的 scope）/ `Channel`（流式回传，见 §11.3） |
 | `event` | `listen` / `once` / `emit` / `emitTo` / `TauriEvent`（`listen` 返回**函数**，同时是 thenable：`const un = listen(...)`、`await listen(...)`、`listen(...).then(fn => ...)` 三种写法都成立；差别只剩 `instanceof Promise === false`） |
-| `window` | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow` + `Window` 类（含静态方法 `Window.getFocusedWindow()`；M5 的状态查询与外观开关：`isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop` / `isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `isEnabled` / `theme`；`setEnabled` / `setMaximizable` / `setMinimizable` / `setClosable` / `setMaxSize` / `setSizeConstraints` / `requestUserAttention` / `setIcon` / `setBackgroundColor`；`onThemeChanged` / `onScaleChanged` / `onDragDropEvent`；显示器 `availableMonitors` / `primaryMonitor` / `currentMonitor` / `monitorFromPoint` / `cursorPosition`） |
+| `window` | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow` + `Window` 类（含静态方法 `Window.getFocusedWindow()`；M5 的状态查询与外观开关：`isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop` / `isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `isEnabled` / `theme`；`setEnabled` / `setMaximizable` / `setMinimizable` / `setClosable` / `setMaxSize` / `setSizeConstraints` / `requestUserAttention` / `setIcon` / `setBackgroundColor`；`onThemeChanged` / `onScaleChanged` / `onDragDropEvent`；显示器 `availableMonitors` / `primaryMonitor` / `currentMonitor` / `monitorFromPoint` / `cursorPosition`；光标 `setCursorGrab` / `setCursorVisible` / `setCursorIcon` / `setCursorPosition` / `setIgnoreCursorEvents` / `startResizeDragging`） |
 | `webviewWindow` | `WebviewWindow`（`extends Window`）/ `getCurrentWebviewWindow` / `getAllWebviewWindows`。**页面建窗**：`new WebviewWindow(label, options)` 后 `await w.created`，或 `await WebviewWindow.create(...)`。与 Tauri 的差别是"创建结果走 `created` 而不是 `tauri://created` 事件"（见该模块一节） |
 | `path` | `sep` / `delimiter`（**同步**）+ `join` / `normalize` / `dirname` / `extname` / `basename` / `isAbsolute` / `resolve` |
 | `app` | `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`（只读元信息，**无需能力声明**）；`exit` / `show` / `hide`（**需要显式 `Allow`**，见 §4 的能力表） |

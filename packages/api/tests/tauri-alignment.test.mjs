@@ -506,17 +506,13 @@ const METHOD_GAP_GROUPS = [
             '三平台机制差异很大，"特效"不是一个跨平台概念，要做就得先自造一套抽象模型。',
         methods: ['window.Window#setEffects', 'window.Window#clearEffects'],
     },
-    {
-        reason: '【A·跨平台不一致】光标控制。三平台基础能力（形状/可见性/位置）相近，但 ' +
-            '`setIgnoreCursorEvents` 在 Linux 上要走 X11 shape 扩展（Wayland 下又不同）、' +
-            '`startResizeDragging` 的拖拽边界语义各平台不同；而且这组需要一套**光标资源**' +
-            '（Tauri 那边光标图标走的是另一套协议）。整体不是"几个独立开关"。',
-        methods: [
-            'window.Window#setCursorGrab', 'window.Window#setCursorIcon',
-            'window.Window#setCursorPosition', 'window.Window#setCursorVisible',
-            'window.Window#setIgnoreCursorEvents', 'window.Window#startResizeDragging',
-        ],
-    },
+    // 光标控制六项已补（B21）：setCursorGrab / setCursorVisible / setCursorIcon /
+    // setCursorPosition / setIgnoreCursorEvents / startResizeDragging。
+    // 支持矩阵是**逐平台不同的**，没有自造"统一语义"：
+    //   * setCursorGrab：Linux 抛 not_supported（Tauri 同样不支持）
+    //   * startResizeDragging：macOS 抛 not_supported（AppKit 没有公开入口）
+    //   * setCursorPosition / setIgnoreCursorEvents：Linux 仅 X11，Wayland 抛 not_supported
+    // 详见 docs/API.md 的降级表。
     {
         reason: '【A·跨平台不一致】任务栏 / Dock 的徽标与进度。Windows 要 `ITaskbarList3`（COM）、' +
             'macOS 要 `NSDockTile`，而 **Linux 上没有对应概念**（不同桌面环境各有自己的扩展协议）。',

@@ -42,6 +42,17 @@ internal static class WindowSelfTest
     private static readonly bool IsLinux = OperatingSystem.IsLinux();
 
     /// <summary>
+    /// 当前是不是 Wayland 会话（Linux 上几条光标命令在 Wayland 下不可用）。
+    /// </summary>
+    /// <remarks>
+    /// 用环境变量判：<c>WAYLAND_DISPLAY</c> 只在 Wayland 会话里设置。这是**启发式**，
+    /// 但它只用来决定"断言还是跳过"，判错的后果是少验一条或者多跳过一条，
+    /// 不会把真实缺陷放过去。
+    /// </remarks>
+    private static readonly bool IsWayland =
+        Environment.GetEnvironmentVariable("WAYLAND_DISPLAY") is { Length: > 0 };
+
+    /// <summary>
     /// 当前环境是否有**窗口管理器**。
     /// </summary>
     /// <remarks>
@@ -687,6 +698,121 @@ internal static class WindowSelfTest
 
             Check(!app.Windows.Contains(probe), "window.destroy 应当关掉目标窗口");
             Check(app.Windows.Contains(main), "window.destroy 不该把发起者一起关掉");
+
+            // ---- 11. 光标（B21）：命令真的到达了三平台的后端 ----
+            //
+            // 这里只能验"命令被接受/被如实拒绝"——形状、可见性、位置对不对只有人眼能判，
+            // 所以不假装验了那些。**刻意不调用 startResizeDragging**：Windows 上它会进入一个
+            // 跟着鼠标的模态循环，自动环境里没有键可以松开，会把整个自检卡死
+            // （macOS 则直接不支持）。那条命令的可用性由单测与文档保证。
+            //
+            // 所有改动都要还原：自检可能跑在别人的桌面上，留下一个被隐藏的光标
+            // 或者被锁死的光标是很糟的副作用。
+
+            JsonElement cursorBefore = await AskMainAsync("window.cursorPosition", "null");
+            double cursorScreenX = cursorBefore.GetProperty("x").GetDouble();
+            double cursorScreenY = cursorBefore.GetProperty("y").GetDouble();
+
+            // 未知形状必须被拒（拼错的名字不该被悄悄当成 default）
+            JsonElement? badIcon = await TryAskMainAsync(
+                "window.setCursorIcon", SelfTestJson.Object(("icon", SelfTestJson.String("pointer"))));
+            Check(badIcon is null, "window.setCursorIcon 应当拒绝未知形状（pointer 是 CSS 名，不是本库的取值）");
+
+            await AskMainAsync(
+                "window.setCursorIcon", SelfTestJson.Object(("icon", SelfTestJson.String("crosshair"))));
+            Console.WriteLine("[window-selftest] OK: window.setCursorIcon 接受合法形状");
+
+            await AskMainAsync(
+                "window.setCursorVisible", SelfTestJson.Object(("visible", SelfTestJson.Bool(false))));
+            await AskMainAsync(
+                "window.setCursorVisible", SelfTestJson.Object(("visible", SelfTestJson.Bool(true))));
+            Console.WriteLine("[window-selftest] OK: window.setCursorVisible 隐藏后恢复");
+
+            // grab：Linux 不支持（Tauri 同样不支持），其余两平台应当成功。
+            JsonElement? grabbed = await TryAskMainAsync(
+                "window.setCursorGrab", SelfTestJson.Object(("grab", SelfTestJson.Bool(true))));
+
+            if (IsLinux)
+            {
+                Check(
+                    grabbed is null && (LastError ?? string.Empty).StartsWith("not_supported", StringComparison.Ordinal),
+                    $"Linux 上 setCursorGrab 应当明确报 not_supported（实际：{(grabbed is null ? LastError : "成功")}）");
+            }
+            else
+            {
+                Check(grabbed is not null, $"setCursorGrab 应当成功（失败：{LastError}）");
+                await AskMainAsync(
+                    "window.setCursorGrab", SelfTestJson.Object(("grab", SelfTestJson.Bool(false))));
+            }
+
+            // 位置：Wayland 不支持（协议不让客户端移动指针）
+            if (IsLinux && IsWayland)
+            {
+                JsonElement? warped = await TryAskMainAsync(
+                    "window.setCursorPosition",
+                    SelfTestJson.Object(
+                        ("position", SelfTestJson.Object(("type", SelfTestJson.String("Logical")),
+                                                        ("x", "20"),
+                                                        ("y", "20")))));
+
+                Check(
+                    warped is null && (LastError ?? string.Empty).StartsWith("not_supported", StringComparison.Ordinal),
+                    $"Wayland 上 setCursorPosition 应当明确报 not_supported（实际：{(warped is null ? LastError : "成功")}）");
+            }
+            else
+            {
+                await AskMainAsync(
+                    "window.setCursorPosition",
+                    SelfTestJson.Object(
+                        ("position", SelfTestJson.Object(("type", SelfTestJson.String("Logical")),
+                                                        ("x", "20"),
+                                                        ("y", "20")))));
+
+                // 还原：把光标放回原来的屏幕位置。
+                //
+                // 单位要换两次：cursorPosition 给的是**物理**像素，而 setCursorPosition 收的是
+                // **逻辑**客户区坐标——先除以缩放比得到逻辑屏幕坐标，再减去客户区原点。
+                // 直接相减会在 150%/Retina 上把光标送到别处（自检结束后用户的鼠标莫名其妙跳走）。
+                double scale = main.ScaleFactor;
+                if (scale <= 0)
+                {
+                    scale = 1;
+                }
+
+                OrielPosition inner = main.InnerPosition;
+                await AskMainAsync(
+                    "window.setCursorPosition",
+                    SelfTestJson.Object(
+                        ("position", SelfTestJson.Object(
+                            ("type", SelfTestJson.String("Logical")),
+                            ("x", SelfTestJson.Number((cursorScreenX / scale) - inner.X)),
+                            ("y", SelfTestJson.Number((cursorScreenY / scale) - inner.Y))))));
+
+                Console.WriteLine("[window-selftest] OK: window.setCursorPosition 移动并还原");
+            }
+
+            // 点击穿透：X11 能验；Wayland 不支持
+            if (IsLinux && IsWayland)
+            {
+                JsonElement? ignored = await TryAskMainAsync(
+                    "window.setIgnoreCursorEvents", SelfTestJson.Object(("ignore", SelfTestJson.Bool(true))));
+
+                Check(
+                    ignored is null && (LastError ?? string.Empty).StartsWith("not_supported", StringComparison.Ordinal),
+                    $"Wayland 上 setIgnoreCursorEvents 应当明确报 not_supported（实际：{(ignored is null ? LastError : "成功")}）");
+            }
+            else
+            {
+                await AskMainAsync(
+                    "window.setIgnoreCursorEvents", SelfTestJson.Object(("ignore", SelfTestJson.Bool(true))));
+                await AskMainAsync(
+                    "window.setIgnoreCursorEvents", SelfTestJson.Object(("ignore", SelfTestJson.Bool(false))));
+                Console.WriteLine("[window-selftest] OK: window.setIgnoreCursorEvents 开关都成功");
+            }
+
+            // 还原形状：设回 default，避免自检结束后光标一直是十字
+            await AskMainAsync(
+                "window.setCursorIcon", SelfTestJson.Object(("icon", SelfTestJson.String("default"))));
         }
         catch (Exception ex)
         {
@@ -744,7 +870,9 @@ internal static class WindowSelfTest
         string script =
             "window.oriel.invoke(" + SelfTestJson.String(command) + ", " + argsJson + ")" +
             ".then(function (v) { window.oriel.postMessage('win.probe', { id: " + id + ", ok: true, v: v }); })" +
-            ".catch(function (e) { window.oriel.postMessage('win.probe', { id: " + id + ", ok: false, e: String(e) }); });";
+            // 错误码拼在文案前面：自检要区分"平台不支持（not_supported）"与"真的失败了"，
+            // 而 String(e) 只给 message、看不出码
+            ".catch(function (e) { window.oriel.postMessage('win.probe', { id: " + id + ", ok: false, e: (e && e.code ? e.code + ': ' : '') + String(e) }); });";
 
         await main.EvaluateJs(script);
 

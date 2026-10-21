@@ -825,9 +825,253 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
             }
         }
 
+        // setCursorIcon / setCursorVisible 造的光标也归本对象所有
+        if (_iconCursor != 0)
+        {
+            GtkNative.GObjectUnref(_iconCursor);
+            _iconCursor = 0;
+        }
+
+        if (_blankCursor != 0)
+        {
+            GtkNative.GObjectUnref(_blankCursor);
+            _blankCursor = 0;
+        }
+
         _activeCursorEdge = -1;
         _pointerInResizeBorder = false;
     }
+
+    // ---- 光标（B21）----
+
+    /// <summary>应用显式设置的光标形状（<c>null</c> = 没设过）。</summary>
+    private OrielCursorIcon? _cursorIcon;
+
+    /// <summary>上面那个形状对应的 GdkCursor（本对象持有引用）；<c>0</c> = 没设或建不出来。</summary>
+    private nint _iconCursor;
+
+    /// <summary>隐藏光标用的空白光标（懒建、缓存）。</summary>
+    private nint _blankCursor;
+
+    /// <summary>光标可见性意图。</summary>
+    private bool _cursorVisible = true;
+
+    /// <summary>是否设置了忽略鼠标事件。</summary>
+    private bool _ignoreCursorEvents;
+
+    /// <inheritdoc />
+    public void SetCursorGrab(bool grab)
+        => throw new NotSupportedException(
+            "Linux 不支持 setCursorGrab：X11 要 XGrabPointer（grab 的生命周期与窗口销毁强耦合，"
+            + "异常退出容易把整个桌面的指针卡住），Wayland 协议则根本没有这个能力。Tauri 在 Linux 上同样不支持。");
+
+    /// <inheritdoc />
+    public void SetCursorVisible(bool visible)
+    {
+        if (visible == _cursorVisible)
+        {
+            return;
+        }
+
+        _cursorVisible = visible;
+        ApplyCursor();
+    }
+
+    /// <inheritdoc />
+    public void SetCursorIcon(OrielCursorIcon icon)
+    {
+        if (_iconCursor != 0)
+        {
+            GtkNative.GObjectUnref(_iconCursor);
+            _iconCursor = 0;
+        }
+
+        _cursorIcon = icon;
+
+        nint display = GtkNative.GdkDisplayGetDefault();
+        if (display != 0)
+        {
+            _iconCursor = GtkNative.GdkCursorNewFromName(display, OrielCursorNames.ToGdkName(icon));
+            if (_iconCursor == 0)
+            {
+                // 主题里没有这个名字（精简主题常见）。退到 default，并记一条诊断——
+                // 这不是错误（用户换了主题），但"设了 copy 却看到箭头"必须能被解释
+                _iconCursor = GtkNative.GdkCursorNewFromName(display, "default");
+                OrielDiagnostics.Report(
+                    $"[OrielWeb] setCursorIcon：当前光标主题没有「{OrielCursorNames.ToGdkName(icon)}」，已退回 default。");
+            }
+        }
+
+        ApplyCursor();
+    }
+
+    /// <summary>按当前状态把光标应用到 webview（隐藏优先于自定义形状）。</summary>
+    private void ApplyCursor()
+    {
+        nint cursor = 0;
+
+        if (!_cursorVisible)
+        {
+            if (_blankCursor == 0)
+            {
+                nint display = GtkNative.GdkDisplayGetDefault();
+                if (display != 0)
+                {
+                    // "none" 是 GTK 约定的空白光标名
+                    _blankCursor = GtkNative.GdkCursorNewFromName(display, "none");
+                }
+            }
+
+            cursor = _blankCursor;
+            if (cursor == 0)
+            {
+                OrielDiagnostics.Report("[OrielWeb] setCursorVisible：拿不到空白光标，光标不会被隐藏。");
+            }
+        }
+        else if (_iconCursor != 0)
+        {
+            cursor = _iconCursor;
+        }
+
+        SetWebviewCursor(cursor);
+    }
+
+    /// <inheritdoc />
+    public void SetCursorPosition(double x, double y)
+    {
+        if (IsWaylandBackend())
+        {
+            throw new NotSupportedException(
+                "Wayland 不允许客户端移动指针（协议没有这个请求），setCursorPosition 在 Wayland 上不可用。");
+        }
+
+        nint gdkWindow = GtkNative.GtkWidgetGetWindow(_webview);
+        if (gdkWindow == 0 || GtkNative.GdkWindowGetOrigin(gdkWindow, out int originX, out int originY) == 0)
+        {
+            return;
+        }
+
+        if (!TryGetPointerDevice(out nint device, out nint screen))
+        {
+            return;
+        }
+
+        // GDK 的坐标是应用像素（逻辑），与入参同口径，不用乘缩放比
+        GtkNative.GdkDeviceWarp(
+            device,
+            screen,
+            originX + (int)Math.Round(x),
+            originY + (int)Math.Round(y));
+    }
+
+    /// <inheritdoc />
+    public void SetIgnoreCursorEvents(bool ignore)
+    {
+        if (IsWaylandBackend())
+        {
+            throw new NotSupportedException(
+                "Wayland 不支持输入形状（gtk_widget_input_shape_combine_region 在 Wayland 下是 no-op），"
+                + "setIgnoreCursorEvents 在 Wayland 上不可用。");
+        }
+
+        if (ignore == _ignoreCursorEvents)
+        {
+            return;
+        }
+
+        _ignoreCursorEvents = ignore;
+
+        // 空区域 = 该部件不再接收任何输入。**顶层与 webview 都要设**：
+        // X11 的输入形状按窗口生效，顶层设了空区域不会自动让子窗口一起穿透。
+        nint region = ignore ? GtkNative.GdkRegionNew() : 0;
+        try
+        {
+            GtkNative.GtkWidgetInputShapeCombineRegion(_gtkWindow, region);
+            if (_webview != 0)
+            {
+                GtkNative.GtkWidgetInputShapeCombineRegion(_webview, region);
+            }
+        }
+        finally
+        {
+            if (region != 0)
+            {
+                GtkNative.GdkRegionDestroy(region);
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public void StartResizeDragging(OrielResizeDirection direction)
+    {
+        if (IsWaylandBackend())
+        {
+            // Wayland 的 xdg_toplevel.resize 要一个来自"当前输入事件"的 serial。
+            // 命令层收到这条命令时，那次按下早已处理完，serial 已经失效——
+            // 调用会静默无效。与其假装成功，不如说清楚。
+            throw new NotSupportedException(
+                "Wayland 下 startResizeDragging 需要一个『当前输入事件』的 serial，"
+                + "而命令是在按下事件处理完之后才到达的——协议层拿不到有效 serial。"
+                + "Wayland 请给窗口画可拖动的边角（宿主自己的边缘 resize 就是这么做的）。");
+        }
+
+        if (_gtkWindow == 0 || !TryGetPointerDevice(out nint device, out _))
+        {
+            return;
+        }
+
+        // 这个函数的返回类型是 void（GTK 的约定）：拿不到时坐标给 -1
+        GtkNative.GdkDeviceGetPosition(device, out _, out int rootX, out int rootY);
+        if (rootX < 0 || rootY < 0)
+        {
+            return;
+        }
+
+        // button 固定左键、timestamp 用 GDK_CURRENT_TIME（0）：X11 下 GTK 走 _NET_WM_MOVERESIZE，
+        // 时间戳只是提示，不影响结果
+        GtkNative.GtkWindowBeginResizeDrag(
+            _gtkWindow,
+            (int)EdgeFor(direction),
+            1,
+            rootX,
+            rootY,
+            0);
+    }
+
+    /// <summary>取默认 display 上的指针设备与屏幕（拿不到时返回 false）。</summary>
+    private static bool TryGetPointerDevice(out nint device, out nint screen)
+    {
+        device = 0;
+        screen = 0;
+
+        nint display = GtkNative.GdkDisplayGetDefault();
+        if (display == 0)
+        {
+            return false;
+        }
+
+        nint seat = GtkNative.GdkDisplayGetDefaultSeat(display);
+        if (seat != 0)
+        {
+            device = GtkNative.GdkSeatGetPointer(seat);
+        }
+
+        screen = GtkNative.GdkDisplayGetDefaultScreen(display);
+        return device != 0 && screen != 0;
+    }
+
+    /// <summary>公共的 resize 方向 → GTK 的窗口边缘。</summary>
+    private static GdkWindowEdge EdgeFor(OrielResizeDirection direction) => direction switch
+    {
+        OrielResizeDirection.East => GdkWindowEdge.East,
+        OrielResizeDirection.North => GdkWindowEdge.North,
+        OrielResizeDirection.NorthEast => GdkWindowEdge.NorthEast,
+        OrielResizeDirection.NorthWest => GdkWindowEdge.NorthWest,
+        OrielResizeDirection.South => GdkWindowEdge.South,
+        OrielResizeDirection.SouthEast => GdkWindowEdge.SouthEast,
+        OrielResizeDirection.SouthWest => GdkWindowEdge.SouthWest,
+        _ => GdkWindowEdge.West,
+    };
 
     // ------------------------------------------------------------------
     // 创建

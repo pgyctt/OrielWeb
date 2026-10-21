@@ -11,6 +11,34 @@
 
 ### 新增
 
+- **光标控制（B21）：`setCursorGrab` / `setCursorVisible` / `setCursorIcon` /
+  `setCursorPosition` / `setIgnoreCursorEvents` / `startResizeDragging`**——
+  `@orielweb/api/window` 的 Tauri `Window` 方法面至此只剩平台开关/特效/任务栏那几组。
+  - **支持矩阵按平台如实给出**（不自造统一语义）：
+    | 方法 | Windows | macOS | Linux |
+    |---|---|---|---|
+    | `setCursorGrab` | ✅ `ClipCursor`（限客户区） | ✅ `CGAssociateMouseAndMouseCursorPosition`（**锁死**光标，不是限制矩形） | ⛔ `not_supported`（Tauri 同样不支持） |
+    | `setCursorVisible` | ✅ `ShowCursor`（计数器，按状态去重） | ✅ `NSCursor hide/unhide` | ✅ 空白光标 |
+    | `setCursorIcon` | ✅ 13 个系统光标 + 降级 | ✅ 18 个 `NSCursor` + 降级 | ✅ CSS 名交给主题 |
+    | `setCursorPosition` | ✅ `SetCursorPos`（客户区→屏幕） | ✅ `CGWarpMouseCursorPosition`（逻辑点，与 `InnerPosition` 同口径） | ✅ X11 `gdk_device_warp`／⛔ Wayland |
+    | `setIgnoreCursorEvents` | ✅ `WS_EX_TRANSPARENT` | ✅ `setIgnoresMouseEvents:` | ✅ X11 输入形状／⛔ Wayland |
+    | `startResizeDragging` | ✅ `WM_NCLBUTTONDOWN` + `HT*` | ⛔ `not_supported`（AppKit 无公开入口） | ✅ `gtk_window_begin_resize_drag`（仅 X11） |
+  - **35 个形状的逐平台降级表**写进 docs/API.md：没有原生形状的（Windows 的 `copy`、
+    macOS 的 `zoomIn`、对角线 resize…）用最接近的一个，而不是编一套自定义光标资源。
+    Linux 的名字解析不到时退回 `default` 并记诊断。
+  - **设置图标后页面的 CSS `cursor` 不再生效**：Windows 上 `WM_SETCURSOR` 只接管客户区、
+    并忽略 WebView2 报来的光标；三平台都没有"交还给 CSS"的入口，只能再设一个形状。
+  - 三平台都按"显示计数器"的语义**按状态去重**（多减一次就再也补不回来）；
+    窗口销毁时恢复 grab / 可见性 / 穿透（grab 是进程级状态，不恢复会让整个应用的光标
+    不再跟随鼠标）。
+  - **`NotSupportedException` 在分发器里统一翻译成 `not_supported`**（此前会落到
+    `internal`，读起来像库有 bug，实际是平台事实）。页面侧可直接按错误码分支。
+  - 演示自检新增第 11 段：三平台各跑一遍（含 Wayland/Linux 的"应当报 not_supported"分支），
+    改动全部还原；**刻意不调用 `startResizeDragging`**（Windows 会进入模态循环）。
+  - 对齐账本的 window 光标缺口 6 项清零。
+
+### 新增
+
 - **文件监视（B20）：`fs.watch` / `fs.watchImmediate`**——
   `@orielweb/api/fs` 至此覆盖 Tauri fs 插件除两项 macOS 沙箱专用能力外的全部导出。
   - 宿主侧新增应用级 `OrielFsWatcherRegistry`（`FileSystemWatcher`，三个平台分别落到
