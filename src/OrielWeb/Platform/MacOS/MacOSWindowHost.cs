@@ -956,11 +956,45 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
 
         RemoveEffectView();
 
-        // 还原窗口与 webview 的背景：材质没了之后，不透明窗口比"漏底"更接近默认观感
+        // 还原窗口与 webview 的背景：材质没了之后，不透明窗口比"漏底"更接近默认观感。
+        // **注意不能只调 ApplyBackgroundColor**：它在"没设过底色"时直接返回，
+        // 而 setEffects 刚刚把窗口底色改成了 clear——那样窗口会一直透明下去
+        // （表现为"清掉材质后整个窗口是黑的/透的"）。所以没显式底色时要显式还原成
+        // 系统的窗口底色。
         ObjCRuntime.SendVoidBool(_nsWindow, ObjCRuntime.Sel("setOpaque:"), true);
         _runtimeBackgroundArgb = null;
-        ApplyBackgroundColor();
+        if (_options.TryGetBackgroundArgb(out _, out _, out _, out _))
+        {
+            ApplyBackgroundColor();
+        }
+        else
+        {
+            RestoreSystemBackgroundColor();
+        }
+
         SetWebviewDrawsBackground(true);
+    }
+
+    /// <summary>把窗口与 webview 的底色还原成系统的窗口底色（<c>NSColor.windowBackgroundColor</c>）。</summary>
+    private void RestoreSystemBackgroundColor()
+    {
+        nint color = ObjCRuntime.SendId(
+            ObjCRuntime.GetClassOrThrow("NSColor"), ObjCRuntime.Sel("windowBackgroundColor"));
+        if (color == 0)
+        {
+            return;
+        }
+
+        ObjCRuntime.SendVoidObj(_nsWindow, ObjCRuntime.Sel("setBackgroundColor:"), color);
+
+        if (_webview != 0
+            && ObjCRuntime.SendBoolRetObj(
+                _webview,
+                ObjCRuntime.Sel("respondsToSelector:"),
+                ObjCRuntime.Sel("setUnderPageBackgroundColor:")))
+        {
+            ObjCRuntime.SendVoidObj(_webview, ObjCRuntime.Sel("setUnderPageBackgroundColor:"), color);
+        }
     }
 
     /// <summary>把材质视图摘掉并释放（幂等）。</summary>

@@ -293,6 +293,26 @@ internal static class Program
                         "window.setCursorPosition",
                         "window.setCursorGrab",
                         "window.setIgnoreCursorEvents",
+                        // 平台开关 / 特效 / 任务栏（B22）。同样**不进白名单**：隐藏任务栏按钮、
+                        // 改截屏保护、把窗口压到底、在任务栏上画进度条——没有一条是画标题栏
+                        // 非要不可是的能力，被注入的页面能随手改这些会让用户以为应用坏了。
+                        "window.setShadow",
+                        "window.setVisibleOnAllWorkspaces",
+                        "window.setContentProtected",
+                        "window.setFocusable",
+                        "window.setSkipTaskbar",
+                        "window.setAlwaysOnBottom",
+                        "window.setTitleBarStyle",
+                        "window.setEffects",
+                        "window.clearEffects",
+                        "window.setProgressBar",
+                        "window.setOverlayIcon",
+                        "window.setBadgeCount",
+                        "window.setSimpleFullscreen",
+                        "window.setDecorations",
+                        // 刻意**不声明** window.setFullscreenOnMonitor：自检不调用它
+                        // （真跑会切显示器并把窗口搬到别处，在 CI 的单屏环境里没有意义），
+                        // 而"没声明就该被拒"本身也是一条能力面的事实。
                         // 图像模块（@orielweb/api/image）用：把文件读成字节、把字节解码成 RGBA。
                         // 两条都放进白名单：它们只碰调用方指定的那个文件，不涉及跨窗口越权。
                         "window.readImageFile",
