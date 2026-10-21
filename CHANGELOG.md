@@ -44,6 +44,9 @@
     新增手写的 `ITaskbarList3` 调用（`CoCreateInstance` + vtable 槽位，本库第一个"只调用、
     不实现"的 COM 接口），Windows 上做进度条与覆盖图标；macOS 做 Dock 徽标（数字/短文本，
     **应用级**）；Linux 的这两个能力都要 `libunity`，本库不链接——抛 `not_supported`。
+    **拿不到 `ITaskbarList3` 时会退到 `ITaskbarList`**（没有 Explorer 的服务会话里
+    请求 v3 得到 `E_NOINTERFACE`）：那种环境里"隐藏任务栏按钮"仍可用，进度条与覆盖图标
+    如实报"只有 v1、没有落点"——Server Core / 无 shell 的会话在真实部署里也存在。
   - **`EffectState` 在 Windows 上被忽略并记诊断**：DWM 材质本身跟随窗口激活态，
     没有"强制激活/非激活"的入口。这一点写在文档里，而不是假装生效。
   - 演示自检新增第 12 段：三平台各跑一遍，每条**按平台分两路**（能做的验成功、
