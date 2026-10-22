@@ -96,6 +96,8 @@ internal sealed unsafe class MacOSMenu : IDisposable
         // popUpContextMenu:withEvent:forView: 是类方法：self 位置传 NSMenu 类对象。
         // event 传 NSApplication.currentEvent —— 位置由事件携带，这正是"在鼠标位置弹出"的来源；
         // 没有当前事件时（例如从后台回调里调用）AppKit 无法定位，此时明确不弹而不是弹到随机位置。
+        MacOSSession.RequireScreen("菜单无法弹出");
+
         nint currentEvent = ObjCRuntime.SendId(
             ObjCRuntime.GetClassOrThrow("NSApplication"), ObjCRuntime.Sel("sharedApplication"));
         currentEvent = ObjCRuntime.SendId(currentEvent, ObjCRuntime.Sel("currentEvent"));
@@ -126,6 +128,8 @@ internal sealed unsafe class MacOSMenu : IDisposable
         {
             return;
         }
+
+        MacOSSession.RequireScreen("菜单无法弹出");
 
         double y = logical.Y;
         if (!ObjCRuntime.SendBoolRet(view, ObjCRuntime.Sel("isFlipped")))

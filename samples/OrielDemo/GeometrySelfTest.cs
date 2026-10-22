@@ -102,6 +102,16 @@ internal static class GeometrySelfTest
     {
         try
         {
+            // macOS 无图形会话时，窗口既不能改尺寸也不能摆位置（没有窗口服务器），
+            // 尺寸语义无从验证——整段跳过，其余平台照常严格断言。
+            if (OperatingSystem.IsMacOS() && !MacDisplay.HasScreenSession)
+            {
+                Console.WriteLine(
+                    "[geometry-selftest] SKIP: 本进程没有图形会话（macOS 停在登录窗口），"
+                    + "窗口尺寸/位置不由客户端决定——几何语义无从验证");
+                return;
+            }
+
             // 页面已 Loaded，DOM 可用。读客户区（CSS 逻辑像素）。
             // 仍在 UI 线程上（await 之前的同步段），EvaluateJs 因此可调。
             string raw = await window.EvaluateJs(
@@ -183,6 +193,16 @@ internal static class GeometrySelfTest
 
         Console.WriteLine($"[geometry-selftest] ({mode}) Resize({TargetWidth}, {TargetHeight}) 之后客户区 {width}x{height}");
 
+        // Wayland：尺寸由合成器决定，程序化 Resize 可能一点效果都没有（实测 gnome-shell）。
+        // 那验的是环境——跳过，但把请求值与实测值都打出来（上面那行已经打了）。
+        if (!(width == TargetWidth && height == TargetHeight) && LinuxDisplay.IsWayland)
+        {
+            Console.WriteLine(
+                $"[geometry-selftest] SKIP: ({mode}) 本会话是 Wayland，窗口尺寸由合成器决定" +
+                $"（请求 {TargetWidth}x{TargetHeight}，实际 {width}x{height}）——尺寸语义无从验证");
+            return;
+        }
+
         Check(
             width == TargetWidth && height == TargetHeight,
             $"({mode}) Resize({TargetWidth}, {TargetHeight}) 之后客户区应为 {TargetWidth}x{TargetHeight}，实际 {width}x{height}" +
@@ -225,6 +245,23 @@ internal static class GeometrySelfTest
         OrielSize outer = window.OuterSize;
         OrielPosition outerPos = window.OuterPosition;
         OrielPosition innerPos = window.InnerPosition;
+
+        // Wayland 下窗口尺寸由**合成器**决定：实测（Ubuntu 22.04 / gnome-shell）
+        // gtk_window_resize、gtk_window_set_default_size、子控件 size_request、
+        // 甚至连 gdk_window_resize 都不会改变 GTK 的分配尺寸——连建窗时请求的
+        // 800x600 都会被换成 852x689。这不是"尺寸语义算错了"，而是这个会话里
+        // **没有可测的尺寸语义**，所以整段跳过（X11 上照常严格断言）。
+        bool sizeHonored = Math.Abs(inner.Width - ProbeWidth) <= Tolerance
+            && Math.Abs(inner.Height - ProbeHeight) <= Tolerance;
+
+        if (!sizeHonored && LinuxDisplay.IsWayland)
+        {
+            Console.WriteLine(
+                $"[geometry-selftest] SKIP: ({mode}) 本会话是 Wayland，窗口尺寸由合成器决定" +
+                $"（请求 {ProbeWidth}x{ProbeHeight}，实际 {inner.Width:0.#}x{inner.Height:0.#}）——" +
+                "尺寸语义无从验证");
+            return;
+        }
 
         Console.WriteLine(
             $"[geometry-selftest] ({mode}) InnerSize={inner.Width:0.#}x{inner.Height:0.#} " +

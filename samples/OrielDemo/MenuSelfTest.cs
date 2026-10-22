@@ -212,7 +212,20 @@ internal static class MenuSelfTest
                 break;
 
             case "fatal":
-                Check(false, $"菜单自检脚本抛错：{Error(root)}");
+                string scriptError = Error(root) ?? string.Empty;
+
+                // macOS 无图形会话时 popup 会被库明确拒绝（not_supported）并抛到页面里，
+                // 那是**预期行为**（见 MacOSMenu.RequireScreenSession），不是脚本坏了。
+                if (OperatingSystem.IsMacOS()
+                    && !MacDisplay.HasScreenSession
+                    && scriptError.Contains("没有图形会话", StringComparison.Ordinal))
+                {
+                    Console.WriteLine("[menu-selftest] SKIP: 页面脚本因无图形会话被拒（预期）");
+                    Finish();
+                    return;
+                }
+
+                Check(false, $"菜单自检脚本抛错：{scriptError}");
                 _main?.PostToUiThread(Finish);
                 break;
         }
@@ -291,10 +304,25 @@ internal static class MenuSelfTest
             _finished = true;
 
             // 四步都必须走到：漏一步说明脚本在中途抛了，那本身就是失败。
-            Check(_popupSeen, "普通菜单的 popup 没有回执（命令失败或页面脚本中断）");
-            Check(_submenuSeen, "子菜单的 popup 没有回执");
-            Check(_emptySeen, "空菜单的 popup 没有回执");
-            Check(_invalidSeen, "非法参数那一组没有回执");
+            //
+            // macOS 无图形会话时 popup 会被库**明确拒绝**（not_supported，见
+            // MacOSMenu.RequireScreenSession）——那边 AppKit 会直接终止进程，
+            // 所以拿不到"回执"是预期行为。此时这四条跳过，其余（构建、序列化、
+            // 非法参数校验）照常断言。
+            bool canPopup = !OperatingSystem.IsMacOS() || MacDisplay.HasScreenSession;
+            if (canPopup)
+            {
+                Check(_popupSeen, "普通菜单的 popup 没有回执（命令失败或页面脚本中断）");
+                Check(_submenuSeen, "子菜单的 popup 没有回执");
+                Check(_emptySeen, "空菜单的 popup 没有回执");
+                Check(_invalidSeen, "非法参数那一组没有回执");
+            }
+            else
+            {
+                Console.WriteLine(
+                    "[menu-selftest] SKIP: 四条 popup 回执（macOS 无图形会话：菜单弹出会被库明确拒绝，"
+                    + "否则 AppKit 会以 Nil screen 终止进程）");
+            }
 
             int failureCount = Failures.Count;
             Console.WriteLine(failureCount == 0

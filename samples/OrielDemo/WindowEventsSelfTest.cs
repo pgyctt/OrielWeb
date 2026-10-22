@@ -42,6 +42,16 @@ internal static class WindowEventsSelfTest
     {
         try
         {
+            // macOS 无图形会话时，Resize / MoveTo / 焦点交接都由窗口服务器负责——
+            // 没有它这三类事件不会发生。那验的是环境，整段跳过。
+            if (OperatingSystem.IsMacOS() && !MacDisplay.HasScreenSession)
+            {
+                Console.WriteLine(
+                    "[windowevents-selftest] SKIP: 本进程没有图形会话（macOS 停在登录窗口），"
+                    + "尺寸/位置/焦点事件都不由客户端驱动——事件语义无从验证");
+                return;
+            }
+
             // ---- 1. Resized：程序调 Resize 必须触发 ----
             var sizeEvents = new List<OrielSizeChangedEventArgs>();
             var positionEvents = new List<OrielPositionChangedEventArgs>();
@@ -86,12 +96,29 @@ internal static class WindowEventsSelfTest
                 await WaitForAsync(() => Count(sizeEvents) > sizeBefore, 2000);
 
                 (double lastWidth, double lastHeight) = LastSize(sizeEvents);
-                Check(
-                    Count(sizeEvents) > sizeBefore,
-                    "Resize(700, 520) 应触发 Resized 事件");
-                Check(
-                    Math.Abs(lastWidth - 700) <= 2 && Math.Abs(lastHeight - 520) <= 2,
-                    $"Resized 的参数应是逻辑像素的客户区（期望 ≈700x520，实际 {lastWidth:0.#}x{lastHeight:0.#}）");
+
+                // Wayland 下尺寸由合成器决定，程序化 Resize 可能完全无效（实测 gnome-shell：
+                // 请求 700x520 后窗口尺寸一点没变，自然也不会发 Resized）。那不是"事件接线错了"，
+                // 而是**没有尺寸变化可报**——跳过，并把实测值打出来。X11 上照常严格断言。
+                bool resizeTook = Count(sizeEvents) > sizeBefore
+                    || Math.Abs(window.InnerSize.Width - 700) <= 2;
+
+                if (!resizeTook && LinuxDisplay.IsWayland)
+                {
+                    Console.WriteLine(
+                        "[windowevents-selftest] SKIP: Resize(700, 520) 应触发 Resized 事件" +
+                        $"（本会话是 Wayland，尺寸由合成器决定；实际客户区 {window.InnerSize.Width:0.#}x" +
+                        $"{window.InnerSize.Height:0.#}）");
+                }
+                else
+                {
+                    Check(
+                        Count(sizeEvents) > sizeBefore,
+                        "Resize(700, 520) 应触发 Resized 事件");
+                    Check(
+                        Math.Abs(lastWidth - 700) <= 2 && Math.Abs(lastHeight - 520) <= 2,
+                        $"Resized 的参数应是逻辑像素的客户区（期望 ≈700x520，实际 {lastWidth:0.#}x{lastHeight:0.#}）");
+                }
 
                 // ---- 2. Moved：程序调 MoveTo 必须触发 ----
                 //
@@ -150,10 +177,28 @@ internal static class WindowEventsSelfTest
 
                 if (other is not null)
                 {
-                    await WaitForAsync(() => Count(focusEvents) > focusBefore, 3000);
-                    Check(
-                        Count(focusEvents) > focusBefore,
-                        "另一个窗口获得焦点时，本窗口应收到 FocusChanged(false)");
+                    // **先确认焦点真的搬过去了**，再要求收到失焦事件。
+                    //
+                    // 为什么不能直接断言：有些环境里新窗口根本拿不到焦点——Wayland/合成器的
+                    // 焦点策略不允许后台窗口抢焦点，X11 下也可能没有 WM 来交接。那种情况下
+                    // 本窗口"没有失焦"是事实，不是库的 bug；断言它只会训练人忽略红灯。
+                    // 反过来，只要另一个窗口**真的**拿到了焦点，本窗口就**必须**收到 false。
+                    await WaitForAsync(
+                        () => other.IsFocused || Count(focusEvents) > focusBefore, 5000);
+
+                    if (other.IsFocused)
+                    {
+                        await WaitForAsync(() => Count(focusEvents) > focusBefore, 3000);
+                        Check(
+                            Count(focusEvents) > focusBefore,
+                            "另一个窗口获得焦点时，本窗口应收到 FocusChanged(false)");
+                    }
+                    else
+                    {
+                        Console.WriteLine(
+                            "[windowevents-selftest] SKIP: 另一个窗口没能获得焦点" +
+                            "（合成器/焦点策略不允许后台窗口抢焦点），本窗口收不到失焦事件是必然的");
+                    }
 
                     int afterBlur = Count(focusEvents);
                     other.Close();
@@ -187,9 +232,19 @@ internal static class WindowEventsSelfTest
                 int dedupeBefore = Count(sizeEvents);
                 window.Resize(700, 520);   // 与上面同一个尺寸
                 await Task.Delay(300);
-                Check(
-                    Count(sizeEvents) == dedupeBefore,
-                    $"重复设置同一尺寸不应再触发 Resized（之前 {dedupeBefore} 次，现在 {Count(sizeEvents)} 次）");
+
+                if (!resizeTook && LinuxDisplay.IsWayland)
+                {
+                    Console.WriteLine(
+                        "[windowevents-selftest] SKIP: 重复设置同一尺寸不应再触发 Resized" +
+                        "（本会话的 Resize 不生效，去重逻辑无从验证）");
+                }
+                else
+                {
+                    Check(
+                        Count(sizeEvents) == dedupeBefore,
+                        $"重复设置同一尺寸不应再触发 Resized（之前 {dedupeBefore} 次，现在 {Count(sizeEvents)} 次）");
+                }
             }
             finally
             {

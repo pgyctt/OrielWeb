@@ -356,7 +356,7 @@ pwsh tools/wsl_publish.ps1 -Bundle              # 在 WSL 里发 Linux 产物（
 | 平台 | 要求 |
 |---|---|
 | Windows | WebView2 运行时（Win10+ 常已预装；未装时库会引导，或由 `OnWebView2RuntimeMissing` 自定义提示）。开发/发布需要 .NET 10 SDK 与 MSVC 工具链（AOT） |
-| Linux | `libwebkit2gtk-4.1`、`libgtk-3`；中文界面另需 CJK 字体（否则渲染成方框）。AOT 发布需要 `clang` 与 `zlib1g-dev` |
+| Linux | `libwebkit2gtk-4.1` **或** `4.0`（Ubuntu 22.04 / Debian 11 只有 4.0——宿主会自动回退，两者是同一套 C API）、`libgtk-3`；中文界面另需 CJK 字体（否则渲染成方框）。AOT 发布需要 `clang` 与 `zlib1g-dev` |
 | macOS | 系统 ≥ 11；产物必须打成 `.app` 才能运行（WKWebView 需要 bundle identifier）。`tools/make-macos-app.sh` 会做这件事，`vpk pack` 再消费它 |
 
 三平台的详细依赖、已知限制与排查入口见 [docs/API.md](docs/API.md#13-运行要求)。

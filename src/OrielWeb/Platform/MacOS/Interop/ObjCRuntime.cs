@@ -7,9 +7,15 @@ namespace OrielWeb.Platform.MacOS.Interop;
 //
 // 关键约定（全部经过 ABI 分析）：
 //  * objc_msgSend 按具体签名多次声明（EntryPoint 指向同一导出）；
-//  * NSPoint/NSSize/NSRect 参数是 double 聚合——x64 SysV 与 arm64 都把
-//    整数/浮点参数分属不同寄存器组，因此 .NET 声明
-//    (void* self, void* sel, double…) 与原生 (self, _cmd, NSPoint…) 槽位一致；
+//  * NSPoint/NSSize（2×double）可以拆成两个 double 参数：x64 SysV 的 SSE 类与
+//    arm64 的 HFA 都把它们放进两个浮点寄存器，与 (void* self, void* sel, double, double)
+//    逐槽一致；
+//  * **NSRect（4×double）不行**：x86_64 上 32 字节的聚合是 MEMORY 类——整个结构
+//    压在**栈**上，而 arm64 仍按 HFA 放进 v0–v3。拆成 4 个 double 在 arm64 上"碰巧对"，
+//    在 Intel Mac 上会把 4 个 double 塞进 xmm 寄存器、栈上留垃圾——实测表现是
+//    NSWindow 收到 frame={{1024,0},{nan,0}} 并抛 NSInternalInconsistencyException
+//    （2026-10-22 在 Hyper-V 的 Intel macOS VM 上抓到）。所以矩形一律走
+//    <see cref="NSRect"/> 结构体，由封送层按平台 ABI 处理；
 //  * 不做 struct 返回的 msgSend（窗口原点等由 JS 侧提供 + 宿主跟踪增量）；
 //  * 回调经手工类对（objc_allocateClassPair + class_addMethod）+ [UnmanagedCallersOnly]，
 //    与 Windows 侧的手工 CCW 同一思想。
@@ -213,36 +219,67 @@ internal static unsafe partial class ObjCRuntime
     internal static partial void SendVoidSelObjDoubleObj(
         nint self, nint sel, nint targetSel, nint arg, double delay, nint tail);
 
-    /// <summary>
-    /// 四个 double（NSRect）+ 一个整数 + 两个对象参数的调用
-    /// （如 <c>NSTrackingArea initWithRect:options:owner:userInfo:</c>）。
-    /// </summary>
+    // ---- 矩形参数（见文件头：**必须走结构体**，不能拆成 4 个 double）----
+
+    /// <summary>AppKit 的 <c>NSRect</c>：原点 + 尺寸，四个 <c>CGFloat</c>。</summary>
     /// <remarks>
-    /// <c>options</c> 是 <c>NSTrackingAreaOptions</c>（NSUInteger）：x64/arm64 上它占一个整数寄存器，
-    /// 必须排在 4 个 double 之后、两个对象之前，与原生签名逐槽对应。
+    /// 传参一律用它，不要拆成四个 double——x86_64 上 32 字节聚合走**栈**，
+    /// 而 arm64 走 v 寄存器，拆开写只在一个架构上对（见文件头第一条）。
     /// </remarks>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct NSRect
+    {
+        public double X;
+        public double Y;
+        public double Width;
+        public double Height;
+
+        public NSRect(double x, double y, double width, double height)
+        {
+            X = x;
+            Y = y;
+            Width = width;
+            Height = height;
+        }
+    }
+
+    /// <summary>一个矩形（如 <c>-setFrame:</c>）。</summary>
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
-    internal static partial nint SendIdDouble4NintObjObj(
-        nint self, nint sel, double a, double b, double c, double d, nuint options, nint obj1, nint obj2);
+    internal static partial void SendVoidRect(nint self, nint sel, NSRect rect);
+
+    /// <summary>一个矩形，返回对象（如 <c>-initWithFrame:</c>）。</summary>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendIdRect(nint self, nint sel, NSRect rect);
+
+    /// <summary>一个矩形 + 一个对象（如 <c>WKWebView initWithFrame:configuration:</c>）。</summary>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendIdRectObj(nint self, nint sel, NSRect rect, nint obj);
+
+    /// <summary>一个矩形 + 两个整数 + 一个 <c>BOOL</c>（如 <c>NSWindow initWithContentRect:styleMask:backing:defer:</c>）。</summary>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendIdRectNuintNuintBool(
+        nint self, nint sel, NSRect rect, nuint style, nuint backing, [MarshalAs(UnmanagedType.Bool)] bool defer);
+
+    /// <summary>
+    /// 一个矩形 + 一个整数 + 两个对象（如 <c>NSTrackingArea initWithRect:options:owner:userInfo:</c>）。
+    /// </summary>
+    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendIdRectNintObjObj(
+        nint self, nint sel, NSRect rect, nuint options, nint obj1, nint obj2);
 
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial void SendVoidDouble2(nint self, nint sel, double a, double b);
 
-    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
-    internal static partial void SendVoidDouble4(nint self, nint sel, double a, double b, double c, double d);
-
-    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
-    internal static partial nint SendIdDouble4Obj(nint self, nint sel, double a, double b, double c, double d, nint obj);
-
-    /// <summary>四个 double 参数、返回对象（如 <c>+[NSColor colorWithSRGBRed:green:blue:alpha:]</c>）。</summary>
+    /// <summary>
+    /// 四个**独立的** <c>CGFloat</c> 参数（如 <c>+[NSColor colorWithSRGBRed:green:blue:alpha:]</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 只用于"四个标量"的 selector。**矩形不要用它**——矩形是 32 字节聚合，
+    /// x86_64 走栈、arm64 走 v 寄存器，拆成标量会在 Intel Mac 上得到 NaN 矩形
+    /// （见文件头）。矩形用 <see cref="SendIdRect"/> 那一组。
+    /// </remarks>
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial nint SendIdDouble4(nint self, nint sel, double a, double b, double c, double d);
-
-    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
-    internal static partial void SendVoidDouble4NuintNuintBool(nint self, nint sel, double a, double b, double c, double d, nuint style, nuint backing, [MarshalAs(UnmanagedType.Bool)] bool defer);
-
-    [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
-    internal static partial nint SendIdDouble4NuintNuintBool(nint self, nint sel, double a, double b, double c, double d, nuint style, nuint backing, [MarshalAs(UnmanagedType.Bool)] bool defer);
 
     // 仅用于参数类型是 const char*（UTF-8 C 字符串）的 selector，例如
     // +[NSString stringWithUTF8String:]。若 selector 期望的是 NSString*，必须先 MakeNSString
@@ -270,14 +307,15 @@ internal static unsafe partial class ObjCRuntime
     internal static partial void SendVoidObjNintObj(nint self, nint sel, nint obj, nint integer, nint tail);
 
     /// <summary>
-    /// 四个 double + 一个 BOOL 的消息，例如 <c>setFrame:display:</c>（B22 的简化全屏）。
+    /// 一个矩形 + 一个 <c>BOOL</c> 的消息，例如 <c>setFrame:display:</c>（B22 的简化全屏）。
     /// </summary>
     /// <remarks>
-    /// 与 <see cref="SendVoidDouble4NuintNuintBool"/> 同一口径：4 个 double 走浮点寄存器，
-    /// BOOL 走第一个整数寄存器。
+    /// 矩形走 <see cref="NSRect"/> 结构体（ABI 理由见文件头），<c>BOOL</c> 走下一个整数寄存器。
+    /// 这里曾经是"4 个 double + BOOL"，在 arm64 上碰巧成立、在 Intel Mac 上会把矩形
+    /// 送进浮点寄存器——那条路径（简化全屏 / 跨屏全屏）在 Intel 上会画出错位的窗口。
     /// </remarks>
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
-    internal static partial void SendVoidDouble4Bool(nint self, nint sel, double a, double b, double c, double d, [MarshalAs(UnmanagedType.Bool)] bool flag);
+    internal static partial void SendVoidRectBool(nint self, nint sel, NSRect rect, [MarshalAs(UnmanagedType.Bool)] bool flag);
 
     /// <summary>
     /// 四个对象/选择器参数的消息，例如

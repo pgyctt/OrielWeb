@@ -49,9 +49,6 @@ internal static class WindowSelfTest
     /// 但它只用来决定"断言还是跳过"，判错的后果是少验一条或者多跳过一条，
     /// 不会把真实缺陷放过去。
     /// </remarks>
-    private static readonly bool IsWayland =
-        Environment.GetEnvironmentVariable("WAYLAND_DISPLAY") is { Length: > 0 };
-
     /// <summary>
     /// 当前环境是否有**窗口管理器**。
     /// </summary>
@@ -61,13 +58,23 @@ internal static class WindowSelfTest
     /// 那验的是环境而不是库，所以无 WM 时这条断言跳过。
     /// <para>
     /// 判据由验证脚本设置（<c>ORIEL_HAS_WM=1</c>，它在 X11 下查 <c>_NET_SUPPORTING_WM_CHECK</c>）；
-    /// 未设置时**只有非 Linux 才认为有 WM**——Windows/macOS 的窗口服务器是系统自带的。
+    /// 未设置时 Linux 认为没有。
+    /// <para>
+    /// macOS 另有一条：**要看有没有图形会话**（<see cref="MacDisplay.HasScreenSession"/>）。
+    /// SSH 连到一台停在登录窗口的机器时，窗口建得出来但没人管——最小化不生效、
+    /// <c>OuterSize</c> 是 0（Hyper-V 的 macOS VM 默认就是这种状态）。
+    /// </para>
+    /// <para>
     /// 默认宁可跳过也不假红：把"环境不足"报成失败会训练人忽略红灯。
+    /// </para>
     /// </para>
     /// </remarks>
     private static readonly bool HasWindowManager =
-        !OperatingSystem.IsLinux()
-        || Environment.GetEnvironmentVariable("ORIEL_HAS_WM") == "1";
+        OperatingSystem.IsLinux()
+            ? Environment.GetEnvironmentVariable("ORIEL_HAS_WM") == "1"
+            : OperatingSystem.IsMacOS()
+                ? MacDisplay.HasScreenSession
+                : true;
 
     private static OrielApp? _app;
     private static WebviewWindow? _main;
@@ -619,8 +626,11 @@ internal static class WindowSelfTest
             JsonElement outerLogical = outerSize.TryGetProperty("Logical", out JsonElement logicalWrapper)
                 ? logicalWrapper
                 : outerSize;
-            Check(outerLogical.GetProperty("width").GetDouble() > 0,
-                "设了最大尺寸之后 outerSize 仍应给得出正数");
+            // 无图形会话时 outerSize 恒 0（窗口没有窗口服务器）——与最小化同一条环境判据。
+            CheckOrSkip(HasWindowManager,
+                outerLogical.GetProperty("width").GetDouble() > 0,
+                "设了最大尺寸之后 outerSize 仍应给得出正数",
+                "当前环境没有窗口服务器（macOS 无图形会话 / Linux 无窗口管理器）");
 
             // 0 表示不限制（取消上限）
             await AskMainAsync(
@@ -752,27 +762,34 @@ internal static class WindowSelfTest
             }
 
             // 位置：Wayland 不支持（协议不让客户端移动指针）
-            if (IsLinux && IsWayland)
-            {
-                JsonElement? warped = await TryAskMainAsync(
-                    "window.setCursorPosition",
-                    SelfTestJson.Object(
-                        ("position", SelfTestJson.Object(("type", SelfTestJson.String("Logical")),
-                                                        ("x", "20"),
-                                                        ("y", "20")))));
+            //
+            // **不按环境变量猜后端**：以前这里判 `WAYLAND_DISPLAY` 有没有值，而 GDK 在
+            // Wayland 会话里**即使只设 DISPLAY=:0 也会连 wayland-0**（那是 Wayland 客户端的
+            // 默认 socket 名，变量可以完全不设）。于是"猜"的结果是 X11、"真相"是 Wayland，
+            // 断言就红了——2026-10-22 在 Hyper-V 的 Ubuntu 22.04 真机上实测到这一条。
+            // 现在改成"发出去看结果"：成功就是 X11 路子，明确 not_supported 就是 Wayland，
+            // 两者都算过，只有"既没成功也没说清原因"才失败。
+            JsonElement? warped = await TryAskMainAsync(
+                "window.setCursorPosition",
+                SelfTestJson.Object(
+                    ("position", SelfTestJson.Object(("type", SelfTestJson.String("Logical")),
+                                                    ("x", "20"),
+                                                    ("y", "20")))));
 
-                Check(
-                    warped is null && (LastError ?? string.Empty).StartsWith("not_supported", StringComparison.Ordinal),
-                    $"Wayland 上 setCursorPosition 应当明确报 not_supported（实际：{(warped is null ? LastError : "成功")}）");
+            bool warpRefused = warped is null
+                && (LastError ?? string.Empty).StartsWith("not_supported", StringComparison.Ordinal);
+
+            if (IsLinux && warpRefused)
+            {
+                Console.WriteLine(
+                    "[window-selftest] SKIP: 本会话是 Wayland，setCursorPosition 按协议不可用"
+                    + $"（{LastError}）");
             }
             else
             {
-                await AskMainAsync(
-                    "window.setCursorPosition",
-                    SelfTestJson.Object(
-                        ("position", SelfTestJson.Object(("type", SelfTestJson.String("Logical")),
-                                                        ("x", "20"),
-                                                        ("y", "20")))));
+                Check(
+                    warped is not null,
+                    $"window.setCursorPosition 应当成功，或明确报 not_supported（失败：{LastError}）");
 
                 // 还原：把光标放回原来的屏幕位置。
                 //
@@ -797,20 +814,24 @@ internal static class WindowSelfTest
                 Console.WriteLine("[window-selftest] OK: window.setCursorPosition 移动并还原");
             }
 
-            // 点击穿透：X11 能验；Wayland 不支持
-            if (IsLinux && IsWayland)
-            {
-                JsonElement? ignored = await TryAskMainAsync(
-                    "window.setIgnoreCursorEvents", SelfTestJson.Object(("ignore", SelfTestJson.Bool(true))));
+            // 点击穿透：X11 能验；Wayland 不支持（理由同上：不猜后端，看结果）
+            JsonElement? ignored = await TryAskMainAsync(
+                "window.setIgnoreCursorEvents", SelfTestJson.Object(("ignore", SelfTestJson.Bool(true))));
 
-                Check(
-                    ignored is null && (LastError ?? string.Empty).StartsWith("not_supported", StringComparison.Ordinal),
-                    $"Wayland 上 setIgnoreCursorEvents 应当明确报 not_supported（实际：{(ignored is null ? LastError : "成功")}）");
+            bool ignoreRefused = ignored is null
+                && (LastError ?? string.Empty).StartsWith("not_supported", StringComparison.Ordinal);
+
+            if (IsLinux && ignoreRefused)
+            {
+                Console.WriteLine(
+                    "[window-selftest] SKIP: 本会话是 Wayland，setIgnoreCursorEvents 按协议不可用"
+                    + $"（{LastError}）");
             }
             else
             {
-                await AskMainAsync(
-                    "window.setIgnoreCursorEvents", SelfTestJson.Object(("ignore", SelfTestJson.Bool(true))));
+                Check(
+                    ignored is not null,
+                    $"window.setIgnoreCursorEvents 应当成功，或明确报 not_supported（失败：{LastError}）");
                 await AskMainAsync(
                     "window.setIgnoreCursorEvents", SelfTestJson.Object(("ignore", SelfTestJson.Bool(false))));
                 Console.WriteLine("[window-selftest] OK: window.setIgnoreCursorEvents 开关都成功");

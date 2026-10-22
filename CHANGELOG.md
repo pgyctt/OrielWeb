@@ -9,7 +9,41 @@
 
 ## Unreleased
 
-（暂无。下一个里程碑的内容记在这里。）
+### 修复
+
+- **Intel Mac 上建第一个窗口就崩**（`NSRect` 的 ABI 被当成了"两个架构都一样"）。
+  `NSRect` 是 32 字节的 double 聚合：arm64 按 HFA 放进 v0–v3，**x86_64 整个压到栈上**。
+  此前把矩形拆成 4 个 `double` 参数传，在 arm64 上碰巧成立，在 Intel 上 AppKit 收到
+  `frame={{1024,0},{nan,0}}` 并抛 `NSInternalInconsistencyException`
+  （实测：`SIGABRT`，进程直接没）。现在引入 `ObjCRuntime.NSRect` 结构体与
+  `SendIdRect*` / `SendVoidRect*` 一组签名，矩形一律走结构体——封送层按平台 ABI 处理。
+  受影响：`NSWindow` 建窗、`WKWebView` / `NSVisualEffectView` 的 `initWithFrame:`、
+  `setFrame:` / `setFrame:display:`、`NSTrackingArea initWithRect:…`。
+  `SendIdDouble4` 只留给"四个独立标量"的 selector（`NSColor` 的构造函数）。
+  **CI 只跑 `osx-arm64`，这条它永远看不见。**
+- **Ubuntu 22.04 / Debian 11 上应用起不来**（只认 `libwebkit2gtk-4.1.so.0`，
+  而 22.04 至今只发 4.0）。新增 `LinuxLibraryResolver`：用 `DllImportResolver` 按
+  `4.1 → 4.0(.so.37) → 4.0(.so.0)` 依次尝试，注册时机挂在 `GtkNative` 的静态构造函数上。
+  换库是安全的——本库用到的 32 个 `webkit_*` 与 1 个 `jsc_*` 符号在 4.0 里逐个探过，一个不缺。
+  **CI 的 `ubuntu-latest` 是 24.04，这条它也永远看不见。**
+- **没有图形会话时，菜单弹出与托盘创建会让进程 abort**（macOS）。
+  AppKit 在那种环境里不是"不生效"，而是抛 `NSInternalInconsistencyException: 'Nil screen'`
+  ——ObjC 异常托管侧接不住，退出码 134。新增 `MacOSSession.RequireScreen(...)`：
+  调这两条路径之前先问 `NSScreen.screens`，为空就抛 `NotSupportedException`
+  （页面侧得到 `not_supported`）。典型场景：SSH 到一台停在登录窗口的机器上跑自检。
+
+### 工程
+
+- **跨平台真机验证（Hyper-V 实验室）**：Windows 宿主 + Ubuntu 22.04 + macOS 15（Intel），
+  同一套 demo 的自检在四组环境里跑满（Windows 20/20、Ubuntu X11 20/20、Ubuntu Wayland 19/19、
+  macOS 20/20）。**抓到 3 个 CI 结构上覆盖不到的真问题**（2 个进程级崩溃 + 1 个"起不来"），
+  外加 1 处自检自己的错误假设（`path.downloadDir()` 断言了英文目录名，中文系统上是「下载」）。
+  详情与复现步骤见 `docs/CROSS-PLATFORM-VERIFICATION.md`。
+  自检的环境判据也一并纠正：**不再看环境变量猜平台**（`WAYLAND_DISPLAY` 在 Wayland 会话里
+  可以不设，GDK 会默认连 `wayland-0`），改成"发出去看结果"或问系统
+  （`CGSessionCopyCurrentDictionary` 判图形会话、`gdk_display_get_name` 判 GDK 后端）。
+  Wayland / 无图形会话下依赖"改窗口尺寸"的断言改为 SKIP 并打印实测值，
+  判据不成立的平台上照旧严格断言。
 
 ## 0.4.2 - 2026-10-22
 

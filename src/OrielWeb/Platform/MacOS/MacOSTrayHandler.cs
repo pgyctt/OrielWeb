@@ -57,10 +57,10 @@ internal static unsafe class MacOSTrayHandler
 
         // initWithRect:options:owner:userInfo: —— rect 用空矩形（InVisibleRect 会忽略它），
         // owner 是托盘 handler（它实现了 mouseEntered:/mouseExited:/mouseMoved:）。
-        nint area = ObjCRuntime.SendIdDouble4NintObjObj(
+        nint area = ObjCRuntime.SendIdRectNintObjObj(
             alloc,
             ObjCRuntime.Sel("initWithRect:options:owner:userInfo:"),
-            0, 0, 0, 0,
+            new ObjCRuntime.NSRect(0, 0, 0, 0),
             (nuint)options,
             handler,
             0);

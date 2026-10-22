@@ -131,6 +131,16 @@ internal static class ApiSelfTest
             const isWindowsHost = hostPlatform === 'windows';
             const isMacOsHost = hostPlatform === 'macos';
 
+            // GDK 后端是不是 Wayland（宿主侧探的，见 LinuxDisplay）。Wayland 下有几件事
+            // 由合成器/焦点状态决定（剪贴板读写要键盘焦点），无人自检的窗口没有焦点——
+            // 那些断言验的是环境而不是库，按"条件成立才断言"处理，其余平台恒 false。
+            const isWaylandSession = {{(LinuxDisplay.IsWayland ? "true" : "false")}};
+
+            // macOS 没有图形会话时（机器停在登录窗口、走 SSH 调用）NSPasteboard 不可用：
+            // 写入返回 false、读取返回 null。那验的是环境而不是库。
+            const hasNoScreenSession = {{(OperatingSystem.IsMacOS() && !MacDisplay.HasScreenSession ? "true" : "false")}};
+            const clipboardUsable = !isWaylandSession && !hasNoScreenSession;
+
             // path 模块在**前面几段**就要用（fs 段的逃逸路径要按平台拼分隔符），
             // 所以提前导入；后面 path 那一节直接复用这个绑定。
             // 放到段内声明会让 fs 段踩到 TDZ（`Cannot access 'path' before initialization`），
@@ -348,11 +358,18 @@ internal static class ApiSelfTest
                 const clipboard = await import(vendor + '/clipboard.js');
 
                 const marker = 'oriel-selftest-' + Date.now();
-                check('clipboard.writeText 报告成功', (await clipboard.writeText(marker)) === true, marker);
+                check('clipboard.writeText 报告成功',
+                    clipboardUsable ? (await clipboard.writeText(marker)) === true : true,
+                    clipboardUsable ? marker : '无图形会话/无键盘焦点，跳过内容判定');
 
                 const clipboardBack = await clipboard.readText();
+                // Wayland：剪贴板读写要**键盘焦点**，而无人自检的窗口没有焦点——
+                // 用最小 GTK 程序实测过（gtk_clipboard_set_text 之后 wait_for_text 返回 NULL，
+                // 同一段代码在 X11 下正常）。这里不断言内容，但把实测值打出来便于排查。
                 check('clipboard.readText 读回刚写进去的内容（三平台原生实现接对了）',
-                    clipboardBack === marker, String(clipboardBack));
+                    !clipboardUsable || clipboardBack === marker,
+                    clipboardUsable ? String(clipboardBack)
+                                    : `跳过（读到 ${String(clipboardBack)}）`);
 
                 let clipLabelCode = 'unset';
                 try {
@@ -363,7 +380,9 @@ internal static class ApiSelfTest
                 check('clipboard.writeText 对 label 明确拒绝（not_supported）',
                     clipLabelCode === 'not_supported', clipLabelCode);
 
-                check('clipboard.clear 报告成功', (await clipboard.clear()) === true, 'ok');
+                check('clipboard.clear 报告成功',
+                    clipboardUsable ? (await clipboard.clear()) === true : true,
+                    clipboardUsable ? 'ok' : '无图形会话/无键盘焦点，跳过');
 
                 const afterClear = await clipboard.readText();
                 check('清空之后读不到文本（null 或空串）',
@@ -565,9 +584,19 @@ internal static class ApiSelfTest
                 // 而 publicDir 也不是 CommonDocuments（那个多一层 \Documents）。
                 const downloads = await path.downloadDir();
                 const publicDir = await path.publicDir();
-                check('path.downloadDir() 取到 Downloads',
-                    /[\\/]Downloads$/.test(downloads), downloads);
-                check('path.publicDir() 是 Public 而不是 Public\\Documents',
+
+                // **不能断言字面量 "Downloads"**：Linux 上这个目录名来自 XDG 用户目录，
+                // 会随系统语言本地化——中文 Ubuntu 22.04 上是 `/home/<user>/下载`（真机实测）。
+                // macOS / Windows 同样如此（Windows 上 Downloads 也是可重定向的 Known Folder）。
+                // 这条断言真正要保证的是"给了一个**具体的**目录，而不是把家目录原样返回"，
+                // 所以判据换成：绝对路径 + 不是家目录本身 + 与 publicDir 不同。
+                check('path.downloadDir() 是绝对路径且不是家目录本身',
+                    (downloads.startsWith('/') || /^[A-Za-z]:[\\/]/.test(downloads))
+                    && downloads !== home,
+                    `${downloads}（家目录 ${home}）`);
+                // 同理不断言"Public"这个字面量（本地化/重定向都会变），
+                // 只要它不落到 ...\\Documents 那一层（.NET 的 CommonDocuments 就是那么错的）。
+                check('path.publicDir() 不是 .../Documents 那一层',
                     !/[\\/]Documents$/.test(publicDir), publicDir);
 
                 // 平台不支持的那几格要以 not_supported 明确拒绝（与 Tauri 一致），

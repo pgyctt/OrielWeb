@@ -264,6 +264,18 @@ internal static class MenuBarSelfTest
         // 几何：装上菜单栏之后客户区必须变小——变小的量就是菜单栏高度。
         // 只要求"确实变小了"而不要求精确值：菜单栏高度随主题/字号/缩放变。
         double dropped = _heightBefore - _heightWithBar;
+
+        // Wayland 例外：窗口尺寸由合成器决定，装上菜单栏后窗口不会跟着缩，
+        // 客户区自然不变——这条验的是"能不能改窗口尺寸"，而那件事在 Wayland 上做不到
+        // （详见 docs/CROSS-PLATFORM-VERIFICATION.md）。跳过而不是失败。
+        if (dropped <= HeightTolerance && LinuxDisplay.IsWayland)
+        {
+            Console.WriteLine(
+                $"[menubar-selftest] SKIP: 装上菜单栏后内高没有变小（装前 {_heightBefore:0.#}，装后 {_heightWithBar:0.#}）" +
+                "——本会话是 Wayland，窗口尺寸由合成器决定，菜单栏占用无法观测");
+            return;
+        }
+
         Check(
             dropped > HeightTolerance,
             $"装上菜单栏后内高没有变小（装前 {_heightBefore:0.#}，装后 {_heightWithBar:0.#}）——" +

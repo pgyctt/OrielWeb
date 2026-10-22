@@ -17,6 +17,16 @@ namespace OrielWeb.Platform.Linux.Interop;
 
 internal static unsafe partial class GtkNative
 {
+    /// <summary>
+    /// 静态构造函数：**在第一次调用本类型的任何 P/Invoke 之前**注册 WebKit 的库名解析。
+    /// </summary>
+    /// <remarks>
+    /// 为什么挂在这里：本类型是全部 <c>webkit_*</c> 声明的家，所以它的类型初始化器
+    /// 一定早于任何一次 WebKit 调用——而 <c>DllImport</c> 的库名解析就发生在那一刻。
+    /// 细节见 <see cref="LinuxLibraryResolver"/>（4.1 → 4.0 的回退）。
+    /// </remarks>
+    static GtkNative() => LinuxLibraryResolver.Register();
+
     private const string Gtk = "libgtk-3.so.0";
     private const string Gdk = "libgdk-3.so.0";
     private const string GOject = "libgobject-2.0.so.0";

@@ -62,6 +62,18 @@ internal static class TraySelfTest
         {
             Console.WriteLine("[tray-selftest] 开始（后端 API）");
 
+            // macOS 无图形会话时创建状态项会让 AppKit 直接终止进程（见 MacOSSession），
+            // 库因此提前拒绝。那验的是环境——跳过整套，别把"没有桌面"报成"托盘坏了"。
+            if (OperatingSystem.IsMacOS() && !MacDisplay.HasScreenSession)
+            {
+                Console.WriteLine(
+                    "[tray-selftest] SKIP: 本进程没有图形会话（macOS 停在登录窗口），"
+                    + "NSStatusBar 不可用——托盘 API 无从验证");
+                Report("TRAY-SELFTEST");
+                window.PostToUiThread(() => app.Quit());
+                return;
+            }
+
             // 1) 图标解码：仓库里的 app.png / app.ico 应当都能解出非空 RGBA
             OrielImage? png = DecodeRelative("app.png");
             Check(png is not null, "app.png 解码成功（PNG）");
@@ -168,6 +180,17 @@ internal static class TraySelfTest
     internal static void RunFrontend(OrielApp app, WebviewWindow window)
     {
         Console.WriteLine("[tray-js-selftest] 开始（页面侧 oriel.tray）");
+
+        // 同 RunBackend：没有图形会话时状态项创建不起来，整套跳过。
+        if (OperatingSystem.IsMacOS() && !MacDisplay.HasScreenSession)
+        {
+            Console.WriteLine(
+                "[tray-js-selftest] SKIP: 本进程没有图形会话（macOS 停在登录窗口），"
+                + "NSStatusBar 不可用——页面侧托盘 API 无从验证");
+            Report("TRAY-JS-SELFTEST");
+            window.PostToUiThread(() => app.Quit());
+            return;
+        }
 
         // 页面执行一段脚本：建托盘 → 取回 → 设属性 → 移除 → 把结果报回来。
         // 结果经 oriel.postMessage('tray-js-selftest', ...) 回传，宿主订阅 MessageReceived 收。

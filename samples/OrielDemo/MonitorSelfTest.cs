@@ -47,6 +47,16 @@ internal static class MonitorSelfTest
         {
             Console.WriteLine("[monitors-selftest] 开始（宿主侧显示器 API）");
 
+            // macOS 没有图形会话时 NSScreen.screens 是空的（机器停在登录窗口、走 SSH 调用）。
+            // 那时"没有显示器"是真的，验的是环境——跳过而不是失败。
+            if (OperatingSystem.IsMacOS() && !MacDisplay.HasScreenSession)
+            {
+                Console.WriteLine(
+                    "[monitors-selftest] SKIP: 本进程没有图形会话（macOS 停在登录窗口），"
+                    + "NSScreen 枚举为空——显示器 API 无从验证");
+                return;
+            }
+
             IReadOnlyList<OrielMonitor> monitors = app.AvailableMonitors;
 
             // 1) 至少一台

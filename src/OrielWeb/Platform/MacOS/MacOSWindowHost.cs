@@ -693,8 +693,8 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
                 ObjCRuntime.Sel("setStyleMask:"),
                 (nint)(_styleMaskBeforeSimpleFullscreen & ~StyleTitled));
 
-            ObjCRuntime.SendVoidDouble4Bool(
-                _nsWindow, ObjCRuntime.Sel("setFrame:display:"), sx, sy, sw, sh, true);
+            ObjCRuntime.SendVoidRectBool(
+                _nsWindow, ObjCRuntime.Sel("setFrame:display:"), new ObjCRuntime.NSRect(sx, sy, sw, sh), true);
 
             _isSimpleFullscreen = true;
             return;
@@ -705,8 +705,8 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
 
         if (_frameBeforeSimpleFullscreen is { } f)
         {
-            ObjCRuntime.SendVoidDouble4Bool(
-                _nsWindow, ObjCRuntime.Sel("setFrame:display:"), f.X, f.Y, f.Width, f.Height, true);
+            ObjCRuntime.SendVoidRectBool(
+                _nsWindow, ObjCRuntime.Sel("setFrame:display:"), new ObjCRuntime.NSRect(f.X, f.Y, f.Width, f.Height), true);
         }
 
         _frameBeforeSimpleFullscreen = null;
@@ -747,8 +747,8 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         }
 
         // 全屏切换本身会把窗口铺满所在屏幕，这里只需要"把它搬到那台屏幕上"
-        ObjCRuntime.SendVoidDouble4Bool(
-            _nsWindow, ObjCRuntime.Sel("setFrame:display:"), sx, sy, sw, sh, true);
+        ObjCRuntime.SendVoidRectBool(
+            _nsWindow, ObjCRuntime.Sel("setFrame:display:"), new ObjCRuntime.NSRect(sx, sy, sw, sh), true);
 
         if (wasSimple)
         {
@@ -924,10 +924,10 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         (double _, double _, double width, double height) = ReadRect(contentView, "bounds");
 
         nint effectClass = ObjCRuntime.GetClassOrThrow("NSVisualEffectView");
-        _effectView = ObjCRuntime.SendIdDouble4(
+        _effectView = ObjCRuntime.SendIdRect(
             ObjCRuntime.SendId(effectClass, ObjCRuntime.Sel("alloc")),
             ObjCRuntime.Sel("initWithFrame:"),
-            0, 0, width, height);
+            new ObjCRuntime.NSRect(0, 0, width, height));
         ObjCRuntime.objc_retain(_effectView);
 
         ObjCRuntime.SendVoidNint(_effectView, ObjCRuntime.Sel("setMaterial:"), material);
@@ -1612,10 +1612,10 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
             style |= StyleFullSizeContentView;
         }
 
-        _nsWindow = ObjCRuntime.SendIdDouble4NuintNuintBool(
+        _nsWindow = ObjCRuntime.SendIdRectNuintNuintBool(
             ObjCRuntime.SendId(clsWindow, ObjCRuntime.Sel("alloc")),
             ObjCRuntime.Sel("initWithContentRect:styleMask:backing:defer:"),
-            0, 0, width, height,
+            new ObjCRuntime.NSRect(0, 0, width, height),
             style,
             2, // NSBackingStoreBuffered
             false);
@@ -1681,10 +1681,10 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
                 ObjCRuntime.MakeNSString(AssetUrl.Scheme));
         }
 
-        _webview = ObjCRuntime.SendIdDouble4Obj(
+        _webview = ObjCRuntime.SendIdRectObj(
             ObjCRuntime.SendId(clsWKWebView, ObjCRuntime.Sel("alloc")),
             ObjCRuntime.Sel("initWithFrame:configuration:"),
-            0, 0, width, height,
+            new ObjCRuntime.NSRect(0, 0, width, height),
             config);
         ObjCRuntime.objc_retain(_webview);
 
@@ -1719,7 +1719,8 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         var contentView = ObjCRuntime.SendId(_nsWindow, ObjCRuntime.Sel("contentView"));
 
         _dropView = MacOSObjCClasses.CreateDropView(this);
-        ObjCRuntime.SendVoidDouble4(_dropView, ObjCRuntime.Sel("setFrame:"), 0, 0, width, height);
+        ObjCRuntime.SendVoidRect(
+            _dropView, ObjCRuntime.Sel("setFrame:"), new ObjCRuntime.NSRect(0, 0, width, height));
         ObjCRuntime.SendVoidObj(contentView, ObjCRuntime.Sel("addSubview:"), _dropView);
         ObjCRuntime.SendVoidNint(_dropView, ObjCRuntime.Sel("setAutoresizingMask:"), NSViewWidthSizable | NSViewHeightSizable);
 
@@ -1730,7 +1731,8 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
             MakeStringArray(["public.file-url"]));
 
         // WebView 填满容器，并随容器尺寸自动调整
-        ObjCRuntime.SendVoidDouble4(_webview, ObjCRuntime.Sel("setFrame:"), 0, 0, width, height);
+        ObjCRuntime.SendVoidRect(
+            _webview, ObjCRuntime.Sel("setFrame:"), new ObjCRuntime.NSRect(0, 0, width, height));
         ObjCRuntime.SendVoidObj(_dropView, ObjCRuntime.Sel("addSubview:"), _webview);
         ObjCRuntime.SendVoidNint(_webview, ObjCRuntime.Sel("setAutoresizingMask:"), NSViewWidthSizable | NSViewHeightSizable);
 

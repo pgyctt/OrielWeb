@@ -61,6 +61,10 @@ internal sealed class MacOSTrayBackend : ITrayBackend
         _iconAsTemplate = options.IconAsTemplate;
         _menuOnClick = options.MenuOnClick;
 
+        // 没有图形会话时 NSStatusBar 会走到"让进程 abort"的那条路上（与 NSMenu 同类），
+        // 所以先拒绝。典型场景：SSH 到一台停在登录窗口的机器上跑自检。
+        MacOSSession.RequireScreen("托盘状态项无法创建");
+
         nint statusBar = ObjCRuntime.SendId(
             ObjCRuntime.GetClassOrThrow("NSStatusBar"), ObjCRuntime.Sel("systemStatusBar"));
         _statusItem = ObjCRuntime.SendIdDouble(

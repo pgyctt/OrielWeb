@@ -1955,6 +1955,11 @@ macOS 走 release 工作流（与 AOT 同理，打包只能在 macOS 上跑）�
 
 ```bash
 sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev zlib1g-dev clang
+
+# Ubuntu 22.04 / Debian 11 没有 4.1（只有 4.0）——不用换系统，也不用装第三方源：
+# 宿主会在加载时自动回退到 libwebkit2gtk-4.0.so.37（同一套 C API，符号逐个比对过）。
+# Ubuntu 22.04 上装 4.0 的开发包即可：
+#   sudo apt-get install -y libwebkit2gtk-4.0-dev libgtk-3-dev
 sudo apt-get install -y fonts-noto-cjk   # 中文界面必需，否则渲染成方框
 ```
 
