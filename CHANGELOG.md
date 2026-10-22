@@ -64,6 +64,40 @@
   - Linux 的 `setSkipTaskbar` / `setVisibleOnAllWorkspaces` / `setFocusable` 都是 WM 提示，
     Wayland 下由合成器决定（主流合成器会忽略 `stick`）。
 
+- **`app` 模块剩余五项（B23）**——`@orielweb/api/app` 的 Tauri 导出面至此**一条不缺**
+  （对齐账本里 `app` 的缺口清零）：
+  - **`getBundleType()` / `BundleType`**：返回应用被什么形态打包/安装的。本库不是打包器，
+    所以只能**观察运行期事实**：在 `.app` 里 → `app`、可执行文件旁边有 Velopack 的
+    `Update.exe` → `nsis`、跑在 AppImage 里 → `appimage`，都观察不到就是 `null`
+    （开发期/手工解压，与 Tauri 未打包时的行为一致）。`msi` / `deb` / `rpm` 在运行期
+    彼此不可区分，要精确回答用程序集元数据 `<AssemblyMetadata Include="OrielBundleType" Value="msi" />`
+    显式声明。**不编值**：观察不出来就返回 null。
+  - **`defaultWindowIcon()`**：返回 `Image | null`，来源是**可执行文件旁边的 `app.png`**
+    （Windows 上也认 `app.ico`）——本库没有资源表。文件按魔数校验（PNG / ICO），
+    谎称 `.png` 的文本文件会被拒并记诊断，而不是交给页面在解析尺寸时炸掉。
+  - **`setDockVisibility(visible)`**：macOS 的 `NSApplication.setActivationPolicy:`
+    （Regular ↔ Accessory）。隐藏 Dock 图标时菜单栏也一起消失——那是 AppKit 对
+    "无 Dock 图标应用"的定义。Windows/Linux 抛 `not_supported`（那边的等价物是**窗口级**的
+    `Window.setSkipTaskbar`）。
+  - **`fetchDataStoreIdentifiers()` / `removeDataStore(uuid)`**：macOS 12+ 的
+    `WKWebsiteDataStore` 按 UUID 隔离浏览数据。新增 `OrielWindowOptions.DataStoreIdentifier`
+    把标识符开放给窗口；标识符登记在 `AppData/data-stores.json`（跨重启可见），
+    因为 WebKit 的全局枚举是**异步回调**接口，与同步的 IPC 请求-回执接不上。
+    形状与 Tauri 一致：**16 个 0–255 的整数**。还有窗口在用该标识符时拒绝删除。
+  - **`onBackButtonPress(handler)`**：桌面端**订阅成立、回调永不触发**（与 Tauri 的
+    "handler is never called" 一致）。返回 `{ unregister }`——结构上兼容 Tauri 的
+    `PluginListener`，所以 `await listener.unregister()` 的迁移代码不用改。
+  - 门禁姿态分两档：`getBundleType` / `defaultWindowIcon` / `fetchDataStoreIdentifiers`
+    是只读元信息（始终放行）；`setDockVisibility` / `removeDataStore` 改状态/删数据
+    （必须显式 `Allow`）。演示自检新增第 13 段按平台分两路取证。
+  - **已知限制（如实记录）**：
+    - `DataStoreIdentifier` **只有 macOS 生效**。Windows 用整个用户数据目录隔离
+      （`UseUserDataFolder`），WebKitGTK 没有 UUID 模型——那两个平台上窗口照常创建，
+      但没有隔离效果（记一条诊断，不抛错：抛错会让同一份代码无法跨平台跑）。
+    - `removeDataStore` 清的是那份存储的**数据**（cookie / localStorage / 缓存），
+      磁盘目录由 WebKit 自己回收；成功返回只保证"数据没了"，不保证目录立刻消失。
+    - `defaultWindowIcon` 的结果在宿主进程内只读一次：启动后新增的图标文件要重启才可见。
+
 - **光标控制（B21）：`setCursorGrab` / `setCursorVisible` / `setCursorIcon` /
   `setCursorPosition` / `setIgnoreCursorEvents` / `startResizeDragging`**——
   `@orielweb/api/window` 的 Tauri `Window` 方法面至此只剩平台开关/特效/任务栏那几组。

@@ -371,6 +371,11 @@ internal static class Program
                     // dialog（F3）：会弹模态对话框并让用户选路径。三条都授权，
                     // 但自检只走"弹之前就该被拒"的那几条路径（见 ApiSelfTest 的说明）。
                     c.Allow("dialog.open", "dialog.save", "dialog.message");
+
+                    // app 级能力（B23）：Dock 显隐会改变应用在系统里的呈现、removeDataStore
+                    // 会删数据——两条都要显式声明。另三条（getBundleType / defaultWindowIcon /
+                    // fetchDataStoreIdentifiers）是只读元信息，在 always-allowed 名单里，不必声明。
+                    c.Allow("app.setDockVisibility", "app.removeDataStore");
                 }
             })
             .UseDebug()

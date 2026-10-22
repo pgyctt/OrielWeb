@@ -22,7 +22,15 @@ import {
     show,
     hide,
     setTheme,
+    BundleType,
+    getBundleType,
+    defaultWindowIcon,
+    setDockVisibility,
+    fetchDataStoreIdentifiers,
+    removeDataStore,
+    onBackButtonPress,
 } from '../src/app.js';
+import { Image } from '../src/image.js';
 import { clearMocks } from '../src/mocks.js';
 import { setTransportOverride } from '../src/internal.js';
 
@@ -255,6 +263,167 @@ test('导入本模块不会自动发任何命令', async () => {
     // 在加载时多打几次 IPC，而失败时还会在控制台留下未捕获的 rejection。
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.deepEqual(calls, []);
+
+    clearMocks();
+});
+
+// ---- B23：产物类型 / 默认图标 / Dock / 数据存储 / 返回键 ----
+
+/** 造一个最小 PNG 头（Image.fromBytes 只读 IHDR 里的宽高）。 */
+function pngHeader(width, height) {
+    const bytes = new Uint8Array(24);
+    bytes.set([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A], 0);
+    bytes.set([0x49, 0x48, 0x44, 0x52], 12);
+    bytes[16] = (width >>> 24) & 0xFF;
+    bytes[17] = (width >>> 16) & 0xFF;
+    bytes[18] = (width >>> 8) & 0xFF;
+    bytes[19] = width & 0xFF;
+    bytes[20] = (height >>> 24) & 0xFF;
+    bytes[21] = (height >>> 16) & 0xFF;
+    bytes[22] = (height >>> 8) & 0xFF;
+    bytes[23] = height & 0xFF;
+    return bytes;
+}
+
+test('BundleType 与 Tauri 逐键同值', () => {
+    // 迁移代码会直接写 BundleType.Nsis / BundleType.AppImage；错一个字母就是 undefined，
+    // 而 undefined 用来分支时永远走 else——静默走错分支。
+    assert.deepEqual(BundleType, {
+        Nsis: 'nsis',
+        Msi: 'msi',
+        Deb: 'deb',
+        Rpm: 'rpm',
+        AppImage: 'appimage',
+        App: 'app',
+    });
+    assert.ok(Object.isFrozen(BundleType), '常量对象应当冻结，避免被调用方改写');
+});
+
+test('getBundleType 原样返回宿主的判断（含 null）', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport({ 'app.getBundleType': 'nsis' });
+    setTransportOverride(transport);
+
+    assert.equal(await getBundleType(), 'nsis');
+    assert.deepEqual(calls.at(-1), ['app.getBundleType', undefined]);
+
+    // 开发期/手工解压：宿主返回 null，页面也拿到 null（不编值）
+    const { transport: nullTransport } = makeTransport({ 'app.getBundleType': null });
+    setTransportOverride(nullTransport);
+    assert.equal(await getBundleType(), null);
+
+    clearMocks();
+});
+
+test('defaultWindowIcon：宿主给 base64 时包成 Image，不给时返回 null', async () => {
+    clearMocks();
+    const png = pngHeader(64, 48);
+    const { calls, transport } = makeTransport({
+        'app.defaultWindowIcon': Buffer.from(png).toString('base64'),
+    });
+    setTransportOverride(transport);
+
+    const icon = await defaultWindowIcon();
+    assert.ok(icon instanceof Image, '应当返回 Image 实例');
+    assert.deepEqual(await icon.size(), { width: 64, height: 48 });
+    assert.deepEqual(calls.at(-1), ['app.defaultWindowIcon', undefined]);
+
+    const { transport: emptyTransport } = makeTransport({ 'app.defaultWindowIcon': null });
+    setTransportOverride(emptyTransport);
+    assert.equal(await defaultWindowIcon(), null);
+
+    clearMocks();
+});
+
+test('setDockVisibility 发 { value }，非布尔当场拒', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport();
+    setTransportOverride(transport);
+
+    await setDockVisibility(false);
+    assert.deepEqual(calls.at(-1), ['app.setDockVisibility', { value: false }]);
+
+    await setDockVisibility(true);
+    assert.deepEqual(calls.at(-1), ['app.setDockVisibility', { value: true }]);
+
+    assert.throws(() => setDockVisibility(/** @type {any} */ ('false')), TypeError);
+    assert.equal(calls.length, 2, '被拒的调用不该发出命令');
+
+    clearMocks();
+});
+
+test('fetchDataStoreIdentifiers 把 base64 解成 16 个整数的数组', async () => {
+    clearMocks();
+    const first = Uint8Array.from({ length: 16 }, (_, index) => index);
+    const second = Uint8Array.from({ length: 16 }, () => 0xFF);
+    const { calls, transport } = makeTransport({
+        'app.fetchDataStoreIdentifiers': [
+            Buffer.from(first).toString('base64'),
+            Buffer.from(second).toString('base64'),
+        ],
+    });
+    setTransportOverride(transport);
+
+    const identifiers = await fetchDataStoreIdentifiers();
+
+    assert.deepEqual(calls.at(-1), ['app.fetchDataStoreIdentifiers', undefined]);
+    assert.equal(identifiers.length, 2);
+
+    // Tauri 的形状是"16 个数字的元组"，不是 Uint8Array——`id[0]` 与 JSON 化都要对得上
+    assert.ok(Array.isArray(identifiers[0]), '每个标识符应当是数组而不是 Uint8Array');
+    assert.equal(identifiers[0].length, 16);
+    assert.deepEqual(identifiers[0], [...first]);
+    assert.equal(identifiers[1][15], 0xFF);
+
+    clearMocks();
+});
+
+test('removeDataStore 收 16 项数组，逐项校验 0–255', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport();
+    setTransportOverride(transport);
+
+    const identifier = /** @type {any} */ (Array.from({ length: 16 }, (_, index) => index));
+    await removeDataStore(identifier);
+
+    assert.deepEqual(calls.at(-1), [
+        'app.removeDataStore',
+        { value: Buffer.from(identifier).toString('base64') },
+    ]);
+
+    // Uint8Array 也接受（同一种东西的另一种常见持有形态）
+    await removeDataStore(/** @type {any} */ (Uint8Array.from(identifier)));
+    assert.equal(calls.length, 2);
+
+    // 长度与取值范围都要拒：`300` 在 Uint8Array 里会回绕成 44，
+    // 那样删掉的是另一个存储——不可逆。
+    assert.throws(() => removeDataStore(/** @type {any} */ ([1, 2, 3])), /16 个整数/);
+    assert.throws(() => removeDataStore(/** @type {any} */ ('AAAA')), /16 个整数/);
+    assert.throws(
+        () => removeDataStore(/** @type {any} */ ([...identifier.slice(1), 300])),
+        /0–255/);
+
+    assert.equal(calls.length, 2, '被拒的调用不该发出命令');
+    clearMocks();
+});
+
+test('onBackButtonPress 返回 { unregister }，桌面端回调永不触发', async () => {
+    clearMocks();
+    const { transport } = makeTransport();
+    // listen 需要传输层的 on()（桥接脚本提供）；这里给一个什么都不做的订阅入口。
+    setTransportOverride({ ...transport, on: () => () => {} });
+
+    let called = 0;
+    const listener = await onBackButtonPress(() => { called += 1; });
+
+    assert.equal(typeof listener.unregister, 'function');
+    assert.equal(called, 0);
+
+    // 宿主没有发出 back-button（桌面端本来也没有这个事件），退订也不该抛
+    await listener.unregister();
+
+    // async 函数里抛的错是"被拒的 Promise"，不是同步异常
+    await assert.rejects(() => onBackButtonPress(/** @type {any} */ (null)), TypeError);
 
     clearMocks();
 });

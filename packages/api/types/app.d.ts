@@ -47,6 +47,32 @@ export function getTauriVersion(): Promise<string>;
  */
 export function supportsMultipleWindows(): Promise<boolean>;
 /**
+ * 这个应用被什么形态打包/安装的（对标 Tauri 的 `getBundleType()`）。
+ *
+ * @returns {Promise<'nsis' | 'msi' | 'deb' | 'rpm' | 'appimage' | 'app' | null>}
+ * @remarks
+ * **无需能力声明**（只读元信息）。
+ *
+ * `null` 表示"不是已知的打包产物"（开发期直接跑、或手工解压），与 Tauri 在
+ * 未打包时的返回值同义。本库的推断只看运行期事实（见文件头），所以 `msi` / `deb` /
+ * `rpm` 永远不会由推断得出——要精确回答请在 csproj 里声明：
+ * `<AssemblyMetadata Include="OrielBundleType" Value="msi" />`。
+ */
+export function getBundleType(): Promise<"nsis" | "msi" | "deb" | "rpm" | "appimage" | "app" | null>;
+/**
+ * 应用默认窗口图标（对标 Tauri 的 `defaultWindowIcon()`）。
+ *
+ * @returns {Promise<import('./image.js').Image | null>} 没有配置图标时为 `null`。
+ * @remarks
+ * **无需能力声明**（只读元信息）。
+ *
+ * 图标来源是**可执行文件旁边的 `app.png`（或 `app.ico`）**——本库没有 Tauri 那样的
+ * 资源表。文件不存在或不是 PNG/ICO 时返回 `null`，并在宿主侧记一条诊断。
+ *
+ * 结果在宿主进程内只读一次：启动后再把文件放进去需要重启才能看到。
+ */
+export function defaultWindowIcon(): Promise<import("./image.js").Image | null>;
+/**
  * 退出应用（对标 Tauri 的 `exit(code?)`）。
  *
  * @param {number} [code] 进程退出码；省略时保持进程原有的退出码。
@@ -80,6 +106,20 @@ export function show(): Promise<void>;
  */
 export function hide(): Promise<void>;
 /**
+ * 显示 / 隐藏 macOS 的 Dock 图标（对标 Tauri 的 `setDockVisibility()`）。
+ *
+ * @param {boolean} visible `false` = 隐藏 Dock 图标（同时没有菜单栏、不出现在 Cmd-Tab 里）。
+ * @returns {Promise<void>}
+ * @remarks
+ * **需要能力声明**（`app.setDockVisibility`）——它改变应用在系统里的呈现方式。
+ *
+ * **只有 macOS 有**：另两个平台抛 `not_supported`。Windows 上"隐藏任务栏按钮"是
+ * **窗口级**的（`Window.setSkipTaskbar`），Linux 的任务条目由窗口管理器按窗口生成。
+ *
+ * 隐藏之后窗口照常显示——这正是托盘弹窗、HUD 这类无 Dock 应用的用法。
+ */
+export function setDockVisibility(visible: boolean): Promise<void>;
+/**
  * 覆写**应用默认**的主题（对标 Tauri 的 `App.setTheme`）。
  *
  * @param {'light' | 'dark' | null} [theme] `null` = 跟随系统
@@ -97,3 +137,95 @@ export function hide(): Promise<void>;
  * **需要能力声明**（`app.setTheme`）——它改变应用外观，不在只读元信息那组里。
  */
 export function setTheme(theme?: "light" | "dark" | null): Promise<void>;
+/**
+ * 列出本应用用过的数据存储标识符（对标 Tauri 的 `fetchDataStoreIdentifiers()`）。
+ *
+ * @returns {Promise<DataStoreIdentifier[]>} 每个元素是 16 个整数的 UUID（与 Tauri 同形状）。
+ * @remarks
+ * **无需能力声明**（只读元信息）。
+ *
+ * **只有 macOS 12+ 有**：那边的 `WKWebsiteDataStore` 支持"按 UUID 隔离一份浏览数据"，
+ * 标识符由 `OrielWindowOptions.DataStoreIdentifier` 指定。另两个平台抛 `not_supported`。
+ *
+ * 表里是**本应用创建过的**标识符（宿主落在应用数据目录的 `data-stores.json` 里），
+ * 不是 WebKit 的全局枚举——WebKit 的枚举是异步回调接口，与同步的 IPC 请求-回执接不上。
+ */
+export function fetchDataStoreIdentifiers(): Promise<DataStoreIdentifier[]>;
+/**
+ * 删除一份按标识符隔离的浏览数据（对标 Tauri 的 `removeDataStore()`）。
+ *
+ * @param {DataStoreIdentifier} identifier 16 个整数的 UUID（来自 {@link fetchDataStoreIdentifiers}）。
+ * @returns {Promise<void>}
+ * @remarks
+ * **需要能力声明**（`app.removeDataStore`）——它会删数据。
+ *
+ * **只有 macOS 12+ 有**，另两个平台抛 `not_supported`。
+ *
+ * 还有窗口在使用这个标识符时会**拒绝删除**（宿主抛 `invalid_argument` 一类的错误）：
+ * 那种情况下 WebKit 会把数据立刻写回来，"删了但没删"比报错更糟。先关掉那些窗口。
+ */
+export function removeDataStore(identifier: DataStoreIdentifier): Promise<void>;
+/**
+ * 监听"系统返回键"（对标 Tauri 的 `onBackButtonPress()`）。
+ *
+ * @param {(payload: OnBackButtonPressPayload) => void} handler
+ * @returns {Promise<{ unregister: () => Promise<void> }>} 监听器句柄；调 `unregister()` 退订。
+ * @remarks
+ * **桌面端没有返回键，所以这个回调永远不会被调用。** 订阅本身是真的（`listen('back-button')`），
+ * `unregister()` 也照常工作——只是宿主永远不会发那个事件。
+ *
+ * 保留它是为了让"同一份代码同时跑桌面与移动端"的迁移项目不必在 import 处就分叉；
+ * Tauri 在桌面端也是这么做的（它的实现同样只是 `listen('back-button', …)`）。
+ *
+ * 返回的是 `{ unregister }` 而不是裸函数：Tauri 那边返回 `PluginListener`（一个句柄类），
+ * 迁移代码写的是 `await listener.unregister()`。本库没有插件体系，所以这里给一个
+ * **结构上兼容**的最小对象，而不是把 `PluginListener` 整个造出来。
+ */
+export function onBackButtonPress(handler: (payload: OnBackButtonPressPayload) => void): Promise<{
+    unregister: () => Promise<void>;
+}>;
+/**
+ * 数据存储标识符（对标 Tauri 的 `DataStoreIdentifier`）：**16 个 0–255 的整数**。
+ *
+ * @remarks Tauri 用的是定长元组而不是 `Uint8Array`，因为它是从 Rust 的 `[u8; 16]`
+ * 直接序列化过来的。本库照它的形状走——迁移代码可能写 `id[0]` 或把它当数组下标访问。
+ *
+ * @typedef {[number, number, number, number, number, number, number, number,
+ *   number, number, number, number, number, number, number, number]} DataStoreIdentifier
+ */
+/**
+ * `onBackButtonPress` 的回调参数（对标 Tauri 的 `OnBackButtonPressPayload`）。
+ *
+ * @typedef {object} OnBackButtonPressPayload
+ * @property {boolean} canGoBack 页面是否还有历史可回退。**桌面端永远不会收到这个回调**。
+ */
+/**
+ * 应用的产物类型（对标 Tauri 的 `BundleType`）。
+ *
+ * 取值与 Tauri 逐键一致。`getBundleType()` 返回其中之一或 `null`。
+ *
+ * @type {Readonly<{
+ *   Nsis: 'nsis', Msi: 'msi', Deb: 'deb', Rpm: 'rpm', AppImage: 'appimage', App: 'app'
+ * }>}
+ */
+export const BundleType: Readonly<{
+    Nsis: "nsis";
+    Msi: "msi";
+    Deb: "deb";
+    Rpm: "rpm";
+    AppImage: "appimage";
+    App: "app";
+}>;
+/**
+ * 数据存储标识符（对标 Tauri 的 `DataStoreIdentifier`）：**16 个 0–255 的整数**。
+ */
+export type DataStoreIdentifier = [number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number];
+/**
+ * `onBackButtonPress` 的回调参数（对标 Tauri 的 `OnBackButtonPressPayload`）。
+ */
+export type OnBackButtonPressPayload = {
+    /**
+     * 页面是否还有历史可回退。**桌面端永远不会收到这个回调**。
+     */
+    canGoBack: boolean;
+};

@@ -448,6 +448,80 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
         return result;
     }
 
+    // ------------------------------------------------------------------ 应用级（B23）
+
+    /// <summary>Dock 图标显隐（见 <see cref="IPlatformBackend.SetDockVisibility"/>）。</summary>
+    /// <remarks>
+    /// <para>
+    /// 落点是 <c>NSApplication.setActivationPolicy:</c>：<c>Regular</c>(0) 有 Dock 图标与菜单栏，
+    /// <c>Accessory</c>(1) 两者都没有（应用仍在运行、窗口照常显示）。
+    /// </para>
+    /// <para>
+    /// <b>不调 <c>NSApp.hide:</c></b>——那是"隐藏应用"（所有窗口一起消失），
+    /// 与"从 Dock 里拿掉图标"是两件事。Tauri 的 <c>set_dock_visibility</c> 也是只改策略。
+    /// </para>
+    /// </remarks>
+    public void SetDockVisibility(bool visible)
+    {
+        nint nsapp = ObjCRuntime.SendId(
+            ObjCRuntime.GetClassOrThrow("NSApplication"), ObjCRuntime.Sel("sharedApplication"));
+        if (nsapp == 0)
+        {
+            throw new InvalidOperationException(
+                "setDockVisibility：NSApplication 不可用（应用尚未进入消息循环？）。");
+        }
+
+        ObjCRuntime.SendVoidNint(nsapp, ObjCRuntime.Sel("setActivationPolicy:"), visible ? 0 : 1);
+    }
+
+    /// <summary>
+    /// 是否支持按标识符隔离的浏览数据（见 <see cref="IPlatformBackend.SupportsDataStoreIdentifiers"/>）。
+    /// </summary>
+    /// <remarks>
+    /// <c>+[WKWebsiteDataStore dataStoreForIdentifier:]</c> 自 macOS 12 起才有。
+    /// 更早的系统上"能建窗但没有隔离能力"——与 Windows/Linux 同一档，所以这里按能力探测，
+    /// 而不是无条件 <c>true</c>。
+    /// </remarks>
+    public bool SupportsDataStoreIdentifiers
+        => ObjCRuntime.class_getClassMethod(
+            ObjCRuntime.GetClassOrThrow("WKWebsiteDataStore"),
+            "dataStoreForIdentifier:") != 0;
+
+    /// <summary>清掉某个标识符下的全部浏览数据（见 <see cref="IPlatformBackend.RemoveDataStoreData"/>）。</summary>
+    /// <remarks>
+    /// <c>removeDataOfTypes:modifiedSince:completionHandler:</c> 的 completionHandler 传 nil——
+    /// 与本文件既有的 <c>ClearAllBrowsingData</c> 同一姿态：完成通知拿不到，清除照常执行。
+    /// </remarks>
+    public void RemoveDataStoreData(Guid identifier)
+    {
+        nint storeClass = ObjCRuntime.GetClassOrThrow("WKWebsiteDataStore");
+        if (ObjCRuntime.class_getClassMethod(storeClass, "dataStoreForIdentifier:") == 0)
+        {
+            throw new NotSupportedException(
+                "removeDataStoreData：按标识符隔离的数据存储需要 macOS 12 或更高版本。");
+        }
+
+        nint store = ObjCRuntime.SendIdObj(
+            storeClass, ObjCRuntime.Sel("dataStoreForIdentifier:"), ObjCRuntime.MakeNSUUID(identifier));
+        nint types = ObjCRuntime.SendId(storeClass, ObjCRuntime.Sel("allWebsiteDataTypes"));
+        nint distantPast = ObjCRuntime.SendId(
+            ObjCRuntime.GetClassOrThrow("NSDate"), ObjCRuntime.Sel("distantPast"));
+
+        if (store == 0 || types == 0 || distantPast == 0)
+        {
+            OrielDiagnostics.Report(
+                $"[OrielWeb] removeDataStore：取不到 WKWebsiteDataStore（{identifier:D}），未清除。");
+            return;
+        }
+
+        ObjCRuntime.SendVoidObjObjObj(
+            store,
+            ObjCRuntime.Sel("removeDataOfTypes:modifiedSince:completionHandler:"),
+            types,
+            distantPast,
+            0);
+    }
+
     public void RunMessageLoop()
     {
         if (Interlocked.Exchange(ref _ran, 1) == 1)

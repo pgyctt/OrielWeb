@@ -19,6 +19,20 @@ public sealed class OrielApp : IDisposable
     /// </remarks>
     public OrielAppInfo Info { get; }
 
+    /// <summary>
+    /// 应用的产物类型（对标 Tauri 的 <c>getBundleType()</c>）；不是打包产物时为 <c>null</c>。
+    /// </summary>
+    /// <remarks>
+    /// 取值与 JS 侧的 <c>BundleType</c> 同集合（<c>nsis</c> / <c>msi</c> / <c>deb</c> /
+    /// <c>rpm</c> / <c>appimage</c> / <c>app</c>）。推断规则见 <see cref="OrielBundleType"/>：
+    /// 程序集元数据 <c>OrielBundleType</c> 优先，其次看运行期事实（<c>.app</c> 包 /
+    /// Velopack 布局 / <c>APPIMAGE</c> 环境变量）。**观察不出来就是 null**，不按平台猜。
+    /// </remarks>
+    public string? BundleType { get; }
+
+    /// <summary>数据存储标识符登记表（见 <see cref="FetchDataStoreIdentifiers"/>）。</summary>
+    internal OrielDataStoreRegistry DataStores { get; }
+
     internal OrielApp(OrielAppBuilder builder)
     {
         _builder = builder;
@@ -27,6 +41,13 @@ public sealed class OrielApp : IDisposable
         // 而"启动后第一次写配置"才发现它非法，故障点离原因很远。
         builder.AppInfo.Validate();
         Info = builder.AppInfo;
+
+        // 产物类型只观察一次（进程生命期内不会变），而页面可能反复问。
+        BundleType = OrielBundleType.Detect();
+
+        // 数据存储标识符登记表：落盘在应用数据目录下，跨重启可见
+        // （WebKit 的全局枚举是异步回调接口，与同步 IPC 接不上，见 OrielDataStoreRegistry）。
+        DataStores = OrielDataStoreRegistry.ForApp(Info.Identifier);
 
         Guard = new OrielIpcGuard(
             builder.Capabilities,
@@ -415,6 +436,26 @@ public sealed class OrielApp : IDisposable
             options.Debug = true;
         }
 
+        window.DataStoreIdentifier = options.DataStoreIdentifier;
+
+        if (options.DataStoreIdentifier is Guid storeIdentifier)
+        {
+            // 登记发生在建窗之前：万一建窗失败，表里多一条标识符比"数据已经写在磁盘上、
+            // 表里却查不到"轻得多（前者只影响一次列举，后者是永远删不掉的残留）。
+            if (_backend!.SupportsDataStoreIdentifiers)
+            {
+                DataStores.Add(storeIdentifier);
+            }
+            else if (!_dataStoreUnsupportedWarned)
+            {
+                // 只提醒一次：多窗口应用里这条会跟着每个窗口重复，刷屏之后就没人看了。
+                _dataStoreUnsupportedWarned = true;
+                OrielDiagnostics.Report(
+                    "[OrielWeb] DataStoreIdentifier 只有 macOS 生效（WKWebsiteDataStore）："
+                    + "本平台上窗口照常创建，但没有按标识符隔离的浏览数据。");
+            }
+        }
+
         var backend = _backend!.CreateWindow(window, options, this, _assets);
         window.Attach(backend);
         _windows.Add(window);
@@ -604,6 +645,103 @@ public sealed class OrielApp : IDisposable
     /// <summary>把主题推给某个窗口的页面。参数已是 JSON 文本（见 <see cref="WebviewWindow.EmitEvent(string, string)"/>）。</summary>
     private static void PushTheme(WebviewWindow window, OrielTheme theme)
         => window.EmitEvent(ThemeEventName, theme == OrielTheme.Dark ? "\"dark\"" : "\"light\"");
+
+    // ---------------------------------------------------------------- Dock 与数据存储
+    //
+    // 这两组都是**应用级**能力（不属于某个窗口），对标 Tauri 的 AppHandle 上的同名方法。
+
+    /// <summary>
+    /// 显示 / 隐藏 macOS 的 Dock 图标（对标 Tauri 的 <c>App::set_dock_visibility</c>）。
+    /// </summary>
+    /// <param name="visible"><c>false</c> = 隐藏 Dock 图标（同时不显示菜单栏、不出现在 Cmd-Tab 里）。</param>
+    /// <remarks>
+    /// <para>
+    /// <b>只有 macOS 有</b>：Windows 的任务栏按钮属于**单个窗口**（用
+    /// <see cref="WebviewWindow.SetSkipTaskbar"/>），Linux 的 Dock 由桌面环境决定。
+    /// 那两个平台调用会抛 <see cref="NotSupportedException"/>，页面侧收到 <c>not_supported</c>。
+    /// </para>
+    /// <para>
+    /// macOS 的落点是 <c>NSApplication.setActivationPolicy:</c>：<c>Regular</c> ↔ <c>Accessory</c>。
+    /// 后者会让应用**没有菜单栏**——这不是缺陷，而是"没有 Dock 图标的应用"在 AppKit 里的定义。
+    /// 隐藏期间窗口仍然显示（托盘的弹出窗口、无边框 HUD 这类用法正是为此）。
+    /// </para>
+    /// </remarks>
+    public void SetDockVisibility(bool visible)
+    {
+        IPlatformBackend backend = _backend
+            ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
+        backend.SetDockVisibility(visible);
+    }
+
+    /// <summary>本平台是否支持按标识符隔离的浏览数据存储（目前只有 macOS 的 WebKit 有）。</summary>
+    public bool SupportsDataStoreIdentifiers => _backend?.SupportsDataStoreIdentifiers ?? false;
+
+    /// <summary>
+    /// 列出本应用用过的数据存储标识符（对标 Tauri 的 <c>App::fetch_data_store_identifiers</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>只有 macOS 有</b>：Windows 的 WebView2 用整个用户数据目录隔离（见
+    /// <c>UseUserDataFolder</c>），WebKitGTK 的 <c>WebsiteDataManager</c> 没有 UUID 标识符模型。
+    /// 那两个平台抛 <see cref="NotSupportedException"/>。
+    /// </para>
+    /// <para>
+    /// 表里是**本应用创建过的**标识符（落在 <c>AppData/data-stores.json</c>），
+    /// 不是 WebKit 的全局枚举——理由见 <see cref="OrielDataStoreRegistry"/>。
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<Guid> FetchDataStoreIdentifiers()
+    {
+        IPlatformBackend backend = _backend
+            ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
+        RequireDataStoreSupport(backend);
+        return DataStores.Identifiers;
+    }
+
+    /// <summary>
+    /// 删除一份按标识符隔离的浏览数据（对标 Tauri 的 <c>App::remove_data_store</c>）。
+    /// </summary>
+    /// <param name="identifier">标识符（与 <see cref="OrielWindowOptions.DataStoreIdentifier"/> 同源）。</param>
+    /// <exception cref="InvalidOperationException">还有窗口在使用这个标识符。</exception>
+    /// <remarks>
+    /// <para>
+    /// **只有 macOS 有**，其他平台抛 <see cref="NotSupportedException"/>（理由同
+    /// <see cref="FetchDataStoreIdentifiers"/>）。
+    /// </para>
+    /// <para>
+    /// 还在用的存储不能删：WebKit 那边会照常写回去，于是"删了但没删"——
+    /// 调用方看到的成功与实际状态不一致。要删先把那些窗口关掉。
+    /// </para>
+    /// </remarks>
+    public void RemoveDataStore(Guid identifier)
+    {
+        IPlatformBackend backend = _backend
+            ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
+        RequireDataStoreSupport(backend);
+
+        foreach (WebviewWindow window in _windows)
+        {
+            if (window.DataStoreIdentifier == identifier)
+            {
+                throw new InvalidOperationException(
+                    $"数据存储 {identifier:D} 仍被窗口 '{window.Label}' 使用，不能删除："
+                    + "先关掉那个窗口（或换一个标识符）再删。");
+            }
+        }
+
+        backend.RemoveDataStoreData(identifier);
+        DataStores.Remove(identifier);
+    }
+
+    private static void RequireDataStoreSupport(IPlatformBackend backend)
+    {
+        if (!backend.SupportsDataStoreIdentifiers)
+        {
+            throw new NotSupportedException(
+                "数据存储标识符只有 macOS 的 WKWebsiteDataStore 有："
+                + "Windows 的 WebView2 用整个用户数据目录隔离，WebKitGTK 没有 UUID 标识符模型。");
+        }
+    }
 
     /// <summary>
     /// 页面侧可见的"菜单项被点击"事件名：<c>oriel.on('menu.itemclicked', ({ id }) =&gt; …)</c>。
@@ -1453,6 +1591,9 @@ public sealed class OrielApp : IDisposable
     /// </para>
     /// </remarks>
     internal bool IsRunning => _backend is not null;
+
+    /// <summary>是否已经就"本平台不支持 DataStoreIdentifier"提醒过一次。</summary>
+    private bool _dataStoreUnsupportedWarned;
 
     // ---------------------------------------------------------------- 系统剪贴板
     //

@@ -616,6 +616,30 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         }
     }
 
+    // ------------------------------------------------------------------ 应用级（B23）
+
+    /// <summary>
+    /// Dock 图标显隐（见 <see cref="IPlatformBackend.SetDockVisibility"/>）。
+    /// </summary>
+    /// <remarks>
+    /// Windows 上**没有**这个能力：任务栏按钮属于单个窗口（<c>window.setSkipTaskbar</c>），
+    /// 而"任务栏"本身是 Explorer 的。抛 <see cref="NotSupportedException"/> 而不是静默无效
+    /// ——静默无效会让调用方以为"隐藏成功了"，然后在截图里看到它。
+    /// </remarks>
+    public void SetDockVisibility(bool visible)
+        => throw new NotSupportedException(
+            "setDockVisibility 只有 macOS 有：Windows 的任务栏按钮属于单个窗口，"
+            + "用 window.setSkipTaskbar 隐藏它；整个任务的图标由 Explorer 决定。");
+
+    /// <summary>Windows 没有"按标识符隔离的浏览数据"（WebView2 用整个用户数据目录隔离）。</summary>
+    public bool SupportsDataStoreIdentifiers => false;
+
+    /// <inheritdoc />
+    public void RemoveDataStoreData(Guid identifier)
+        => throw new NotSupportedException(
+            "数据存储标识符只有 macOS 的 WKWebsiteDataStore 有："
+            + "Windows 的 WebView2 用整个用户数据目录隔离（见 UseUserDataFolder），没有按 UUID 分库的模型。");
+
     /// <summary>把一段字节放进剪贴板（调用方已 <c>OpenClipboard</c> 且 <c>EmptyClipboard</c>）。</summary>
     /// <remarks>
     /// <c>SetClipboardData</c> 成功后那块 <c>GMEM_MOVEABLE</c> 内存的**所有权归系统**，

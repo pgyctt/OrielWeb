@@ -299,6 +299,12 @@ internal static class OrielCapabilityRules
     /// 但门禁是按命令名判的，所以在这一点上分得开——将来加它们时各自单独判断。
     /// </para>
     /// <para>
+    /// <b>B23 划的两条线</b>：<c>app.setDockVisibility</c> 会改变应用在系统里的呈现
+    /// （Dock 图标消失、菜单栏消失），<c>app.removeDataStore</c> 会删数据——两者都要显式
+    /// <c>Allow</c>；而同批的 <c>app.getBundleType</c> / <c>app.defaultWindowIcon</c> /
+    /// <c>app.fetchDataStoreIdentifiers</c> 是只读元信息，进下面的名单。
+    /// </para>
+    /// <para>
     /// <b>2026-10-19 起这三条已经实现</b>（<c>app.exit</c> / <c>app.show</c> / <c>app.hide</c>），
     /// 并且**仍然不在下面这个名单里**：页面能退出应用、能隐藏主窗口，这是需要应用点头的能力，
     /// 不该因为"名字在 app 族里"就默认拥有。应用要放行得显式写：
@@ -312,6 +318,12 @@ internal static class OrielCapabilityRules
         "app.getIdentifier",
         "app.getTauriVersion",
         "app.supportsMultipleWindows",
+        // B23 的三条只读命令：产物类型、默认图标、数据存储标识符列表。
+        // 它们读的都是"应用自己的元信息"，没有一条能让页面做到本来做不到的事
+        // ——标识符列表至多泄露"有哪几个隔离存储"（页面本来就在其中之一的 webview 里跑）。
+        "app.getBundleType",
+        "app.defaultWindowIcon",
+        "app.fetchDataStoreIdentifiers",
     ];
 
     /// <summary>判断某个 <c>app.*</c> 命令是否属于"始终放行"的那几条只读元信息。</summary>

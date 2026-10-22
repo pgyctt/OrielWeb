@@ -116,6 +116,29 @@ public sealed class OrielWindowOptions
     public bool Frameless { get; set; }
     public bool Hidden { get; set; }
     public bool Maximized { get; set; }
+
+    /// <summary>
+    /// 这份窗口的浏览数据用哪个存储（对标 Tauri 的 <c>WebviewWindowBuilder::data_store_identifier</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>只有 macOS 生效</b>（<c>WKWebsiteDataStore dataStoreForIdentifier:</c>）：同一个
+    /// UUID 的窗口共享 cookie / localStorage / 缓存，不同 UUID 彼此隔离。Windows 的
+    /// WebView2 用整个用户数据目录隔离，WebKitGTK 没有这套模型——那两个平台会记一条诊断并
+    /// **照常建窗**（只是没有隔离效果）。
+    /// </para>
+    /// <para>
+    /// 用过的标识符会被登记在应用数据目录的 <c>data-stores.json</c> 里，
+    /// 于是 <c>app.fetchDataStoreIdentifiers()</c> 能列出来、<c>app.removeDataStore()</c>
+    /// 能删掉（见 <see cref="OrielApp.RemoveDataStore"/>）。
+    /// </para>
+    /// <para>
+    /// **在 Windows/Linux 上不抛错**：窗口本身照常可用，缺的只是"隔离"这一层。
+    /// 在这里抛错会让同一份应用代码无法跨平台运行——而这个参数在另两个平台上的
+    /// 等价物（不同 user data folder）是应用级配置，不是窗口级参数。
+    /// </para>
+    /// </remarks>
+    public Guid? DataStoreIdentifier { get; set; }
     /// <summary>
     /// 直接加载的 URL。未设置时使用内嵌资产首页（<c>&lt;资源目录&gt;/index.html</c>）。
     /// </summary>
@@ -345,6 +368,13 @@ public sealed class OrielWindowOptions
 
     /// <summary>开启/关闭用户缩放页面；见 <see cref="Zoom"/>。</summary>
     public OrielWindowOptions WithZoom(bool enabled = true) { Zoom = enabled; return this; }
+
+    /// <summary>指定这份窗口的浏览数据标识符（只有 macOS 有隔离效果）；见 <see cref="DataStoreIdentifier"/>。</summary>
+    public OrielWindowOptions WithDataStoreIdentifier(Guid identifier)
+    {
+        DataStoreIdentifier = identifier;
+        return this;
+    }
 
     /// <summary>设置内核就绪前的窗口底色（<c>0xAARRGGBB</c>）；见 <see cref="BackgroundColor"/>。</summary>
     public OrielWindowOptions WithBackgroundColor(uint argb) { BackgroundColor = argb; return this; }

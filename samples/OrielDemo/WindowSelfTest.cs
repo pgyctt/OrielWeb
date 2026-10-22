@@ -1057,6 +1057,85 @@ internal static class WindowSelfTest
             await AskMainAsync("window.setDecorations", SelfTestJson.Object(("value", SelfTestJson.Bool(true))));
             Check(main.IsDecorated, "setDecorations(true) 之后 isDecorated 应当为 true");
             Console.WriteLine("[window-selftest] OK: window.setDecorations 去掉再装回（isDecorated 跟着变）");
+
+            // ---- 13. app 级能力（B23）：产物类型 / 默认图标 / Dock / 数据存储 ----
+            //
+            // 这四条与 window.* 不同：它们**不属于某个窗口**。仍然从主窗口的页面发起
+            // （命令需要来源窗口来拿应用实例），但作用面是整个应用。
+            {
+                JsonElement? bundleType = await TryAskMainAsync("app.getBundleType", SelfTestJson.Object());
+                string? bundle = bundleType is { ValueKind: JsonValueKind.String } element
+                    ? element.GetString()
+                    : null;
+                bool bundleKnown = bundle is null or "nsis" or "msi" or "deb" or "rpm" or "appimage" or "app";
+
+                Check(
+                    bundleType is not null && bundleKnown,
+                    "app.getBundleType 应当返回 null 或已知的产物类型"
+                    + $"（实际：{(bundleType is null ? LastError : bundle ?? "null")}）");
+
+                // 默认图标：demo 的产物里**没有** app.png（那是应用自己放的），
+                // 所以这里期望 null；若有人把它加进去了，则必须是 base64 字符串。
+                string iconPath = Path.Combine(AppContext.BaseDirectory, "app.png");
+                JsonElement? icon = await TryAskMainAsync("app.defaultWindowIcon", SelfTestJson.Object());
+                bool iconOk = File.Exists(iconPath)
+                    ? icon is { ValueKind: JsonValueKind.String }
+                    : icon is { ValueKind: JsonValueKind.Null };
+
+                Check(iconOk, "app.defaultWindowIcon 应当与可执行文件旁有没有 app.png 一致"
+                    + $"（实际：{(icon is null ? LastError : icon.Value.ValueKind.ToString())}）");
+
+                // Dock 显隐：只有 macOS 有
+                if (isMac)
+                {
+                    await AskMainAsync(
+                        "app.setDockVisibility", SelfTestJson.Object(("value", SelfTestJson.Bool(false))));
+                    await AskMainAsync(
+                        "app.setDockVisibility", SelfTestJson.Object(("value", SelfTestJson.Bool(true))));
+                    Console.WriteLine("[window-selftest] OK: app.setDockVisibility 从 Dock 拿掉再放回");
+                }
+                else
+                {
+                    JsonElement? dock = await TryAskMainAsync(
+                        "app.setDockVisibility", SelfTestJson.Object(("value", SelfTestJson.Bool(false))));
+                    Check(
+                        dock is null && (LastError ?? string.Empty).StartsWith("not_supported", StringComparison.Ordinal),
+                        $"{(isWindows ? "Windows" : "Linux")} 上 setDockVisibility 应当明确报 not_supported"
+                        + $"（实际：{(dock is null ? LastError : "成功")}）");
+                }
+
+                // 数据存储标识符：只有 macOS 12+ 有
+                if (isMac)
+                {
+                    JsonElement? identifiers = await TryAskMainAsync(
+                        "app.fetchDataStoreIdentifiers", SelfTestJson.Object());
+                    Check(
+                        identifiers is { ValueKind: JsonValueKind.Array },
+                        "macOS 上 fetchDataStoreIdentifiers 应当返回数组"
+                        + $"（实际：{(identifiers is null ? LastError : identifiers.Value.ValueKind.ToString())}）");
+
+                    // 删一个**从没用过**的标识符：它不该报错（WebKit 那边没有这个存储，
+                    // 清空是空操作），也不该影响正在跑的这个窗口（它用的是默认存储）。
+                    JsonElement? removed = await TryAskMainAsync(
+                        "app.removeDataStore",
+                        SelfTestJson.Object(("value", SelfTestJson.String(
+                            Convert.ToBase64String(Guid.NewGuid().ToByteArray())))));
+                    Check(
+                        removed is { ValueKind: JsonValueKind.Null },
+                        "macOS 上 removeDataStore 删一个未使用的标识符应当成功"
+                        + $"（实际：{(removed is null ? LastError : removed.Value.ValueKind.ToString())}）");
+                }
+                else
+                {
+                    JsonElement? identifiers = await TryAskMainAsync(
+                        "app.fetchDataStoreIdentifiers", SelfTestJson.Object());
+                    Check(
+                        identifiers is null
+                        && (LastError ?? string.Empty).StartsWith("not_supported", StringComparison.Ordinal),
+                        $"{(isWindows ? "Windows" : "Linux")} 上 fetchDataStoreIdentifiers 应当明确报 not_supported"
+                        + $"（实际：{(identifiers is null ? LastError : "成功")}）");
+                }
+            }
         }
         catch (Exception ex)
         {

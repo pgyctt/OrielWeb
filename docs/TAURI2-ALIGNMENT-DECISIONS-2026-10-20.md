@@ -88,7 +88,7 @@ notification 的移动端 8 个。
 | **B20** | fs watch/watchImmediate + security-scoped | 三平台监视器（inotify/ReadDirectoryChangesW/FSEvents） | B17 | 高 |
 | **B21** | window 光标 6 项 | 三平台光标后端 | 无 | 中高 |
 | **B22** | window 平台开关 10 项 + 特效 4 项 + 任务栏 5 项（**已完成**，见 §6） | 三平台窗口宿主（最重的一批） | B13 | **高** |
-| **B23** | app 剩余：setDockVisibility、defaultWindowIcon、BundleType、getBundleType、数据存储 2 项、onBackButtonPress | `OrielApp` + macOS Dock + WKWebsiteDataStore | B13 | 中 |
+| **B23** | app 剩余：setDockVisibility、defaultWindowIcon、BundleType、getBundleType、数据存储 2 项、onBackButtonPress（**已完成**，见 §6） | `OrielApp` + macOS Dock + WKWebsiteDataStore | B13 | 中 |
 | **B24** | 账本收口：GAPS 清零核对、PLANNED_MODULES 更新、batch 新鲜度断言、迁移演练复跑 | `tauri-alignment.test.mjs`、`tools/migration-drill/` | B12–B23 | 低 |
 
 **规模合计**（按改动点）：新增文件约 6、修改文件约 45、新增测试约 150 条。
@@ -202,3 +202,33 @@ B14 与 B22 是两块硬骨头；B12/B13/B15/B16/B23 是「一个下午一批」
 **取证**：演示自检第 12 段按平台分两路（能做的验成功、不支持的验 `not_supported`），
 改动全部还原；C# 单测补 64 条（注册/门禁/参数校验/名字表），JS 单测补 9 条
 （命令名与形状、参数校验）。
+
+### B23（2026-10-22，已完成）：app 剩余五项
+
+`@orielweb/api/app` 的导出面与 Tauri 2 **一条不缺**，对齐账本 `GAPS.app` 清零。
+这一批的难点不在代码量，而在**每一格都要说清"凭什么知道"**：
+
+1. **`getBundleType()` 的答案是推断出来的，不是读出来的。** Tauri 在编译期把
+   `TAURI_BUNDLE_TYPE` 塞进二进制；本库没有打包阶段，所以只能观察运行期事实
+   （`.app` 里的路径、Velopack 的 `Update.exe`、`APPIMAGE` 环境变量）。
+   看不出来就返回 `null`——**不按平台猜**。`msi` / `deb` / `rpm` 在运行期无法区分，
+   要精确回答得用程序集元数据 `OrielBundleType` 显式声明。这是"不编值"原则
+   在这一批里最直接的一次应用。
+2. **数据存储标识符没有走 WebKit 的全局枚举。** `+[WKWebsiteDataStore
+   fetchAllDataStoreIdentifiers:]` 是异步回调接口（要传 ObjC block），而本库的 IPC 是
+   同步请求-回执——在 UI 线程上等主队列的回调就是死锁。于是改成宿主侧登记表
+   （`AppData/data-stores.json`，跨重启可见），并把"按 UUID 隔离"真正接到
+   `OrielWindowOptions.DataStoreIdentifier` 上（`+dataStoreForIdentifier:`，macOS 12+，
+   调之前用 `class_getClassMethod` 探测）。
+3. **`onBackButtonPress` 是"真订阅 + 永不触发"**，不是空函数：桌面端本来就没有返回键，
+   Tauri 在桌面端也只是 `listen('back-button', …)`。返回句柄做成 `{ unregister }`，
+   结构上兼容它的 `PluginListener`。
+
+**门禁姿态**：只读的三条（`getBundleType` / `defaultWindowIcon` /
+`fetchDataStoreIdentifiers`）进 always-allowed；改应用呈现的 `setDockVisibility` 与删数据的
+`removeDataStore` 要显式 `Allow`。这条线是 B23 里唯一容易在后续重构中被"合并简化"的东西，
+所以 C# 侧单独钉了测试。
+
+**取证**：演示自检第 13 段按平台分两路（macOS 验成功路径、Windows/Linux 验 `not_supported`）；
+C# 单测补 47 条（推断规则、魔数判断、登记表落盘与损坏恢复、门禁与参数校验），
+JS 单测补 7 条（命令名与形状、16 位元组、退订接口）。

@@ -1238,4 +1238,45 @@ internal interface IPlatformBackend : IDisposable
     /// 剪贴板管理器可以不理（这与 Tauri 的说明一致）。
     /// </remarks>
     bool WriteClipboardSecret(string text);
+
+    // ------------------------------------------------------------------ 应用级（B23）
+    //
+    // Dock 显隐与数据存储标识符都是**应用级**能力（不属于某个窗口），
+    // 所以放在本接口而不是 IWindowBackend 上。
+
+    /// <summary>
+    /// 显示 / 隐藏应用在 Dock / 任务栏里的图标（对标 Tauri 的 <c>setDockVisibility</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>只有 macOS 有真实现</b>（<c>NSApplication.setActivationPolicy:</c> 的
+    /// Regular / Accessory）。Windows 的任务栏按钮属于单个窗口（<c>setSkipTaskbar</c>），
+    /// Linux 的 Dock 由桌面环境决定——两者抛 <see cref="NotSupportedException"/>。
+    /// </para>
+    /// <para>
+    /// 必须在 UI 线程调用（命令处理本来就在 UI 线程）。
+    /// </para>
+    /// </remarks>
+    void SetDockVisibility(bool visible);
+
+    /// <summary>
+    /// 本平台是否支持"按标识符隔离的浏览数据存储"。
+    /// </summary>
+    /// <remarks>
+    /// 目前只有 macOS 的 <c>WKWebsiteDataStore</c> 有这个模型。它同时决定
+    /// <see cref="RemoveDataStoreData"/> 与 <c>app.fetchDataStoreIdentifiers</c> /
+    /// <c>app.removeDataStore</c> 是"真做"还是 <c>not_supported</c>。
+    /// </remarks>
+    bool SupportsDataStoreIdentifiers { get; }
+
+    /// <summary>
+    /// 清掉某个数据存储标识符下的全部浏览数据（cookie / localStorage / 缓存）。
+    /// </summary>
+    /// <remarks>
+    /// <b>只有 macOS 实现</b>（<c>WKWebsiteDataStore dataStoreForIdentifier:</c> +
+    /// <c>removeDataOfTypes:modifiedSince:completionHandler:</c>），其他平台抛
+    /// <see cref="NotSupportedException"/>。标识符的登记与"是否仍被窗口占用"由
+    /// <see cref="OrielApp.RemoveDataStore"/> 那侧管，本方法只管清数据。
+    /// </remarks>
+    void RemoveDataStoreData(Guid identifier);
 }

@@ -1171,7 +1171,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 | `window` | `getCurrentWindow` / `getAllWindows` / `getByLabel` / `getFocusedWindow` + `Window` 类（含静态方法 `Window.getFocusedWindow()`；M5 的状态查询与外观开关：`isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop` / `isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `isEnabled` / `theme`；`setEnabled` / `setMaximizable` / `setMinimizable` / `setClosable` / `setMaxSize` / `setSizeConstraints` / `requestUserAttention` / `setIcon` / `setBackgroundColor`；`onThemeChanged` / `onScaleChanged` / `onDragDropEvent`；显示器 `availableMonitors` / `primaryMonitor` / `currentMonitor` / `monitorFromPoint` / `cursorPosition`；光标 `setCursorGrab` / `setCursorVisible` / `setCursorIcon` / `setCursorPosition` / `setIgnoreCursorEvents` / `startResizeDragging`；平台开关 `setSkipTaskbar` / `setVisibleOnAllWorkspaces` / `setContentProtected` / `setSimpleFullscreen` / `setFullscreenOnMonitor` / `setTitleBarStyle` / `setShadow` / `setAlwaysOnBottom` / `setFocusable` / `setDecorations`；材质 `setEffects` / `clearEffects` + `Effect` / `EffectState`；任务栏 `setProgressBar` / `setOverlayIcon` / `setBadgeCount` / `setBadgeLabel` + `ProgressBarStatus`；以及 `TitleBarStyle` / `Effects` / `ProgressBarState` 三个类型） |
 | `webviewWindow` | `WebviewWindow`（`extends Window`）/ `getCurrentWebviewWindow` / `getAllWebviewWindows`。**页面建窗**：`new WebviewWindow(label, options)` 后 `await w.created`，或 `await WebviewWindow.create(...)`。与 Tauri 的差别是"创建结果走 `created` 而不是 `tauri://created` 事件"（见该模块一节） |
 | `path` | `sep` / `delimiter`（**同步**）+ `join` / `normalize` / `dirname` / `extname` / `basename` / `isAbsolute` / `resolve` |
-| `app` | `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows`（只读元信息，**无需能力声明**）；`exit` / `show` / `hide`（**需要显式 `Allow`**，见 §4 的能力表） |
+| `app` | `getName` / `getVersion` / `getIdentifier` / `getTauriVersion` / `supportsMultipleWindows` / `getBundleType` / `defaultWindowIcon` / `fetchDataStoreIdentifiers`（只读元信息，**无需能力声明**）；`exit` / `show` / `hide` / `setTheme` / `setDockVisibility` / `removeDataStore`（**需要显式 `Allow`**，见 §4 的能力表）；`onBackButtonPress`（只读订阅，桌面端永不触发） |
 | `fs` | `readTextFile` / `writeTextFile` / `readFile` / `writeFile` / `exists` / `size` / `readDir` / `stat` / `lstat` / `mkdir` / `remove` / `rename` / `copyFile` / `truncate` + `open` / `create` / `FileHandle` / `SeekMode` / `readTextFileLines`（B17）+ `watch` / `watchImmediate`（B20，**两道关都必过**，见下） |
 | `opener` | `openUrl` / `openPath` / `revealItemInDir` |
 | `notification` | `isPermissionGranted` / `requestPermission` / `sendNotification`（含 `schedule` 排期）+ 登记表 `active` / `pending` / `cancel` / `cancelAll` / `removeActive` / `removeAllActive` + `Schedule` / `ScheduleEvery` + `onNotificationReceived`（真事件）/ `onAction`（订阅时抛 `not_supported`，见该模块一节） |
@@ -1635,11 +1635,79 @@ Debug 构建不受影响（全放行）。
 > `getTauriVersion()` 的版本号判断，那一段必须重写，不能照搬。
 > 它与 `window.oriel.version` **同源**（都来自程序集版本），所以两处做能力探测不会矛盾。
 
-**本模块仍然不含**：`setTheme` / `setDockVisibility`（应用级主题覆写、macOS Dock 显隐，本库还没有）、
-`getBundleType` / `BundleType`（返回的是 Tauri 打包器的产物类型，本库是库不是打包器，
-**给不出这个值**——编一个比不提供更糟，迁移代码会基于错信息分支）、`defaultWindowIcon` /
-`fetchDataStoreIdentifiers` / `removeDataStore` / `onBackButtonPress`（依赖图标资源表、
-数据存储、移动端返回键，暂无对应物）。
+#### 产物类型 / 默认图标 / Dock / 数据存储 / 返回键（B23）
+
+B23 之后 `app` 模块的导出面与 Tauri 2 **一条不缺**。这五项的形态与平台事实如下：
+
+```js
+import {
+    BundleType, getBundleType, defaultWindowIcon, setDockVisibility,
+    fetchDataStoreIdentifiers, removeDataStore, onBackButtonPress,
+} from '@orielweb/api/app';
+
+await getBundleType();          // 'nsis' | 'msi' | 'deb' | 'rpm' | 'appimage' | 'app' | null
+await defaultWindowIcon();      // Image | null
+await setDockVisibility(false); // 仅 macOS：从 Dock 拿掉图标（同时没有菜单栏）
+const ids = await fetchDataStoreIdentifiers(); // [{16 个数字}, …]，仅 macOS 12+
+await removeDataStore(ids[0]);
+const listener = await onBackButtonPress(({ canGoBack }) => {}); // 桌面端永不触发
+await listener.unregister();
+```
+
+| 项 | Windows | macOS | Linux | 能力声明 |
+|---|---|---|---|---|
+| `getBundleType` / `BundleType` | ✅ | ✅（在 `.app` 里 → `app`） | ✅（AppImage → `appimage`） | 否（只读） |
+| `defaultWindowIcon` | ✅ | ✅ | ✅ | 否（只读） |
+| `setDockVisibility` | ⛔ `not_supported` | ✅ `setActivationPolicy` | ⛔ `not_supported` | **要**（`app.setDockVisibility`） |
+| `fetchDataStoreIdentifiers` | ⛔ | ✅（macOS 12+） | ⛔ | 否（只读） |
+| `removeDataStore` | ⛔ | ✅（macOS 12+） | ⛔ | **要**（`app.removeDataStore`） |
+| `onBackButtonPress` | ✅ 订阅成立、永不触发 | 同 | 同 | 否 |
+
+**`getBundleType()` 返回的产物类型是从运行期事实推断的，不是读配置**：
+
+| 观察到的事实 | 返回值 |
+|---|---|
+| 程序集元数据 `OrielBundleType`（见下） | 它声明的那一个（**优先于一切推断**） |
+| 进程在 `…/X.app/Contents/MacOS/` 里 | `app` |
+| 可执行文件旁（或上一级）有 Velopack 的 `Update.exe` | `nsis`（Velopack 的 Setup.exe 安装器） |
+| 环境变量 `APPIMAGE` 非空 | `appimage` |
+| 以上都不成立（开发期、手工解压、`dotnet run`） | `null` |
+
+`msi` / `deb` / `rpm` 在**运行期彼此不可区分**（装完之后留在磁盘上的东西一样），所以推断不会
+给出它们。要精确回答就在 csproj 里声明：
+
+```xml
+<ItemGroup>
+  <AssemblyMetadata Include="OrielBundleType" Value="msi" />
+</ItemGroup>
+```
+
+> **`getBundleType()` 在未打包时返回 `null`**。Tauri 的 `app.d.ts` 把返回类型写成
+> `Promise<BundleType>`，但它在未打包时实际也给 `null`——本库的类型如实带上 `| null`。
+
+**`defaultWindowIcon()` 的图标来源是"可执行文件旁边的 `app.png`"（Windows 上也认 `app.ico`）**：
+本库没有 Tauri 那样的资源表。文件不存在或不是 PNG/ICO（按魔数判断）时返回 `null` 并记一条诊断。
+结果在宿主进程内只读一次——启动后再放文件进去要重启才能看到。
+
+**`setDockVisibility` 是 macOS 专有**：落点 `NSApplication.setActivationPolicy:`（`Regular` ↔
+`Accessory`）。隐藏 Dock 图标的同时**菜单栏也会消失**——这是"没有 Dock 图标的应用"在 AppKit
+里的定义，不是缺陷。Windows 的任务栏按钮是**窗口级**的（`Window.setSkipTaskbar`），
+Linux 的任务条目由窗口管理器按窗口生成，两者都抛 `not_supported`。
+
+**数据存储标识符（`DataStoreIdentifier`）是 macOS 12+ 的能力**：`WKWebsiteDataStore` 支持按
+UUID 隔离一份浏览数据，本库用 `OrielWindowOptions.DataStoreIdentifier` 把它开放给窗口。
+`fetchDataStoreIdentifiers()` 返回的是**本应用创建过的**标识符（宿主登记在
+`AppData/data-stores.json` 里），而不是 WebKit 的全局枚举——后者的接口是异步回调，
+与同步的 IPC 请求-回执接不上。标识符的形状与 Tauri 一致：**16 个 0–255 的整数**，
+不是 `Uint8Array`。
+
+`removeDataStore()` 会清掉那份存储的全部数据（cookie / localStorage / 缓存）并把它从登记表里
+删掉。**还有窗口在使用该标识符时拒绝删除**（那些窗口会把数据立刻写回来，"删了但没删"比报错更糟）。
+
+**`onBackButtonPress` 在桌面端订阅成立、回调永不触发**（Tauri 的说明也是
+"Windows / Linux / macOS / iOS: Unsupported, the handler is never called"）。
+返回的句柄是 `{ unregister }`——Tauri 那边是 `PluginListener` 类，本库没有插件体系，
+所以给了个**结构上兼容**的最小对象，`await listener.unregister()` 照常可用。
 
 **`window` 模块的方法是否需要能力声明**：
 

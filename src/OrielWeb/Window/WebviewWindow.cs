@@ -328,6 +328,16 @@ public sealed class WebviewWindow : IOrielWindowControl
     public string? Label => _backend?.Label;
 
     /// <summary>
+    /// 本窗口绑定的数据存储标识符（B23）；<c>null</c> = 用默认存储。
+    /// </summary>
+    /// <remarks>
+    /// 只有 macOS 真正生效（见 <see cref="OrielWindowOptions.DataStoreIdentifier"/>）。
+    /// 记在窗口上是为了 <see cref="OrielApp.RemoveDataStore"/> 能回答"还有谁在用"——
+    /// 删掉别人正在写的存储，结果会是"删了但立刻又被写回来"。
+    /// </remarks>
+    internal Guid? DataStoreIdentifier { get; set; }
+
+    /// <summary>
     /// 关闭时的簿记：由 <see cref="OrielApp"/> 设置（把本窗口从应用窗口列表里摘掉），
     /// 在公共 <see cref="Closed"/> 事件**之前**执行。
     /// </summary>

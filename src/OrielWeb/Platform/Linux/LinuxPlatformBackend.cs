@@ -518,6 +518,30 @@ internal sealed class LinuxPlatformBackend : IPlatformBackend
         ]);
     }
 
+    // ------------------------------------------------------------------ 应用级（B23）
+
+    /// <summary>
+    /// Dock 图标显隐（见 <see cref="IPlatformBackend.SetDockVisibility"/>）。
+    /// </summary>
+    /// <remarks>
+    /// Linux 上没有"应用级 Dock 图标"这个概念：任务是**每个窗口**一条（由窗口管理器 /
+    /// 桌面环境决定），应用本身没有被独立表示的图标。抛 <see cref="NotSupportedException"/>，
+    /// 与 Tauri 在 Linux 上不做 <c>set_dock_visibility</c> 一致。
+    /// </remarks>
+    public void SetDockVisibility(bool visible)
+        => throw new NotSupportedException(
+            "setDockVisibility 只有 macOS 有：Linux 的任务条目由窗口管理器按窗口生成，"
+            + "没有应用级的 Dock 图标可以隐藏（隐藏单个窗口用 window.setSkipTaskbar）。");
+
+    /// <summary>Linux 没有"按标识符隔离的浏览数据"（WebKitGTK 的 WebsiteDataManager 没有 UUID 模型）。</summary>
+    public bool SupportsDataStoreIdentifiers => false;
+
+    /// <inheritdoc />
+    public void RemoveDataStoreData(Guid identifier)
+        => throw new NotSupportedException(
+            "数据存储标识符只有 macOS 的 WKWebsiteDataStore 有："
+            + "WebKitGTK 的 WebsiteDataManager 没有按 UUID 分库的模型。");
+
     /// <summary>以多目标方式声明剪贴板内容。</summary>
     private static unsafe bool OfferTargets((string Target, byte[] Data)[] items)
     {

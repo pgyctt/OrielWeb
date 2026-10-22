@@ -1544,6 +1544,52 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     // 创建
     // ------------------------------------------------------------------
 
+    /// <summary>
+    /// 按 <see cref="OrielWindowOptions.DataStoreIdentifier"/> 给 webview 绑定一份隔离的浏览数据。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>+[WKWebsiteDataStore dataStoreForIdentifier:]</c> 是 macOS 12+ 的**类方法**
+    /// （返回一个按 UUID 隔离的存储）。同一个 UUID 的多个窗口共享 cookie / localStorage，
+    /// 不同 UUID 彼此隔离——这就是 Tauri 的 <c>data_store_identifier</c> 在 macOS 上的全部含义。
+    /// </para>
+    /// <para>
+    /// <b>先探测再发消息</b>：旧系统上这个类方法不存在，向它发消息会抛
+    /// <c>NSInvalidArgumentException</c>（ObjC 异常，托管侧接不住）。探测不到时记一条诊断并
+    /// 沿用默认存储——窗口照常可用，只是没有隔离。
+    /// </para>
+    /// </remarks>
+    private void ApplyDataStoreIdentifier(nint config)
+    {
+        if (_options.DataStoreIdentifier is not Guid identifier)
+        {
+            return;
+        }
+
+        nint storeClass = ObjCRuntime.GetClassOrThrow("WKWebsiteDataStore");
+        if (ObjCRuntime.class_getClassMethod(storeClass, "dataStoreForIdentifier:") == 0)
+        {
+            OrielDiagnostics.Report(
+                "[OrielWeb] DataStoreIdentifier 需要 macOS 12 或更高版本："
+                + "本窗口沿用默认数据存储（没有隔离）。");
+            return;
+        }
+
+        nint store = ObjCRuntime.SendIdObj(
+            storeClass,
+            ObjCRuntime.Sel("dataStoreForIdentifier:"),
+            ObjCRuntime.MakeNSUUID(identifier));
+
+        if (store == 0)
+        {
+            OrielDiagnostics.Report(
+                $"[OrielWeb] DataStoreIdentifier 绑定失败（{identifier:D}），本窗口沿用默认数据存储。");
+            return;
+        }
+
+        ObjCRuntime.SendVoidObj(config, ObjCRuntime.Sel("setWebsiteDataStore:"), store);
+    }
+
     internal void Create()
     {
         // 取类即校验：类不存在时宁可显式报错，也不要让后面一长串 objc_msgSend 静默 no-op
@@ -1588,6 +1634,11 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         // ---- WKWebView ----
         var config = ObjCRuntime.SendId(
             ObjCRuntime.SendId(clsWKWebViewConfiguration, ObjCRuntime.Sel("alloc")), ObjCRuntime.Sel("init"));
+
+        // 数据存储（B23）：必须在创建 WKWebView **之前**挂到 config 上——
+        // webview 一旦建出来，它的 dataStore 就固定了，之后改 config 不生效。
+        ApplyDataStoreIdentifier(config);
+
         var userContentController = ObjCRuntime.SendId(config, ObjCRuntime.Sel("userContentController"));
 
         _scriptHandler = MacOSObjCClasses.CreateScriptHandler(_messageHandler);

@@ -111,6 +111,8 @@ const CONST_OBJECTS = [
     { module: '../src/fs.js', theirs: '@tauri-apps/plugin-fs', name: 'SeekMode' },
     // B18：ScheduleEvery 是字符串枚举（Year = 'year' …），迁移代码会直接写 ScheduleEvery.Hour
     { module: '../src/notification.js', theirs: '@tauri-apps/plugin-notification', name: 'ScheduleEvery' },
+    // B23：BundleType 是产物类型的枚举（Nsis = 'nsis' …），迁移代码会直接拿它比对
+    { module: '../src/app.js', theirs: '@tauri-apps/api/app', name: 'BundleType' },
 ];
 
 /**
@@ -143,13 +145,14 @@ const GAPS = {
         // BaseDirectory 已补（B13）：枚举对象，值与 Tauri 逐键同值，fs 的 baseDir 选项由此串接。
     },
     app: {
-        BundleType: 'Tauri 打包器的产物类型；本库是库不是打包器，给不出（见 API.md）',
-        defaultWindowIcon: '要图标资源表，本库没有',
-        fetchDataStoreIdentifiers: '数据存储标识符枚举；本库没有那个存储层',
-        getBundleType: '同 BundleType',
-        onBackButtonPress: '移动端返回键；桌面端没有',
-        removeDataStore: '同 fetchDataStoreIdentifiers',
-        setDockVisibility: 'macOS 的 Dock 显隐；本库还没有',
+        // B23 之后**没有缺口**：
+        //   * BundleType / getBundleType —— 产物类型按运行期事实推断（.app / Velopack /
+        //     AppImage），也可以用程序集元数据显式声明；观察不出来时返回 null。
+        //   * defaultWindowIcon —— 来源是可执行文件旁的 app.png / app.ico。
+        //   * setDockVisibility —— macOS 的 NSApplication.setActivationPolicy:。
+        //   * fetchDataStoreIdentifiers / removeDataStore —— macOS 12+ 的 WKWebsiteDataStore，
+        //     标识符登记在宿主侧（WebKit 的全局枚举是异步回调，与同步 IPC 接不上）。
+        //   * onBackButtonPress —— 订阅是真的（listen('back-button')），桌面端永不触发。
     },
     mocks: {},
     fs: {

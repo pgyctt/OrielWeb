@@ -174,6 +174,11 @@ public sealed class AppInfoTests
     [InlineData("app.getTauriVersion")]
     [InlineData("app.supportsMultipleWindows")]
     [InlineData("app.setTheme")]
+    [InlineData("app.getBundleType")]
+    [InlineData("app.defaultWindowIcon")]
+    [InlineData("app.setDockVisibility")]
+    [InlineData("app.fetchDataStoreIdentifiers")]
+    [InlineData("app.removeDataStore")]
     public void AppCommandsAreRegistered(string name)
         => Assert.True(OrielBuiltInAppCommands.TryGet(name, out _), $"未注册：{name}");
 
@@ -187,6 +192,10 @@ public sealed class AppInfoTests
     [InlineData("app.getIdentifier")]
     [InlineData("app.getTauriVersion")]
     [InlineData("app.supportsMultipleWindows")]
+    // B23：只读的三条（产物类型 / 默认图标 / 数据存储标识符列表）
+    [InlineData("app.getBundleType")]
+    [InlineData("app.defaultWindowIcon")]
+    [InlineData("app.fetchDataStoreIdentifiers")]
     public void AppMetadataCommandsAreAlwaysAllowed(string name)
         => Assert.True(OrielCapabilityRules.IsAlwaysAllowedAppCommand(name));
 
@@ -195,7 +204,8 @@ public sealed class AppInfoTests
     [InlineData("app.show")]
     [InlineData("app.hide")]
     [InlineData("app.setTheme")]
-    [InlineData("app.getBundleType")]
+    [InlineData("app.setDockVisibility")]
+    [InlineData("app.removeDataStore")]
     [InlineData("apps.getName")]
     [InlineData("app.")]
     public void StatefulAppCommandsAreNotAlwaysAllowed(string name)

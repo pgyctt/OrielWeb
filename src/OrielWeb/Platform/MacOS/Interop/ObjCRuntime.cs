@@ -63,6 +63,14 @@ internal static unsafe partial class ObjCRuntime
     [LibraryImport(ObjCLib, StringMarshalling = StringMarshalling.Utf8)]
     internal static partial nint class_getInstanceVariable(nint cls, string name);
 
+    /// <summary>
+    /// 取**类方法**（不存在时返回 0）。B23 用它判断 <c>+[WKWebsiteDataStore dataStoreForIdentifier:]</c>
+    /// 在旧系统上是否存在——向不认识的 selector 发消息会抛 <c>NSInvalidArgumentException</c>，
+    /// 那是 ObjC 异常、托管侧接不住。
+    /// </summary>
+    [LibraryImport(ObjCLib, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial nint class_getClassMethod(nint cls, string name);
+
     [LibraryImport(ObjCLib)]
     internal static partial void objc_release(nint obj);
 
@@ -436,6 +444,22 @@ internal static unsafe partial class ObjCRuntime
     /// <summary>[[NSString stringWithUTF8String:]]（autoreleased，主循环自动排空）。</summary>
     internal static nint MakeNSString(string value)
         => SendIdUtf8(GetClass("NSString"), Sel("stringWithUTF8String:"), value);
+
+    /// <summary>
+    /// 造一个 <c>NSUUID</c>（autoreleased）。标识符与页面之间走的是"UUID 的 16 字节"，
+    /// 而 ObjC 侧只认它自己的对象——两处（建窗绑定存储、删除存储）都从这里造。
+    /// </summary>
+    /// <remarks>
+    /// 用 <c>initWithUUIDString:</c> 而不是 <c>initWithUUIDBytes:</c>：后者要传
+    /// <c>const unsigned char *</c>，得先在托管侧钉住数组，而字符串形态没有这个麻烦，
+    /// 且 <see cref="Guid.ToString(string?)"/> 的 "D" 格式正是它要的写法。
+    /// 返回 0 表示 UUID 字符串没被接受（理论上不会——输入来自 Guid）。
+    /// </remarks>
+    internal static nint MakeNSUUID(Guid identifier)
+        => SendIdObj(
+            SendId(GetClass("NSUUID"), Sel("alloc")),
+            Sel("initWithUUIDString:"),
+            MakeNSString(identifier.ToString("D")));
 
     // ---- 协议与追加的 msgSend 签名（oriel:// 的应答需要）----
 
