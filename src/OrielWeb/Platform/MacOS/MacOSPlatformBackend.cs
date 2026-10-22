@@ -488,8 +488,22 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
 
     /// <summary>清掉某个标识符下的全部浏览数据（见 <see cref="IPlatformBackend.RemoveDataStoreData"/>）。</summary>
     /// <remarks>
-    /// <c>removeDataOfTypes:modifiedSince:completionHandler:</c> 的 completionHandler 传 nil——
-    /// 与本文件既有的 <c>ClearAllBrowsingData</c> 同一姿态：完成通知拿不到，清除照常执行。
+    /// <para>
+    /// 落点是 <c>removeDataOfTypes:allWebsiteDataTypes modifiedSince:[NSDate distantPast]
+    /// completionHandler:&lt;空 block&gt;</c>——与 <c>MacOSWindowHost.ClearAllBrowsingData</c>
+    /// 同一条 API，区别只是对象换成按 UUID 取到的那份存储。
+    /// </para>
+    /// <para>
+    /// <b>completionHandler 必须是一个真 block，不能是 nil</b>：这个参数在头文件里标成可空，
+    /// 但 WebKit 会无条件调用它——传 nil 就是在 <c>block-&gt;invoke</c>（偏移 0x10）取指令，
+    /// 真机上是 <c>KERN_INVALID_ADDRESS at 0x10</c>，进程直接没。B23 的第一版就是这么挂的，
+    /// 现在统一走 <see cref="ObjCRuntime"/> 旁边的 <see cref="ObjCBlock.NoOp"/>（全局 block，
+    /// 不需要谁持有或释放）。
+    /// </para>
+    /// <para>
+    /// 清除是**异步**的：本方法返回只代表"已经交给 WebKit 去删"，不代表磁盘上已经删干净。
+    /// 这一点写在 CHANGELOG 的已知限制里，而不是假装同步完成。
+    /// </para>
     /// </remarks>
     public void RemoveDataStoreData(Guid identifier)
     {
@@ -518,7 +532,7 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
             ObjCRuntime.Sel("removeDataOfTypes:modifiedSince:completionHandler:"),
             types,
             distantPast,
-            0);
+            ObjCBlock.NoOp);
     }
 
     public void RunMessageLoop()

@@ -219,7 +219,7 @@ B14 与 B22 是两块硬骨头；B12/B13/B15/B16/B23 是「一个下午一批」
    同步请求-回执——在 UI 线程上等主队列的回调就是死锁。于是改成宿主侧登记表
    （`AppData/data-stores.json`，跨重启可见），并把"按 UUID 隔离"真正接到
    `OrielWindowOptions.DataStoreIdentifier` 上（`+dataStoreForIdentifier:`，macOS 12+，
-   调之前用 `class_getClassMethod` 探测）。
+   调之前探测类方法是否存在——**探测方式后来换过一次**，见下面的"真机抓出的两个问题"）。
 3. **`onBackButtonPress` 是"真订阅 + 永不触发"**，不是空函数：桌面端本来就没有返回键，
    Tauri 在桌面端也只是 `listen('back-button', …)`。返回句柄做成 `{ unregister }`，
    结构上兼容它的 `PluginListener`。
@@ -232,3 +232,24 @@ B14 与 B22 是两块硬骨头；B12/B13/B15/B16/B23 是「一个下午一批」
 **取证**：演示自检第 13 段按平台分两路（macOS 验成功路径、Windows/Linux 验 `not_supported`）；
 C# 单测补 47 条（推断规则、魔数判断、登记表落盘与损坏恢复、门禁与参数校验），
 JS 单测补 7 条（命令名与形状、16 位元组、退订接口）。
+
+**真机 smoke 抓出的两个问题（都改在代码里，不是绕过去）**：
+
+1. **`class_getClassMethod` 查不到 WebKit 的类方法。** `+[WKWebsiteDataStore
+   dataStoreForIdentifier:]` 明明存在、调用也正常，运行时 API 却返回 0——WebKit 在类簇 /
+   分类里实现它。结果 macOS 上 `fetchDataStoreIdentifiers` 与 `removeDataStore` 一律报
+   `not_supported`。改成问类对象本身：`[WKWebsiteDataStore respondsToSelector:@selector(…)]`
+   ——类对象也是对象，`respondsToSelector:` 在它上面查的正是类方法，且不依赖运行时表布局。
+   **这条修正的教训**：探测 API 存在性要用"它自己认的方式"，而不是"看起来更底层的方式"。
+2. **`completionHandler: nil` 会让 WebKit 直接调飞。** `-removeDataOfTypes:modifiedSince:
+   completionHandler:` 的头文件把 handler 标成可空，但 WebKit 的实现无条件调用它——传 nil 就是
+   在 `block->invoke`（偏移 0x10）取指令，真机上是
+   `SIGSEGV KERN_INVALID_ADDRESS at 0x0000000000000010`，进程连结论行都来不及打。
+   于是补了本库的第一份 **ObjC block 基础设施**（`Interop/ObjCBlock.cs`）：一个
+   `BLOCK_IS_GLOBAL` 的全局空 block，`_Block_copy` 返回自身、`_Block_release` 直接返回，
+   所以它是进程级单例、不需要谁持有或释放；`_NSConcreteGlobalBlock` 用 `dlsym` 取，
+   取不到时退到 `objc_getClass("__NSGlobalBlock__")`。
+   **同一条 API 在 `clearAllBrowsingData`（B16）里也是传 nil**——自检从没跑到那条的完成
+   路径，于是这个 bug 躺了一个批次；这次一并修掉。
+   **这条修正的教训**：头文件写"可空"不等于实现里会判空，尤其当它是个 block 参数时；
+   而"两处同样的调用，一处被覆盖、一处没有"正是这类 bug 的典型藏身处。

@@ -30,6 +30,14 @@ internal static unsafe partial class ObjCRuntime
     [LibraryImport(LibSystem, EntryPoint = "dlerror")]
     private static partial nint dlerror();
 
+    /// <summary><c>dlopen</c>/<c>dlsym</c> 的句柄：查主程序与所有已加载库的全局符号。</summary>
+    /// <remarks>macOS 的 <c>RTLD_DEFAULT</c> 是 <c>((void *) -2)</c>（<c>dlfcn.h</c>）。</remarks>
+    internal static readonly nint RtldDefault = -2;
+
+    /// <summary>按名字找已加载符号（找不到返回 0）。B23 用它取 <c>_NSConcreteGlobalBlock</c>。</summary>
+    [LibraryImport(LibSystem, EntryPoint = "dlsym", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial nint dlsym(nint handle, string symbol);
+
     // ---- runtime 基础 ----
 
     [LibraryImport(ObjCLib, StringMarshalling = StringMarshalling.Utf8)]

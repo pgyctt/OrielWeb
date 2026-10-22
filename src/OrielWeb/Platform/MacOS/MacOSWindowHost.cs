@@ -429,14 +429,19 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     /// <remarks>
     /// <para>
     /// 落点是 <c>[WKWebsiteDataStore.defaultDataStore removeDataOfTypes:
-    /// allWebsiteDataTypes modifiedSince:[NSDate distantPast] completionHandler:nil]</c>：
+    /// allWebsiteDataTypes modifiedSince:[NSDate distantPast] completionHandler:&lt;空 block&gt;]</c>：
     /// 默认（持久）数据存储里的全部类型、全部时间的数据。
     /// </para>
     /// <para>
-    /// completionHandler 传 nil 与本文件 <c>evaluateJavaScript:completionHandler:</c>
-    /// 的既有做法同一姿态（三处都在传 0）：完成通知拿不到，清除照常执行。
-    /// 该 API 本身自 macOS 10.13 起可用，无版本顾虑。
+    /// <b>completionHandler 不能传 nil</b>（B16 那版就是传 0，只是自检没跑到这条 API
+    /// 的完成路径，所以一直没暴露）：WebKit 会无条件调用那个 block，传 nil 就是在
+    /// <c>block-&gt;invoke</c>（偏移 0x10）取指令——真机上是
+    /// <c>KERN_INVALID_ADDRESS at 0x10</c>。现在统一传
+    /// <see cref="ObjCBlock.NoOp"/>（全局 block，不需要持有或释放）。
+    /// 注意这与 <c>evaluateJavaScript:completionHandler:</c> 不同：那条的 nil 是**真的被支持**
+    /// （Apple 明确文档化了"handler 可为 nil"），这两条不是。
     /// </para>
+    /// <para>清除是**异步**的：本方法返回只代表"已经交给 WebKit"，不代表已经删干净。</para>
     /// </remarks>
     public void ClearAllBrowsingData()
     {
@@ -461,7 +466,7 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         ObjCRuntime.SendVoidObjObjObj(
             store,
             ObjCRuntime.Sel("removeDataOfTypes:modifiedSince:completionHandler:"),
-            types, distantPast, 0);
+            types, distantPast, ObjCBlock.NoOp);
     }
 
     // ---- 光标（B21）----

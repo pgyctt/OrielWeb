@@ -9,6 +9,22 @@
 
 ## Unreleased
 
+### 修复
+
+- **macOS：`clearAllBrowsingData()` 会直接杀掉进程**（B16 起就存在，B23 的真机 smoke 抓到）。
+  `-removeDataOfTypes:modifiedSince:completionHandler:` 的 handler 在头文件里标成可空，
+  但 WebKit **无条件调用**它——传 `nil` 就是在 `block->invoke`（偏移 0x10）取指令，
+  结果是 `SIGSEGV KERN_INVALID_ADDRESS at 0x10`。现在统一传一个真正的空 block。
+  同一条 API 在 B23 的 `app.removeDataStore()` 里也踩了同一个坑（这次是自检直接打出来的），
+  一并修掉。为此新增本库的第一份 **ObjC block 基础设施**（`Interop/ObjCBlock.cs`）：
+  一个 `BLOCK_IS_GLOBAL` 的全局空 block，`_Block_copy` 返回自身、`_Block_release` 直接返回，
+  所以是进程级单例，不需要谁持有或释放。
+- **macOS：`app.fetchDataStoreIdentifiers()` / `app.removeDataStore()` 误报 `not_supported`**。
+  原来用 `class_getClassMethod` 探测 `+[WKWebsiteDataStore dataStoreForIdentifier:]`，
+  而 WebKit 把那个类方法实现在类簇/分类里，运行时 API 查不到（方法确实可用）。
+  改成 `[WKWebsiteDataStore respondsToSelector:@selector(…)]`——类对象也是对象，
+  这样查的正是类方法本身。
+
 ### 新增
 
 - **平台开关 / 特效 / 任务栏（B22）：19 项一次补齐**——
