@@ -1567,7 +1567,7 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         }
 
         nint storeClass = ObjCRuntime.GetClassOrThrow("WKWebsiteDataStore");
-        if (ObjCRuntime.class_getClassMethod(storeClass, "dataStoreForIdentifier:") == 0)
+        if (!ObjCRuntime.ClassRespondsToSelector(storeClass, "dataStoreForIdentifier:"))
         {
             OrielDiagnostics.Report(
                 "[OrielWeb] DataStoreIdentifier 需要 macOS 12 或更高版本："

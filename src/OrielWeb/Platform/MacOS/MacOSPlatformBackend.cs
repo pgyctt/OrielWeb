@@ -483,9 +483,8 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
     /// 而不是无条件 <c>true</c>。
     /// </remarks>
     public bool SupportsDataStoreIdentifiers
-        => ObjCRuntime.class_getClassMethod(
-            ObjCRuntime.GetClassOrThrow("WKWebsiteDataStore"),
-            "dataStoreForIdentifier:") != 0;
+        => ObjCRuntime.ClassRespondsToSelector(
+            ObjCRuntime.GetClassOrThrow("WKWebsiteDataStore"), "dataStoreForIdentifier:");
 
     /// <summary>清掉某个标识符下的全部浏览数据（见 <see cref="IPlatformBackend.RemoveDataStoreData"/>）。</summary>
     /// <remarks>
@@ -495,7 +494,7 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
     public void RemoveDataStoreData(Guid identifier)
     {
         nint storeClass = ObjCRuntime.GetClassOrThrow("WKWebsiteDataStore");
-        if (ObjCRuntime.class_getClassMethod(storeClass, "dataStoreForIdentifier:") == 0)
+        if (!ObjCRuntime.ClassRespondsToSelector(storeClass, "dataStoreForIdentifier:"))
         {
             throw new NotSupportedException(
                 "removeDataStoreData：按标识符隔离的数据存储需要 macOS 12 或更高版本。");

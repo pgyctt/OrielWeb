@@ -63,14 +63,6 @@ internal static unsafe partial class ObjCRuntime
     [LibraryImport(ObjCLib, StringMarshalling = StringMarshalling.Utf8)]
     internal static partial nint class_getInstanceVariable(nint cls, string name);
 
-    /// <summary>
-    /// 取**类方法**（不存在时返回 0）。B23 用它判断 <c>+[WKWebsiteDataStore dataStoreForIdentifier:]</c>
-    /// 在旧系统上是否存在——向不认识的 selector 发消息会抛 <c>NSInvalidArgumentException</c>，
-    /// 那是 ObjC 异常、托管侧接不住。
-    /// </summary>
-    [LibraryImport(ObjCLib, StringMarshalling = StringMarshalling.Utf8)]
-    internal static partial nint class_getClassMethod(nint cls, string name);
-
     [LibraryImport(ObjCLib)]
     internal static partial void objc_release(nint obj);
 
@@ -444,6 +436,27 @@ internal static unsafe partial class ObjCRuntime
     /// <summary>[[NSString stringWithUTF8String:]]（autoreleased，主循环自动排空）。</summary>
     internal static nint MakeNSString(string value)
         => SendIdUtf8(GetClass("NSString"), Sel("stringWithUTF8String:"), value);
+
+    /// <summary>
+    /// 类对象是否响应某个**类方法**（等价于"这个类方法在当前系统上存不存在"）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>为什么不用 <c>class_getClassMethod</c></b>：实测（macOS 14 的 CI 真机）它对
+    /// <c>+[WKWebsiteDataStore dataStoreForIdentifier:]</c> 返回 0——那个类方法确实存在、
+    /// 调用也正常，但运行时 API 找不到它（方法是在 WebKit 的类簇/分类里实现的）。
+    /// 于是改成问类对象本身：<c>[WKWebsiteDataStore respondsToSelector:@selector(…)]</c>。
+    /// 类对象也是对象，<c>respondsToSelector:</c> 在它上面查的正是**类方法**——
+    /// 这是 ObjC 里判断"类方法有没有"的标准写法，且不依赖运行时表的布局。
+    /// </para>
+    /// <para>
+    /// 向不认识的 selector 发消息会抛 <c>NSInvalidArgumentException</c>（ObjC 异常、
+    /// 托管侧接不住），所以凡是"某个 API 是 12.0+ 才有的"的地方都先过这一关。
+    /// </para>
+    /// </remarks>
+    internal static bool ClassRespondsToSelector(nint cls, string selectorName)
+        => cls != 0
+           && SendBoolRetObj(cls, Sel("respondsToSelector:"), Sel(selectorName));
 
     /// <summary>
     /// 造一个 <c>NSUUID</c>（autoreleased）。标识符与页面之间走的是"UUID 的 16 字节"，
