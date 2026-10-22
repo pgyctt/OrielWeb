@@ -139,17 +139,25 @@ internal static class EventSelfTest
             _phase = Phase.Broadcast;
             await EmitFromPageAsync(first, target: null);
 
-            await WaitForAsync(() => _broadcastFromFirst > 0 && _broadcastFromSecond > 0, 8000);
+            // 跨窗口投递要 20 秒，不是 8 秒：0.4.2 发版时这一条在 CI 的 Linux runner 上
+            // 偶发超时（同一提交重跑就过，另一侧窗口的 evaluateJavaScript 排在主循环后面）。
+            // 快是真的快（正常几十毫秒），但"慢"的上界不由我们决定——CI 的软件渲染
+            // 环境下偶发几秒的停顿是常态，而这条断言的**结论**（"该收到"）与超时长短无关。
+            // 把上界放宽只是让偶发不变成红灯，不会让"真的没收到"漏过去。
+            await WaitForAsync(() => _broadcastFromFirst > 0 && _broadcastFromSecond > 0, 20000);
 
             Check(_broadcastFromFirst > 0, "广播：发起窗口自己也该收到（与 Tauri 的全局 emit 一致）");
-            Check(_broadcastFromSecond > 0, "广播：另一个窗口该收到");
+            Check(_broadcastFromSecond > 0,
+                $"广播：另一个窗口该收到（等待 20 秒；实际第一个窗口 {_broadcastFromFirst} 次、" +
+                $"第二个 {_broadcastFromSecond} 次）");
 
             // ---- 2. 定向：只有目标窗口收到 ----
             _phase = Phase.Targeted;
             int firstBefore = _targetedFromFirst;
             await EmitFromPageAsync(first, target: SecondLabel);
 
-            await WaitForAsync(() => _targetedFromSecond > 0, 8000);
+            // 与广播同一条通路，同样放宽到 20 秒（理由见上）
+            await WaitForAsync(() => _targetedFromSecond > 0, 20000);
             Check(_targetedFromSecond > 0, "定向：目标窗口该收到");
 
             // 给"误投递"留出到达时间，否则"多发了一次"会被下一行断言之前的时序漏掉
