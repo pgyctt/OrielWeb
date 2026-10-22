@@ -70,12 +70,55 @@ internal static unsafe partial class ObjCRuntime
     internal static partial nint object_getClass(nint obj);
 
     /// <summary>取实例方法（不存在时返回 0）。B22 用它判断"某个 selector 是否真的实现了"。</summary>
-    [LibraryImport(ObjCLib, StringMarshalling = StringMarshalling.Utf8)]
-    internal static partial nint class_getInstanceMethod(nint cls, string name);
+    /// <remarks>
+    /// <b>第二个参数是 <c>SEL</c>，不是 C 字符串</b>：<c>Method class_getInstanceMethod(Class, SEL)</c>。
+    /// 传 <c>string</c> 会让 marshaling 变成一个 <c>char*</c>，而 runtime 会把这块内存当成
+    /// <c>objc_selector</c> 结构去解析——结果是 <b>nil</b>（在别的 runtime 版本上可能是崩溃）。
+    /// 症状极具误导性：查什么方法都"不存在"，于是所有"这个系统支不支持 X"的判断恒为假。
+    /// 调用方必须先 <see cref="Sel"/> 再传进来。
+    /// </remarks>
+    [LibraryImport(ObjCLib)]
+    internal static partial nint class_getInstanceMethod(nint cls, nint sel);
 
     /// <summary>取实例变量（不存在时返回 0）。B22 用它判断 KVC 能否安全地走 ivar。</summary>
+    /// <remarks>
+    /// <b>不查父类</b>（runtime 的文档明确：does not search superclasses）。要找继承来的 ivar
+    /// 得自己沿 <see cref="class_getSuperclass"/> 往上走，或用 <see cref="class_copyIvarList"/>
+    /// 逐类扫。B22 最初的判断就栽在这上面：<c>_drawsBackground</c> 查不到 → 断言"不支持" →
+    /// 材质永远透不出来。
+    /// </remarks>
     [LibraryImport(ObjCLib, StringMarshalling = StringMarshalling.Utf8)]
     internal static partial nint class_getInstanceVariable(nint cls, string name);
+
+    /// <summary>取父类（根类返回 0）。</summary>
+    [LibraryImport(ObjCLib)]
+    internal static partial nint class_getSuperclass(nint cls);
+
+    /// <summary>
+    /// 列出**该类自身**声明的全部实例变量（调用方负责 <c>free</c> 返回的数组）。
+    /// </summary>
+    /// <remarks>
+    /// 这是判断"某个 KVC key 能不能走 ivar"唯一可靠的办法：ivar 名往往不在
+    /// <c>class_getInstanceVariable</c> 的可见范围内（那是逐类查的），但 KVC 的
+    /// <c>accessInstanceVariablesDirectly</c> 会沿继承链找。
+    /// </remarks>
+    [LibraryImport(ObjCLib)]
+    internal static partial nint class_copyIvarList(nint cls, out uint outCount);
+
+    /// <summary>ivar 的名字（<c>const char*</c>，由 runtime 持有，不要释放）。</summary>
+    [LibraryImport(ObjCLib)]
+    internal static partial nint ivar_getName(nint ivar);
+
+    /// <summary>
+    /// <c>free()</c>：释放 <see cref="class_copyIvarList"/> 这类 runtime 分配的内存。
+    /// </summary>
+    /// <remarks>
+    /// 必须走 libc 的 <c>free</c>，不能用 <c>Marshal.FreeHGlobal</c>——后者对应的是
+    /// <c>LocalAlloc</c>/<c>CoTaskMemAlloc</c> 的分配器，与 malloc 的堆不是同一个。
+    /// 混用的后果是堆损坏，而症状出现在**之后**的某次分配上，极难定位。
+    /// </remarks>
+    [LibraryImport("/usr/lib/libSystem.B.dylib")]
+    internal static partial void free(nint pointer);
 
     [LibraryImport(ObjCLib)]
     internal static partial void objc_release(nint obj);

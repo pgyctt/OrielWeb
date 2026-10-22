@@ -123,18 +123,15 @@ internal sealed class MacOSTrayBackend : ITrayBackend
         ObjCRuntime.SendVoidObj(
             _button, ObjCRuntime.Sel("setTitle:"), ObjCRuntime.MakeNSString(title ?? string.Empty));
 
-        // 有文字时给按钮一个固定宽度，否则文字会被图标挤掉。
+        // 长度**始终**交给 AppKit 自适应（NSVariableStatusItemLength = -1）。
         //
-        // **必须用 double 重载**：`NSStatusItem.setLength:` 的参数是 `CGFloat`（浮点），
-        // 而 arm64 上整数参数走 x0-x7、浮点走 d0-d7——用 SendVoidNint 把 CGFloat 塞进整数
-        // 寄存器，AppKit 读到的就是垃圾值。实测后果是 **SIGSEGV**（崩溃报告：
-        // EXC_BAD_ACCESS + "possible pointer authentication failure"，崩在 objc_msgSend）：
-        // 状态项拿到荒谬的长度后去分配对应缓冲区，指针认证随即失败。
-        // 同一个道理，上面 statusItemWithLength: 用的也是 SendIdDouble。
+        // 这里曾经是「有标题时设 0」，名义上叫"给按钮一个固定宽度"，实际效果是
+        // **宽度归零**：状态项确实存在、isVisible 返回 YES、button.image 也非空，
+        // 但菜单栏上那一格是空的——用户看到的是"托盘没工作"，而所有 API 都成功。
+        // macOS 的 `0` 不是"自动"，是"零宽"；宽度该由 AppKit 按内容（图标+文字）算，
+        // 想指定就得给具体点数，而那需要先量文字宽度——没有理由在这里做那件事。
         ObjCRuntime.SendVoidDouble(
-            _statusItem,
-            ObjCRuntime.Sel("setLength:"),
-            string.IsNullOrEmpty(title) ? VariableStatusItemLength : 0);
+            _statusItem, ObjCRuntime.Sel("setLength:"), VariableStatusItemLength);
     }
 
     /// <summary>
@@ -167,7 +164,37 @@ internal sealed class MacOSTrayBackend : ITrayBackend
             return;
         }
 
-        ApplyImage(MacOSImageFactory.CreateNSImage(icon));
+        nint image = MacOSImageFactory.CreateNSImage(icon);
+        NormalizeStatusItemImage(image, icon.Width, icon.Height);
+        ApplyImage(image);
+    }
+
+    /// <summary>状态栏图标的标准高度（点）。</summary>
+    /// <remarks>macOS 状态栏高 22 点，图标惯例是 18 点；Tauri 的 tao 同样归一到这里。</remarks>
+    private const double StatusItemIconHeight = 18.0;
+
+    /// <summary>
+    /// 把图标归一成状态栏尺寸（保持宽高比）。
+    /// </summary>
+    /// <remarks>
+    /// <b>NSStatusItem 不会缩放 image</b>：它按 <c>image.size</c>（点）分配宽度。
+    /// 一张 512×512 的 PNG 会让状态项宽 512 点——把菜单栏其他项全挤走；实测更糟：
+    /// 宽度被系统钳制后图标干脆不画，状态项成了一片空白，而
+    /// <c>image</c>、<c>isVisible</c>、<c>length</c> 全都是"正常"值。
+    /// </remarks>
+    private static void NormalizeStatusItemImage(nint image, int pixelWidth, int pixelHeight)
+    {
+        if (image == 0 || pixelWidth <= 0 || pixelHeight <= 0)
+        {
+            return;
+        }
+
+        double scale = StatusItemIconHeight / Math.Max(pixelWidth, pixelHeight);
+        ObjCRuntime.SendVoidDouble2(
+            image,
+            ObjCRuntime.Sel("setSize:"),
+            pixelWidth * scale,
+            pixelHeight * scale);
     }
 
     /// <summary>
@@ -179,9 +206,16 @@ internal sealed class MacOSTrayBackend : ITrayBackend
     /// </remarks>
     private void ApplyIcon(OrielTrayOptions options)
     {
-        ApplyImage(options.ResolveIcon() is { } image
-            ? MacOSImageFactory.CreateNSImage(image)
-            : 0);
+        OrielImage? resolved = options.ResolveIcon();
+        if (resolved is null)
+        {
+            ApplyImage(0);
+            return;
+        }
+
+        nint image = MacOSImageFactory.CreateNSImage(resolved);
+        NormalizeStatusItemImage(image, resolved.Width, resolved.Height);
+        ApplyImage(image);
     }
 
     /// <summary>把 NSImage 设到状态项按钮上；传 0 表示回落占位符。</summary>

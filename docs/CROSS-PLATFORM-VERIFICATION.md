@@ -1,9 +1,12 @@
 # 跨平台真机验证（Hyper-V 实验室）
 
 > 目的不是"再跑一遍 CI"，而是跑 **CI 结构上覆盖不到的那一半**：不同发行版的库版本、
-> 不同 CPU 架构、不同的桌面会话类型（X11 / Wayland / 无会话）。
-> 结论先给：这一轮抓到 **4 个真问题**，其中 2 个是**进程级崩溃**，1 个是"应用在 Ubuntu 22.04
-> 上根本起不来"。三个都在 CI 上永远是绿的。
+> 不同 CPU 架构、不同的桌面会话类型（X11 / Wayland / 无会话），以及最后那一层
+> **"看起来对不对"**。
+> 结论先给：两轮下来抓到 **8 个真问题**，其中 2 个是**进程级崩溃**、1 个是"应用在
+> Ubuntu 22.04 上根本起不来"，还有 3 个是**所有 API 都成功但画面上什么都没有**
+> （材质被白底挡住、托盘宽度归零、图标尺寸超限）。最后这一类只有真机看得见——
+> 单测和 CI 永远是绿的。
 
 ## 1. 环境
 
@@ -15,7 +18,7 @@
 |---|---|---|---|---|
 | 宿主 | Windows 10 19044 | x64 | WebView2 运行时 | 有（桌面） |
 | `lab-ubuntu` | Ubuntu 22.04 LTS | x86_64 | 内核 6.8；**WebKitGTK 4.0**（`libwebkit2gtk-4.0.so.37`）；GTK 3 | **Wayland**（gnome-shell，另有 XWayland） |
-| `lab-macos` | macOS 15.8.1 | **x86_64（Intel）** | 无 .NET、无 Xcode CLT | **无**（停在登录窗口，`console user: root`） |
+| `lab-macos` | macOS 15.8.1 | **x86_64（Intel）** | 无 .NET、无 Xcode CLT；**Hyper-V 虚拟显卡（8 MB 显存，无 Metal）** | **有**（登录后 `console user: pgyctt`） |
 
 三台都**没有装 .NET**：产物用 `dotnet publish -r <rid> --self-contained true -p:PublishAot=false`
 从宿主交叉发布，再 `tar` 流式推过去（`deploy-run.ps1` 的做法）。AOT 需要目标平台工具链，
@@ -32,9 +35,13 @@
 | Ubuntu 22.04 **X11**（`GDK_BACKEND=x11`） | 20 | **20/20 PASS** |
 | Ubuntu 22.04 **Wayland** | 19 | **19/19 PASS** |
 | macOS 15 **Intel，无图形会话** | 20 | **20/20 PASS** |
+| macOS 15 **Intel，已登录图形会话** | 21（新增 `visuals`） | **21/21 PASS** |
 
 四组全绿，但**其中一部分是 SKIP**——下面第 4 节说清哪些断言在什么环境里被跳过、
 为什么跳过不等于放过。
+
+第 5 行是"观感"那一轮：登录桌面会话后补跑的 `--selftest visuals`，它验的是
+**看起来对不对**（标题栏三档、材质、阴影、Dock 显隐、托盘图标），而不是"命令调得通"。
 
 ## 3. 找到并修掉的问题
 
@@ -112,6 +119,97 @@ NSInternalInconsistencyException: 'Nil screen'
 结论：**库是对的**（Linux 上这个目录来自 XDG 用户目录，本来就随系统语言变），
 错的是断言。改成"绝对路径且不是家目录本身"——那才是这条断言真正要保证的东西。
 
+### 3.5 `class_getInstanceMethod` 的第二个参数是 `SEL`，不是 C 字符串
+
+现象：`setEffects` 每次都打一条诊断——"这个系统上的 WKWebView 没有 drawsBackground"，
+在 macOS 15 上**永远**如此，换哪个版本都一样。
+
+根因在 P/Invoke 声明：
+
+```csharp
+// 错的：第二个参数被 marshaling 成 char*
+[LibraryImport(ObjCLib, StringMarshalling = StringMarshalling.Utf8)]
+internal static partial nint class_getInstanceMethod(nint cls, string name);
+```
+
+ObjC runtime 的签名是 `Method class_getInstanceMethod(Class, SEL)`。传一个 `char*`
+过去，runtime 会把字符串的头几个字节当作 `objc_selector` 结构去解析，**返回 nil**。
+于是"这个方法存不存在"的答案恒为"不存在"，而这个函数正是所有
+"本系统支不支持 X"判断的依据。
+
+**为什么危险**：它不崩、不报错，只是让一整类能力判断集体失效。症状出现在很远的地方
+（"材质看不见"），日志里的解释却是"这个系统没有那个属性"——把人指向系统版本而不是这行声明。
+
+修复：签名改成 `nint sel`，调用方先 `ObjCRuntime.Sel("setDrawsBackground:")`。
+（同一批里把 `class_getInstanceVariable` 的注释也补清楚了：它**不查父类**。）
+
+### 3.6 macOS 15 移除了 WKWebView 的私有 `drawsBackground`，材质被页面白底挡住
+
+`NSVisualEffectView` 挂上去了、`material` 对了、窗口 `opaque=false`、页面 CSS 也是
+`rgba(0,0,0,0)`——**画面仍然是纯白**。
+
+取证（不是猜）：
+
+```text
+[visuals-selftest] WKWebView 内部：WKFlippedView(op=0,bg=nil)
+[visuals-selftest] 页面计算背景："{"html":"rgba(0, 0, 0, 0)","body":"rgba(0, 0, 0, 0)"}"
+```
+
+再逐层扫 ivar（`class_copyIvarList`，沿继承链）：
+
+```text
+[OrielWeb] WKWebView 的 drawsBackground 探测失败，ivar 扫描结果（逐层父类）：
+  [28 ivars: ] [136 ivars: _hasDrawMatrix/.../_backgroundColor/...] [3 ivars: ] [1 ivars: ]
+```
+
+**WKWebView 的 28 个 ivar 里没有 `_drawsBackground`**，`respondsToSelector` 对
+`setDrawsBackground:` 也是 false。这个私有属性在 macOS 15 上被移除了（Tauri/tao
+依赖的那条 KVC 路径在新系统上已经不通）。
+
+替代品是**公开 API** `WKWebView.backgroundColor`（macOS 10.14+）。用 JXA 在 VM 上实测：
+
+```text
+setBackgroundColor(clearColor) → backgroundColor.alphaComponent = 0   ✔ 真的生效
+setOpaque(false)             → isOpaque 仍返回 true                  ✘ 被 WKWebView 覆写
+```
+
+所以 `isOpaque` **不能**当判据（WKWebView 恒返回 YES），要读 `backgroundColor` 的 alpha。
+
+修复：优先走公开的 `setBackgroundColor:`（`clearColor` / `windowBackgroundColor`），
+老系统才回退私有 KVC；**设完读回 alpha 校验**，不匹配就报诊断——不然下次它又静默失效。
+
+### 3.7 托盘状态项长度设成 0：一个"存在但看不见"的托盘
+
+现象：`tray.IsVisible = true`、`[button image]` 非空、`NSStatusBar` 里确实多了一项，
+但**菜单栏那一格是空的**。连 `NSStatusItem.title = "ORIEL"` 的纯文字也不显示。
+
+根因：
+
+```csharp
+// 注释写的是"有文字时给按钮一个固定宽度"
+ObjCRuntime.SendVoidDouble(_statusItem, ObjCRuntime.Sel("setLength:"),
+    string.IsNullOrEmpty(title) ? VariableStatusItemLength : 0);   // ← 0
+```
+
+macOS 的 `0` 不是"自动"，是**零宽**。宽度归零后状态项仍在、`isVisible` 仍为 true、
+图标也仍挂着，但画面上什么都没有——这是最难排查的一类"没坏但看不见"。
+
+修复：长度**始终**交给 AppKit 自适应（`NSVariableStatusItemLength = -1`）。
+想固定宽度得先量文字宽度，没有理由在这里做那件事。
+
+### 3.8 512×512 的图标放不进状态栏
+
+修好长度之后，用 `app.png`（512×512）仍看不见图标——`NSStatusItem` 按 `image.size`
+（**点**）分配宽度，512 点宽会被系统钳制，钳制的结果是**不绘制**。
+
+`NSStatusItem` 不会替你缩放。Tauri 的 tao 同样把托盘图标归一到 18 点。修复：
+设置前按最长边缩放到 18 点（保持宽高比），`SetIcon`（运行期换图标）与 `ApplyIcon`
+（创建期）走同一条归一。
+
+顺带纠正一个配置误用：`IconAsTemplate` 默认 true 表示"按 alpha 变成单色剪影、
+由系统反色"。彩色图标（demo 的蓝底白窗 `app.png`）套上去会丢掉全部配色、只剩实心块。
+demo 现在显式设 false——模板图只适合单色线条图标。
+
 ## 4. 自检里的环境判据：从"猜"改成"问"
 
 这一轮最大的方法论收获：**判断平台能力不能看环境变量**。
@@ -148,11 +246,48 @@ dotnet publish samples\OrielDemo -c Release -r linux-x64 --self-contained true -
 Linux 侧要显式给显示后端：`DISPLAY=:0 XAUTHORITY=$HOME/.Xauthority`，
 验 X11 时再加 `GDK_BACKEND=x11`。
 
+### 5.1 观感验证（`--selftest visuals`）
+
+这一批验的是"看起来对不对"，跑法不同：它会把窗口逐档切成
+visible / transparent / overlay，再依次套 sidebar / hudWindow 材质，每档读回
+AppKit 的真实状态并断言，最后验 Dock 显隐与托盘。
+
+```bash
+# 断言 + 每档停留 6 秒（供人盯着看）
+ORIEL_VISUALS_DWELL=6 ./OrielDemo --selftest visuals
+
+# 同时把每档的窗口截图存下来（真实颜色，见下面的坑）
+ORIEL_VISUALS_SNAPSHOT=$HOME/shots ./OrielDemo --selftest visuals
+
+# 只停在某一档，其余档照常断言但不停
+ORIEL_VISUALS_ONLY=sidebar ORIEL_VISUALS_DWELL=25 ./OrielDemo --selftest visuals
+```
+
+页面是 `visuals.html`，**背景必须是透明的**——页面一旦铺了不透明底色，材质就被盖住，
+"材质没生效"与"页面挡住了"看起来一模一样。
+
+### 5.2 截图的三个坑（都踩过）
+
+取一张能看出观感的图不容易，三条路各有各的失效方式：
+
+| 手段 | 结果 |
+|---|---|
+| Hyper-V `GetVirtualSystemThumbnailImage` | 文档说 RGB565，**实测解出来 R 通道恒为 0**：纯白 `#F5F5F5` 与纯黑 `#111` 转完都是 `#0008F0`。**颜色完全不可信**，只能看布局与存在性 |
+| macOS `screencapture` | 需要"屏幕录制"权限；没授权时只得到菜单栏 + 一片灰 |
+| `CGWindowListCreateImage`（自截） | 截**自己进程**的窗口不需要权限，颜色真实（`MacScreenCapture.cs`）。但 **BehindWindow 材质拍不到**——它渲染的是单个窗口的图层树，背后没有内容可混合 |
+
+所以这一轮的观感结论来自"两路对照"：**结构看 Hyper-V 缩略图**（标题栏、红绿灯、
+Dock、菜单栏位置），**颜色与细节看自截 PNG**。材质的模糊则两路都拍不到，见第 6 节。
+
 ## 6. 已知限制
 
-- **macOS VM 未登录图形会话**：21 个模式里 20 个能跑（其中几何/窗口事件/显示器/菜单/托盘
-  按判据 SKIP），但**真机观感**（窗口位置、装饰、材质、Dock、托盘图标长什么样）**没有验证**。
-  登录桌面会话后应复跑一遍——那需要 VM 的登录密码，本轮没做。
+- **vibrancy 的"模糊"在 VM 上验不了**：`system_profiler` 报的是
+  `Hyper-V Graphics`、8 MB 显存、**没有 Metal 支持项**。登录会话后跑 `visuals`，
+  材质的**结构**全对——`NSVisualEffectView` 在 contentView 里、frame = 1024×720、
+  `material` = 7/13、窗口 `opaque=false` 且背景 alpha=0、webview 背景 alpha=0、
+  页面计算背景 `rgba(0,0,0,0)`——但画面上是纯色。
+  真实 Mac 有 GPU 合成，模糊会出来；**这台 VM 上只能证明"该连的都连上了"，
+  不能证明"看起来是毛玻璃"**。要在有 GPU 的真机上补一次目视。
 - **架构覆盖**：Linux 与 macOS 都是 x64；arm64 由 CI 覆盖（`osx-arm64`）。两边都覆盖到了，
   但**同一平台的两个架构没有在同一台机器上对比过**（那正是 3.2 那类 bug 的温床）。
 - **Linux 只验了 Ubuntu 22.04**：Debian / Fedora / Arch 的 GTK 与 WebKit 版本组合更多，

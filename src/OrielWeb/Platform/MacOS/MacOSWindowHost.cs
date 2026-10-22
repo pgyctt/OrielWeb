@@ -1064,14 +1064,46 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         }
 
         nint cls = ObjCRuntime.object_getClass(_webview);
-        bool kvcSafe = ObjCRuntime.class_getInstanceMethod(cls, "setDrawsBackground:") != 0
-            || ObjCRuntime.class_getInstanceVariable(cls, "_drawsBackground") != 0;
 
-        if (!kvcSafe)
+        // 首选**公开** API：WKWebView.backgroundColor 自 macOS 10.14 起可用。
+        // 它同时决定"页面没画东西的地方显示什么"，这正是材质能不能透出来的关键。
+        if (ObjCRuntime.class_getInstanceMethod(cls, ObjCRuntime.Sel("setBackgroundColor:")) != 0)
+        {
+            nint colorClass = ObjCRuntime.GetClassOrThrow("NSColor");
+            nint color = ObjCRuntime.SendId(
+                colorClass,
+                ObjCRuntime.Sel(draws ? "windowBackgroundColor" : "clearColor"));
+            if (color != 0)
+            {
+                ObjCRuntime.SendVoidObj(_webview, ObjCRuntime.Sel("setBackgroundColor:"), color);
+            }
+
+            // opaque 必须一起改：只把颜色设成透明而 NSView 仍标记为不透明时，
+            // AppKit 会跳过底下的材质合成——颜色对了，材质还是看不到。
+            ObjCRuntime.SendVoidBool(_webview, ObjCRuntime.Sel("setOpaque:"), draws);
+
+            // 设完读回：这条链路设不上时症状是"材质永远看不见"，而日志一片安静。
+            // 读回的是 webview 自己的 backgroundColor（不是刚传进去的那个对象），
+            // 所以它同时验证了"消息发对了 receiver"。
+            double alphaAfter = ReadBackgroundAlpha(_webview);
+            if (draws ? alphaAfter < 0.999 : alphaAfter > 0.001)
+            {
+                OrielDiagnostics.Report(
+                    $"[OrielWeb] setEffects：WKWebView 的 backgroundColor 设置未生效"
+                    + $"（期望 alpha {(draws ? "1" : "0")}，读回 {alphaAfter:0.###}）——"
+                    + "材质可能被 webview 的不透明底色挡住。");
+            }
+
+            return;
+        }
+
+        // 老系统回退：私有的 drawsBackground（KVC）。macOS 15 上这个 key 已被移除，
+        // 所以它只对 10.14 之前有意义。
+        if (!SupportsDrawsBackground(_webview))
         {
             OrielDiagnostics.Report(
-                "[OrielWeb] setEffects：这个系统上的 WKWebView 没有 drawsBackground，"
-                + "webview 仍会画不透明底色——材质可能看不见（页面背景透不出来）。");
+                "[OrielWeb] setEffects：这个系统上的 WKWebView 既没有 backgroundColor 也没有"
+                + " drawsBackground，webview 仍会画不透明底色——材质可能看不见（页面背景透不出来）。");
             return;
         }
 
@@ -1079,6 +1111,111 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
         nint boxed = ObjCRuntime.SendIdNint(
             ObjCRuntime.GetClassOrThrow("NSNumber"), ObjCRuntime.Sel("numberWithBool:"), draws ? 1 : 0);
         ObjCRuntime.SendVoidObjObj(_webview, ObjCRuntime.Sel("setValue:forKey:"), boxed, key);
+    }
+
+    /// <summary>读 webview 当前背景色的 alpha（读不到按 1 处理，即"不透明"）。</summary>
+    private static double ReadBackgroundAlpha(nint webview)
+    {
+        nint color = ObjCRuntime.SendId(webview, ObjCRuntime.Sel("backgroundColor"));
+        if (color == 0)
+        {
+            return 1.0;
+        }
+
+        return ObjCRuntime.SendDouble(color, ObjCRuntime.Sel("alphaComponent"));
+    }
+
+    /// <summary>
+    /// webview 支不支持对 <c>drawsBackground</c> 走 KVC。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 两条件任一成立即可：有 <c>setDrawsBackground:</c> 方法，或继承链上有能对上 KVC 名字的
+    /// ivar。WKWebView 的这个属性**是私有的**，实测（Catalina 15.8.1）两个公开选择器都不响应，
+    /// 但 KVC 仍能写进去——它走的是 ivar 路径。
+    /// </para>
+    /// <para>
+    /// <b>为什么不能只看 <c>class_getInstanceVariable</c></b>：那个函数只查**该类自身**，
+    /// 不查父类（runtime 文档明确）。B22 最初的实现就是这么判断的，于是在 Catalina 上
+    /// 恒为"不支持"，材质永远透不出来——而日志只提示"这个系统没有 drawsBackground"，
+    /// 指向的是系统而不是那个判断本身。
+    /// </para>
+    /// <para>
+    /// <c>class_copyIvarList</c> 返回的数组由 runtime 分配，必须用 libc 的 <c>free</c> 释放。
+    /// </para>
+    /// </remarks>
+    private static bool SupportsDrawsBackground(nint webview)
+    {
+        nint cls = ObjCRuntime.object_getClass(webview);
+
+        if (ObjCRuntime.class_getInstanceMethod(cls, ObjCRuntime.Sel("setDrawsBackground:")) != 0)
+        {
+            return true;
+        }
+
+        // KVC 走 ivar 时依次找 _<key>、_is<Key>、<key>、is<Key>
+        bool found = false;
+        var scan = new System.Text.StringBuilder();
+        for (nint current = cls; current != 0; current = ObjCRuntime.class_getSuperclass(current))
+        {
+            nint list = ObjCRuntime.class_copyIvarList(current, out uint count);
+            if (list == 0)
+            {
+                continue;
+            }
+
+            try
+            {
+                var interesting = new List<string>();
+                for (uint i = 0; i < count; i++)
+                {
+                    nint ivar = Marshal.ReadIntPtr(list, (int)i * IntPtr.Size);
+                    nint name = ObjCRuntime.ivar_getName(ivar);
+                    if (name == 0)
+                    {
+                        continue;
+                    }
+
+                    string? text = Marshal.PtrToStringUTF8(name);
+                    if (text is null)
+                    {
+                        continue;
+                    }
+
+                    if (text is "drawsBackground" or "_drawsBackground"
+                        or "_isDrawsBackground" or "isDrawsBackground")
+                    {
+                        found = true;
+                    }
+
+                    // 诊断只留可能相关的名字，否则 WKWebView 的 ivar 列表能刷满一屏
+                    if (text.Contains("raw", StringComparison.OrdinalIgnoreCase)
+                        || text.Contains("ackground", StringComparison.OrdinalIgnoreCase))
+                    {
+                        interesting.Add(text);
+                    }
+                }
+
+                scan.Append($"[{count} ivars: {string.Join("/", interesting)}] ");
+            }
+            finally
+            {
+                ObjCRuntime.free(list);
+            }
+
+            if (found)
+            {
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            OrielDiagnostics.Report(
+                "[OrielWeb] WKWebView 的 drawsBackground 探测失败，ivar 扫描结果（逐层父类）：" + scan);
+        }
+
+        return found;
     }
 
     /// <summary>把 Tauri 的 <c>Effect</c> 映射到 <c>NSVisualEffectMaterial</c>；不支持的返回 -1。</summary>

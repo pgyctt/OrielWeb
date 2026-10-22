@@ -52,7 +52,7 @@ internal static class Program
     /// <c>--selftest</c> 认得的名字。加一个自检只需在这里加名字 + 在 Main 里加一行判定。
     /// </summary>
     private static readonly string[] SelfTestNames =
-        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowevents", "event", "close", "window", "windownew", "monitors", "menu", "menubar", "api", "channel"];
+        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowevents", "event", "close", "window", "windownew", "monitors", "menu", "menubar", "api", "channel", "visuals"];
 
     /// <summary>本次请求的自检名字是否就是 <paramref name="name"/>（忽略大小写与首尾空白）。</summary>
     private static bool IsSelfTest(string? requested, string name)
@@ -171,6 +171,10 @@ internal static class Program
         // menubar：setAsWindowMenu / setAsAppMenu 真的装上了菜单栏，且没弄坏客户区尺寸契约。
         // B6b 是唯一动到窗口结构的一批（Linux 的 GtkBox{menubar,webview}），几何只能真跑取证。
         var menuBarSelfTest = IsSelfTest(selfTest, "menubar");
+        // visuals：窗口观感（标题栏三档 / 材质 / 阴影 / Dock 显隐）。
+        // 与 api 自检的分工：那个验"命令能不能调通"，这个验"AppKit 上看起来是不是那么回事"——
+        // 它绕开库直接读 NSWindow 的状态，并用透明页面把材质暴露给人眼。
+        var visualsSelfTest = IsSelfTest(selfTest, "visuals");
         // api：前端包在真实页面里能不能用（ESM 加载 / 各类往返）。
         var apiSelfTest = IsSelfTest(selfTest, "api");
         // channel：流式回传（Channel）整条链——参数序列化 + 宿主逐条推送 + 命令结束后自动关闭。
@@ -189,7 +193,7 @@ internal static class Program
             || schemeSelfTest || exitSelfTest || threadingSelfTest || traySelfTest || trayJsSelfTest
             || geometrySelfTest || geometryFramelessSelfTest || windowEventsSelfTest || eventSelfTest
             || closeSelfTest || windowSelfTest || windowNewSelfTest || monitorsSelfTest
-            || menuSelfTest || menuBarSelfTest || apiSelfTest || channelSelfTest;
+            || menuSelfTest || menuBarSelfTest || apiSelfTest || channelSelfTest || visualsSelfTest;
         var manualCheck = !anySelfTest && !args.Contains("--todo");
 
         // 主题自检需要 OrielApp（主题是应用级的），所以这里显式 Build 再 Run；
@@ -411,7 +415,14 @@ internal static class Program
                     // 用 https 别名只是为了与 manualCheck 的写法一致——导航前会归一成 oriel://。
                     w.WithUrl($"https://{AssetHost}/event-probe.html");
                 }
-                w.WithTitle(manualCheck ? "Oriel Demo — 手动验证"
+                if (visualsSelfTest)
+                {
+                    // 观感页：**透明背景**。不透明页面会把窗口材质整个盖住，
+                    // 于是"材质没生效"与"页面挡住了"看起来一模一样。
+                    w.WithUrl($"https://{AssetHost}/visuals.html");
+                }
+                w.WithTitle(visualsSelfTest ? VisualSelfTest.WindowTitle
+                          : manualCheck ? "Oriel Demo — 手动验证"
                           : eventSelfTest ? "Oriel Demo — 事件探针"
                           : "Oriel Demo — Todo")
                     .WithSize((geometrySelfTest || geometryFramelessSelfTest) ? GeometrySelfTest.Width : 1024,
@@ -423,7 +434,8 @@ internal static class Program
                 // geometry 自检**必须**用装饰窗口：frameless 下整窗 ≈ 客户区，
                 // 三平台尺寸语义的偏差就测不出来——而那正是这个自检要抓的缺陷。
                 // geometry-frameless 则相反，专门验"换算没被套到无边框窗口上"。
-                if (!geometrySelfTest)
+                // visuals 同理要用装饰窗口：titleBarStyle 的三档只在**有标题栏**的窗口上才有意义。
+                if (!geometrySelfTest && !visualsSelfTest)
                 {
                     w.WithFrameless();
                 }
@@ -578,6 +590,13 @@ internal static class Program
                         }
                     };
                 }
+                if (visualsSelfTest)
+                {
+                    // 观感要等窗口真的在屏幕上（Loaded），否则 AppKit 还没走完首帧，
+                    // 读回来的 styleMask 可能还是建窗时的默认值。
+                    WebviewWindow created = win;
+                    created.Loaded += () => VisualSelfTest.Begin(created.App, created, VisualSelfTest.WindowTitle);
+                }
             });
 
         if (singleInstanceSelfTest)
@@ -603,16 +622,32 @@ internal static class Program
             builder.UseExitTimeout(TimeSpan.FromSeconds(3));
         }
 
-        if (shellSelfTest || manualCheck)
+        if (shellSelfTest || manualCheck || visualsSelfTest)
         {
             // 托盘是应用级能力，必须在 Run() 之前配置：原生资源在 Run 期间创建。
             // 操作台同样要它——这一批里"看得见"的东西大多挂在托盘上。
+            // 观感自检也要：状态栏图标是"看起来对不对"的一部分，而它只有建了托盘才存在。
             builder.AddTray(o =>
             {
                 o.Tooltip = shellSelfTest ? "OrielWeb self-test" : "OrielWeb 手动验证";
+                // demo 的 app.png 是**彩色**图标（蓝底白窗）。macOS 的模板图语义是
+                // "按 alpha 变成单色剪影、由系统反色"，彩色图套上去会丢掉全部配色、
+                // 只剩一个实心块。模板图只适合单色线条图标（Tauri 的 iconAsTemplate 同理）。
+                o.IconAsTemplate = false;
                 // 操作台上让左键也能弹菜单：手动验证时"点了没反应"最难判断，
                 // 而 Windows 的默认语义是左键只回调、右键才弹菜单。
                 o.MenuOnClick = manualCheck;
+
+                // **图标不是可选的观感细节，是托盘可见性的前提。**
+                // macOS 的 NSStatusItem 在没有 image 也没有 title 时宽度为 0：
+                // 状态项确实存在、也能收到点击，但**状态栏里那一格是空的**——
+                // 用户看到的是"托盘没工作"，排查时却查不到任何错误。
+                // Tauri 同样如此（TrayIconBuilder 不给图标就会得到空状态项）。
+                // 所以示例显式给图标：既是正确示范，也让"托盘到底长什么样"可被截图验证。
+                if (icon is not null)
+                {
+                    o.IconPath = icon;
+                }
             });
         }
 
@@ -660,6 +695,7 @@ internal static class Program
             || (menuBarSelfTest && MenuBarSelfTest.Failed)
             || (apiSelfTest && ApiSelfTest.Failed)
             || (channelSelfTest && ChannelSelfTest.Failed)
+            || (visualsSelfTest && VisualSelfTest.Failed)
             || ((traySelfTest || trayJsSelfTest) && TraySelfTest.Failed))
         {
             Environment.ExitCode = 1;

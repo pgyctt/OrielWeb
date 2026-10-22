@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8">
+  <title>观感验证</title>
+  <!--
+    观感验证专用页（`--selftest visuals` 使用）。
+
+    **整页背景必须是透明的**：这是唯一能让人看见窗口材质（NSVisualEffectView / Mica）
+    的办法——页面一旦铺了不透明底色，材质就被盖住，看起来"设置没生效"。
+    这与库无关，是任何 vibrancy 效果的前提（Tauri 的文档也要求页面自己透明）。
+
+    文字用半透明黑卡片衬底 + 白色文字：材质可能是深色（hudWindow）也可能是浅色
+    （light / mediumLight），单一文字色在其中一侧会看不清。
+  -->
+  <style>
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+      background: transparent;
+      /* 关键：透明。改掉这一行就再也看不到材质了 */
+      color: #fff;
+      font: 15px/1.6 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    /* 顶部留出标题栏高度：overlay 形态下页面会延伸到红绿灯下方 */
+    .page {
+      box-sizing: border-box;
+      padding: 44px 28px 28px;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .hint {
+      font-size: 12px;
+      opacity: .75;
+    }
+
+    .phase {
+      display: inline-block;
+      align-self: flex-start;
+      padding: 10px 18px;
+      border-radius: 10px;
+      background: rgba(0, 0, 0, .55);
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: .5px;
+    }
+
+    .phase small {
+      display: block;
+      font-size: 12px;
+      font-weight: 400;
+      opacity: .7;
+      letter-spacing: 0;
+    }
+
+    /* 色块：材质是否"洗色"、是否模糊，拿它们当参照 */
+    .swatches {
+      display: flex;
+      gap: 10px;
+    }
+
+    .swatch {
+      width: 84px;
+      height: 84px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      font-size: 11px;
+      font-weight: 600;
+      color: rgba(0, 0, 0, .55);
+    }
+
+    .card {
+      padding: 14px 18px;
+      border-radius: 12px;
+      background: rgba(0, 0, 0, .45);
+      max-width: 560px;
+      font-size: 13px;
+    }
+
+    .card b {
+      color: #ffe58f;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="page">
+    <div class="phase" id="phase">
+      <span id="phaseText">—</span>
+      <small id="detail">等待自检切换</small>
+    </div>
+
+    <div class="swatches">
+      <div class="swatch" style="background:#e5484d">红</div>
+      <div class="swatch" style="background:#30a46c">绿</div>
+      <div class="swatch" style="background:#3b82f6">蓝</div>
+      <div class="swatch" style="background:#f5f5f5">白</div>
+      <div class="swatch" style="background:#111">黑</div>
+    </div>
+
+    <div class="card">
+      页面背景是<b>透明</b>的。若窗口材质真的生效，你应当能透过页面看到桌面壁纸的
+      <b>模糊</b>与<b>染色</b>；若材质没生效，这里会是一片纯黑或纯白（窗口底色）。
+      <br>
+      上方的档位文字由自检注入，截图时以它为准。
+    </div>
+
+    <div class="hint">OrielWeb 观感验证页 · 仅用于真机目视与截图取证</div>
+  </div>
+</body>
+
+</html>

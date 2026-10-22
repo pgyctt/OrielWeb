@@ -31,6 +31,21 @@
   ——ObjC 异常托管侧接不住，退出码 134。新增 `MacOSSession.RequireScreen(...)`：
   调这两条路径之前先问 `NSScreen.screens`，为空就抛 `NotSupportedException`
   （页面侧得到 `not_supported`）。典型场景：SSH 到一台停在登录窗口的机器上跑自检。
+- **`setEffects` 在 macOS 15 上完全无效：材质被页面白底挡住**（观感类，无异常无日志）。
+  `class_getInstanceMethod` 的第二个参数是 `SEL`，此前声明成 `string`，marshaling 变成
+  `char*` 后 runtime 返回 nil——于是"这个系统支不支持 `drawsBackground`"的判断**恒为假**。
+  修掉声明后发现 macOS 15 **真的移除了** WKWebView 的私有 `drawsBackground`
+  （`class_copyIvarList` 扫遍继承链没有该 ivar），于是改用公开 API
+  `WKWebView.backgroundColor`（10.14+）配 `setOpaque:`，老系统才回退私有 KVC；
+  **设完读回 alpha 校验**，不匹配就报诊断。判据也不再读 `isOpaque`——WKWebView 覆写了它、恒返回 YES。
+- **托盘状态项宽度被设成 0，状态栏里什么都看不见**（观感类，`isVisible` 却返回 true）。
+  `SetTitle` 在"有标题"时调用 `setLength:0`，注释写的是"给一个固定宽度"。
+  macOS 的 `0` 是**零宽**而不是自动：状态项存在、图标挂着、`isVisible` 为真，
+  但菜单栏那一格是空的。改成始终用 `NSVariableStatusItemLength` 交给 AppKit 自适应。
+- **托盘图标给了也看不见：`NSStatusItem` 不缩放 image**。它按 `image.size`（点）分配宽度，
+  512×512 的 PNG 会让状态项宽 512 点，被系统钳制后**直接不绘制**。
+  现在设置前按最长边归一到 18 点（与 Tauri 的 tao 一致），`SetIcon` 与 `ApplyIcon` 共用同一条归一。
+  另外 demo 的托盘显式设 `IconAsTemplate = false`——彩色图标套模板语义会丢掉全部配色、只剩实心块。
 
 ### 工程
 
@@ -38,6 +53,13 @@
   同一套 demo 的自检在四组环境里跑满（Windows 20/20、Ubuntu X11 20/20、Ubuntu Wayland 19/19、
   macOS 20/20）。**抓到 3 个 CI 结构上覆盖不到的真问题**（2 个进程级崩溃 + 1 个"起不来"），
   外加 1 处自检自己的错误假设（`path.downloadDir()` 断言了英文目录名，中文系统上是「下载」）。
+- **观感验证（macOS 登录图形会话后补跑）**：新增 `--selftest visuals`，逐档切换
+  标题栏三档 / 材质 / 阴影 / Dock 显隐 / 托盘，每档用 `MacWindowProbe` **绕开库**直接读
+  `NSWindow` 的真实状态（因为"库记得自己设过"不等于"AppKit 上真的是那样"）。
+  这一轮又抓到 4 个问题（上面三条观感类 + 一条声明类型错误），它们的共同点是
+  **所有 API 都成功、CI 全绿、画面上什么都没有**。
+  验证边界：这台 VM 的显卡是 `Hyper-V Graphics`（8 MB 显存、无 Metal），
+  vibrancy 的**模糊**出不来——材质的结构全对但画面是纯色，需在有 GPU 的真机上补目视。
   详情与复现步骤见 `docs/CROSS-PLATFORM-VERIFICATION.md`。
   自检的环境判据也一并纠正：**不再看环境变量猜平台**（`WAYLAND_DISPLAY` 在 Wayland 会话里
   可以不设，GDK 会默认连 `wayland-0`），改成"发出去看结果"或问系统
