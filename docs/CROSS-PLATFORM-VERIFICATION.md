@@ -279,6 +279,33 @@ ORIEL_VISUALS_ONLY=sidebar ORIEL_VISUALS_DWELL=25 ./OrielDemo --selftest visuals
 所以这一轮的观感结论来自"两路对照"：**结构看 Hyper-V 缩略图**（标题栏、红绿灯、
 Dock、菜单栏位置），**颜色与细节看自截 PNG**。材质的模糊则两路都拍不到，见第 6 节。
 
+### 5.3 观感基线
+
+取证图存在 `docs/verification/macos/`。除最后一张外都来自"自截"，颜色真实。
+
+**`titleBarStyle = visible`**：系统标题栏 + 标题居中 + 红绿灯三键 + 内容从标题栏下方开始。
+
+![titleBarStyle=visible](verification/macos/titlebar-visible.png)
+
+**`titleBarStyle = transparent`**：标题栏与内容融为一体（分隔线消失），标题仍在、内容位置不变。
+
+![titleBarStyle=transparent](verification/macos/titlebar-transparent.png)
+
+**`titleBarStyle = overlay`**：标题消失，内容整体上移并延伸到标题栏之下，只剩红绿灯浮在上面。
+对比前一张的档位卡片纵向位置即可看出这段位移。
+
+![titleBarStyle=overlay](verification/macos/titlebar-overlay.png)
+
+**`setEffects(sidebar)`**：`NSVisualEffectView` 已挂上、页面透明。这张里客户区仍是纯白——
+不是材质没生效，是这台 VM 没有 GPU 合成，模糊出不来（第 6 节）。
+
+![setEffects(sidebar)](verification/macos/effects-sidebar.png)
+
+**托盘图标**（此图为 Hyper-V 缩略图，颜色失真；看的是"那一格有没有东西"）：
+菜单栏左侧的输入法图标 "A" 左边多了一个 18 点的应用图标。
+
+![托盘图标](verification/macos/tray-menu-bar.png)
+
 ## 6. 已知限制
 
 - **vibrancy 的"模糊"在 VM 上验不了**：`system_profiler` 报的是
