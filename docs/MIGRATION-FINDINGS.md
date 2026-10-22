@@ -194,6 +194,14 @@ node tools/migration-drill/drill.mjs --app lumos     # 只跑一个
 3. **不做**：`plugin-updater`（整块生态能力）、`clipboard.writeImage`（三平台原生剪贴板）、
    `onBackButtonPress`（桌面库不该有）。这三项写进账本的"明确不做"档，附理由。
 
+   > **2026-10-22 更正（B24 复核）**：三条里**后两条后来做了**——`clipboard.writeImage` 在
+   > **B19**（三平台原生剪贴板，含手写的 PNG 编码器）、`onBackButtonPress` 在 **B23**
+   > （订阅是真的，桌面端永不触发，与 Tauri 同）。当时的"不做"判断错在一处：
+   > 把"桌面端没有返回键"当成了"不该有这个函数"，而真正的判据是**迁移代码会不会 import 它**
+   > ——random-frame 有两处 import，删掉那两行 Android 分支的代价远小于让它编译不过。
+   > `plugin-updater` 仍然不做（整块生态能力，且更新器是打包器的事）。
+   > 这一条保留原文，是因为"我们判错过的判据"比"现在正确的结论"更值得记住。
+
 ## 6. 这次演练对"对齐策略"本身的修正
 
 * **账本会给出错误的任务粒度**。`Channel` / `onBackButtonPress` / `writeImage` 在账本上
@@ -204,3 +212,58 @@ node tools/migration-drill/drill.mjs --app lumos     # 只跑一个
   `__TAURI_INTERNALS__` 与 `plugin:` 字面量的扫描，而不是只做类型检查。
 * **"缺能力"里有一条其实该删代码**（#8）。判断标准是"目标平台有没有这个概念"，
   而不是"Tauri 有没有这个导出"。
+
+## 7. 复跑（B24 收口，2026-10-22）
+
+B7 的三条取样应用与 commit SHA **一个没变**（`apps.json` 未改），所以这是同一把尺子
+量两次——结论可比。
+
+| 指标 | B7（2026-10-20） | B24（2026-10-22） | 变化 |
+|---|---|---|---|
+| 源文件 | 228 | 228 | — |
+| Tauri 模块说明符 | 16 | 16 | — |
+| 能映射到本库的模块 | 13/16 | 13/16 | —（剩下 3 个是刻意不做） |
+| 导入符号 | 24 | 24 | — |
+| **导入符号里本库没有的** | **3** | **0** | **−3** |
+| tsc 诊断（与本库相关） | 7 条 / 3 个应用 | 3 条 / 2 个应用 | −4 |
+
+### 7.1 消失的那 3 个符号，各自怎么消掉的
+
+| 符号 | 调用点 | 消掉它的批次 | 迁移改法 |
+|---|---|---|---|
+| `app.onBackButtonPress` | random-frame ×2（`android-navigation.ts` / `privacy.ts`） | **B23** | 零改动（桌面端订阅成立、永不触发） |
+| `clipboard.writeImage` | random-frame ×1（`image-actions.ts`） | **B19** | 零改动（收路径 / `Image` / 编码字节三形状） |
+| `core.Channel` | lumos ×1（`lib/tauri.ts`） | **B9** | 零改动（`onmessage` 仍是 `onmessage`） |
+
+三处都是**零改动**——这正是"对齐"该有的样子：迁移者不用读我们的文档就知道怎么改，
+因为根本没有要改的地方。
+
+### 7.2 剩下的 3 条诊断，全是"模块不存在"而不是"符号不存在"
+
+```
+TS2307 src/client/update.ts: Cannot find module '@tauri-apps/plugin-process'
+TS2307 src/client/update.ts: Cannot find module '@tauri-apps/plugin-updater'
+TS2307 src/dock/Dock.tsx:    Cannot find module '@tauri-apps/api/webview'
+```
+
+三条对应账本里的三个**刻意不做**（`PLANNED_MODULES` 的 webview + `drill.mjs` 的
+process / updater）——不是漏做，是判过之后不做。它们的迁移改法：
+
+* **`plugin-process`**：只有 `relaunch` 一处。本库没有"重启自己"（需要宿主支持进程重启），
+  改法是 `exit()` + 由外面拉起。**这条会真的少一个功能**，迁移时要单独确认。
+* **`plugin-updater`**：整块生态能力（签名校验、差分包、下载器）。本库把更新交给
+  Velopack（`getBundleType()` 认得它的 `Update.exe`），页面侧不提供 updater API。
+* **`api/webview`**：pier-dock 只用 `getCurrentWebview().listen(...)`。改成
+  `getCurrentWindow().listen(...)` 即可——B16 / B22 已经把 webview 级方法挂到
+  `WebviewWindow` 上，事件名与 payload 一致（B8 起 `onDragDropEvent` 就在 `Window` 上）。
+
+### 7.3 顺带修掉的一处账本腐化
+
+`tools/migration-drill/drill.mjs` 的 `MODULE_MAP` 里，`@tauri-apps/api/tray` 一直写着
+"本库没有托盘模块"——而 tray 模块在 **B12** 就实现了。三个取样应用都不用托盘，所以
+演练结果从来没暴露它；但只要下一个应用 import 了 tray，报告就会把它算成缺口。
+同一条目的 `webview` 说明也停在 B7（那时确实没有 webview 级方法），B24 一并更新成现状。
+
+**这条腐化的形态值得记住**：演练工具自己的映射表**没有任何断言盯着**，它既不是账本的
+一部分（不在 `tauri-alignment.test.mjs` 里），也不是类型检查的对象。B24 因此加了一条
+账本级的基线断言（`EXPECTED_GAPS`），但 "映射表" 这一层仍然只靠人读——写在这里当已知缺口。

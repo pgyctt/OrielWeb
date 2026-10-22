@@ -25,6 +25,26 @@
   改成 `[WKWebsiteDataStore respondsToSelector:@selector(…)]`——类对象也是对象，
   这样查的正是类方法本身。
 
+### 工程
+
+- **对齐账本收口（B24）**：Tauri 2 对齐计划的最后一批。三件事，都是"把说法换成可执行的事实"：
+  - **剩余缺口从"写着"变成"数着"**：新增 `EXPECTED_GAPS` 基线（core 7 + fs 2 + notification 8 = 17 条），
+    并加一条测试钉住键集与条数。此前 `GAPS` 只保证"缺了的都写了原因"，不保证"缺的只有这些"——
+    新缺口配上原因就能加进去，而"缺口总数"这个真正该被盯的数字没人看。
+    **收口时发现计划文档写错了**：它说"只剩 core 7 + notification 8"，其实 fs 还有 2 条
+    （macOS 沙箱的 security-scoped bookmark），**总数是 17 而不是 15**。文档已更正。
+  - **批次新鲜度断言**：账本里引用的每个批次号都必须在 `CHANGELOG.md` 里有对应的落地条目
+    ——防止"账本上写着 B24、实际上没发出去"。
+  - **迁移演练复跑**（同一批取样应用、同一个 commit，尺子没换）：
+    24 个被导入的符号里**本库没有的从 3 个降到 0 个**，tsc 诊断从 7 条降到 3 条
+    ——那 3 条全是"模块不存在"（`plugin-process` / `plugin-updater` / `api/webview`），
+    都是**判过之后不做**的。三处消失的符号（`onBackButtonPress` / `writeImage` / `Channel`）
+    迁移时都是**零改动**。详见 `docs/MIGRATION-FINDINGS.md` §7。
+  - 顺带修掉演练工具里的一处腐化：`@tauri-apps/api/tray` 一直记着"本库没有托盘模块"，
+    而它在 B12 就实现了——三个取样应用都不用托盘，所以从来没暴露。
+  - `PLANNED_MODULES` 的 webview 条目**复核后仍然不做**（缺的是"一个窗口挂多个 webview"这个模型，
+    不是方法），批次改标 B24 并写清迁移改法（`getCurrentWebview()` → `getCurrentWindow()`）。
+
 ### 新增
 
 - **平台开关 / 特效 / 任务栏（B22）：19 项一次补齐**——

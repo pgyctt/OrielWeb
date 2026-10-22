@@ -18,7 +18,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 /** 加载参照实现；没装时返回 null（调用方跳过）。 */
@@ -81,10 +81,16 @@ const PLANNED_MODULES = [
         label: 'webview',
         theirs: '@tauri-apps/api/webview',
         ours: '../src/webview.js',
-        batch: 'B4',
+        // 批次写 B24（收口批）：这条不是"还没排到"，而是"复核后仍然不做"。
+        // 写 B24 是为了让"批次新鲜度"那条断言能验证它——见文件末尾那条测试。
+        batch: 'B24',
         note: 'webview 的独立概念。本库**窗口即 webview**，没有"一个窗口挂多个 webview"；' +
             'WebviewWindow 已经作为 Window 的子类提供，但独立的 Webview 类与 getAllWebviews 不造。' +
-            '2026-10-20 决策：**暂缓**（留到有真实的多 webview 需求），webview 级方法补壳挂在 WebviewWindow 上。',
+            '**B24 复核结论：继续不做。** 理由是它缺的不是方法而是模型（多 webview 需要宿主侧重做窗口/坐标/事件路由），' +
+            '而 webview 级的方法本身在 B16（setZoom / clearAllBrowsingData）与 B22（其余窗口开关）' +
+            '已经挂到 WebviewWindow 上——真要用 `getCurrentWebview()` 的地方换成 `getCurrentWindow()` 即可。' +
+            '迁移演练里 pier-dock 唯一的模块级缺口就是它，而它那处 `getCurrentWebview().listen(...)` ' +
+            '改成 `getCurrentWindow().listen(...)` 后类型检查就过了（见 docs/MIGRATION-FINDINGS.md §5）。',
     },
 ];
 
@@ -193,6 +199,58 @@ const GAPS = {
         // Tauri 的 TrayIcon extends Resource，构造是 rid + id 双字段；本库的构造只有 id
         // （没有资源表）。导出面一致，差异在类的方法层（METHOD_DIVERGENCES）。
     },
+};
+
+/**
+ * **B24 收口时的剩余缺口基线**——一份"锁定清单"。
+ *
+ * 为什么要有它：`GAPS` 本身只保证"缺了的都写了原因"，**不保证缺的只有这些**。
+ * 一条新缺口只要"配一句原因"就能加进去，于是"缺口总数"这个真正该被盯的数字
+ * 反而没人看。这里把它钉成常量：任何增减都必须改这份基线，而改它的人一定会
+ * 读到下面这段"为什么只剩这些"。
+ *
+ * B24 的实地核对结果（与 docs/TAURI2-ALIGNMENT-DECISIONS-2026-10-20.md §2.1 的
+ * 计划说法**不一致**，以这里为准）：
+ *
+ *   * `core` 7 条——**没有插件体系**这一件事的全部投影（Resource / PluginListener /
+ *     addPluginListener / transformCallback / checkPermissions / requestPermissions /
+ *     SERIALIZE_TO_IPC_FN）。它们不是七个独立能力，是一个模型缺失的七个面。
+ *   * `fs` 2 条——macOS 沙箱的 security-scoped bookmark。需要 open 面板签发的 bookmark
+ *     与沙箱 entitlement，本库不做应用打包，给不出那个上下文。
+ *   * `notification` 8 条——移动端专有（Android 的 channel / 重要级 / 可见性，iOS 的动作类型）。
+ *     **其中 `Importance` / `Visibility` 是纯类型别名**，Tauri 自己也不把它们挂在运行期导出面上，
+ *     所以 `Object.keys` 只看得到 6 条——导出面比对报的"缺口 6"与这里的 8 都对，只是口径不同。
+ *
+ * 计划文档原先写的是"只剩 core 7 + notification 8"，**漏了 fs 的 2 条**。
+ * 这不是笔误而是当时没核对：fs 那两条从 B17 起就挂在清单里。收口的意义正在于此——
+ * 把"以为的"换成"数出来的"。
+ *
+ * @type {Record<string, string[]>}
+ */
+const EXPECTED_GAPS = {
+    core: [
+        'PluginListener',
+        'Resource',
+        'SERIALIZE_TO_IPC_FN',
+        'addPluginListener',
+        'checkPermissions',
+        'requestPermissions',
+        'transformCallback',
+    ],
+    fs: [
+        'startAccessingSecurityScopedResource',
+        'stopAccessingSecurityScopedResource',
+    ],
+    notification: [
+        'Importance',
+        'Visibility',
+        'channels',
+        'createChannel',
+        'deleteChannel',
+        'listChannels',
+        'removeChannel',
+        'registerActionTypes',
+    ],
 };
 
 /**
@@ -351,6 +409,76 @@ test('未实现模块有登记，且登记与代码状态一致', async (t) => {
         assert.notEqual(await tryImport(planned.theirs), null,
             `${planned.label}: 参照模块 ${planned.theirs} 加载不了，模块名可能写错了`);
     }
+});
+
+test('GAPS 只剩基线里那三组——"清零"要能数出来，不是说出来', () => {
+    // 这一条是 B24 收口的产物。它盯的**不是"缺的有没有写原因"**（上面那条管那个），
+    // 而是"缺的是不是只有这些"——`GAPS` 允许加条目，所以总数需要一个独立的事实来源，
+    // 否则账本会一年后变成"一长串都写了原因的缺口"，而没人记得它当初应该是 17 条还是 70 条。
+    const problems = [];
+
+    // 方向一：基线里的每一组都要在 GAPS 里，且键集完全一致（多了少了都算变动）
+    for (const [module, expected] of Object.entries(EXPECTED_GAPS)) {
+        const actual = Object.keys(GAPS[module] ?? {}).sort();
+        const wanted = [...expected].sort();
+
+        for (const name of wanted.filter((n) => !actual.includes(n))) {
+            problems.push(`${module}.${name}: 基线里有、GAPS 里没有（谁把原因删了？）`);
+        }
+
+        for (const name of actual.filter((n) => !wanted.includes(n))) {
+            problems.push(
+                `${module}.${name}: GAPS 里多出一条基线外的缺口——` +
+                '要么它其实是能做的（那就做），要么把它加进 EXPECTED_GAPS 并写清为什么不做。');
+        }
+    }
+
+    // 方向二：基线之外的模块必须一条不剩
+    for (const [module, gaps] of Object.entries(GAPS)) {
+        if (module in EXPECTED_GAPS) {
+            continue;
+        }
+
+        for (const name of Object.keys(gaps)) {
+            problems.push(
+                `${module}.${name}: 这个模块本该**零缺口**（B24 已收口），` +
+                '却又出现了未记录的差异——要么实现它，要么更新 EXPECTED_GAPS 的基线并说明。');
+        }
+    }
+
+    const total = Object.values(EXPECTED_GAPS).reduce((sum, list) => sum + list.length, 0);
+
+    assert.equal(total, 17, '基线条数变了：改这个数字时请同步改上面那段说明与 docs 的支持矩阵');
+    assert.deepEqual(
+        problems, [],
+        `GAPS 与基线（core 7 + fs 2 + notification 8）不一致：\n  - ${problems.join('\n  - ')}`);
+});
+
+test('账本引用的批次都真的落地过（新鲜度）', () => {
+    // 一条"批次号"只有在它对应的东西真发出去之后才有意义。往账本里写 B24 而
+    // CHANGELOG 里没有 B24 那条，说明这批还停在本地——那样的账本读起来像完成了，
+    // 实际上没有。这条测试把"批次号"与"发版记录"绑在一起。
+    const changelog = readFileSync(new URL('../../../CHANGELOG.md', import.meta.url), 'utf8');
+
+    // CHANGELOG 里的批次标记是中文全角括号（`（B22）`），也允许半角（手写时容易混）
+    const shipped = new Set(
+        [...changelog.matchAll(/[（(]B(\d+)[）)]/g)].map((match) => `B${match[1]}`));
+
+    /** @type {Array<{ where: string, batch: string }>} */
+    const references = [
+        ...PLANNED_MODULES.map((planned) => ({
+            where: `PLANNED_MODULES.${planned.label}`,
+            batch: planned.batch,
+        })),
+        ...METHOD_GAP_GROUPS.flatMap((group) => (group.reason.match(/\bB\d+/g) ?? [])
+            .map((batch) => ({ where: `METHOD_GAP_GROUPS（${group.methods[0] ?? '?'}…）`, batch }))),
+    ];
+
+    const stale = references.filter(({ batch }) => !shipped.has(batch));
+
+    assert.deepEqual(
+        stale.map(({ where, batch }) => `${where}: ${batch}`), [],
+        '这些批次号在 CHANGELOG 里找不到落地记录（写的是"做完了"，但没有发版条目）：');
 });
 
 test('常量对象的键与值都与参照实现一致', async (t) => {

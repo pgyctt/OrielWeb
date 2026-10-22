@@ -56,8 +56,11 @@ const MODULE_MAP = {
     '@tauri-apps/api/menu': { oriel: 'menu' },
     '@tauri-apps/api/mocks': { oriel: 'mocks' },
     '@tauri-apps/api/image': { oriel: 'image' },
-    '@tauri-apps/api/webview': { oriel: null, gap: '本库没有 webview 层：窗口即 webview，webview 级方法（position/size/setAutoResize/reparent）无处安放；onDragDropEvent 已由 B8 补到 Window 上，改用 getCurrentWindow()' },
-    '@tauri-apps/api/tray': { oriel: null, gap: '前端没有托盘模块（托盘能力在宿主侧，页面只能用命令配置，不出现在 JS 导出面）' },
+    '@tauri-apps/api/webview': { oriel: null, gap: '本库没有 webview 层：窗口即 webview。'
+        + 'webview 级的方法已经在 B16（setZoom / clearAllBrowsingData）与 B22 补到 WebviewWindow 上，'
+        + 'onDragDropEvent 由 B8 补到 Window 上——所以迁移时把 `getCurrentWebview()` 换成 '
+        + '`getCurrentWindow()` 就够用，缺的只是"一个窗口挂多个 webview"那个概念本身' },
+    '@tauri-apps/api/tray': { oriel: 'tray' },
     '@tauri-apps/plugin-dialog': { oriel: 'dialog' },
     '@tauri-apps/plugin-fs': { oriel: 'fs' },
     '@tauri-apps/plugin-opener': { oriel: 'opener' },

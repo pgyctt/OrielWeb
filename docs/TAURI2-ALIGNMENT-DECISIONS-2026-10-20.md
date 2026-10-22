@@ -89,7 +89,7 @@ notification 的移动端 8 个。
 | **B21** | window 光标 6 项 | 三平台光标后端 | 无 | 中高 |
 | **B22** | window 平台开关 10 项 + 特效 4 项 + 任务栏 5 项（**已完成**，见 §6） | 三平台窗口宿主（最重的一批） | B13 | **高** |
 | **B23** | app 剩余：setDockVisibility、defaultWindowIcon、BundleType、getBundleType、数据存储 2 项、onBackButtonPress（**已完成**，见 §6） | `OrielApp` + macOS Dock + WKWebsiteDataStore | B13 | 中 |
-| **B24** | 账本收口：GAPS 清零核对、PLANNED_MODULES 更新、batch 新鲜度断言、迁移演练复跑 | `tauri-alignment.test.mjs`、`tools/migration-drill/` | B12–B23 | 低 |
+| **B24** | 账本收口：GAPS 清零核对、PLANNED_MODULES 更新、batch 新鲜度断言、迁移演练复跑（**已完成**，见 §6） | `tauri-alignment.test.mjs`、`tools/migration-drill/` | B12–B23 | 低 |
 
 **规模合计**（按改动点）：新增文件约 6、修改文件约 45、新增测试约 150 条。
 B14 与 B22 是两块硬骨头；B12/B13/B15/B16/B23 是「一个下午一批」的规模。
@@ -100,7 +100,12 @@ B14 与 B22 是两块硬骨头；B12/B13/B15/B16/B23 是「一个下午一批」
 - **B14 单独发 0.5.0**（线格式破坏性变更，见 §4）。
   **2026-10-20 更正**：B14 实际随 **0.4.1** 一并发布（与 B12/B13/B15 同版），没有单独发 0.5.0；
   读兼容策略不变（0.6.0 删旧形状读取）。
-- B24 结束后账本 GAPS 应只剩两组（core 7 + notification 移动端 8），发 0.6.0 对齐里程碑。
+- B24 结束后账本 GAPS 只剩三组（core 7 + fs 2 + notification 移动端 8 = **17 条**），发 0.6.0 对齐里程碑。
+  **2026-10-22 更正**：这里原写"只剩两组（core 7 + notification 8）"，**漏了 fs 的 2 条**
+  （macOS 沙箱的 security-scoped bookmark，从 B17 起就在清单里）。B24 收口时逐条数过，
+  以 `packages/api/tests/tauri-alignment.test.mjs` 的 `EXPECTED_GAPS` 为准；
+  另外 notification 那 8 条里有 2 条（`Importance` / `Visibility`）是纯类型别名，
+  Tauri 自己也不把它们挂在运行期导出面上，所以导出面比对报的是"缺口 6"。
 
 ## 3. 三条实现护栏（与「全量对齐」同时成立）
 
@@ -253,3 +258,32 @@ JS 单测补 7 条（命令名与形状、16 位元组、退订接口）。
    路径，于是这个 bug 躺了一个批次；这次一并修掉。
    **这条修正的教训**：头文件写"可空"不等于实现里会判空，尤其当它是个 block 参数时；
    而"两处同样的调用，一处被覆盖、一处没有"正是这类 bug 的典型藏身处。
+
+### B24（2026-10-22，已完成）：对齐账本收口
+
+B12–B24 的收尾。这一批没有新增能力，做的全是**把"说法"变成"可执行的事实"**——
+三件事，每件都指向同一类风险：账本会自己腐化，而腐化的账本比没有账本更危险。
+
+1. **缺口总数第一次有了独立的事实来源。** 此前 `GAPS` 只保证"缺了的都写了原因"，
+   不保证"缺的只有这些"——加一条新缺口只要配一句话就能过。现在有 `EXPECTED_GAPS`
+   基线（键集 + 条数双重钉死），任何增减都要改基线，而改基线的人一定会读到那段
+   "为什么只剩这些"。
+   **核对时抓出计划文档的一处错**：它写"只剩 core 7 + notification 8"，实际还有
+   fs 的 2 条（macOS security-scoped bookmark），**17 而不是 15**。
+2. **批次号与发版记录绑在一起。** 账本里出现的每个 `B<n>` 都必须在 `CHANGELOG.md` 里
+   找得到落地条目——"账本写着 B24、其实没发出去"这种状态现在会直接红。
+3. **迁移演练复跑，尺子没换。** 同一批应用、同一个 commit SHA，所以两次结果可比：
+   24 个被导入的符号里本库没有的从 **3 → 0**，tsc 诊断从 **7 → 3**，而剩下的 3 条
+   全是"模块不存在"（`plugin-process` / `plugin-updater` / `api/webview`），
+   都是判过之后不做的。三处消失的符号迁移时**零改动**——这是对齐最好的形态。
+
+**顺手修掉的两处腐化**：
+- `drill.mjs` 的 `MODULE_MAP` 里 `@tauri-apps/api/tray` 仍写着"本库没有托盘模块"，
+  而 tray 在 B12 就实现了（三个取样应用都不用它，所以从没暴露）。
+- `MIGRATION-FINDINGS.md` §5 的"不做：`writeImage` / `onBackButtonPress`"两条，
+  后来分别在 B19 / B23 做了。原文保留 + 加更正，因为**判错过的判据**比现在的结论更值得记。
+
+**仍然只在文档里的缺口**（B24 明确不解决，写在这里当已知）：
+- `drill.mjs` 的模块映射表没有任何断言盯着——它既不在账本里，也不是类型检查的对象。
+  要治它得让演练进 CI（需要网络与三个 GitHub 仓库的可达性），本批没做。
+- `METHOD_DIVERGENCES` / `METHOD_EXTRAS` 的条目只靠人读，没有"条目是否仍然成立"的断言。
