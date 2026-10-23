@@ -106,7 +106,7 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 | `bool IsOnUiThread { get; }` | 当前线程是不是 UI 线程（应用未运行时为 `false`）。宿主自己的后台线程据此判断"要不要编组"，不必再自己维护主线程 ID |
 | `void PostToMainThread(Action action)` | 把动作切回 UI 线程（应用自己的后台线程要用它；IPC 命令里 `await` 之后已在 UI 线程，无需再切，见下方线程模型）。**投递失败抛 `InvalidOperationException`** |
 | `bool TryPostToMainThread(Action action)` | 同上但不抛：投递失败返回 `false` 并报一条诊断（退出途中"尽力投递"用它） |
-| `void InvokeOnUiThread(Action action)` | 在 UI 线程上**同步**执行：已在 UI 线程则直接执行，否则投递并阻塞等待完成。动作抛的异常原样带回调用方。**退出已开始时立刻抛**（消息循环停了，投递的动作不会被处理，干等即永久阻塞） |
+| `void InvokeOnUiThread(Action action, TimeSpan? timeout = null)` | 在 UI 线程上**同步**执行：已在 UI 线程则直接执行，否则投递并阻塞等待完成。动作抛的异常原样带回调用方。**退出已开始时立刻抛**（消息循环停了，投递的动作不会被处理，干等即永久阻塞）。`timeout` 默认 `null` = 无限等待（与旧行为一致）；给了值则超时抛 `TimeoutException`——UI 线程卡在一条慢命令或模态原生调用里时，调用方至少能拿到一条说得清的错误 |
 | `bool IsExiting { get; }` | 退出流程是否已开始（`Quit` 已调用，或消息循环已结束）。退出一旦开始，UI 线程队列就不再被排空——**别再做"投过去等它执行"的操作** |
 | `void Quit()` | 请求退出：结束消息循环、让 `Run()` 返回，并**保证进程最终结束**（见下方"退出语义"）。**只能在 UI 线程调用** |
 | `event Action<OrielExitEventArgs>? Exiting` | 退出流程已开始（消息循环即将/已经结束） |
@@ -260,7 +260,7 @@ WebviewWindow? again = app.GetWindow("settings");   // 按 label 取回（不存
 | `Task<string> EvaluateJs(string script)` | 在页面当前文档上下文执行 JS，回 **JSON 编码**的结果串（WebView2 风格）。**边界**：macOS/Linux 这条路经页面回环完成，桥接没装上时它会等到超时或失败（不可信来源就是这样，见 §4）；页面导航离开原文档或窗口销毁时以异常立即失败，不会永久挂起 |
 | `bool PostToUiThread(Action action)` | 把动作切回 UI 线程（已在 UI 线程则直接执行）。返回 `false` = 调度通道已失效、回调不会执行，同时有一条诊断 |
 | `bool IsOnUiThread { get; }` | 当前线程是不是 UI 线程 |
-| `void InvokeOnUiThread(Action action)` | 同步编组：投递并阻塞等待完成；动作抛的异常原样带回调用方 |
+| `void InvokeOnUiThread(Action action, TimeSpan? timeout = null)` | 同步编组：投递并阻塞等待完成；动作抛的异常原样带回调用方；超时抛 `TimeoutException`（默认 `null` = 无限等待） |
 | **窗口命令与菜单** | |
 | `ShowContextMenu(IReadOnlyList<OrielMenuItem> items)` | 弹应用自己的上下文菜单（见 §10） |
 | `ShowContextMenu(items, OrielPosition? position)` | 同上，但指定位置（逻辑像素，相对客户区左上角；`null` = 跟随鼠标） |
@@ -1503,7 +1503,15 @@ c.Allow(OrielAssetFileServer.ScopeCommand, s => s.AllowPath("$APPDATA/images/**"
 
 ### `fs` 模块：两道关都必过
 
-这是全库**唯一**一处"命令授权 + 路径 scope 都必须声明"的命令族。理由：
+这是全库**唯一**一处"命令授权 + 路径 scope 都必须声明"的命令族。
+
+> **符号链接会先解析、再判 scope**（0.4.9 起）：allowed 目录里放一个指向 `~/.ssh/id_rsa` 的链接，
+> 曾能让路径判定一路通过。现在路径**逐段**解析到最终目标，再用解析结果判 scope——
+> 目标在 scope 外就拒绝（`path_not_allowed`）。指向 scope 内的链接照常可用；
+> 目标不存在的写路径跳过解析（`ResolveLinkTarget` 对不存在的路径没有意义）。
+> 解析失败（链接成环、跨卷、权限不足）一律**不放行**。
+
+理由：
 
 ```csharp
 // 只说"能调读文件这个动作"

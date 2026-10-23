@@ -567,10 +567,12 @@ internal static class OrielBuiltInFsCommands
     /// 然后归一后指到别处——这就是经典的 scope 绕过。归一是 <see cref="Path.GetFullPath(string)"/>。
     /// </para>
     /// <para>
-    /// <b>已知限制：不解析符号链接。</b> 若 allowed 目录里有个符号链接指向外部，
-    /// 文本层面的 scope 判定会通过。解析真实路径（<c>ResolveLinkTarget</c>）要做多次
-    /// 文件系统访问且对不存在的路径无效（写文件时目标通常还不存在），
-    /// 所以这里不做——已记入文档的"已知限制"，而不是假装它不存在。
+    /// <para>
+    /// <b>符号链接在 scope 判定之前解析</b>（0.4.9 起）：allowed 目录里放一个指向外部的链接，
+    /// 曾经能让文本层面的判定通过——scope 于是形同虚设。现在由 <see cref="ResolveLinkTargets"/>
+    /// **逐段**解析到最终目标，再用它判 scope。目标不存在（写命令的常见情形）时跳过解析：
+    /// <c>ResolveLinkTarget</c> 对不存在的路径没有意义。
+    /// </para>
     /// </para>
     /// </remarks>
     private static string AuthorizePath(
@@ -645,6 +647,11 @@ internal static class OrielBuiltInFsCommands
             };
         }
 
+        // 归一之后、判 scope 之前，把符号链接解析到最终目标。
+        // **顺序不能反**：先判 scope 再解析，等于用"链接所在位置"的合法性去担保"链接指向的目标"——
+        // allowed 目录里放一个指向 ~/.ssh/id_rsa 的链接就能读走它，而 scope 要防的正是这一层。
+        full = ResolveLinkTargets(full);
+
         if (!window.App.Guard.TryAuthorizePath(command, full, window.App.Info.Identifier, out string? reason))
         {
             throw new OrielIpcException(reason ?? $"路径不在 '{command}' 的 scope 内。")
@@ -654,6 +661,77 @@ internal static class OrielBuiltInFsCommands
         }
 
         return full;
+    }
+
+    /// <summary>
+    /// 把已存在的符号链接解析到最终目标；不是链接、或目标不存在时原样返回。
+    /// </summary>
+    /// <param name="full">已归一的绝对路径。</param>
+    /// <remarks>
+    /// <para>
+    /// <b>为什么读路径必须做这一步</b>：scope 的威胁模型是"页面被 XSS 后不能读走 scope 外的文件"，
+    /// 而 scope 通常放行应用自己的数据目录（可写）。攻击者在该目录里放一个指向
+    /// <c>~/.ssh/id_rsa</c> 的链接，文本层面的路径判定会一路通过——scope 于是形同虚设。
+    /// </para>
+    /// <para>
+    /// <b>只在"路径已存在"时解析</b>：写命令的目标通常还不存在，<c>ResolveLinkTarget</c>
+    /// 对不存在的路径没有意义；读命令的目标一定存在（否则会以 file_not_found 失败）。
+    /// </para>
+    /// <para>
+    /// <b>解析失败不放行</b>：跨卷、权限不足、链接成环时无法确定真实目标，
+    /// 继续用字面路径判定等于回到未修复的状态。按 <c>path_not_allowed</c> 拒绝并给出原因。
+    /// </para>
+    /// </remarks>
+    private static string ResolveLinkTargets(string full)
+    {
+        string root = Path.GetPathRoot(full) ?? string.Empty;
+        if (root.Length == 0)
+        {
+            return full;
+        }
+
+        string current = root;
+        string[] segments = full[root.Length..].Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+
+        // **逐段解析**，不是只看最后一段：allowed 目录里放一个指向 /etc 的目录链接，
+        // 再读 allowed/link/passwd——最后一段（passwd）自己不是链接，只看它等于没查。
+        // 每段一次 Exists + LinkTarget，深路径多几次 syscall，相对真实 I/O 可以忽略。
+        foreach (string segment in segments)
+        {
+            current = Path.Combine(current, segment);
+
+            // junction 在 .NET 里也算目录（Directory.Exists 为 true）；不存在的段按文件处理，
+            // 它的 LinkTarget 是 null，于是续接下去——写命令的目标通常还不存在。
+            FileSystemInfo info = Directory.Exists(current)
+                ? new DirectoryInfo(current)
+                : new FileInfo(current);
+
+            if (info.LinkTarget is null)
+            {
+                continue;
+            }
+
+            try
+            {
+                FileSystemInfo? target = info.ResolveLinkTarget(returnFinalTarget: true);
+                if (target is not null)
+                {
+                    current = target.FullName;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw new OrielIpcException(
+                    $"路径上的符号链接无法解析（链接成环、跨卷或权限不足）：{ex.Message}", ex)
+                {
+                    Code = OrielIpcErrorCodes.PathNotAllowed,
+                };
+            }
+        }
+
+        return current;
     }
 
     /// <summary>

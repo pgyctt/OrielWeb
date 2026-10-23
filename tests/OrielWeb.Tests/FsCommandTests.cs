@@ -455,4 +455,117 @@ public sealed class FsCommandTests : IDisposable
 
     private static void InvokeWith(OrielApp app, string command, object args)
         => InvokeWith<object?>(app, command, args);
+
+    // ---- 符号链接（R6.1）：scope 不能靠"链接所在位置"担保"链接指向的目标" ----
+
+    [Fact]
+    public void ReadTextFile_ThroughFileLinkOutsideScope_IsRejected()
+    {
+        string outside = CreateOutsideDirectory();
+        try
+        {
+            string secret = Path.Combine(outside, "secret.txt");
+            File.WriteAllText(secret, "TOP-SECRET");
+
+            string link = Path.Combine(_root, "link.txt");
+            CreateFileLink(link, secret);
+
+            var error = Assert.Throws<OrielIpcException>(
+                () => Invoke<string>("fs.readTextFile", new { path = link }));
+
+            Assert.Equal(OrielIpcErrorCodes.PathNotAllowed, error.Code);
+        }
+        finally
+        {
+            DeleteQuietly(outside);
+        }
+    }
+
+    [Fact]
+    public void ReadTextFile_ThroughDirectoryLinkOutsideScope_IsRejected()
+    {
+        string outside = CreateOutsideDirectory();
+        try
+        {
+            File.WriteAllText(Path.Combine(outside, "x.txt"), "X");
+
+            string linkDir = Path.Combine(_root, "linkdir");
+            CreateDirectoryLink(linkDir, outside);
+
+            // 最后一段（x.txt）自己**不是**链接：只解析最后一段的实现在这里会放行。
+            // 这正是"allowed 目录里放一个指向 /etc 的目录链接"那条绕过。
+            var error = Assert.Throws<OrielIpcException>(
+                () => Invoke<string>("fs.readTextFile", new { path = Path.Combine(linkDir, "x.txt") }));
+
+            Assert.Equal(OrielIpcErrorCodes.PathNotAllowed, error.Code);
+        }
+        finally
+        {
+            DeleteQuietly(outside);
+        }
+    }
+
+    [Fact]
+    public void ReadTextFile_ThroughLinkInsideScope_Succeeds()
+    {
+        // 修的是绕过，不是把符号链接一律禁掉：指向 scope 内的链接照常可读。
+        string target = Path.Combine(_root, "real.txt");
+        File.WriteAllText(target, "inside");
+
+        string link = Path.Combine(_root, "link-inside.txt");
+        CreateFileLink(link, target);
+
+        Assert.Equal("inside", Invoke<string>("fs.readTextFile", new { path = link }));
+    }
+
+    private static string CreateOutsideDirectory()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "oriel-outside-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(path);
+        return path;
+    }
+
+    private static void CreateFileLink(string linkPath, string targetPath)
+    {
+        try
+        {
+            File.CreateSymbolicLink(linkPath, targetPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Assert.Fail(
+                "无法创建符号链接：" + ex.Message +
+                "。Windows 需要 SeCreateSymbolicLinkPrivilege（以管理员运行，或开启开发者模式）。" +
+                "这条用例不能用\"跳过\"代替——符号链接绕过是 scope 的真实攻击面。");
+        }
+    }
+
+    private static void CreateDirectoryLink(string linkPath, string targetPath)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(linkPath, targetPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Assert.Fail(
+                "无法创建目录符号链接：" + ex.Message +
+                "（Windows 需要管理员或开发者模式）。");
+        }
+    }
+
+    private static void DeleteQuietly(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+            // 清理失败不该让测试变红
+        }
+    }
 }
