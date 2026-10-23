@@ -29,6 +29,11 @@
   在 arm64 机器上会去交叉发布 x64 的 AOT 产物，链接阶段报
   `ld.bfd: unrecognised emulation mode: elf_x86_64`，看起来像 AOT 工具链的问题。
   `smoke-linux-arm64` 首轮就是这么红的。
+- `ci.yml` 的 `test` 与三个 `compile-*` job 补上 `timeout-minutes`，`compile-linux` 的 apt
+  改用与其他 job 一致的 `APT_OPTS`。起因：一次 `apt-get update` 挂起让整条 run 卡了 26 分钟，
+  而缺省超时是 6 小时，只能人工取消——下游的 `smoke-linux*` 全在等它。
+- README 平台矩阵里 macOS x64 与 Linux arm64 改为 ✅：两个新 job 首轮各抓到一个真问题
+  （见上两条），修复后二轮 CI 全绿。
 
 ## 0.4.10 - 2026-10-23
 

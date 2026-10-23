@@ -11,8 +11,8 @@ dotnet add package OrielWeb
 | Windows x64/arm64 | WebView2 (Evergreen) | ✅ 真机验证（IPC 往返、单测、AOT 发布） | `ci:compile-windows`、`ci:smoke-windows` |
 | Linux x64 | WebKitGTK 4.1 | ✅ 真机验证（WSL2 + WSLg；X11 与 Wayland 双后端） | `ci:compile-linux`、`ci:smoke-linux` |
 | macOS arm64 | WKWebView | ✅ 真机验证（GitHub 托管 runner） | `ci:smoke-macos` |
-| Linux arm64 | WebKitGTK 4.1 | ⚠️ CI 自检（原生 arm64，待首轮绿）；未在真机桌面运行 | `ci:compile-linux`、`ci:smoke-linux-arm64` |
-| macOS x64 | WKWebView | ⚠️ CI 自检（`macos-15-intel`，待首轮绿）；此前只做过 IL 编译 | `ci:compile-macos`、`ci:smoke-macos-x64` |
+| Linux arm64 | WebKitGTK 4.1 | ✅ CI 自检（原生 arm64 runner + Xvfb，2026-10-23 首绿）；未在真机桌面运行 | `ci:compile-linux`、`ci:smoke-linux-arm64` |
+| macOS x64 | WKWebView | ✅ 真机验证（`macos-15-intel` 托管 runner，2026-10-23 首绿）；此前只做过 IL 编译 | `ci:compile-macos`、`ci:smoke-macos-x64` |
 
 > **"证据"列不是形容词，是可核对的引用**：`ci:<job>` 指向 `.github/workflows/ci.yml` 里的 job 名，
 > 由 `tools/verify-matrix.ps1` 在 `test` job 里校验；引用一个不存在的 job 会让 CI 红。
