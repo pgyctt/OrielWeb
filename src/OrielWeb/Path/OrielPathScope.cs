@@ -160,7 +160,28 @@ public sealed class OrielPathScope
 
         // 路径与模式都归一到 '/'，并压掉重复分隔符：scope 里的模式一律用 '/' 写
         // （Tauri 也如此），而调用方给的路径在 Windows 上带 '\'。
-        return OrielGlob.IsMatch(Normalize(expanded), Normalize(absolutePath));
+        string normalizedPattern = Normalize(expanded);
+        string normalizedPath = Normalize(absolutePath);
+
+        if (OrielGlob.IsMatch(normalizedPattern, normalizedPath))
+        {
+            return true;
+        }
+
+        // 字面匹配没中，还要再试一次"模式也解析过符号链接"的形态。
+        //
+        // 为什么必须有这一步：候选路径在进 scope 之前已经被解析到真实路径
+        // （fs 命令的 OrielLinkResolver.Resolve），而模式还是用户写的字面路径。
+        // macOS 上 /var 是 /private/var 的符号链接，于是候选变成 /private/var/folders/...，
+        // 模式仍是 /var/folders/... —— 两边永远对不上，**所有 fs 命令都会被拒**
+        // （0.4.9 的回归，由同版本新增的 macOS CI 抓到；Windows/Linux 上不可能复现）。
+        //
+        // 安全性：解析的是**模式自己的静态前缀**（用户配置的可信路径），不是攻击者控制的输入；
+        // 而候选路径这一侧仍然只认真实路径，所以"allowed 目录里放链接指向外部"照旧被拒。
+        string canonicalPattern = OrielLinkResolver.ResolvePattern(normalizedPattern);
+
+        return !string.Equals(canonicalPattern, normalizedPattern, StringComparison.Ordinal)
+            && OrielGlob.IsMatch(canonicalPattern, normalizedPath);
     }
 
     /// <summary>把路径归一成 <c>glob</c> crate 认识的形式：分隔符统一、无重复、无尾随。</summary>

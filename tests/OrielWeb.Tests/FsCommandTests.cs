@@ -518,6 +518,28 @@ public sealed class FsCommandTests : IDisposable
         Assert.Equal("inside", Invoke<string>("fs.readTextFile", new { path = link }));
     }
 
+    [Fact]
+    public void ScopeRootItselfIsALink_PathStillAllowed()
+    {
+        // scope 的根目录本身是符号链接——macOS 上就是这种形态（/var → /private/var）。
+        // 候选路径被解析到真实路径，模式若不解析，两者永远对不上：
+        // 0.4.9 因此在 macOS 上把所有 fs.* 都拒了，而 Windows/Linux 上完全看不出来。
+        string real = Path.Combine(_root, "real-dir");
+        Directory.CreateDirectory(real);
+
+        string alias = Path.Combine(_root, "alias-dir");
+        CreateDirectoryLink(alias, real);
+
+        string file = Path.Combine(alias, "inside.txt");
+
+        using OrielApp app = CreateAppExact(c =>
+            c.Allow("fs.*", s => s.AllowPath(alias.Replace('\\', '/') + "/**")));
+
+        InvokeWith(app, "fs.writeTextFile", new { path = file, data = "ok" });
+
+        Assert.Equal("ok", InvokeWith<string>(app, "fs.readTextFile", new { path = file }));
+    }
+
     private static string CreateOutsideDirectory()
     {
         string path = Path.Combine(Path.GetTempPath(), "oriel-outside-" + Guid.NewGuid().ToString("N"));
