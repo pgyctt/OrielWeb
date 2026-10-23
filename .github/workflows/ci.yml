@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # 手动触发：基准 job 需要（它不在 PR 上跑，见文件末尾的 benchmark job）。
+  workflow_dispatch:
 
 # 同一个 ref 的旧运行已经没有价值：新推送直接取代它（release.yml 刻意相反——发布要串行跑完）。
 concurrency:
@@ -318,3 +320,41 @@ jobs:
           path: ${{ runner.temp }}/macos-verify-out
           if-no-files-found: warn
           retention-days: 14
+
+  benchmark:
+    # 只在 main 与手动触发时跑。**PR 上不跑**：共享 runner 的噪声足以让"回归 20%"
+    # 变成狼来了，而一条会误报的门禁最终一定会被忽略。
+    # 先只记录、不设阈值——等 main 上积累十几次样本，再定"回归 > 20% 告警"。
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-dotnet-nuget
+
+      - name: Run benchmarks
+        # 四个基准各用独立进程（BDN 默认工具链）。注册表是进程级的，
+        # 分成两个类正是为了让它互不污染——同一进程先注册 1000 条再测 1 条，测的就不是 1 条。
+        run: dotnet run -c Release --project benchmarks/OrielWeb.Benchmarks -- --filter '*' --exporters markdown
+
+      - name: Publish trend to job summary
+        # 表进 Step Summary，历史就在 Actions 页面按 run 翻——不引入外部服务，
+        # 也不需要 gh-pages 分支。
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem BenchmarkDotNet.Artifacts/results/*.md -ErrorAction SilentlyContinue
+          if (-not $files) { throw "基准没有产出 markdown：BDN 可能没跑起来" }
+          "## 基准结果" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          foreach ($file in $files) {
+            Get-Content $file.FullName | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks
+          path: BenchmarkDotNet.Artifacts
+          if-no-files-found: warn
+          retention-days: 30

@@ -338,7 +338,28 @@ node --test tests/bridge/bridge.test.mjs        # 桥接脚本的三平台一致
 
 pwsh tools/publish.ps1 -Bundle                  # AOT 发布 + Velopack 打包
 pwsh tools/wsl_publish.ps1 -Bundle              # 在 WSL 里发 Linux 产物（同上）
+
+dotnet run -c Release --project benchmarks/OrielWeb.Benchmarks -- --filter '*'   # 性能基线（见下）
 ```
+
+**性能基线**（`benchmarks/`，2026-10-23 实测 / Windows x64 / .NET 10 / `--job short`）：
+
+| 场景 | 耗时 | 每次分配 |
+|---|---|---|
+| 一次 invoke 往返（1 条路由） | 1.24 μs | 3.8 KB |
+| 同上，注册表里有 1000 条命令 | 1.19 μs | 3.81 KB |
+| 内嵌资源查找（子路径 / 带 query / 未命中） | 94 / 61 / 59 ns | 192 / 192 / 176 B |
+| 能力名单：前缀通配 / 精确 / 命中 deny | 25 / 13 / 1.8 ns | 0 |
+
+**1000 条路由与 1 条的耗时相同**——这是"O(1) 分发"的实测证据，不是从代码推断的。
+
+同一轮基准还抓到一处每条消息都在交的税：前缀通配匹配原先把 `pattern[..^1]` 当 string 切片，
+每次分配 32 B；改成 `ReadOnlySpan` 后归零（0.4.7 的「性能」条目）。
+3.8 KB/次是回执序列化的代价（`ArrayBufferWriter` + `Utf8JsonWriter` + `string`），属已知优化空间，
+不是契约——数字会随实现改进下降。
+
+基准项目**不在** `OrielWeb.slnx` 里：跑一次要几分钟，不该拖慢每次 `dotnet build` 与 `dotnet format`。
+CI 用单独 job 跑（只在 `main` 与手动触发，PR 上不跑——共享 runner 的噪声会让"回归 20%"变成狼来了）。
 
 `tools/` 下是验证与取证脚本，由 CI 调用；用法见各脚本头部的注释。
 

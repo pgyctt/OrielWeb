@@ -8,6 +8,10 @@ using System.Buffers;
 
 [assembly: InternalsVisibleTo("OrielWeb.Tests")]
 
+// 基准项目要直接调 HandleInvokeAsync 与资源/路径查找（都是 internal）：
+// 通过这些类型的公开面绕一圈，测到的就不是热路径本身了。
+[assembly: InternalsVisibleTo("OrielWeb.Benchmarks")]
+
 namespace OrielWeb.Ipc;
 
 /// <summary>把回执 JSON 发回前端（由平台后端实现；实现负责切回 UI 线程）。</summary>

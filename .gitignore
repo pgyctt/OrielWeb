@@ -79,6 +79,9 @@ publish/
 tauri-project/
 
 
+# 基准产物（每次 dotnet run -c Release --project benchmarks/... 都会重新生成）
+BenchmarkDotNet.Artifacts/
+
 # B7 迁移演练的取样源码与改写产物（可随时由 tools/migration-drill 重新下载生成）。
 # 第三方应用源码不入库：只保留固定 SHA 的清单与结论（docs/MIGRATION-FINDINGS.md）。
 /.drill/

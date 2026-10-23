@@ -219,6 +219,19 @@ dotnet run -c Release --project benchmarks/OrielWeb.Benchmarks -- --filter '*'
 
 能跑出四张表；CI 的 `benchmark` job 在 `main` 上有历史趋势。
 
+**实施结果（2026-10-23，随 0.4.7 交付）**
+
+四个基准全部落地，并把首次测量值写进了 README。两个发现值得记下来：
+
+| 发现 | 数据 | 处置 |
+|---|---|---|
+| **1000 条路由与 1 条路由耗时相同**（1.19 vs 1.24 μs） | "O(1) 分发"第一次有了证据，不再是从 `Dictionary` 推断 | 记为基线 |
+| **前缀通配匹配每次分配 32 B** | `pattern[..^1]` 是 `Substring`，而 `Allow("todo.*")` 是应用最常见的写法、每条 invoke 都过这里 | **已修**：换成 `ReadOnlySpan` 切片，32 B → 0，耗时 32 → 25 ns |
+| 回执序列化每次 3.8 KB | `ArrayBufferWriter` + `Utf8JsonWriter` + `string` 三次分配 | 记为待优化，本轮不动（改动会碰回执协议路径） |
+
+> 这条 32 B 的修复说明基准的价值：它是**每条消息都在交**的税，但没有任何测试会红——
+> 只有分配列会说话。
+
 ---
 
 ### R4 — 平台宿主分层
