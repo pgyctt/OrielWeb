@@ -20,20 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache NuGet packages
-        # 每个 job 都要 restore，缓存 ~/.nuget/packages 能省掉大半下载时间。
-        # 键取 csproj 与 Directory.Build.props 的哈希：依赖一变就换键，restore-keys 兜住回退。
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
-
-      - name: Setup .NET 10
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
+      - uses: ./.github/actions/setup-dotnet-nuget
 
       - name: Build
         run: dotnet build OrielWeb.slnx -c Release
@@ -120,20 +107,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache NuGet packages
-        # 每个 job 都要 restore，缓存 ~/.nuget/packages 能省掉大半下载时间。
-        # 键取 csproj 与 Directory.Build.props 的哈希：依赖一变就换键，restore-keys 兜住回退。
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
-
-      - name: Setup .NET 10
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
+      - uses: ./.github/actions/setup-dotnet-nuget
 
       - name: Publish AOT
         run: dotnet publish samples/OrielDemo -c Release -r win-x64 -v minimal
@@ -152,20 +126,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache NuGet packages
-        # 每个 job 都要 restore，缓存 ~/.nuget/packages 能省掉大半下载时间。
-        # 键取 csproj 与 Directory.Build.props 的哈希：依赖一变就换键，restore-keys 兜住回退。
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
-
-      - name: Setup .NET 10
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
+      - uses: ./.github/actions/setup-dotnet-nuget
 
       - name: Compile for osx-arm64
         run: dotnet build src/OrielWeb/OrielWeb.csproj -r osx-arm64 -c Release --no-self-contained
@@ -183,20 +144,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev
 
-      - name: Cache NuGet packages
-        # 每个 job 都要 restore，缓存 ~/.nuget/packages 能省掉大半下载时间。
-        # 键取 csproj 与 Directory.Build.props 的哈希：依赖一变就换键，restore-keys 兜住回退。
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
-
-      - name: Setup .NET 10
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
+      - uses: ./.github/actions/setup-dotnet-nuget
 
       - name: Compile for linux-x64
         run: dotnet build src/OrielWeb/OrielWeb.csproj -r linux-x64 -c Release --no-self-contained
@@ -260,20 +208,7 @@ jobs:
           # tools/fake-notification-service.py 顶替无头环境里缺席的通知守护。
           sudo apt-get install -y $APT_OPTS libwebkit2gtk-4.1-dev libgtk-3-dev xvfb x11-utils imagemagick zlib1g-dev clang libnotify-bin python3-dbus python3-gi
 
-      - name: Cache NuGet packages
-        # 每个 job 都要 restore，缓存 ~/.nuget/packages 能省掉大半下载时间。
-        # 键取 csproj 与 Directory.Build.props 的哈希：依赖一变就换键，restore-keys 兜住回退。
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
-
-      - name: Setup .NET 10
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
+      - uses: ./.github/actions/setup-dotnet-nuget
 
       - name: Start Xvfb and wait until it accepts connections
         # 不用 `xvfb-run -a`：它分配 display 号之后**立刻**执行命令，不等 X server 就绪。
@@ -327,20 +262,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache NuGet packages
-        # 每个 job 都要 restore，缓存 ~/.nuget/packages 能省掉大半下载时间。
-        # 键取 csproj 与 Directory.Build.props 的哈希：依赖一变就换键，restore-keys 兜住回退。
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
-
-      - name: Setup .NET 10
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
+      - uses: ./.github/actions/setup-dotnet-nuget
 
       - name: Build demo
         run: dotnet build samples/OrielDemo -c Release -r win-x64
@@ -372,20 +294,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache NuGet packages
-        # 每个 job 都要 restore，缓存 ~/.nuget/packages 能省掉大半下载时间。
-        # 键取 csproj 与 Directory.Build.props 的哈希：依赖一变就换键，restore-keys 兜住回退。
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
-
-      - name: Setup .NET 10
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
+      - uses: ./.github/actions/setup-dotnet-nuget
 
       - name: Smoke run with evidence
         # 托管 macOS runner 具备图形登录会话（2026-09-29 实测：managername=Aqua、/dev/console

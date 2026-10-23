@@ -1,0 +1,32 @@
+name: Setup .NET + NuGet cache
+description: >-
+  CI 各 job 共用的两步：缓存 ~/.nuget/packages、安装 .NET 10 SDK。
+  抽成 composite 是因为原先 7 个 job 各复制一份 13 行样板——改缓存键或 SDK 版本要改 7 遍，
+  而漏改一处不会报错，只会让那个 job 每次都全量 restore（慢，但绿）。
+
+  注意 <code>hashFiles()</code> 的基准是 <code>github.workspace</code>，不是本 action 所在目录——
+  在 composite 里它照样解析到仓库根，所以缓存键与内联写法逐字符一致。
+
+inputs:
+  dotnet-version:
+    description: 要安装的 .NET SDK 版本。
+    required: false
+    default: '10.0.x'
+
+runs:
+  using: composite
+  steps:
+    - name: Cache NuGet packages
+      # 每个 job 都要 restore，缓存 ~/.nuget/packages 能省掉大半下载时间。
+      # 键取 csproj 与 Directory.Build.props 的哈希：依赖一变就换键，restore-keys 兜住回退。
+      uses: actions/cache@v4
+      with:
+        path: ~/.nuget/packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ inputs.dotnet-version }}
