@@ -264,6 +264,17 @@ dotnet run -c Release --project benchmarks/OrielWeb.Benchmarks -- --filter '*'
 
 验收：平台层新增 ≥ 60 个单测；`dotnet test` 总数从 1,476 涨到 1,540+，仍 0 跳过。
 
+> **执行记录（0.4.13）**：抽出 10 个函数到 3 个静态工具类（`Win32Conversions`、
+> `MacOSMappings`、`LinuxMappings`），新增 **104 条**用例，总数 1,501 → **1,605**。
+>
+> 只收"不碰宿主字段、不调 P/Invoke"的函数。像 `ClientToWindowSize`（调
+> `AdjustWindowRectExForDpi`）、`CursorHandle`（调 `LoadCursorW`）虽然也是 `static`，
+> 仍然留在宿主里——给它们造替身测出来的是替身的行为，不是平台的行为。
+>
+> 两个副产品：macOS 的 `SelectorFor` 改名为 `CursorSelector`（原名看不出返回什么）；
+> 表驱动用例里"每个枚举值一条"，顺带挡住了"复制一个 case 忘了改编号"这类
+> 只在运行期表现为"属性不管用"的错误。
+
 **R4c 抽 conformance 项目**（可与 R4a 并行）
 
 把 demo 里的 `--selftest nav/ipc/threading/tray/geometry/window/exit` 抽到 `tests/OrielWeb.Conformance`，demo 只保留一个转发入口。理由：这些自检是事实上的跨平台契约测试，却住在示例工程里——任何一次 demo 重构都可能顺手削弱唯一的语义守卫。
@@ -277,7 +288,7 @@ dotnet run -c Release --project benchmarks/OrielWeb.Benchmarks -- --filter '*'
 | 子批 | 状态 | 说明 |
 |---|---|---|
 | R4a 拆分 | ✅ 已完成（0.4.12） | 三个宿主各拆成 9 个 partial 分片，最大 737 行；成员整块搬运，零逻辑改动 |
-| R4b 纯函数化 | ⬜ 未开始 | 需要逐个判断"哪些计算真的与宿主状态无关"，是长尾工作 |
+| R4b 纯函数化 | ✅ 已完成（0.4.13） | 抽出 10 个纯函数（3 个静态工具类），新增 **104 条**用例；测试总数 1,501 → 1,605 |
 | R4c conformance 项目 | ⬜ 未开始 | 与 R4a 无依赖关系，可单独开工 |
 
 **R4a 的做法与验收**：原计划写的是 `git mv` + 手工切分，实际改用 Roslyn 语法树
