@@ -100,6 +100,29 @@ namespace OrielWeb.Tests
             var index = OrielCommandRegistry.BuildIndex();
             Assert.True(index.ContainsKey(commandName));
         }
+
+        // ---- R2：注册边界如实化（Build 时的诊断，不改变行为） ----
+
+        [Fact]
+        public void UnregisteredTargetTypes_ReportsInstanceCommandsWithoutFactory()
+        {
+            // "索引里有、但本应用没 AddCommands"的实例命令类型要能被列出来——
+            // 否则症状是运行期一条命令失败，而开发者的心智模型是"我没注册就不该存在"。
+            Type[] unregistered = OrielCommandRegistry.UnregisteredTargetTypes([]);
+
+            Assert.Contains(typeof(NoFactoryCommands), unregistered);
+            Assert.Contains(typeof(TestCommands), unregistered);
+        }
+
+        [Fact]
+        public void UnregisteredTargetTypes_ExcludesRegisteredTypes()
+        {
+            Type[] unregistered = OrielCommandRegistry.UnregisteredTargetTypes(
+                [typeof(NoFactoryCommands), typeof(TestCommands)]);
+
+            Assert.DoesNotContain(typeof(NoFactoryCommands), unregistered);
+            Assert.DoesNotContain(typeof(TestCommands), unregistered);
+        }
     }
 
     /// <summary>伪路由：只注册一个给定的命令名（供内建冲突/放行用例参数化使用）。</summary>

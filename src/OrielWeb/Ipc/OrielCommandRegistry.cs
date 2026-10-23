@@ -64,6 +64,40 @@ public static class OrielCommandRegistry
     }
 
     /// <summary>
+    /// 列出"全局索引里有实例命令、但给定集合里没有"的类型（诊断用）。
+    /// </summary>
+    /// <param name="registered">本应用已 <c>AddCommands</c> 的类型。</param>
+    /// <remarks>
+    /// <para>
+    /// 注册是**进程全局**的：生成器在每个程序集打 <c>[ModuleInitializer]</c>，程序集一被加载，
+    /// 里面所有 <c>[OrielCommand]</c> 就进了索引，与"哪个应用要用"无关；而"要不要用"是
+    /// per-app 的（<c>AddCommands</c>）。两者的差集就是"索引里有、但本应用没注册"的类型——
+    /// 调用它们会在解析目标时失败。
+    /// </para>
+    /// <para>
+    /// <b>为什么要报出来</b>：不报的话，症状是运行期一条命令失败，而开发者的心智模型是
+    /// "我没 AddCommands，它就不该存在"。这条诊断把"能看见但调不通"变成一行可见的提示。
+    /// 它**不改变行为**，只写诊断通道。
+    /// </para>
+    /// <para>
+    /// 静态命令（<c>RequiresTarget == false</c>）不在结果里：它们不需要工厂，
+    /// 也不受 <c>AddCommands</c> 约束——这一点写在 API.md 的「命令的注册语义」里。
+    /// </para>
+    /// </remarks>
+    internal static Type[] UnregisteredTargetTypes(IReadOnlyCollection<Type> registered)
+    {
+        lock (s_gate)
+        {
+            return [.. s_index.Values
+                .Where(router => router.RequiresTarget
+                    && router.TargetType is { } type
+                    && !registered.Contains(type))
+                .Select(router => router.TargetType!)
+                .Distinct()];
+        }
+    }
+
+    /// <summary>
     /// name 是否由任何一个内建命令族实现（各族 <c>TryGet</c> 的精确名 switch）。
     /// </summary>
     /// <remarks>

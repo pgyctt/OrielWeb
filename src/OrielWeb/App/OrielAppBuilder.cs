@@ -363,7 +363,39 @@ public sealed class OrielAppBuilder
         return this;
     }
 
-    public OrielApp Build() => new(this);
+    public OrielApp Build()
+    {
+        ReportUnregisteredCommands();
+        return new(this);
+    }
+
+    /// <summary>
+    /// 报告"全局索引里有、但本应用没 <c>AddCommands</c>"的实例命令类型。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 命令注册是进程全局的（生成器在程序集加载时把该程序集所有 <c>[OrielCommand]</c> 登记进索引），
+    /// 而"这个应用用不用"是 per-app 的。差集不报出来，症状是运行期一条命令失败，而开发者的
+    /// 心智模型是"我没注册就不该存在"。
+    /// </para>
+    /// <para>
+    /// 只看**实例**命令：静态命令不需要工厂、也不受 <c>AddCommands</c> 约束，
+    /// 见 API.md 的「命令的注册语义」。这条诊断不改变行为，只写诊断通道。
+    /// </para>
+    /// </remarks>
+    private void ReportUnregisteredCommands()
+    {
+        Type[] unregistered = OrielCommandRegistry.UnregisteredTargetTypes([.. TargetFactories.Keys]);
+        if (unregistered.Length == 0)
+        {
+            return;
+        }
+
+        OrielDiagnostics.Report(
+            $"[OrielWeb] 有 {unregistered.Length} 个含实例命令的类型未调用 AddCommands：" +
+            $"{string.Join("、", unregistered.Select(type => type.Name))}。" +
+            "调用它们的命令会失败；若本应用不需要，可忽略本提示。");
+    }
 
     /// <summary>构建并阻塞运行，直到所有窗口关闭。</summary>
     public void Run() => Build().Run();
