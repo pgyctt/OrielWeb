@@ -41,22 +41,12 @@ public sealed class TrayOptionsTests
     [Fact]
     public void ResolveIcon_MissingFile_ReportsDiagnosticAndReturnsNull()
     {
-        var seen = new List<string>();
-        Action<OrielDiagnosticEventArgs> collector = e => seen.Add(e.Message);
+        using var diagnostics = new DiagnosticCollector();
 
-        OrielDiagnostics.Reported += collector;
-        OrielImage? resolved;
-        try
-        {
-            resolved = new OrielTrayOptions { IconPath = "missing.png" }.ResolveIcon();
-        }
-        finally
-        {
-            OrielDiagnostics.Reported -= collector;
-        }
+        OrielImage? resolved = new OrielTrayOptions { IconPath = "missing.png" }.ResolveIcon();
 
         Assert.Null(resolved);
-        Assert.Contains(seen, m => m.Contains("托盘图标无法使用", StringComparison.Ordinal));
+        Assert.True(diagnostics.Contains("托盘图标无法使用"));
     }
 
     [Fact]

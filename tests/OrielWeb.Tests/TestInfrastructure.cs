@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -135,6 +136,42 @@ public sealed partial class NoFactoryCommands
 {
     [OrielCommand("nf.hello")]
     public string Hello() => "hi";
+}
+
+/// <summary>
+/// 线程安全的诊断收集器：订阅 <see cref="OrielDiagnostics.Reported"/>，退出时自动退订。
+/// </summary>
+/// <remarks>
+/// <para>
+/// <see cref="OrielDiagnostics.Reported"/> 是**进程级静态事件**，测试并行执行时它可能从任意线程、
+/// 为任意测试触发。用 <c>List&lt;string&gt;</c> 收集会偶发失败：并发 <c>Add</c> 抛
+/// <see cref="InvalidOperationException"/> → 被 <c>Report</c> 的兜底 catch 吞掉 → 那条消息没进集合
+/// → <c>Assert.Contains</c> 随机红，而错误信息里看不出真因。
+/// </para>
+/// <para>
+/// 2026-10-23 实测：全量跑约 5 次出现 1 次（<c>ExitSemanticsTests.TryPostToMainThread_BeforeRun_ReturnsFalse_AndReports</c>），
+/// 单独跑 20 次全绿——典型的并行干扰。
+/// </para>
+/// </remarks>
+internal sealed class DiagnosticCollector : IDisposable
+{
+    private readonly ConcurrentQueue<string> _messages = new();
+    private readonly Action<OrielDiagnosticEventArgs> _handler;
+
+    public DiagnosticCollector()
+    {
+        _handler = args => _messages.Enqueue(args.Message);
+        OrielDiagnostics.Reported += _handler;
+    }
+
+    /// <summary>已收集到的诊断文本（快照式读取，可安全并发）。</summary>
+    public IReadOnlyCollection<string> Messages => _messages;
+
+    /// <summary>是否收集到包含该片段的消息。</summary>
+    public bool Contains(string fragment)
+        => _messages.Any(message => message.Contains(fragment, StringComparison.Ordinal));
+
+    public void Dispose() => OrielDiagnostics.Reported -= _handler;
 }
 
 /// <summary>捕获回执 JSON 的 IIpcReplySink 测试实现（经 InternalsVisibleTo 访问内部接口）。</summary>

@@ -15,13 +15,12 @@ public sealed class DiagnosticsTests
     [Fact]
     public void Report_ReachesAllSubscribers_EvenIfOneThrows()
     {
-        var seen = new List<string>();
         Action<OrielDiagnosticEventArgs> throwing = _ => throw new InvalidOperationException("订阅者自己炸了");
-        Action<OrielDiagnosticEventArgs> collecting = e => seen.Add(e.Message);
 
-        // 抛异常的那个排在前面：多播委托默认会在它那里中断，逐个调用 + 各自兜异常才不会
+        // 抛异常的那个排在前面：多播委托默认会在它那里中断，逐个调用 + 各自兜异常才不会。
+        // 收集器必须**后**订阅，否则它排在 throwing 之前，这条用例就测不到"之后的订阅者仍收到"。
         OrielDiagnostics.Reported += throwing;
-        OrielDiagnostics.Reported += collecting;
+        using var diagnostics = new DiagnosticCollector();
         try
         {
             OrielDiagnostics.Report("unit-test-diagnostic");
@@ -29,10 +28,9 @@ public sealed class DiagnosticsTests
         finally
         {
             OrielDiagnostics.Reported -= throwing;
-            OrielDiagnostics.Reported -= collecting;
         }
 
-        Assert.Contains("unit-test-diagnostic", seen);
+        Assert.True(diagnostics.Contains("unit-test-diagnostic"));
     }
 
     [Fact]

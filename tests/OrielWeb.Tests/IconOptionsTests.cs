@@ -36,20 +36,11 @@ public sealed class IconOptionsTests
     [Fact]
     public void Icon_MissingFile_ReportsDiagnostic()
     {
-        var seen = new List<string>();
-        Action<OrielDiagnosticEventArgs> collector = e => seen.Add(e.Message);
+        using var diagnostics = new DiagnosticCollector();
 
-        OrielDiagnostics.Reported += collector;
-        try
-        {
-            new OrielWindowOptions().Icon = Path.Combine(Path.GetTempPath(), $"oriel-missing-{Guid.NewGuid():N}.ico");
-        }
-        finally
-        {
-            OrielDiagnostics.Reported -= collector;
-        }
+        new OrielWindowOptions().Icon = Path.Combine(Path.GetTempPath(), $"oriel-missing-{Guid.NewGuid():N}.ico");
 
-        Assert.Contains(seen, m => m.Contains("窗口图标不存在", StringComparison.Ordinal));
+        Assert.True(diagnostics.Contains("窗口图标不存在"));
     }
 
     [Fact]

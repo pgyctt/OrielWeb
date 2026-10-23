@@ -91,24 +91,15 @@ public sealed class ExitSemanticsTests
     [Fact]
     public void TryPostToMainThread_BeforeRun_ReturnsFalse_AndReports()
     {
-        var seen = new List<string>();
-        Action<OrielDiagnosticEventArgs> collector = e => seen.Add(e.Message);
-
         using var app = Oriel.CreateBuilder().Build();
-        OrielDiagnostics.Reported += collector;
-        bool posted;
-        try
-        {
-            posted = app.TryPostToMainThread(() => { });
-        }
-        finally
-        {
-            OrielDiagnostics.Reported -= collector;
-        }
+        // 订阅必须在 Build 之后：Build 自己会产生诊断（未注册命令提示），不该混进这里。
+        using var diagnostics = new DiagnosticCollector();
+
+        bool posted = app.TryPostToMainThread(() => { });
 
         // 关键：不抛异常，但也不静默——返回 false 且留下痕迹
         Assert.False(posted);
-        Assert.Contains(seen, m => m.Contains("TryPostToMainThread 失败", StringComparison.Ordinal));
+        Assert.True(diagnostics.Contains("TryPostToMainThread 失败"));
     }
 
     [Fact]
