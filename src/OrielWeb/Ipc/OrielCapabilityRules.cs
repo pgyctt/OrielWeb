@@ -43,8 +43,15 @@ internal static class OrielCapabilityMatch
 
         if (IsPrefixPattern(pattern))
         {
-            // 去掉末尾的 '*'，留下的 'todo.' 就是前缀（末尾的 '.' 让它不会误匹配 'todo' 本身）
-            return commandName.StartsWith(pattern[..^1], StringComparison.Ordinal);
+            // 去掉末尾的 '*'，留下的 'todo.' 就是前缀（末尾的 '.' 让它不会误匹配 'todo' 本身）。
+            //
+            // 用 span 切片而不是 pattern[..^1]：后者对 string 是 Substring，**每次匹配分配一个新串**。
+            // 前缀通配是应用最常见的写法（Allow("todo.*")），而每条 invoke 都要过这里——
+            // 基准实测（benchmarks/OrielWeb.Benchmarks 的 CapabilityMatch）这条路径每次 32 B，
+            // 换成 span 之后是 0。
+            return commandName.AsSpan().StartsWith(
+                pattern.AsSpan(0, pattern.Length - 1),
+                StringComparison.Ordinal);
         }
 
         return string.Equals(pattern, commandName, StringComparison.Ordinal);
