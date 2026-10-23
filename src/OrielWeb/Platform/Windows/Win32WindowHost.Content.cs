@@ -272,7 +272,7 @@ internal partial class Win32WindowHost
                     // 只有开启 console 转发时页面才会发这类消息（hook 由桥接脚本注入决定）
                     if (Accept(root, originUrl))
                     {
-                        RaiseConsoleMessage(ReadStringProperty(root, "level"), ReadStringProperty(root, "text"));
+                        RaiseConsoleMessage(Win32Conversions.ReadStringProperty(root, "level"), Win32Conversions.ReadStringProperty(root, "text"));
                     }
                     break;
                 case "message":
@@ -281,7 +281,7 @@ internal partial class Win32WindowHost
                     if (Accept(root, originUrl))
                     {
                         RaiseMessageReceived(
-                            ReadStringProperty(root, "name"),
+                            Win32Conversions.ReadStringProperty(root, "name"),
                             root.TryGetProperty("payload", out var payload) ? payload.GetRawText() : "null");
                     }
                     break;
@@ -292,12 +292,6 @@ internal partial class Win32WindowHost
             // 非 OrielWeb 消息（页面自定义 postMessage），忽略
         }
     }
-
-    /// <summary>读字符串属性；缺失或类型不符时返回空串（页面数据不可信，一律按可缺席处理）。</summary>
-    private static string ReadStringProperty(JsonElement root, string name)
-        => root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString() ?? string.Empty
-            : string.Empty;
 
     /// <summary>入站消息的来源 + 令牌校验（命令授权不在这里，见分发器）。originUrl 为逐消息来源，null 时退回快照。</summary>
     private bool Accept(JsonElement root, string? originUrl)
@@ -394,7 +388,7 @@ internal partial class Win32WindowHost
 
         if (!handled)
         {
-            MessageBoxResult(RuntimeMissingMessage(browserFolder), "OrielWeb", OrielMessageBoxIcon.Error);
+            MessageBoxResult(Win32Conversions.RuntimeMissingMessage(browserFolder), "OrielWeb", OrielMessageBoxIcon.Error);
         }
 
         // 没有 WebView2 的窗口没有内容可按；销毁它即让应用退出，与"装完再启动"的流程一致。
@@ -403,17 +397,6 @@ internal partial class Win32WindowHost
             Win32.DestroyWindow(_hwnd);
         }
     }
-
-    /// <summary>默认提示：区分"系统未装 Evergreen 运行时"与"指定的固定版本目录无效"两种情形。</summary>
-    private static string RuntimeMissingMessage(string? browserFolder) =>
-        browserFolder is null
-            ? "未检测到 Microsoft Edge WebView2 运行时，界面无法显示。\r\n\r\n" +
-              "请安装 WebView2 运行时后重新启动本应用：\r\n" +
-              OrielWebView2RuntimeMissingEventArgs.DownloadUrl
-            : "未在指定目录找到 WebView2 运行时，界面无法显示。\r\n\r\n" +
-              $"目录：{browserFolder}\r\n\r\n" +
-              "请确认环境变量 ORIEL_WEBVIEW2_FOLDER 指向有效的固定版本运行时目录；" +
-              "如需改用系统 Evergreen 运行时，请清除该变量。";
 
     internal void RaiseLoadedIfFirst()
     {

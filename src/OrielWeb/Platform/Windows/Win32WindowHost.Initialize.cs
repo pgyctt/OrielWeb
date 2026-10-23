@@ -38,7 +38,7 @@ internal partial class Win32WindowHost
         var host = new Win32WindowHost(window, options, app, assets, backend);
         host._selfHandle = GCHandle.Alloc(host);
 
-        uint style = ComputeStyle(options);
+        uint style = Win32Conversions.ComputeStyle(options);
         int x = options.X ?? Win32Constants.CW_USEDEFAULT;
         int y = options.Y ?? Win32Constants.CW_USEDEFAULT;
 
@@ -171,28 +171,6 @@ internal partial class Win32WindowHost
         {
             throw new InvalidOperationException("提交 DirectComposition 合成树失败。");
         }
-    }
-
-    private static uint ComputeStyle(OrielWindowOptions options)
-    {
-        uint style;
-        if (options.Frameless)
-        {
-            style = Win32Constants.WS_POPUP | Win32Constants.WS_SYSMENU;
-            if (options.Resizable)
-            {
-                style |= Win32Constants.WS_THICKFRAME | Win32Constants.WS_MAXIMIZEBOX | Win32Constants.WS_MINIMIZEBOX;
-            }
-        }
-        else
-        {
-            style = Win32Constants.WS_OVERLAPPEDWINDOW;
-            if (!options.Resizable)
-            {
-                style &= ~(Win32Constants.WS_THICKFRAME | Win32Constants.WS_MAXIMIZEBOX);
-            }
-        }
-        return style;
     }
 
     private void PostCreate()

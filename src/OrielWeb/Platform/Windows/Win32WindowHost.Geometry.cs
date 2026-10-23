@@ -424,7 +424,7 @@ internal partial class Win32WindowHost
         if (!_options.Frameless)
         {
             (physicalWidth, physicalHeight) = ClientToWindowSize(
-                physicalWidth, physicalHeight, ComputeStyle(_options), dpi);
+                physicalWidth, physicalHeight, Win32Conversions.ComputeStyle(_options), dpi);
         }
 
         Win32.SetWindowPos(

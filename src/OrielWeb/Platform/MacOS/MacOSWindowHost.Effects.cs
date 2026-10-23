@@ -12,7 +12,7 @@ internal sealed partial class MacOSWindowHost
     /// <remarks>
     /// <para>
     /// 落点是 <c>NSVisualEffectView</c>：一个插在 contentView 里、**位于 webview 之下**的
-    /// 材质视图。材质编号见 <see cref="ToVisualEffectMaterial"/>（<c>NSVisualEffectMaterial</c>）。
+    /// 材质视图。材质编号见 <see cref="MacOSMappings.ToVisualEffectMaterial"/>（<c>NSVisualEffectMaterial</c>）。
     /// </para>
     /// <para>
     /// <b>必须把窗口与 webview 的背景放开</b>，否则材质永远看不到：这里同时做三件事——
@@ -35,7 +35,7 @@ internal sealed partial class MacOSWindowHost
         int material = -1;
         foreach (OrielEffect effect in effects.Effects)
         {
-            int candidate = ToVisualEffectMaterial(effect);
+            int candidate = MacOSMappings.ToVisualEffectMaterial(effect);
             if (candidate >= 0)
             {
                 material = candidate;
@@ -186,35 +186,4 @@ internal sealed partial class MacOSWindowHost
         ObjCRuntime.objc_release(_effectView);
         _effectView = 0;
     }
-
-    /// <summary>把 Tauri 的 <c>Effect</c> 映射到 <c>NSVisualEffectMaterial</c>；不支持的返回 -1。</summary>
-    /// <remarks>
-    /// 编号来自 AppKit 的 <c>NSVisualEffectMaterial</c>（10.14 的取值集合）。前五个是 10.14
-    /// 起废弃的旧材质，但仍然是合法取值——老系统上它们才是能用的那几个。
-    /// </remarks>
-    private static int ToVisualEffectMaterial(OrielEffect effect) => effect switch
-    {
-        OrielEffect.AppearanceBased => 0,
-        OrielEffect.Light => 1,
-        OrielEffect.Dark => 2,
-        OrielEffect.Titlebar => 3,
-        OrielEffect.Selection => 4,
-        OrielEffect.Menu => 5,
-        OrielEffect.Popover => 6,
-        OrielEffect.Sidebar => 7,
-        OrielEffect.MediumLight => 8,
-        OrielEffect.UltraDark => 9,
-        OrielEffect.HeaderView => 10,
-        OrielEffect.Sheet => 11,
-        OrielEffect.WindowBackground => 12,
-        OrielEffect.HudWindow => 13,
-        OrielEffect.FullScreenUi => 15,
-        OrielEffect.Tooltip => 17,
-        OrielEffect.ContentBackground => 18,
-        OrielEffect.UnderWindowBackground => 21,
-        OrielEffect.UnderPageBackground => 22,
-
-        // Windows 材质与 macOS 26 的液态玻璃：本平台没有对应物
-        _ => -1,
-    };
 }

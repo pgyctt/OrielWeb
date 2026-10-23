@@ -162,7 +162,7 @@ internal partial class Win32WindowHost
         {
             AccentState = accentState,
             AccentFlags = 0,
-            GradientColor = colorArgb is { } argb ? ToAbgr(argb) : 0,
+            GradientColor = colorArgb is { } argb ? Win32Conversions.ToAbgr(argb) : 0,
             AnimationId = 0,
         };
 
@@ -180,16 +180,6 @@ internal partial class Win32WindowHost
         }
 
         return ok != 0;
-    }
-
-    /// <summary>ARGB → ABGR（强调色策略的 <c>GradientColor</c> 是 ABGR 序）。</summary>
-    private static uint ToAbgr(uint argb)
-    {
-        uint a = (argb >> 24) & 0xFF;
-        uint r = (argb >> 16) & 0xFF;
-        uint g = (argb >> 8) & 0xFF;
-        uint b = argb & 0xFF;
-        return (a << 24) | (b << 16) | (g << 8) | r;
     }
 
     /// <inheritdoc />

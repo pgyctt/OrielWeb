@@ -399,7 +399,7 @@ internal sealed partial class LinuxWindowHost
         // 时间戳只是提示，不影响结果
         GtkNative.GtkWindowBeginResizeDrag(
             _gtkWindow,
-            (int)EdgeFor(direction),
+            (int)LinuxMappings.EdgeFor(direction),
             1,
             rootX,
             rootY,

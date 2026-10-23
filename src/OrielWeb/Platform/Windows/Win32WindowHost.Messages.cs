@@ -225,7 +225,7 @@ internal partial class Win32WindowHost
                     int minWidth = LogicalPixels.ToPhysical(_minWidth, dpi);
                     info->ptMinTrackSize.X = _options.Frameless
                         ? minWidth
-                        : ClientToWindowSize(minWidth, 1, ComputeStyle(_options), dpi).Width;
+                        : ClientToWindowSize(minWidth, 1, Win32Conversions.ComputeStyle(_options), dpi).Width;
                 }
 
                 if (_minHeight > 0)
@@ -233,7 +233,7 @@ internal partial class Win32WindowHost
                     int minHeight = LogicalPixels.ToPhysical(_minHeight, dpi);
                     info->ptMinTrackSize.Y = _options.Frameless
                         ? minHeight
-                        : ClientToWindowSize(1, minHeight, ComputeStyle(_options), dpi).Height;
+                        : ClientToWindowSize(1, minHeight, Win32Conversions.ComputeStyle(_options), dpi).Height;
                 }
 
                 // 最大尺寸：与 min 同一处处理，同样是**整窗**尺寸，所以 framed 窗口要先
@@ -243,7 +243,7 @@ internal partial class Win32WindowHost
                     int maxWidth = LogicalPixels.ToPhysical(_maxWidth, dpi);
                     info->ptMaxTrackSize.X = _options.Frameless
                         ? maxWidth
-                        : ClientToWindowSize(maxWidth, 1, ComputeStyle(_options), dpi).Width;
+                        : ClientToWindowSize(maxWidth, 1, Win32Conversions.ComputeStyle(_options), dpi).Width;
                 }
 
                 if (_maxHeight > 0)
@@ -251,7 +251,7 @@ internal partial class Win32WindowHost
                     int maxHeight = LogicalPixels.ToPhysical(_maxHeight, dpi);
                     info->ptMaxTrackSize.Y = _options.Frameless
                         ? maxHeight
-                        : ClientToWindowSize(1, maxHeight, ComputeStyle(_options), dpi).Height;
+                        : ClientToWindowSize(1, maxHeight, Win32Conversions.ComputeStyle(_options), dpi).Height;
                 }
 
                 return 0;

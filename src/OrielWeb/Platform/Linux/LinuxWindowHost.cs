@@ -305,19 +305,6 @@ internal sealed partial class LinuxWindowHost : IWindowBackend
         return device != 0 && screen != 0;
     }
 
-    /// <summary>公共的 resize 方向 → GTK 的窗口边缘。</summary>
-    private static GdkWindowEdge EdgeFor(OrielResizeDirection direction) => direction switch
-    {
-        OrielResizeDirection.East => GdkWindowEdge.East,
-        OrielResizeDirection.North => GdkWindowEdge.North,
-        OrielResizeDirection.NorthEast => GdkWindowEdge.NorthEast,
-        OrielResizeDirection.NorthWest => GdkWindowEdge.NorthWest,
-        OrielResizeDirection.South => GdkWindowEdge.South,
-        OrielResizeDirection.SouthEast => GdkWindowEdge.SouthEast,
-        OrielResizeDirection.SouthWest => GdkWindowEdge.SouthWest,
-        _ => GdkWindowEdge.West,
-    };
-
     private string? _currentUrl;
 
     /// <summary>当前文档 URI；加载中/销毁后可能取不到，返回空串。</summary>

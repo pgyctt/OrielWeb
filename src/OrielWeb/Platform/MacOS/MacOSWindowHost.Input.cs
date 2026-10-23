@@ -53,7 +53,7 @@ internal sealed partial class MacOSWindowHost
     {
         foreach (OrielMenuItem item in OrielMenuRoles.EditingMenuItems())
         {
-            string? selectorName = EditingSelector(item.Role);
+            string? selectorName = MacOSMappings.EditingSelector(item.Role);
             if (selectorName is null)
             {
                 continue;
@@ -64,7 +64,7 @@ internal sealed partial class MacOSWindowHost
                 ObjCRuntime.Sel("initWithTitle:action:keyEquivalent:"),
                 ObjCRuntime.MakeNSString(OrielMenuRoles.DefaultLabel(item.Role) ?? string.Empty),
                 ObjCRuntime.Sel(selectorName),
-                ObjCRuntime.MakeNSString(EditingKeyEquivalent(item.Role)));
+                ObjCRuntime.MakeNSString(MacOSMappings.EditingKeyEquivalent(item.Role)));
 
             if (menuItem == 0)
             {
@@ -77,27 +77,6 @@ internal sealed partial class MacOSWindowHost
         }
     }
 
-    /// <summary>编辑类 role → AppKit 的标准 selector；不认识的 role 返回 null。</summary>
-    private static string? EditingSelector(string? role) => role switch
-    {
-        OrielMenuRole.Cut => "cut:",
-        OrielMenuRole.Copy => "copy:",
-        OrielMenuRole.Paste => "paste:",
-        OrielMenuRole.Undo => "undo:",
-        OrielMenuRole.Redo => "redo:",
-        OrielMenuRole.SelectAll => "selectAll:",
-        OrielMenuRole.Delete => "delete:",
-        _ => null,
-    };
-
-    private static string EditingKeyEquivalent(string? role) => role switch
-    {
-        OrielMenuRole.Cut => "x",
-        OrielMenuRole.Copy => "c",
-        OrielMenuRole.Paste => "v",
-        _ => string.Empty,
-    };
-
     /// <summary>
     /// 把编辑类 role 经 AppKit 的响应链交给 <c>WKWebView</c> 执行。
     /// </summary>
@@ -108,7 +87,7 @@ internal sealed partial class MacOSWindowHost
     /// </remarks>
     private bool TryExecuteNativeEditing(string role)
     {
-        string? selectorName = EditingSelector(role);
+        string? selectorName = MacOSMappings.EditingSelector(role);
         if (selectorName is null)
         {
             return false;
@@ -158,43 +137,13 @@ internal sealed partial class MacOSWindowHost
 
         nint cursor = ObjCRuntime.SendId(
             ObjCRuntime.GetClassOrThrow("NSCursor"),
-            ObjCRuntime.Sel(SelectorFor(icon)));
+            ObjCRuntime.Sel(MacOSMappings.CursorSelector(icon)));
 
         if (cursor != 0)
         {
             ObjCRuntime.SendVoid(cursor, ObjCRuntime.Sel("set"));
         }
     }
-
-    /// <summary>枚举 → <c>NSCursor</c> 的类方法选择器（没有对应形状时用最接近的一个）。</summary>
-    /// <remarks>
-    /// <b>AppKit 只有 18 个公开光标</b>，<c>copy</c> / <c>zoomIn</c> / 对角线 resize 都没有对应形状。
-    /// 降级表与 docs/API.md 逐条对应——改这里要同步改文档。
-    /// 对角 resize 落到 <c>resizeUpDownCursor</c>/<c>resizeLeftRightCursor</c>：
-    /// 这两个至少给出"能拖"的视觉暗示，而箭头什么都不给。
-    /// </remarks>
-    private static string SelectorFor(OrielCursorIcon icon) => icon switch
-    {
-        OrielCursorIcon.Crosshair or OrielCursorIcon.Cell => "crosshairCursor",
-        OrielCursorIcon.Hand => "pointingHandCursor",
-        OrielCursorIcon.Move or OrielCursorIcon.AllScroll or OrielCursorIcon.Grab => "openHandCursor",
-        OrielCursorIcon.Grabbing => "closedHandCursor",
-        OrielCursorIcon.Text => "IBeamCursor",
-        OrielCursorIcon.VerticalText => "IBeamCursorForVerticalLayout",
-        OrielCursorIcon.NotAllowed or OrielCursorIcon.NoDrop => "operationNotAllowedCursor",
-        OrielCursorIcon.ContextMenu => "contextualMenuCursor",
-        OrielCursorIcon.Alias => "dragLinkCursor",
-        OrielCursorIcon.Copy => "dragCopyCursor",
-        OrielCursorIcon.EResize or OrielCursorIcon.WResize or OrielCursorIcon.EwResize
-            or OrielCursorIcon.ColResize or OrielCursorIcon.NwResize or OrielCursorIcon.SeResize
-            or OrielCursorIcon.NwseResize => "resizeLeftRightCursor",
-        OrielCursorIcon.NResize or OrielCursorIcon.SResize or OrielCursorIcon.NsResize
-            or OrielCursorIcon.RowResize or OrielCursorIcon.NeResize or OrielCursorIcon.SwResize
-            or OrielCursorIcon.NeswResize => "resizeUpDownCursor",
-
-        // default / arrow / wait / progress / zoomIn / zoomOut：AppKit 没有对应形状
-        _ => "arrowCursor",
-    };
 
     /// <inheritdoc />
     public void SetCursorPosition(double x, double y)

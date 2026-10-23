@@ -358,8 +358,8 @@ internal partial class Win32WindowHost
     /// </para>
     /// <para>
     /// <b>无边框窗口同样有系统菜单</b>（实测）：本库的 frameless 靠 <c>WM_NCCALCSIZE</c>
-    /// 隐藏边框，<c>ComputeStyle</c> 里照样带 <c>WS_SYSMENU</c>（见
-    /// <see cref="ComputeStyle"/>）——所以它的 <c>IsClosable</c> 是 <c>true</c>，
+    /// 隐藏边框，<c>Win32Conversions.ComputeStyle</c> 里照样带 <c>WS_SYSMENU</c>（见
+    /// <see cref="Win32Conversions.ComputeStyle"/>）——所以它的 <c>IsClosable</c> 是 <c>true</c>，
     /// 与"有没有可见标题栏"无关。要让它不可关得显式调 <see cref="SetClosable"/>。
     /// </para>
     /// </remarks>
@@ -593,7 +593,7 @@ internal partial class Win32WindowHost
     /// <para>
     /// 窗口没有系统菜单时**什么都不做**——那种窗口本来就没有关闭按钮可灰。
     /// 注意**无边框窗口不属于这一类**：本库的 frameless 只是靠 <c>WM_NCCALCSIZE</c>
-    /// 隐藏边框，<c>ComputeStyle</c> 里仍带 <c>WS_SYSMENU</c>，所以它有系统菜单、
+    /// 隐藏边框，<c>Win32Conversions.ComputeStyle</c> 里仍带 <c>WS_SYSMENU</c>，所以它有系统菜单、
     /// 这里会真的去灰化（实测确认）。
     /// </para>
     /// </remarks>
