@@ -375,25 +375,6 @@ internal sealed class OrielCommandDispatcher
     }
 
     /// <summary>
-    /// 异常 → 回给页面的错误文案。
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// **只透传 <see cref="OrielIpcException"/>**（应用命令侧）。非 IPC 异常（IOException、
-    /// SocketException……）的 Message 常含内部路径、主机名、端点，原样回传等于给（可能被 XSS 的）
-    /// 页面一个探测内部的放大器；API.md「IPC」章对使用者的承诺也一直是"只有 OrielIpcException
-    /// 的 Message 原样到达页面，其余给通用失败文本"——这里让代码兑现这句话。
-    /// 参数校验错误（缺参数、类型不符）由 <see cref="OrielJson"/> 抛
-    /// <see cref="OrielIpcException"/>，不受影响。命令名可以进文案：它是页面自己发来的。
-    /// </para>
-    /// <para>
-    /// <b>内建命令（<c>win.*</c> / <c>tray.*</c>）是另一套口径</b>：它们全部由库自己实现，
-    /// 异常里不会有应用/页面塞进去的内容，而失败原因（"应用尚未运行""托盘不存在"）正是
-    /// 页面排障唯一能看到的东西。所以内建命令的异常**原样透传**——
-    /// 把它净化成"命令执行失败"只会让调用方拿到一句无从下手的文案。
-    /// </para>
-    /// </remarks>
-    /// <summary>
     /// 一条错误回执的内容：文案 + 可选的机器可判别的码与附加数据。
     /// </summary>
     /// <param name="Message">给页面看的文案（会进用户可见的提示）。</param>

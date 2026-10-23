@@ -158,15 +158,18 @@ public sealed class GeneratorDiagnosticsTests
         Assert.Equal("ORIELWEB105", Assert.Single(diagnostics).Id);
     }
 
-    // ---- ORIELWEB106：win. 保留前缀（Error：构建期拦下，不再靠运行期排障） ----
+    // ---- ORIELWEB106：win. / tray. 保留前缀（Error：构建期拦下，不再靠运行期排障） ----
 
-    [Fact]
-    public void ReservedWinPrefix_IsAnErrorButStillGenerates()
+    [Theory]
+    [InlineData("win.custom")]    // 2026-10-19 起拦下
+    [InlineData("tray.custom")]   // 2026-10-23 评审发现的缺口：整族绕过能力配置，此前漏拦
+    [InlineData("tray.")]         // 前缀本身（非内建精确名）同样落在保留区
+    public void ReservedWinOrTrayPrefix_IsAnErrorButStillGenerates(string commandName)
     {
-        var (all, sources) = Compile("""
+        var (all, sources) = Compile($$"""
             public static class Commands
             {
-                [OrielWeb.Ipc.OrielCommand("win.custom")]
+                [OrielWeb.Ipc.OrielCommand("{{commandName}}")]
                 public static string Ok() => "ok";
             }
             """);
@@ -177,21 +180,46 @@ public sealed class GeneratorDiagnosticsTests
         // **Error 而不是 Warning**：这条描述的是"注册成功但永远不会被调用"——
         // 一个永远不会执行的分支，没有合法的使用场景。Warning 时它的症状是
         // "我明明写了这个命令，页面说找不到"，而根因在另一条命令上，极难归因。
+        // tray. 的理由还要再加一层：能力门禁对这两个前缀**整族放行**，
+        // 落在前缀里、不与内建重名的应用命令在 Release 未声明能力时也被放行——
+        // fail-closed 对整个前缀失效。
         Assert.Equal(DiagnosticSeverity.Error, error.Severity);
 
         // 仍然生成路由：诊断不该把生成器打成"什么都不产出"，
         // 否则同一个编译里会再冒出十几条"找不到路由"的次生错误。
-        Assert.Contains("win.custom", string.Join('\n', sources.Select((s) => s.SourceText.ToString())));
+        Assert.Contains(commandName, string.Join('\n', sources.Select((s) => s.SourceText.ToString())));
     }
 
-    // ---- ORIELWEB107：event.emit 与库内建命令重合 ----
+    [Theory]
+    [InlineData("windows.close")]   // 相似前缀，不是保留前缀
+    [InlineData("winry.minimize")]  // 同上
+    [InlineData("mytray.refresh")]  // 同上
+    public void SimilarButNotReservedPrefixes_AreNotReported(string commandName)
+    {
+        // 保留判定是 Ordinal 前缀匹配：只有以 "win." / "tray." **开头**才算，
+        // "windows." / "mytray." 这类相似前缀是应用自己的合法命名空间。
+        var diagnostics = OrielDiagnostics($$"""
+            public static class Commands
+            {
+                [OrielWeb.Ipc.OrielCommand("{{commandName}}")]
+                public static string Ok() => "ok";
+            }
+            """);
+
+        Assert.Empty(diagnostics);
+    }
+
+    // ---- ORIELWEB107：event.emit 与库内建命令重合（2026-10-23 起 Error，与 106 同理由） ----
 
     [Fact]
-    public void ReservedEventEmitName_IsWarnedButStillGenerates()
+    public void ReservedEventEmitName_IsAnErrorButStillGenerates()
     {
         // event.emit 是库内建（@orielweb/api/event 的 emit/emitTo 依赖它），
         // 应用同名命令会被它遮蔽——注册成功但永不可达。
-        var diagnostics = OrielDiagnostics("""
+        // 2026-10-23 由 Warning 升为 Error：与 106 同一条理由——"注册成功但永不可达"
+        // 是一个永远不会执行的分支；且注册表从同日起在运行期也拦这个名字
+        // （见 OrielCommandRegistry.AddRouter），"注册成功"这个前提已经不成立。
+        var (all, sources) = Compile("""
             public static class Commands
             {
                 [OrielWeb.Ipc.OrielCommand("event.emit")]
@@ -199,9 +227,12 @@ public sealed class GeneratorDiagnosticsTests
             }
             """);
 
-        var warning = Assert.Single(diagnostics);
-        Assert.Equal("ORIELWEB107", warning.Id);
-        Assert.Equal(DiagnosticSeverity.Warning, warning.Severity);
+        var error = Assert.Single(all.Where(d => d.Id.StartsWith("ORIELWEB", StringComparison.Ordinal)));
+        Assert.Equal("ORIELWEB107", error.Id);
+        Assert.Equal(DiagnosticSeverity.Error, error.Severity);
+
+        // 仍然生成路由（理由同 106：避免次生的"找不到路由"错误淹没这条真正的诊断）。
+        Assert.Contains("event.emit", string.Join('\n', sources.Select((s) => s.SourceText.ToString())));
     }
 
     [Theory]

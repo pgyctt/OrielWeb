@@ -5,15 +5,22 @@ namespace OrielWeb.Ipc;
 /// 加载时自动调用 <see cref="AddRouter"/>，应用代码无需手工登记。
 /// </summary>
 /// <remarks>
-/// 注册时即检测命令名冲突：两个类注册同名命令时，若静默放过，后者将永远不可达
-/// 且无任何提示（生效方取决于 <c>[ModuleInitializer]</c> 执行序，不稳定）。
+/// <para>
+/// 注册时即检测两类命令名冲突，若静默放过，后果都是"注册成功但永远不可达且无任何提示"：
+/// </para>
+/// <list type="bullet">
+///   <item><description>两个路由注册同名命令：生效方取决于 <c>[ModuleInitializer]</c> 执行序，不稳定。</description></item>
+///   <item><description>应用命令与**内建命令精确名**重合（2026-10-23 评审发现的盲区）：内建在分发器里
+///     先于应用路由解析，应用侧 <c>window.close</c> / <c>fs.readTextFile</c> 这类同名命令注册成功
+///     但永不执行——症状是"我明明写了这个命令，页面说找不到"，而根因在库的内建表里。</description></item>
+/// </list>
 /// </remarks>
 public static class OrielCommandRegistry
 {
     private static readonly Dictionary<string, IOrielCommandRouter> s_index = new(StringComparer.Ordinal);
     private static readonly object s_gate = new();
 
-    /// <summary>注册一个路由。命令名与既有注册冲突时抛 <see cref="InvalidOperationException"/>。</summary>
+    /// <summary>注册一个路由。命令名与既有注册或内建命令冲突时抛 <see cref="InvalidOperationException"/>。</summary>
     public static void AddRouter(IOrielCommandRouter router)
     {
         ArgumentNullException.ThrowIfNull(router);
@@ -21,6 +28,13 @@ public static class OrielCommandRegistry
         {
             foreach (var name in router.CommandNames)
             {
+                if (IsBuiltInCommandName(name))
+                {
+                    throw new InvalidOperationException(
+                        $"命令名冲突：'{name}' 与库内建命令重合。内建命令先于应用路由解析，" +
+                        "应用同名命令注册成功但永不可达——请换一个命令名。");
+                }
+
                 if (s_index.TryGetValue(name, out var existing) && !ReferenceEquals(existing, router))
                 {
                     throw new InvalidOperationException(
@@ -47,5 +61,44 @@ public static class OrielCommandRegistry
             }
             return index;
         }
+    }
+
+    /// <summary>
+    /// name 是否由任何一个内建命令族实现（各族 <c>TryGet</c> 的精确名 switch）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 分发器把内建命令放在应用路由**之前**逐族解析（见 <c>OrielCommandDispatcher</c>），
+    /// 于是内建精确名会静默遮蔽应用同名命令。这里在注册期（程序集加载时）把重合的名字
+    /// 拦下——与"路由之间重名"同一时刻、同一姿态（启动即崩，不静默）。
+    /// </para>
+    /// <para>
+    /// <b>win. / tray. 前缀刻意不在这里拦</b>：它们由编译期 <c>ORIELWEB106</c>（Error 级）
+    /// 负责，运行期放行保留一条"#pragma 压制 106 做内建优先行为验证"的知情路径
+    /// （见测试 ShadowWindowCommands）。两层的分工互补：**编译期管前缀，运行期管精确名**
+    /// ——后者编译期看不见（window. / fs. 等前缀本身合法），也不像前缀那样有可镜像的常量。
+    /// 正因如此，下面的链里没有 <c>win.</c> / <c>tray.</c> 两族：前缀短路在先，
+    /// 它们的 TryGet 永远不会被调到。
+    /// </para>
+    /// <para>
+    /// 各族 <c>TryGet</c> 是纯名字匹配（switch，无副作用），在这里复用**零漂移**——
+    /// 内建表加一个名字，这条检查自动跟着生效，不存在"手抄第二份清单忘更新"的缝。
+    /// </para>
+    /// </remarks>
+    private static bool IsBuiltInCommandName(string name)
+    {
+        if (OrielCapabilityRules.IsBuiltInCommand(name))
+        {
+            return false;
+        }
+
+        return OrielBuiltInWindowApiCommands.TryGet(name, out _)
+            || OrielBuiltInFsCommands.TryGet(name, out _)
+            || OrielBuiltInDialogCommands.TryGet(name, out _)
+            || OrielBuiltInPlatformCommands.TryGet(name, out _)
+            || OrielBuiltInAppCommands.TryGet(name, out _)
+            || OrielBuiltInMenuCommands.TryGet(name, out _)
+            || OrielBuiltInEventCommands.TryGet(name, out _)
+            || OrielBuiltInPathCommands.TryGet(name, out _);
     }
 }

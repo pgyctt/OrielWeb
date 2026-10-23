@@ -303,10 +303,17 @@ public sealed class BuiltInWindowCommandTests
 /// </summary>
 /// <remarks>
 /// <para>
-/// 生成器对 <c>win.</c> 前缀报 ORIELWEB106（Error 级，2026-10-19 起），
-/// 所以正常情况下**没有任何应用能写出这个类**。这个类靠 <c>#pragma warning disable</c>
-/// 显式压制，唯一目的是保留"内建压过路由"的回归覆盖——诊断本身另有
-/// <see cref="GeneratorDiagnosticsTests"/> 钉住。
+/// 生成器对 <c>win.</c> / <c>tray.</c> 前缀报 ORIELWEB106（Error 级，2026-10-19 起；
+/// <c>tray.</c> 2026-10-23 补入），所以正常情况下**没有任何应用能写出这个类**。
+/// 这个类靠 <c>#pragma warning disable</c> 显式压制，唯一目的是保留"内建压过路由"
+/// 的回归覆盖——诊断本身另有 <see cref="GeneratorDiagnosticsTests"/> 钉住。
+/// </para>
+/// <para>
+/// 注册表的内建冲突检查（2026-10-23 起，见 <c>OrielCommandRegistry.AddRouter</c>）
+/// 对这两个前缀**刻意放行**：前缀归编译期 106 管，运行期只拦"合法前缀下与内建精确名
+/// 重合"的名字——所以这个类在 ModuleInitializer 注册 "win.minimize" 不会抛，
+/// 这是两层分工（编译期管前缀 / 运行期管精确名）的一部分，由
+/// <c>RegistryTests.AddRouter_ReservedPrefixOrNonBuiltInName_IsAllowed</c> 钉住。
 /// </para>
 /// <para>
 /// 压制是刻意的、局部的，而且一旦内建表与路由的相对优先级变了，这里的用例会红。
