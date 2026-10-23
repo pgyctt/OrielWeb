@@ -7,6 +7,23 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
+## 0.4.8 - 2026-10-23
+
+### 维护
+
+- **补上两个此前"只编译不运行"的平台**（R5 批次）：
+  - `smoke-linux-arm64`：在 `ubuntu-24.04-arm` 上原生跑 `verify-linux.sh --stages selftest`；
+  - `smoke-macos-x64`：在 `macos-15-intel` 上跑 `verify-macos.sh` 全套。0.4.3 修的
+    NSRect ABI 崩溃（Intel 上建第一个窗口即 `SIGABRT`）正是"CI 只跑 `osx-arm64`"的盲区产物，
+    这条线专门覆盖它。
+  两者在平台矩阵里先标"待首轮绿"——本地无法验证，所以不写"已通过"。
+- **README 平台矩阵每行加了可核对的证据引用**（`ci:<job>`），由新增的
+  `tools/verify-matrix.ps1` 在 `test` job 里校验：引用不存在的 job 直接让 CI 红。
+  起因是评审发现 arm64 那行写着"xvfb 冒烟"，而仓库里只有一条 IL 交叉编译——
+  一句无法复现的话，比一句难看的实话贵得多。
+- 记录两条 runner 现状：`macos-13` 已于 2025-12-04 退役，Intel 现用 `macos-15-intel`
+  （可用到 2027 年秋）；Linux arm64 用 `ubuntu-24.04-arm`（公开仓库免费）。
+
 ## 0.4.7 - 2026-10-23
 
 ### 性能
