@@ -155,12 +155,27 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
-        # APT_OPTS 与 smoke-linux 一致：默认的 apt 没有单项超时，
-        # 镜像卡住时会一直等（2026-10-23 这条线卡了 25 分钟，而 job 也没有总超时）。
+        # compile-linux 只需要编译依赖（不跑产物），包比 smoke 线少。
+        # **外层 timeout 比 Acquire::Timeout 更要紧**：2026-10-23 两次 run 里，
+        # 带 Acquire 超时的 apt-get update 照样挂了 25 分钟以上——卡住的不是 HTTP 传输，
+        # 而是在等 mirror 应答/DNS/锁。Acquire 参数管不到这些，只有进程级硬超时能兜住。
+        # 三次尝试之间隔 10 秒：镜像抖动通常是短时的，重试比重跑到天亮的 job 便宜。
         run: |
           APT_OPTS="-o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=2"
-          sudo apt-get update $APT_OPTS
-          sudo apt-get install -y $APT_OPTS libwebkit2gtk-4.1-dev libgtk-3-dev
+          APT_PACKAGES="libwebkit2gtk-4.1-dev libgtk-3-dev"
+          for attempt in 1 2 3; do
+            echo "::group::apt 第 ${attempt} 次"
+            if timeout 240 sudo apt-get update $APT_OPTS &&
+               timeout 360 sudo apt-get install -y $APT_OPTS $APT_PACKAGES; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "第 ${attempt} 次 apt 失败，10 秒后重试" >&2
+            sleep 10
+          done
+          echo "apt 连续三次失败，判定为 runner/镜像故障" >&2
+          exit 1
 
       - uses: ./.github/actions/setup-dotnet-nuget
 
@@ -216,15 +231,29 @@ jobs:
           exit $status
 
       - name: Install dependencies
+        # x11-utils 提供 xwininfo（窗口断言）、imagemagick 提供 import（截图）；
+        # zlib1g-dev/clang 是 Native AOT 的前置；libnotify-bin 提供真的 notify-send，
+        # python3-dbus/python3-gi 供 tools/fake-notification-service.py 顶替无头环境的通知守护。
+        # **外层 timeout 比 Acquire::Timeout 更要紧**：2026-10-23 两次 run 里，
+        # 带 Acquire 超时的 apt-get update 照样挂了 25 分钟以上——卡住的不是 HTTP 传输，
+        # 而是在等 mirror 应答/DNS/锁。Acquire 参数管不到这些，只有进程级硬超时能兜住。
+        # 三次尝试之间隔 10 秒：镜像抖动通常是短时的，重试比重跑到天亮的 job 便宜。
         run: |
-          # apt 自带超时与重试：上面那次挂起就发生在本步
           APT_OPTS="-o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=2"
-          sudo apt-get update $APT_OPTS
-          # x11-utils 提供 xwininfo（窗口断言）、imagemagick 提供 import（截图）；
-          # zlib1g-dev/clang 是 Native AOT 的前置（runner 通常已带，显式列出以免依赖镜像）；
-          # libnotify-bin 提供真的 notify-send（通知投递路径），python3-dbus/python3-gi 供
-          # tools/fake-notification-service.py 顶替无头环境里缺席的通知守护。
-          sudo apt-get install -y $APT_OPTS libwebkit2gtk-4.1-dev libgtk-3-dev xvfb x11-utils imagemagick zlib1g-dev clang libnotify-bin python3-dbus python3-gi
+          APT_PACKAGES="libwebkit2gtk-4.1-dev libgtk-3-dev xvfb x11-utils imagemagick zlib1g-dev clang libnotify-bin python3-dbus python3-gi"
+          for attempt in 1 2 3; do
+            echo "::group::apt 第 ${attempt} 次"
+            if timeout 240 sudo apt-get update $APT_OPTS &&
+               timeout 360 sudo apt-get install -y $APT_OPTS $APT_PACKAGES; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "第 ${attempt} 次 apt 失败，10 秒后重试" >&2
+            sleep 10
+          done
+          echo "apt 连续三次失败，判定为 runner/镜像故障" >&2
+          exit 1
 
       - uses: ./.github/actions/setup-dotnet-nuget
 
@@ -349,10 +378,27 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
+        # arm64 runner 上同样是原生 apt，依赖包与 x64 同名。
+        # **外层 timeout 比 Acquire::Timeout 更要紧**：2026-10-23 两次 run 里，
+        # 带 Acquire 超时的 apt-get update 照样挂了 25 分钟以上——卡住的不是 HTTP 传输，
+        # 而是在等 mirror 应答/DNS/锁。Acquire 参数管不到这些，只有进程级硬超时能兜住。
+        # 三次尝试之间隔 10 秒：镜像抖动通常是短时的，重试比重跑到天亮的 job 便宜。
         run: |
           APT_OPTS="-o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=2"
-          sudo apt-get update $APT_OPTS
-          sudo apt-get install -y $APT_OPTS libwebkit2gtk-4.1-dev libgtk-3-dev xvfb x11-utils zlib1g-dev clang
+          APT_PACKAGES="libwebkit2gtk-4.1-dev libgtk-3-dev xvfb x11-utils zlib1g-dev clang"
+          for attempt in 1 2 3; do
+            echo "::group::apt 第 ${attempt} 次"
+            if timeout 240 sudo apt-get update $APT_OPTS &&
+               timeout 360 sudo apt-get install -y $APT_OPTS $APT_PACKAGES; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "第 ${attempt} 次 apt 失败，10 秒后重试" >&2
+            sleep 10
+          done
+          echo "apt 连续三次失败，判定为 runner/镜像故障" >&2
+          exit 1
 
       - uses: ./.github/actions/setup-dotnet-nuget
 
