@@ -113,237 +113,42 @@ internal sealed class OrielCommandDispatcher
 
         JsonElement args = message.TryGetProperty("args", out var argsElement) ? argsElement : default;
 
-        // 内建窗口命令（win.*）**先于**应用路由：它们是库自己实现的，应用不需要注册。
-        // 代价是应用自定义的同名命令会被遮蔽——win. 本来就是保留前缀（见 OrielBuiltInWindowCommands）。
-        if (OrielBuiltInWindowCommands.TryGet(name, out var builtIn))
+        // 内建命令族：按 OrielBuiltInCommandFamilies.All 的顺序尝试，命中即处理并返回。
+        // **先于**应用路由：win. / tray. 是库保留前缀，应用同名命令在注册期就被拦下
+        // （见 OrielCommandRegistry.AddRouter），所以这里不存在"应用命令被静默遮蔽"。
+        foreach (IBuiltInCommandFamily family in OrielBuiltInCommandFamilies.All)
         {
-            if (window is null)
+            if (!family.TryGet(name, window, out Func<IOrielWindowControl, string, JsonElement, object?> handler))
             {
-                ReplyError(sink, id, ErrorReply.Text($"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。", OrielIpcErrorCodes.NoSourceWindow));
+                continue;
+            }
+
+            if (family.RequiresWindow && window is null)
+            {
+                ReplyError(
+                    sink,
+                    id,
+                    ErrorReply.Text(
+                        $"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。",
+                        OrielIpcErrorCodes.NoSourceWindow));
                 return;
             }
 
             try
             {
-                ReplyOk(sink, id, builtIn(window, args));
+                // window 只在 RequiresWindow=true 时非空；false 的族（path.*）按契约忽略这个参数，
+                // 见 IBuiltInCommandFamily 的说明。
+                ReplyOk(sink, id, handler(window!, name, args));
             }
             catch (Exception ex)
             {
                 // 内建命令抛出的是库自己的缺陷：走诊断通道，不进命令观测事件（见 Invoked 的说明）
                 ReplyError(sink, id, DescribeBuiltInFailure(name, ex));
             }
-            return;
-        }
-
-        // 内建托盘命令（tray.*）：同样是库实现、应用不必注册。
-        // 托盘是应用级的，但命令由某个窗口的页面发起——经 window.App 拿到应用（见 IOrielWindowControl.App）。
-        if (OrielBuiltInTrayCommands.TryGet(name, out var trayBuiltIn))
-        {
-            if (window is null)
-            {
-                ReplyError(sink, id, ErrorReply.Text($"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。", OrielIpcErrorCodes.NoSourceWindow));
-                return;
-            }
-
-            try
-            {
-                ReplyOk(sink, id, trayBuiltIn(window, args));
-            }
-            catch (Exception ex)
-            {
-                ReplyError(sink, id, DescribeBuiltInFailure(name, ex));
-            }
-            return;
-        }
-
-        // 内建事件命令（event.*）：广播/定向发送。
-        // **注意它不在"始终放行"名单里**（见 OrielCapabilityRules.IsBuiltInCommand）——
-        // 走到这里之前已经过了命令授权，所以能到这一行的调用方是**被允许**的。
-        // 这与 win.* / tray.* 刻意不同：广播是真正的能力（能驱动另一个窗口），
-        // 而自绘标题栏不依赖它，没有开后门的理由。
-        if (OrielBuiltInEventCommands.TryGet(name, out var eventBuiltIn))
-        {
-            if (window is null)
-            {
-                ReplyError(sink, id, ErrorReply.Text($"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。", OrielIpcErrorCodes.NoSourceWindow));
-                return;
-            }
-
-            try
-            {
-                ReplyOk(sink, id, eventBuiltIn(window, args));
-            }
-            catch (Exception ex)
-            {
-                ReplyError(sink, id, DescribeBuiltInFailure(name, ex));
-            }
-            return;
-        }
-
-        // 内建路径命令族（path.*）：路径运算，对标 Tauri 2 的 @tauri-apps/api/path。
-        //
-        // **不需要来源窗口**——这是它与 win.* / window.* 的结构性差别：那些命令的操作对象
-        // 是某个窗口，而路径运算只碰页面自己给的字符串。所以这里没有 window is null 的检查。
-        //
-        // 本族**始终放行**（见 OrielCapabilityRules.AlwaysAllowedPathCommands）。
-        if (OrielBuiltInPathCommands.TryGet(name, window?.App.Info.Identifier, out var pathBuiltIn))
-        {
-            try
-            {
-                ReplyOk(sink, id, pathBuiltIn(args));
-            }
-            catch (Exception ex)
-            {
-                ReplyError(sink, id, DescribeBuiltInFailure(name, ex));
-            }
-            return;
-        }
-
-        // 内建文件命令族（fs.*）：**不整族放行**，而且每个命令还要过**路径 scope**。
-        //
-        // 这是本库唯一一处"两道关都必过"的命令族：命令授权说"能调读文件这个动作"，
-        // scope 说"能读哪些文件"。少了后者，一条 XSS 就能把 ~/.ssh/id_rsa 读走。
-        // 与 path.* 的区别正在这里——path.* 只做运算不碰文件系统，所以能整族放行。
-        if (OrielBuiltInFsCommands.TryGet(name, out var fsBuiltIn))
-        {
-            if (window is null)
-            {
-                ReplyError(sink, id, ErrorReply.Text($"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。", OrielIpcErrorCodes.NoSourceWindow));
-                return;
-            }
-
-            try
-            {
-                ReplyOk(sink, id, fsBuiltIn(window, name, args));
-            }
-            catch (Exception ex)
-            {
-                ReplyError(sink, id, DescribeBuiltInFailure(name, ex));
-            }
 
             return;
         }
 
-        // 内建对话框命令族（dialog.*）：对标 Tauri 的 plugin-dialog。
-        //
-        // **与既有 win.pickFile / window.pickFile 并存**：那两条是既有的公开契约
-        // （冻结不动，只收 title/filter、返回单个路径），本族收 Tauri 形状的 options
-        // （多选 / 过滤器 / 初始目录）。两者共用底下的原生对话框，
-        // 所以不存在"两份实现漂移"——"独立"指的是命令契约独立。
-        if (OrielBuiltInDialogCommands.TryGet(name, out var dialogBuiltIn))
-        {
-            if (window is null)
-            {
-                ReplyError(sink, id, ErrorReply.Text($"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。", OrielIpcErrorCodes.NoSourceWindow));
-                return;
-            }
-
-            try
-            {
-                ReplyOk(sink, id, dialogBuiltIn(window, name, args));
-            }
-            catch (Exception ex)
-            {
-                ReplyError(sink, id, DescribeBuiltInFailure(name, ex));
-            }
-
-            return;
-        }
-
-        // 内建平台集成命令族（opener.* / notification.* / autostart.*）：
-        // 对标 Tauri 的 plugin-opener / plugin-notification / plugin-autostart。
-        //
-        // 三族**都不整族放行**：它们改的是系统状态（autostart）、能拉起外部程序
-        // （opener.openPath 相当于"用默认程序打开任意文件"，双击一个 .exe 就是执行它）、
-        // 或能拉起任意协议处理器（opener.openUrl）。都不是"只操作自己那个窗口"那一类。
-        if (OrielBuiltInPlatformCommands.TryGet(name, out var platformBuiltIn))
-        {
-            if (window is null)
-            {
-                ReplyError(sink, id, ErrorReply.Text($"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。", OrielIpcErrorCodes.NoSourceWindow));
-                return;
-            }
-
-            try
-            {
-                ReplyOk(sink, id, platformBuiltIn(window, name, args));
-            }
-            catch (Exception ex)
-            {
-                ReplyError(sink, id, DescribeBuiltInFailure(name, ex));
-            }
-
-            return;
-        }
-
-        // 内建应用命令族（app.*）：只读元信息，对标 Tauri 2 的 @tauri-apps/api/app。
-        //
-        // 与 path.* 的差别：本族需要**应用实例**（`window.App`），所以要有来源窗口。
-        // 实践中这不成问题——所有 invoke 都来自某个窗口里的页面；
-        // 而真出现无窗口调用时，报 no_source_window 比"猜一个应用"清楚得多。
-        if (OrielBuiltInAppCommands.TryGet(name, out var appBuiltIn))
-        {
-            if (window is null)
-            {
-                ReplyError(sink, id, ErrorReply.Text($"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。", OrielIpcErrorCodes.NoSourceWindow));
-                return;
-            }
-
-            try
-            {
-                ReplyOk(sink, id, appBuiltIn(window, args));
-            }
-            catch (Exception ex)
-            {
-                ReplyError(sink, id, DescribeBuiltInFailure(name, ex));
-            }
-            return;
-        }
-
-        // 内建窗口 API 命令族（window.*）：可按 label 寻址，对标 Tauri 2 的 @tauri-apps/api/window。
-        // 与 event.* 一样**不整族放行**：只有标题栏必需的那组才绕过能力校验
-        // （见 OrielCapabilityRules.IsAlwaysAllowedWindowCommand）。能走到这里的调用方
-        // 要么在那组白名单里，要么已经通过了命令授权。
-        if (OrielBuiltInWindowApiCommands.TryGet(name, out var windowApiBuiltIn))
-        {
-            if (window is null)
-            {
-                ReplyError(sink, id, ErrorReply.Text($"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。", OrielIpcErrorCodes.NoSourceWindow));
-                return;
-            }
-
-            try
-            {
-                ReplyOk(sink, id, windowApiBuiltIn(window, args));
-            }
-            catch (Exception ex)
-            {
-                ReplyError(sink, id, DescribeBuiltInFailure(name, ex));
-            }
-            return;
-        }
-
-        // 内建菜单命令族（menu.*）：页面把整棵菜单树发过来，宿主弹一次 / 装成菜单栏。
-        // 无状态（没有资源表），因此不存在"句柄在哪"的问题；能走到这里说明命令已过
-        // OrielIpcGuard 的门禁（menu.setAsAppMenu 不在无条件放行名单里，要应用点头）。
-        if (OrielBuiltInMenuCommands.TryGet(name, out var menuBuiltIn))
-        {
-            if (window is null)
-            {
-                ReplyError(sink, id, ErrorReply.Text($"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。", OrielIpcErrorCodes.NoSourceWindow));
-                return;
-            }
-
-            try
-            {
-                ReplyOk(sink, id, menuBuiltIn(window, args));
-            }
-            catch (Exception ex)
-            {
-                ReplyError(sink, id, DescribeBuiltInFailure(name, ex));
-            }
-            return;
-        }
 
         if (!_routes.TryGetValue(name, out var route))
         {
