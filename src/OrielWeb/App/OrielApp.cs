@@ -997,7 +997,13 @@ public sealed class OrielApp : IDisposable
     /// </para>
     /// <para>应用未运行时抛 <see cref="InvalidOperationException"/>（与 <see cref="PostToMainThread"/> 一致）。</para>
     /// </remarks>
-    public void InvokeOnUiThread(Action action)
+    /// <param name="action">要在 UI 线程上执行的动作。</param>
+    /// <param name="timeout">
+    /// 等待上限；<c>null</c>（默认）表示无限等待，与加这个参数之前的行为一致。
+    /// 超时抛 <see cref="TimeoutException"/>：UI 线程卡住时（一条慢命令、一个不返回的模态原生调用），
+    /// 调用方至少能拿到一条说得清的错误，而不是永久阻塞。
+    /// </param>
+    public void InvokeOnUiThread(Action action, TimeSpan? timeout = null)
     {
         ArgumentNullException.ThrowIfNull(action);
 
@@ -1036,7 +1042,13 @@ public sealed class OrielApp : IDisposable
             throw new InvalidOperationException("InvokeOnUiThread 失败：调度通道已失效（回调已被丢弃）。");
         }
 
-        done.Wait();
+        if (!done.Wait(timeout ?? Timeout.InfiniteTimeSpan))
+        {
+            throw new TimeoutException(
+                $"InvokeOnUiThread 在 {timeout} 内没有完成：UI 线程可能被长任务占用" +
+                "（一条慢命令、一个不返回的模态原生调用）。各条命令的耗时见 CommandInvoked。");
+        }
+
         if (failure is not null)
         {
             // 原样抛出：编组不该改写调用方异常的类型与栈（用 ExceptionDispatchInfo 保住栈）

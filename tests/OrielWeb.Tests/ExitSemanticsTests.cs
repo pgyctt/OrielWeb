@@ -112,6 +112,30 @@ public sealed class ExitSemanticsTests
     }
 
     [Fact]
+    public void InvokeOnUiThread_TimeoutParameterIsOptionalAndNullByDefault()
+    {
+        // 为什么只钉形状、不测超时行为：OrielApp 没有后端注入点，而 IPlatformBackend 有约 100 个成员——
+        // 为验证一个 TimeSpan 造一个假后端不划算。这里能守住的是**默认值**：
+        // 一旦默认变成非 null，所有既有调用方的行为都会从"无限等待"变成"可能超时"，
+        // 那是隐蔽的破坏性变更，必须有东西拦一下。
+        var appMethod = typeof(OrielApp).GetMethod(
+            nameof(OrielApp.InvokeOnUiThread),
+            [typeof(Action), typeof(TimeSpan?)]);
+        Assert.NotNull(appMethod);
+
+        var timeoutParameter = appMethod.GetParameters()[1];
+        Assert.True(timeoutParameter.IsOptional);
+        Assert.Null(timeoutParameter.DefaultValue);
+
+        // 两处共用一套语义，签名不能漂移
+        var windowMethod = typeof(WebviewWindow).GetMethod(
+            nameof(WebviewWindow.InvokeOnUiThread),
+            [typeof(Action), typeof(TimeSpan?)]);
+        Assert.NotNull(windowMethod);
+        Assert.Null(windowMethod.GetParameters()[1].DefaultValue);
+    }
+
+    [Fact]
     public void InvokeOnUiThread_BeforeRun_Throws()
     {
         using var app = Oriel.CreateBuilder().Build();

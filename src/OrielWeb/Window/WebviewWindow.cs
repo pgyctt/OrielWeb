@@ -858,11 +858,18 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// 在 UI 线程上**同步**执行动作：已在 UI 线程则直接执行，否则投递过去并阻塞等待完成。
     /// </summary>
     /// <remarks>
+    /// <para>
     /// 与 <see cref="PostToUiThread"/> 的区别是"等不等"，语义与死锁注意事项见
     /// <see cref="OrielApp.InvokeOnUiThread"/>（同一套实现）——**退出已经开始时会立刻失败**，
     /// 因为消息循环停下后投递的动作不会被处理，干等就是永久阻塞。
+    /// </para>
     /// </remarks>
-    public void InvokeOnUiThread(Action action)
+    /// <param name="action">要在 UI 线程上执行的动作。</param>
+    /// <param name="timeout">
+    /// 等待上限；<c>null</c>（默认）表示无限等待。超时抛 <see cref="TimeoutException"/>，
+    /// 语义同 <see cref="OrielApp.InvokeOnUiThread"/>。
+    /// </param>
+    public void InvokeOnUiThread(Action action, TimeSpan? timeout = null)
     {
         ArgumentNullException.ThrowIfNull(action);
 
@@ -901,7 +908,13 @@ public sealed class WebviewWindow : IOrielWindowControl
                 "InvokeOnUiThread 失败：调度通道已失效（应用正在退出或窗口已销毁）。");
         }
 
-        done.Wait();
+        if (!done.Wait(timeout ?? Timeout.InfiniteTimeSpan))
+        {
+            throw new TimeoutException(
+                $"InvokeOnUiThread 在 {timeout} 内没有完成：UI 线程可能被长任务占用" +
+                "（一条慢命令、一个不返回的模态原生调用）。");
+        }
+
         if (failure is not null)
         {
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
