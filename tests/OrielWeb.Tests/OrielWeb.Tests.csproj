@@ -14,6 +14,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- 公开 API 快照：运行时读它做比对（见 PublicApiSnapshotTests）。
+         PreserveNewest 而不是 Always：改了快照不必先清输出目录。 -->
+    <None Include="PublicApi.snapshot.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\OrielWeb\OrielWeb.csproj" />
     <!-- 源生成器不随 ProjectReference 传递：测试程序集要生成自己的命令路由 -->
     <ProjectReference Include="..\..\src\OrielWeb.Generators\OrielWeb.Generators.csproj"

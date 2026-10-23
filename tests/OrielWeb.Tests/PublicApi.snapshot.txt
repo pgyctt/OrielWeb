@@ -1,0 +1,748 @@
+  OrielWeb.Ipc.IOrielCommandRouter :: CommandNames : System.Collections.Generic.IReadOnlyList`1[System.String] (get=True, set=False)
+  OrielWeb.Ipc.IOrielCommandRouter :: InvokeAsync(System.Int32, System.Object, System.Text.Json.JsonElement, System.Text.Json.Serialization.JsonSerializerContext, OrielWeb.Ipc.OrielEventSink) -> System.Threading.Tasks.ValueTask`1[System.Object]
+  OrielWeb.Ipc.IOrielCommandRouter :: RequiresTarget : System.Boolean (get=True, set=False)
+  OrielWeb.Ipc.IOrielCommandRouter :: Route(System.String) -> System.Int32
+  OrielWeb.Ipc.IOrielCommandRouter :: TargetType : System.Type (get=True, set=False)
+  OrielWeb.Ipc.OrielChannel :: Bind(System.Text.Json.JsonElement, System.String, OrielWeb.Ipc.OrielEventSink, System.Text.Json.Serialization.JsonSerializerContext) -> OrielWeb.Ipc.OrielChannel
+  OrielWeb.Ipc.OrielChannel :: BindOptional(System.Text.Json.JsonElement, System.String, OrielWeb.Ipc.OrielEventSink, System.Text.Json.Serialization.JsonSerializerContext) -> OrielWeb.Ipc.OrielChannel
+  OrielWeb.Ipc.OrielChannel :: Close() -> System.Void
+  OrielWeb.Ipc.OrielChannel :: Id : System.Int32 (get=True, set=False)
+  OrielWeb.Ipc.OrielChannel :: IsClosed : System.Boolean (get=True, set=False)
+  OrielWeb.Ipc.OrielChannel :: Send(System.Object) -> System.Void
+  OrielWeb.Ipc.OrielChannel :: SendJson(System.String) -> System.Void
+  OrielWeb.Ipc.OrielCommandAttribute :: Name : System.String (get=True, set=False)
+  OrielWeb.Ipc.OrielCommandFailedEventArgs :: DocumentUrl : System.String (get=True, set=False)
+  OrielWeb.Ipc.OrielCommandFailedEventArgs :: Duration : System.TimeSpan (get=True, set=False)
+  OrielWeb.Ipc.OrielCommandFailedEventArgs :: Exception : System.Exception (get=True, set=False)
+  OrielWeb.Ipc.OrielCommandFailedEventArgs :: Name : System.String (get=True, set=False)
+  OrielWeb.Ipc.OrielCommandInvokedEventArgs :: DocumentUrl : System.String (get=True, set=False)
+  OrielWeb.Ipc.OrielCommandInvokedEventArgs :: Duration : System.TimeSpan (get=True, set=False)
+  OrielWeb.Ipc.OrielCommandInvokedEventArgs :: Name : System.String (get=True, set=False)
+  OrielWeb.Ipc.OrielCommandInvokedEventArgs :: Succeeded : System.Boolean (get=True, set=False)
+  OrielWeb.Ipc.OrielCommandRegistry :: AddRouter(OrielWeb.Ipc.IOrielCommandRouter) -> System.Void
+  OrielWeb.Ipc.OrielEventSink :: BeginInvoke(System.String, System.String, System.AsyncCallback, System.Object) -> System.IAsyncResult
+  OrielWeb.Ipc.OrielEventSink :: EndInvoke(System.IAsyncResult) -> System.Void
+  OrielWeb.Ipc.OrielEventSink :: Invoke(System.String, System.String) -> System.Void
+  OrielWeb.Ipc.OrielIpcErrorCodes :: Internal : System.String
+  OrielWeb.Ipc.OrielIpcErrorCodes :: InvalidArgument : System.String
+  OrielWeb.Ipc.OrielIpcErrorCodes :: InvalidMessage : System.String
+  OrielWeb.Ipc.OrielIpcErrorCodes :: MissingArgument : System.String
+  OrielWeb.Ipc.OrielIpcErrorCodes :: NoSourceWindow : System.String
+  OrielWeb.Ipc.OrielIpcErrorCodes :: NotAllowed : System.String
+  OrielWeb.Ipc.OrielIpcErrorCodes :: NotSupported : System.String
+  OrielWeb.Ipc.OrielIpcErrorCodes :: PathNotAllowed : System.String
+  OrielWeb.Ipc.OrielIpcErrorCodes :: TargetNotFound : System.String
+  OrielWeb.Ipc.OrielIpcErrorCodes :: Timeout : System.String
+  OrielWeb.Ipc.OrielIpcErrorCodes :: UnknownCommand : System.String
+  OrielWeb.Ipc.OrielIpcException :: Code : System.String (get=True, set=True)
+  OrielWeb.Ipc.OrielIpcException :: Details : System.Nullable`1[System.Text.Json.JsonElement] (get=True, set=True)
+  OrielWeb.Ipc.OrielIpcRejectedEventArgs :: CommandName : System.String (get=True, set=False)
+  OrielWeb.Ipc.OrielIpcRejectedEventArgs :: DocumentUrl : System.String (get=True, set=False)
+  OrielWeb.Ipc.OrielIpcRejectedEventArgs :: Layer : OrielWeb.Ipc.OrielIpcRejectionLayer (get=True, set=False)
+  OrielWeb.Ipc.OrielIpcRejectedEventArgs :: Reason : System.String (get=True, set=False)
+  OrielWeb.Ipc.OrielIpcRejectionLayer :: Command : OrielWeb.Ipc.OrielIpcRejectionLayer
+  OrielWeb.Ipc.OrielIpcRejectionLayer :: Size : OrielWeb.Ipc.OrielIpcRejectionLayer
+  OrielWeb.Ipc.OrielIpcRejectionLayer :: Source : OrielWeb.Ipc.OrielIpcRejectionLayer
+  OrielWeb.Ipc.OrielIpcRejectionLayer :: Token : OrielWeb.Ipc.OrielIpcRejectionLayer
+  OrielWeb.Ipc.OrielIpcRejectionLayer :: value__ : System.Int32
+  OrielWeb.Ipc.OrielJson :: GetOptionalArg(System.Text.Json.JsonElement, System.String, System.Text.Json.Serialization.JsonSerializerContext) -> T
+  OrielWeb.Ipc.OrielJson :: GetRequiredArg(System.Text.Json.JsonElement, System.String, System.Text.Json.Serialization.JsonSerializerContext) -> T
+  OrielWeb.Ipc.OrielJson :: RequireArgElement(System.Text.Json.JsonElement, System.String) -> System.Text.Json.JsonElement
+  OrielWeb.Ipc.OrielJson :: RequireArgKind(System.Text.Json.JsonElement, System.String, System.String, System.Text.Json.JsonValueKind[]) -> System.Void
+  OrielWeb.Ipc.OrielJson :: TryGetArgElement(System.Text.Json.JsonElement, System.String, System.Text.Json.JsonElement&) -> System.Boolean
+  OrielWeb.Ipc.OrielJson :: WriteResult(System.Text.Json.Utf8JsonWriter, System.Object, System.Text.Json.Serialization.JsonSerializerContext) -> System.Void
+  OrielWeb.MessageButtons :: Ok : OrielWeb.MessageButtons
+  OrielWeb.MessageButtons :: OkCancel : OrielWeb.MessageButtons
+  OrielWeb.MessageButtons :: YesNo : OrielWeb.MessageButtons
+  OrielWeb.MessageButtons :: YesNoCancel : OrielWeb.MessageButtons
+  OrielWeb.MessageButtons :: value__ : System.Int32
+  OrielWeb.MessageResult :: Cancel : OrielWeb.MessageResult
+  OrielWeb.MessageResult :: No : OrielWeb.MessageResult
+  OrielWeb.MessageResult :: Ok : OrielWeb.MessageResult
+  OrielWeb.MessageResult :: Yes : OrielWeb.MessageResult
+  OrielWeb.MessageResult :: value__ : System.Int32
+  OrielWeb.Oriel :: CreateBuilder(System.String[] = optional) -> OrielWeb.OrielAppBuilder
+  OrielWeb.OrielAccelerator :: Alt : System.Boolean (get=True, set=False)
+  OrielWeb.OrielAccelerator :: Command : System.Boolean (get=True, set=False)
+  OrielWeb.OrielAccelerator :: Control : System.Boolean (get=True, set=False)
+  OrielWeb.OrielAccelerator :: DisplayString : System.String (get=True, set=False)
+  OrielWeb.OrielAccelerator :: Key : System.String (get=True, set=False)
+  OrielWeb.OrielAccelerator :: Shift : System.Boolean (get=True, set=False)
+  OrielWeb.OrielAccelerator :: ToDisplayString(System.Boolean) -> System.String
+  OrielWeb.OrielAccelerator :: TryParse(System.String, OrielWeb.OrielAccelerator&) -> System.Boolean
+  OrielWeb.OrielApp :: ActiveNotifications : System.Collections.Generic.IReadOnlyList`1[OrielWeb.OrielNotificationRecord] (get=True, set=False)
+  OrielWeb.OrielApp :: AvailableMonitors : System.Collections.Generic.IReadOnlyList`1[OrielWeb.OrielMonitor] (get=True, set=False)
+  OrielWeb.OrielApp :: BundleType : System.String (get=True, set=False)
+  OrielWeb.OrielApp :: CancelAllScheduledNotifications() -> System.Int32
+  OrielWeb.OrielApp :: CancelScheduledNotifications(System.Collections.Generic.IEnumerable`1[System.Int64]) -> System.Int32
+  OrielWeb.OrielApp :: ClearClipboard() -> System.Boolean
+  OrielWeb.OrielApp :: CreateTray(System.Action`1[OrielWeb.OrielTrayOptions] = optional) -> OrielWeb.OrielTray
+  OrielWeb.OrielApp :: CreateWindow(System.Action`1[OrielWeb.OrielWindowOptions] = optional, System.Action`1[OrielWeb.WebviewWindow] = optional) -> OrielWeb.WebviewWindow
+  OrielWeb.OrielApp :: CursorPosition : OrielWeb.OrielPosition (get=True, set=False)
+  OrielWeb.OrielApp :: DisableAutoStart() -> System.Boolean
+  OrielWeb.OrielApp :: Dispose() -> System.Void
+  OrielWeb.OrielApp :: EnableAutoStart(System.Collections.Generic.IReadOnlyList`1[System.String] = optional) -> System.Boolean
+  OrielWeb.OrielApp :: ExitTimeoutDuration : System.TimeSpan (get=True, set=False)
+  OrielWeb.OrielApp :: FetchDataStoreIdentifiers() -> System.Collections.Generic.IReadOnlyList`1[System.Guid]
+  OrielWeb.OrielApp :: ForceExitCode : System.Int32 (get=True, set=False)
+  OrielWeb.OrielApp :: GetFocusedWindow() -> OrielWeb.WebviewWindow
+  OrielWeb.OrielApp :: GetMonitorFromPoint(System.Double, System.Double) -> OrielWeb.OrielMonitor
+  OrielWeb.OrielApp :: GetTray(System.String) -> OrielWeb.OrielTray
+  OrielWeb.OrielApp :: GetWindow(System.String) -> OrielWeb.WebviewWindow
+  OrielWeb.OrielApp :: HideAllWindows() -> System.Void
+  OrielWeb.OrielApp :: Info : OrielWeb.OrielAppInfo (get=True, set=False)
+  OrielWeb.OrielApp :: InvokeOnUiThread(System.Action, System.Nullable`1[System.TimeSpan] = optional) -> System.Void
+  OrielWeb.OrielApp :: IsAutoStartEnabled : System.Boolean (get=True, set=False)
+  OrielWeb.OrielApp :: IsExiting : System.Boolean (get=True, set=False)
+  OrielWeb.OrielApp :: IsOnUiThread : System.Boolean (get=True, set=False)
+  OrielWeb.OrielApp :: IsSecondaryInstance : System.Boolean (get=True, set=True)
+  OrielWeb.OrielApp :: NotificationsSupported : System.Boolean (get=True, set=False)
+  OrielWeb.OrielApp :: OpenExternal(System.String) -> System.Boolean
+  OrielWeb.OrielApp :: OpenWithDefaultApp(System.String) -> System.Boolean
+  OrielWeb.OrielApp :: PendingNotifications : System.Collections.Generic.IReadOnlyList`1[OrielWeb.OrielNotificationRecord] (get=True, set=False)
+  OrielWeb.OrielApp :: PostToMainThread(System.Action) -> System.Void
+  OrielWeb.OrielApp :: PrimaryMonitor : OrielWeb.OrielMonitor (get=True, set=False)
+  OrielWeb.OrielApp :: Quit() -> System.Void
+  OrielWeb.OrielApp :: ReadClipboardImage() -> System.Byte[]
+  OrielWeb.OrielApp :: ReadClipboardText() -> System.String
+  OrielWeb.OrielApp :: RemoveActiveNotifications(System.Collections.Generic.IEnumerable`1[System.Int64]) -> System.Int32
+  OrielWeb.OrielApp :: RemoveAllActiveNotifications() -> System.Int32
+  OrielWeb.OrielApp :: RemoveDataStore(System.Guid) -> System.Void
+  OrielWeb.OrielApp :: RemoveTray() -> System.Boolean
+  OrielWeb.OrielApp :: RemoveTray(System.String) -> System.Boolean
+  OrielWeb.OrielApp :: RestoreTray() -> OrielWeb.OrielTray
+  OrielWeb.OrielApp :: RevealInFileManager(System.String) -> System.Boolean
+  OrielWeb.OrielApp :: Run() -> System.Void
+  OrielWeb.OrielApp :: ScheduleNotification(OrielWeb.OrielNotificationOptions, OrielWeb.OrielNotificationSchedule) -> System.Int64
+  OrielWeb.OrielApp :: SetAppMenuBar(System.Collections.Generic.IReadOnlyList`1[OrielWeb.OrielMenuItem]) -> System.Void
+  OrielWeb.OrielApp :: SetDockVisibility(System.Boolean) -> System.Void
+  OrielWeb.OrielApp :: SetTheme(System.Nullable`1[OrielWeb.OrielTheme]) -> System.Void
+  OrielWeb.OrielApp :: ShowAllWindows() -> System.Void
+  OrielWeb.OrielApp :: ShowNotification(OrielWeb.OrielNotificationOptions) -> System.Boolean
+  OrielWeb.OrielApp :: ShowNotification(System.String, System.String = optional) -> System.Boolean
+  OrielWeb.OrielApp :: SupportsDataStoreIdentifiers : System.Boolean (get=True, set=False)
+  OrielWeb.OrielApp :: Theme : OrielWeb.OrielTheme (get=True, set=False)
+  OrielWeb.OrielApp :: Tray : OrielWeb.OrielTray (get=True, set=False)
+  OrielWeb.OrielApp :: Trays : System.Collections.Generic.IReadOnlyCollection`1[OrielWeb.OrielTray] (get=True, set=False)
+  OrielWeb.OrielApp :: TryPostToMainThread(System.Action) -> System.Boolean
+  OrielWeb.OrielApp :: Windows : System.Collections.Generic.IReadOnlyList`1[OrielWeb.WebviewWindow] (get=True, set=False)
+  OrielWeb.OrielApp :: WriteClipboardHtml(System.String, System.String = optional) -> System.Boolean
+  OrielWeb.OrielApp :: WriteClipboardImage(System.Byte[]) -> System.Boolean
+  OrielWeb.OrielApp :: WriteClipboardSecret(System.String) -> System.Boolean
+  OrielWeb.OrielApp :: WriteClipboardText(System.String) -> System.Boolean
+  OrielWeb.OrielApp :: event CommandFailed : System.Action`1[OrielWeb.Ipc.OrielCommandFailedEventArgs]
+  OrielWeb.OrielApp :: event CommandInvoked : System.Action`1[OrielWeb.Ipc.OrielCommandInvokedEventArgs]
+  OrielWeb.OrielApp :: event ExitCompleted : System.Action`1[OrielWeb.OrielExitEventArgs]
+  OrielWeb.OrielApp :: event ExitTimeout : System.Action`1[OrielWeb.OrielExitTimeoutEventArgs]
+  OrielWeb.OrielApp :: event Exiting : System.Action`1[OrielWeb.OrielExitEventArgs]
+  OrielWeb.OrielApp :: event IpcRejected : System.Action`1[OrielWeb.Ipc.OrielIpcRejectedEventArgs]
+  OrielWeb.OrielApp :: event ThemeChanged : System.Action`1[OrielWeb.OrielTheme]
+  OrielWeb.OrielAppBuilder :: AddCommands() -> OrielWeb.OrielAppBuilder
+  OrielWeb.OrielAppBuilder :: AddCommands(System.Func`1[T]) -> OrielWeb.OrielAppBuilder
+  OrielWeb.OrielAppBuilder :: AddTray(System.Action`1[OrielWeb.OrielTrayOptions] = optional) -> OrielWeb.OrielAppBuilder
+  OrielWeb.OrielAppBuilder :: AddWindow(System.Action`1[OrielWeb.OrielWindowOptions] = optional) -> OrielWeb.OrielAppBuilder
+  OrielWeb.OrielAppBuilder :: AddWindow(System.Action`1[OrielWeb.OrielWindowOptions], System.Action`1[OrielWeb.WebviewWindow]) -> OrielWeb.OrielAppBuilder
+  OrielWeb.OrielAppBuilder :: Build() -> OrielWeb.OrielApp
+  OrielWeb.OrielAppBuilder :: Debug : System.Boolean (get=True, set=True)
+  OrielWeb.OrielAppBuilder :: OnWebView2RuntimeMissing(System.Action`1[OrielWeb.OrielWebView2RuntimeMissingEventArgs]) -> OrielWeb.OrielAppBuilder
+  OrielWeb.OrielAppBuilder :: Run() -> System.Void
+  OrielWeb.OrielAppBuilder :: SingleInstance(System.String, System.Action`2[OrielWeb.WebviewWindow,System.Collections.Generic.IReadOnlyList`1[System.String]] = optional) -> OrielWeb.OrielAppBuilder
+  OrielWeb.OrielAppBuilder :: UseAutoStartId(System.String) -> OrielWeb.OrielAppBuilder
+  OrielWeb.OrielAppBuilder :: UseCapabilities(System.Action`1[OrielWeb.OrielCapabilityOptions] = optional) -> OrielWeb.OrielAppBuilder
+  OrielWeb.OrielAppBuilder :: UseDebug(System.Boolean = optional) -> OrielWeb.OrielAppBuilder
+  OrielWeb.OrielAppBuilder :: UseEmbeddedAssets(System.String = optional, System.String = optional) -> OrielWeb.OrielAppBuilder
+  OrielWeb.OrielAppBuilder :: UseExitTimeout(System.TimeSpan) -> OrielWeb.OrielAppBuilder
+  OrielWeb.OrielAppBuilder :: UseExitWatchdog(System.Boolean = optional) -> OrielWeb.OrielAppBuilder
+  OrielWeb.OrielAppBuilder :: UseForceExitCode(System.Int32) -> OrielWeb.OrielAppBuilder
+  OrielWeb.OrielAppBuilder :: UseJsonContext(System.Text.Json.Serialization.JsonSerializerContext) -> OrielWeb.OrielAppBuilder
+  OrielWeb.OrielAppBuilder :: UseNotificationAppId(System.String) -> OrielWeb.OrielAppBuilder
+  OrielWeb.OrielAppBuilder :: UseShell(System.Action`1[OrielWeb.OrielShellOptions] = optional) -> OrielWeb.OrielAppBuilder
+  OrielWeb.OrielAppBuilder :: UseUserDataFolder(System.String) -> OrielWeb.OrielAppBuilder
+  OrielWeb.OrielAppBuilder :: WithAppInfo(System.String = optional, System.String = optional, System.String = optional) -> OrielWeb.OrielAppBuilder
+  OrielWeb.OrielAppInfo :: Identifier : System.String (get=True, set=True)
+  OrielWeb.OrielAppInfo :: Name : System.String (get=True, set=True)
+  OrielWeb.OrielAppInfo :: Version : System.String (get=True, set=True)
+  OrielWeb.OrielAssetFileServer :: ScopeCommand : System.String
+  OrielWeb.OrielCapabilityOptions :: Allow(System.String, System.Action`1[OrielWeb.OrielPathScope]) -> OrielWeb.OrielCapabilityOptions
+  OrielWeb.OrielCapabilityOptions :: Allow(System.String[]) -> OrielWeb.OrielCapabilityOptions
+  OrielWeb.OrielCapabilityOptions :: AllowOrigin(System.String) -> OrielWeb.OrielCapabilityOptions
+  OrielWeb.OrielCapabilityOptions :: Deny(System.String[]) -> OrielWeb.OrielCapabilityOptions
+  OrielWeb.OrielCloseRequestEventArgs :: Cancel : System.Boolean (get=True, set=True)
+  OrielWeb.OrielConsoleMessageEventArgs :: Level : System.String (get=True, set=False)
+  OrielWeb.OrielConsoleMessageEventArgs :: Text : System.String (get=True, set=False)
+  OrielWeb.OrielContextMenuPolicy :: Disabled : OrielWeb.OrielContextMenuPolicy
+  OrielWeb.OrielContextMenuPolicy :: Editing : OrielWeb.OrielContextMenuPolicy
+  OrielWeb.OrielContextMenuPolicy :: Native : OrielWeb.OrielContextMenuPolicy
+  OrielWeb.OrielContextMenuPolicy :: value__ : System.Int32
+  OrielWeb.OrielCursorIcon :: Alias : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: AllScroll : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: Arrow : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: Cell : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: ColResize : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: ContextMenu : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: Copy : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: Crosshair : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: Default : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: EResize : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: EwResize : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: Grab : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: Grabbing : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: Hand : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: Help : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: Move : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: NResize : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: NeResize : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: NeswResize : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: NoDrop : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: NotAllowed : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: NsResize : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: NwResize : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: NwseResize : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: Progress : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: RowResize : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: SResize : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: SeResize : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: SwResize : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: Text : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: VerticalText : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: WResize : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: Wait : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: ZoomIn : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: ZoomOut : OrielWeb.OrielCursorIcon
+  OrielWeb.OrielCursorIcon :: value__ : System.Int32
+  OrielWeb.OrielDiagnosticEventArgs :: Message : System.String (get=True, set=False)
+  OrielWeb.OrielDiagnostics :: event Reported : System.Action`1[OrielWeb.OrielDiagnosticEventArgs]
+  OrielWeb.OrielDragEventArgs :: Paths : System.Collections.Generic.IReadOnlyList`1[System.String] (get=True, set=False)
+  OrielWeb.OrielDragEventArgs :: Type : OrielWeb.OrielDragEventType (get=True, set=False)
+  OrielWeb.OrielDragEventArgs :: X : System.Int32 (get=True, set=False)
+  OrielWeb.OrielDragEventArgs :: Y : System.Int32 (get=True, set=False)
+  OrielWeb.OrielDragEventType :: Drop : OrielWeb.OrielDragEventType
+  OrielWeb.OrielDragEventType :: Enter : OrielWeb.OrielDragEventType
+  OrielWeb.OrielDragEventType :: Leave : OrielWeb.OrielDragEventType
+  OrielWeb.OrielDragEventType :: Over : OrielWeb.OrielDragEventType
+  OrielWeb.OrielDragEventType :: value__ : System.Int32
+  OrielWeb.OrielEffect :: Acrylic : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: AppearanceBased : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: Blur : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: ContentBackground : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: Dark : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: FullScreenUi : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: HeaderView : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: HudWindow : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: Light : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: LiquidGlassClear : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: LiquidGlassRegular : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: MediumLight : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: Menu : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: Mica : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: Popover : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: Selection : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: Sheet : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: Sidebar : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: Tabbed : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: TabbedDark : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: TabbedLight : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: Titlebar : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: Tooltip : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: UltraDark : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: UnderPageBackground : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: UnderWindowBackground : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: WindowBackground : OrielWeb.OrielEffect
+  OrielWeb.OrielEffect :: value__ : System.Int32
+  OrielWeb.OrielEffectState :: Active : OrielWeb.OrielEffectState
+  OrielWeb.OrielEffectState :: FollowsWindowActiveState : OrielWeb.OrielEffectState
+  OrielWeb.OrielEffectState :: Inactive : OrielWeb.OrielEffectState
+  OrielWeb.OrielEffectState :: value__ : System.Int32
+  OrielWeb.OrielEffects :: ColorArgb : System.Nullable`1[System.UInt32] (get=True, set=True)
+  OrielWeb.OrielEffects :: Deconstruct(System.Collections.Generic.IReadOnlyList`1[OrielWeb.OrielEffect]&, OrielWeb.OrielEffectState&, System.Nullable`1[System.Double]&, System.Nullable`1[System.UInt32]&, System.Boolean&) -> System.Void
+  OrielWeb.OrielEffects :: Effects : System.Collections.Generic.IReadOnlyList`1[OrielWeb.OrielEffect] (get=True, set=True)
+  OrielWeb.OrielEffects :: Equals(OrielWeb.OrielEffects) -> System.Boolean
+  OrielWeb.OrielEffects :: Equals(System.Object) -> System.Boolean
+  OrielWeb.OrielEffects :: GetHashCode() -> System.Int32
+  OrielWeb.OrielEffects :: Interactive : System.Boolean (get=True, set=True)
+  OrielWeb.OrielEffects :: Radius : System.Nullable`1[System.Double] (get=True, set=True)
+  OrielWeb.OrielEffects :: State : OrielWeb.OrielEffectState (get=True, set=True)
+  OrielWeb.OrielEffects :: ToString() -> System.String
+  OrielWeb.OrielExitEventArgs :: Elapsed : System.TimeSpan (get=True, set=False)
+  OrielWeb.OrielExitEventArgs :: Stage : System.String (get=True, set=False)
+  OrielWeb.OrielExitEventArgs :: ToString() -> System.String
+  OrielWeb.OrielExitTimeoutEventArgs :: PendingStage : System.String (get=True, set=False)
+  OrielWeb.OrielExitTimeoutEventArgs :: Timeout : System.TimeSpan (get=True, set=False)
+  OrielWeb.OrielExitTimeoutEventArgs :: ToString() -> System.String
+  OrielWeb.OrielFileDropEventArgs :: Paths : System.Collections.Generic.IReadOnlyList`1[System.String] (get=True, set=False)
+  OrielWeb.OrielFileFilter :: AllFiles : OrielWeb.OrielFileFilter (get=True, set=False)
+  OrielWeb.OrielFileFilter :: Name : System.String (get=True, set=True)
+  OrielWeb.OrielFileFilter :: Of(System.String, System.String[]) -> OrielWeb.OrielFileFilter
+  OrielWeb.OrielFileFilter :: Parse(System.String) -> System.Collections.Generic.IReadOnlyList`1[OrielWeb.OrielFileFilter]
+  OrielWeb.OrielFileFilter :: Patterns : System.Collections.Generic.IReadOnlyList`1[System.String] (get=True, set=True)
+  OrielWeb.OrielImage :: FromBytes(System.ReadOnlySpan`1[System.Byte]) -> OrielWeb.OrielImage
+  OrielWeb.OrielImage :: FromFile(System.String) -> OrielWeb.OrielImage
+  OrielWeb.OrielImage :: Height : System.Int32 (get=True, set=False)
+  OrielWeb.OrielImage :: Rgba : System.ReadOnlyMemory`1[System.Byte] (get=True, set=False)
+  OrielWeb.OrielImage :: ToString() -> System.String
+  OrielWeb.OrielImage :: TryFromFile(System.String, OrielWeb.OrielImage&, System.String&) -> System.Boolean
+  OrielWeb.OrielImage :: Width : System.Int32 (get=True, set=False)
+  OrielWeb.OrielLibrary :: Version : System.String (get=True, set=False)
+  OrielWeb.OrielMenuItem :: Accelerator : System.String (get=True, set=True)
+  OrielWeb.OrielMenuItem :: Checked : System.Boolean (get=True, set=True)
+  OrielWeb.OrielMenuItem :: Enabled : System.Boolean (get=True, set=True)
+  OrielWeb.OrielMenuItem :: Id : System.String (get=True, set=True)
+  OrielWeb.OrielMenuItem :: IsSeparator : System.Boolean (get=True, set=True)
+  OrielWeb.OrielMenuItem :: Item(System.String, System.String) -> OrielWeb.OrielMenuItem
+  OrielWeb.OrielMenuItem :: Items : System.Collections.Generic.IReadOnlyList`1[OrielWeb.OrielMenuItem] (get=True, set=True)
+  OrielWeb.OrielMenuItem :: Label : System.String (get=True, set=True)
+  OrielWeb.OrielMenuItem :: Role : System.String (get=True, set=True)
+  OrielWeb.OrielMenuItem :: RoleItem(System.String) -> OrielWeb.OrielMenuItem
+  OrielWeb.OrielMenuItem :: Separator() -> OrielWeb.OrielMenuItem
+  OrielWeb.OrielMenuRole :: About : System.String
+  OrielWeb.OrielMenuRole :: Close : System.String
+  OrielWeb.OrielMenuRole :: Copy : System.String
+  OrielWeb.OrielMenuRole :: Cut : System.String
+  OrielWeb.OrielMenuRole :: Delete : System.String
+  OrielWeb.OrielMenuRole :: Front : System.String
+  OrielWeb.OrielMenuRole :: Hide : System.String
+  OrielWeb.OrielMenuRole :: HideOthers : System.String
+  OrielWeb.OrielMenuRole :: Minimize : System.String
+  OrielWeb.OrielMenuRole :: Paste : System.String
+  OrielWeb.OrielMenuRole :: Quit : System.String
+  OrielWeb.OrielMenuRole :: Redo : System.String
+  OrielWeb.OrielMenuRole :: SelectAll : System.String
+  OrielWeb.OrielMenuRole :: ShowAll : System.String
+  OrielWeb.OrielMenuRole :: ToggleFullScreen : System.String
+  OrielWeb.OrielMenuRole :: Undo : System.String
+  OrielWeb.OrielMenuRole :: Zoom : System.String
+  OrielWeb.OrielMessageBoxIcon :: Error : OrielWeb.OrielMessageBoxIcon
+  OrielWeb.OrielMessageBoxIcon :: Info : OrielWeb.OrielMessageBoxIcon
+  OrielWeb.OrielMessageBoxIcon :: Question : OrielWeb.OrielMessageBoxIcon
+  OrielWeb.OrielMessageBoxIcon :: Warning : OrielWeb.OrielMessageBoxIcon
+  OrielWeb.OrielMessageBoxIcon :: value__ : System.Int32
+  OrielWeb.OrielMessageReceivedEventArgs :: Json : System.String (get=True, set=False)
+  OrielWeb.OrielMessageReceivedEventArgs :: Name : System.String (get=True, set=False)
+  OrielWeb.OrielMonitor :: <Clone>$() -> OrielWeb.OrielMonitor
+  OrielWeb.OrielMonitor :: Deconstruct(System.String&, OrielWeb.OrielPosition&, OrielWeb.OrielSize&, System.Double&) -> System.Void
+  OrielWeb.OrielMonitor :: Equals(OrielWeb.OrielMonitor) -> System.Boolean
+  OrielWeb.OrielMonitor :: Equals(System.Object) -> System.Boolean
+  OrielWeb.OrielMonitor :: GetHashCode() -> System.Int32
+  OrielWeb.OrielMonitor :: IsPrimary : System.Boolean (get=True, set=True)
+  OrielWeb.OrielMonitor :: Name : System.String (get=True, set=True)
+  OrielWeb.OrielMonitor :: Position : OrielWeb.OrielPosition (get=True, set=True)
+  OrielWeb.OrielMonitor :: ScaleFactor : System.Double (get=True, set=True)
+  OrielWeb.OrielMonitor :: Size : OrielWeb.OrielSize (get=True, set=True)
+  OrielWeb.OrielMonitor :: ToString() -> System.String
+  OrielWeb.OrielNavigationCompletedEventArgs :: Error : System.String (get=True, set=False)
+  OrielWeb.OrielNavigationCompletedEventArgs :: Success : System.Boolean (get=True, set=False)
+  OrielWeb.OrielNavigationCompletedEventArgs :: Url : System.String (get=True, set=False)
+  OrielWeb.OrielNotificationOptions :: Body : System.String (get=True, set=True)
+  OrielWeb.OrielNotificationOptions :: IconPath : System.String (get=True, set=True)
+  OrielWeb.OrielNotificationOptions :: Id : System.String (get=True, set=True)
+  OrielWeb.OrielNotificationOptions :: Title : System.String (get=True, set=True)
+  OrielWeb.OrielNotificationRecord :: Body : System.String (get=True, set=True)
+  OrielWeb.OrielNotificationRecord :: IconPath : System.String (get=True, set=True)
+  OrielWeb.OrielNotificationRecord :: Id : System.Int64 (get=True, set=True)
+  OrielWeb.OrielNotificationRecord :: Schedule : OrielWeb.OrielNotificationSchedule (get=True, set=True)
+  OrielWeb.OrielNotificationRecord :: Tag : System.String (get=True, set=True)
+  OrielWeb.OrielNotificationRecord :: Title : System.String (get=True, set=True)
+  OrielWeb.OrielNotificationSchedule :: AllowWhileIdle : System.Boolean (get=True, set=True)
+  OrielWeb.OrielNotificationSchedule :: AtDate : System.Nullable`1[System.DateTimeOffset] (get=True, set=True)
+  OrielWeb.OrielNotificationSchedule :: AtRepeating : System.Boolean (get=True, set=True)
+  OrielWeb.OrielNotificationSchedule :: Every : System.String (get=True, set=True)
+  OrielWeb.OrielNotificationSchedule :: EveryCount : System.Int32 (get=True, set=True)
+  OrielWeb.OrielNotificationSchedule :: Interval : OrielWeb.OrielScheduleInterval (get=True, set=True)
+  OrielWeb.OrielOpenFileDialogOptions :: AllowMultiple : System.Boolean (get=True, set=True)
+  OrielWeb.OrielOpenFileDialogOptions :: Filters : System.Collections.Generic.IReadOnlyList`1[OrielWeb.OrielFileFilter] (get=True, set=True)
+  OrielWeb.OrielOpenFileDialogOptions :: InitialDirectory : System.String (get=True, set=True)
+  OrielWeb.OrielOpenFileDialogOptions :: Title : System.String (get=True, set=True)
+  OrielWeb.OrielPathScope :: Allow : System.Collections.Generic.IReadOnlyList`1[System.String] (get=True, set=False)
+  OrielWeb.OrielPathScope :: AllowPath(System.String) -> OrielWeb.OrielPathScope
+  OrielWeb.OrielPathScope :: AllowPaths(System.String[]) -> OrielWeb.OrielPathScope
+  OrielWeb.OrielPathScope :: Deny : System.Collections.Generic.IReadOnlyList`1[System.String] (get=True, set=False)
+  OrielWeb.OrielPathScope :: DenyPath(System.String) -> OrielWeb.OrielPathScope
+  OrielWeb.OrielPathScope :: DenyPaths(System.String[]) -> OrielWeb.OrielPathScope
+  OrielWeb.OrielPathVariables :: All : System.Collections.Generic.IReadOnlyList`1[System.String] (get=True, set=False)
+  OrielWeb.OrielPosition :: Deconstruct(System.Double&, System.Double&) -> System.Void
+  OrielWeb.OrielPosition :: Equals(OrielWeb.OrielPosition) -> System.Boolean
+  OrielWeb.OrielPosition :: Equals(System.Object) -> System.Boolean
+  OrielWeb.OrielPosition :: GetHashCode() -> System.Int32
+  OrielWeb.OrielPosition :: ToString() -> System.String
+  OrielWeb.OrielPosition :: X : System.Double (get=True, set=True)
+  OrielWeb.OrielPosition :: Y : System.Double (get=True, set=True)
+  OrielWeb.OrielPositionChangedEventArgs :: X : System.Double (get=True, set=False)
+  OrielWeb.OrielPositionChangedEventArgs :: Y : System.Double (get=True, set=False)
+  OrielWeb.OrielProgressBarStatus :: Error : OrielWeb.OrielProgressBarStatus
+  OrielWeb.OrielProgressBarStatus :: Indeterminate : OrielWeb.OrielProgressBarStatus
+  OrielWeb.OrielProgressBarStatus :: None : OrielWeb.OrielProgressBarStatus
+  OrielWeb.OrielProgressBarStatus :: Normal : OrielWeb.OrielProgressBarStatus
+  OrielWeb.OrielProgressBarStatus :: Paused : OrielWeb.OrielProgressBarStatus
+  OrielWeb.OrielProgressBarStatus :: value__ : System.Int32
+  OrielWeb.OrielResizeDirection :: East : OrielWeb.OrielResizeDirection
+  OrielWeb.OrielResizeDirection :: North : OrielWeb.OrielResizeDirection
+  OrielWeb.OrielResizeDirection :: NorthEast : OrielWeb.OrielResizeDirection
+  OrielWeb.OrielResizeDirection :: NorthWest : OrielWeb.OrielResizeDirection
+  OrielWeb.OrielResizeDirection :: South : OrielWeb.OrielResizeDirection
+  OrielWeb.OrielResizeDirection :: SouthEast : OrielWeb.OrielResizeDirection
+  OrielWeb.OrielResizeDirection :: SouthWest : OrielWeb.OrielResizeDirection
+  OrielWeb.OrielResizeDirection :: West : OrielWeb.OrielResizeDirection
+  OrielWeb.OrielResizeDirection :: value__ : System.Int32
+  OrielWeb.OrielSaveFileDialogOptions :: DefaultExtension : System.String (get=True, set=True)
+  OrielWeb.OrielSaveFileDialogOptions :: DefaultFileName : System.String (get=True, set=True)
+  OrielWeb.OrielSaveFileDialogOptions :: Filters : System.Collections.Generic.IReadOnlyList`1[OrielWeb.OrielFileFilter] (get=True, set=True)
+  OrielWeb.OrielSaveFileDialogOptions :: InitialDirectory : System.String (get=True, set=True)
+  OrielWeb.OrielSaveFileDialogOptions :: Title : System.String (get=True, set=True)
+  OrielWeb.OrielScheduleEvery :: Day : System.String
+  OrielWeb.OrielScheduleEvery :: Hour : System.String
+  OrielWeb.OrielScheduleEvery :: Minute : System.String
+  OrielWeb.OrielScheduleEvery :: Month : System.String
+  OrielWeb.OrielScheduleEvery :: Second : System.String
+  OrielWeb.OrielScheduleEvery :: TwoWeeks : System.String
+  OrielWeb.OrielScheduleEvery :: Week : System.String
+  OrielWeb.OrielScheduleEvery :: Year : System.String
+  OrielWeb.OrielScheduleInterval :: Day : System.Nullable`1[System.Int32] (get=True, set=True)
+  OrielWeb.OrielScheduleInterval :: Hour : System.Nullable`1[System.Int32] (get=True, set=True)
+  OrielWeb.OrielScheduleInterval :: Minute : System.Nullable`1[System.Int32] (get=True, set=True)
+  OrielWeb.OrielScheduleInterval :: Month : System.Nullable`1[System.Int32] (get=True, set=True)
+  OrielWeb.OrielScheduleInterval :: Second : System.Nullable`1[System.Int32] (get=True, set=True)
+  OrielWeb.OrielScheduleInterval :: Weekday : System.Nullable`1[System.Int32] (get=True, set=True)
+  OrielWeb.OrielScheduleInterval :: Year : System.Nullable`1[System.Int32] (get=True, set=True)
+  OrielWeb.OrielShellOptions :: AllowedSchemes : System.Collections.Generic.IReadOnlyList`1[System.String] (get=True, set=True)
+  OrielWeb.OrielShellOptions :: DefaultSchemes : System.Collections.Generic.IReadOnlyList`1[System.String] (get=True, set=False)
+  OrielWeb.OrielShellOptions :: WithScheme(System.String) -> OrielWeb.OrielShellOptions
+  OrielWeb.OrielSize :: Deconstruct(System.Double&, System.Double&) -> System.Void
+  OrielWeb.OrielSize :: Equals(OrielWeb.OrielSize) -> System.Boolean
+  OrielWeb.OrielSize :: Equals(System.Object) -> System.Boolean
+  OrielWeb.OrielSize :: GetHashCode() -> System.Int32
+  OrielWeb.OrielSize :: Height : System.Double (get=True, set=True)
+  OrielWeb.OrielSize :: ToString() -> System.String
+  OrielWeb.OrielSize :: Width : System.Double (get=True, set=True)
+  OrielWeb.OrielSizeChangedEventArgs :: Height : System.Double (get=True, set=False)
+  OrielWeb.OrielSizeChangedEventArgs :: Width : System.Double (get=True, set=False)
+  OrielWeb.OrielTheme :: Dark : OrielWeb.OrielTheme
+  OrielWeb.OrielTheme :: Light : OrielWeb.OrielTheme
+  OrielWeb.OrielTheme :: value__ : System.Int32
+  OrielWeb.OrielTitleBarStyle :: Overlay : OrielWeb.OrielTitleBarStyle
+  OrielWeb.OrielTitleBarStyle :: Transparent : OrielWeb.OrielTitleBarStyle
+  OrielWeb.OrielTitleBarStyle :: Visible : OrielWeb.OrielTitleBarStyle
+  OrielWeb.OrielTitleBarStyle :: value__ : System.Int32
+  OrielWeb.OrielTray :: ClearMenu() -> System.Void
+  OrielWeb.OrielTray :: Dispose() -> System.Void
+  OrielWeb.OrielTray :: Hide() -> System.Void
+  OrielWeb.OrielTray :: Icon : OrielWeb.OrielImage (get=True, set=False)
+  OrielWeb.OrielTray :: IconAsTemplate : System.Boolean (get=True, set=True)
+  OrielWeb.OrielTray :: IconPath : System.String (get=True, set=False)
+  OrielWeb.OrielTray :: Id : System.String (get=True, set=False)
+  OrielWeb.OrielTray :: IsVisible : System.Boolean (get=True, set=False)
+  OrielWeb.OrielTray :: MenuOnClick : System.Boolean (get=True, set=True)
+  OrielWeb.OrielTray :: SetIcon(OrielWeb.OrielImage) -> System.Void
+  OrielWeb.OrielTray :: SetIcon(System.String) -> System.Void
+  OrielWeb.OrielTray :: SetMenu(System.Collections.Generic.IReadOnlyList`1[OrielWeb.OrielMenuItem]) -> System.Void
+  OrielWeb.OrielTray :: Show() -> System.Void
+  OrielWeb.OrielTray :: Title : System.String (get=True, set=True)
+  OrielWeb.OrielTray :: Tooltip : System.String (get=True, set=True)
+  OrielWeb.OrielTray :: event Clicked : System.Action
+  OrielWeb.OrielTray :: event MenuItemClicked : System.Action`1[System.String]
+  OrielWeb.OrielTray :: event RawEvent : System.Action`1[System.String]
+  OrielWeb.OrielTray :: event TrayEvent : System.Action`1[OrielWeb.OrielTrayEvent]
+  OrielWeb.OrielTrayButtonState :: Down : OrielWeb.OrielTrayButtonState
+  OrielWeb.OrielTrayButtonState :: Up : OrielWeb.OrielTrayButtonState
+  OrielWeb.OrielTrayButtonState :: value__ : System.Int32
+  OrielWeb.OrielTrayEvent :: Button : System.Nullable`1[OrielWeb.OrielTrayMouseButton] (get=True, set=False)
+  OrielWeb.OrielTrayEvent :: ButtonState : System.Nullable`1[OrielWeb.OrielTrayButtonState] (get=True, set=False)
+  OrielWeb.OrielTrayEvent :: Position : System.Nullable`1[OrielWeb.OrielTrayPoint] (get=True, set=False)
+  OrielWeb.OrielTrayEvent :: Rect : System.Nullable`1[OrielWeb.OrielTrayRect] (get=True, set=False)
+  OrielWeb.OrielTrayEvent :: ToString() -> System.String
+  OrielWeb.OrielTrayEvent :: TrayId : System.String (get=True, set=False)
+  OrielWeb.OrielTrayEvent :: Type : OrielWeb.OrielTrayEventType (get=True, set=False)
+  OrielWeb.OrielTrayEventType :: Click : OrielWeb.OrielTrayEventType
+  OrielWeb.OrielTrayEventType :: DoubleClick : OrielWeb.OrielTrayEventType
+  OrielWeb.OrielTrayEventType :: Enter : OrielWeb.OrielTrayEventType
+  OrielWeb.OrielTrayEventType :: Leave : OrielWeb.OrielTrayEventType
+  OrielWeb.OrielTrayEventType :: Move : OrielWeb.OrielTrayEventType
+  OrielWeb.OrielTrayEventType :: value__ : System.Int32
+  OrielWeb.OrielTrayMouseButton :: Left : OrielWeb.OrielTrayMouseButton
+  OrielWeb.OrielTrayMouseButton :: Middle : OrielWeb.OrielTrayMouseButton
+  OrielWeb.OrielTrayMouseButton :: Right : OrielWeb.OrielTrayMouseButton
+  OrielWeb.OrielTrayMouseButton :: value__ : System.Int32
+  OrielWeb.OrielTrayOptions :: Icon : OrielWeb.OrielImage (get=True, set=True)
+  OrielWeb.OrielTrayOptions :: IconAsTemplate : System.Boolean (get=True, set=True)
+  OrielWeb.OrielTrayOptions :: IconPath : System.String (get=True, set=True)
+  OrielWeb.OrielTrayOptions :: IconPathOrNull : System.String (get=True, set=False)
+  OrielWeb.OrielTrayOptions :: Id : System.String (get=True, set=True)
+  OrielWeb.OrielTrayOptions :: MenuOnClick : System.Boolean (get=True, set=True)
+  OrielWeb.OrielTrayOptions :: Title : System.String (get=True, set=True)
+  OrielWeb.OrielTrayOptions :: Tooltip : System.String (get=True, set=True)
+  OrielWeb.OrielTrayPoint :: Deconstruct(System.Double&, System.Double&) -> System.Void
+  OrielWeb.OrielTrayPoint :: Equals(OrielWeb.OrielTrayPoint) -> System.Boolean
+  OrielWeb.OrielTrayPoint :: Equals(System.Object) -> System.Boolean
+  OrielWeb.OrielTrayPoint :: GetHashCode() -> System.Int32
+  OrielWeb.OrielTrayPoint :: ToString() -> System.String
+  OrielWeb.OrielTrayPoint :: X : System.Double (get=True, set=True)
+  OrielWeb.OrielTrayPoint :: Y : System.Double (get=True, set=True)
+  OrielWeb.OrielTrayRect :: Deconstruct(OrielWeb.OrielTrayPoint&, System.Double&, System.Double&) -> System.Void
+  OrielWeb.OrielTrayRect :: Equals(OrielWeb.OrielTrayRect) -> System.Boolean
+  OrielWeb.OrielTrayRect :: Equals(System.Object) -> System.Boolean
+  OrielWeb.OrielTrayRect :: GetHashCode() -> System.Int32
+  OrielWeb.OrielTrayRect :: Height : System.Double (get=True, set=True)
+  OrielWeb.OrielTrayRect :: Position : OrielWeb.OrielTrayPoint (get=True, set=True)
+  OrielWeb.OrielTrayRect :: ToString() -> System.String
+  OrielWeb.OrielTrayRect :: Width : System.Double (get=True, set=True)
+  OrielWeb.OrielUserAttention :: Critical : OrielWeb.OrielUserAttention
+  OrielWeb.OrielUserAttention :: Informational : OrielWeb.OrielUserAttention
+  OrielWeb.OrielUserAttention :: value__ : System.Int32
+  OrielWeb.OrielWebView2RuntimeMissingEventArgs :: BrowserExecutableFolder : System.String (get=True, set=False)
+  OrielWeb.OrielWebView2RuntimeMissingEventArgs :: DownloadUrl : System.String
+  OrielWeb.OrielWebView2RuntimeMissingEventArgs :: KeepWindowOpen : System.Boolean (get=True, set=True)
+  OrielWeb.OrielWebView2RuntimeMissingEventArgs :: Window : OrielWeb.WebviewWindow (get=True, set=False)
+  OrielWeb.OrielWindowEventKind :: Focus : OrielWeb.OrielWindowEventKind
+  OrielWeb.OrielWindowEventKind :: Move : OrielWeb.OrielWindowEventKind
+  OrielWeb.OrielWindowEventKind :: None : OrielWeb.OrielWindowEventKind
+  OrielWeb.OrielWindowEventKind :: Resize : OrielWeb.OrielWindowEventKind
+  OrielWeb.OrielWindowEventKind :: Scale : OrielWeb.OrielWindowEventKind
+  OrielWeb.OrielWindowEventKind :: value__ : System.Int32
+  OrielWeb.OrielWindowOptions :: At(System.Int32, System.Int32) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: BackgroundColor : System.Nullable`1[System.UInt32] (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: Center : System.Boolean (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: Centered(System.Boolean = optional) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: ConsoleForwarding : System.Boolean (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: ContextMenuPolicy : OrielWeb.OrielContextMenuPolicy (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: DataStoreIdentifier : System.Nullable`1[System.Guid] (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: Debug : System.Boolean (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: DefaultLabel : System.String
+  OrielWeb.OrielWindowOptions :: Frameless : System.Boolean (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: Fullscreen : System.Boolean (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: Height : System.Int32 (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: Hidden : System.Boolean (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: Icon : System.String (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: InterceptClose : System.Boolean (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: Label : System.String (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: Maximized : System.Boolean (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: MinHeight : System.Nullable`1[System.Int32] (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: MinWidth : System.Nullable`1[System.Int32] (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: OnTop : System.Boolean (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: RequestedIcon : System.String (get=True, set=False)
+  OrielWeb.OrielWindowOptions :: RequireIcon : System.Boolean (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: Resizable : System.Boolean (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: Title : System.String (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: Url : System.String (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: Width : System.Int32 (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: WithBackgroundColor(System.Byte, System.Byte, System.Byte) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithBackgroundColor(System.UInt32) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithConsoleForwarding(System.Boolean = optional) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithContextMenuPolicy(OrielWeb.OrielContextMenuPolicy) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithDataStoreIdentifier(System.Guid) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithDebug(System.Boolean = optional) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithDragRegion(System.String) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithFrameless(System.Boolean = optional) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithFullscreen(System.Boolean = optional) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithHidden(System.Boolean = optional) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithIcon(System.String) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithInterceptClose(System.Boolean = optional) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithLabel(System.String) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithMaximized(System.Boolean = optional) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithMinSize(System.Int32, System.Int32) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithOnTop(System.Boolean = optional) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithRequireIcon(System.Boolean = optional) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithResizable(System.Boolean = optional) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithSize(System.Int32, System.Int32) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithTitle(System.String) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithUrl(System.String) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: WithZoom(System.Boolean = optional) -> OrielWeb.OrielWindowOptions
+  OrielWeb.OrielWindowOptions :: X : System.Nullable`1[System.Int32] (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: Y : System.Nullable`1[System.Int32] (get=True, set=True)
+  OrielWeb.OrielWindowOptions :: Zoom : System.Boolean (get=True, set=True)
+  OrielWeb.WebviewWindow :: App : OrielWeb.OrielApp (get=True, set=False)
+  OrielWeb.WebviewWindow :: BeginDrag() -> System.Void
+  OrielWeb.WebviewWindow :: BeginDragStreaming(System.Double, System.Double, System.Double, System.Double, System.Double, System.Double, System.Double) -> System.Void
+  OrielWeb.WebviewWindow :: CanGoBack : System.Boolean (get=True, set=False)
+  OrielWeb.WebviewWindow :: CanGoForward : System.Boolean (get=True, set=False)
+  OrielWeb.WebviewWindow :: Center() -> System.Void
+  OrielWeb.WebviewWindow :: ClearAllBrowsingData() -> System.Void
+  OrielWeb.WebviewWindow :: ClearEffects() -> System.Void
+  OrielWeb.WebviewWindow :: Close() -> System.Void
+  OrielWeb.WebviewWindow :: CloseContextMenu() -> System.Void
+  OrielWeb.WebviewWindow :: CloseInterceptEnabled : System.Boolean (get=True, set=True)
+  OrielWeb.WebviewWindow :: ContextMenuPolicy : OrielWeb.OrielContextMenuPolicy (get=True, set=True)
+  OrielWeb.WebviewWindow :: CurrentMonitor : OrielWeb.OrielMonitor (get=True, set=False)
+  OrielWeb.WebviewWindow :: Destroy() -> System.Void
+  OrielWeb.WebviewWindow :: DragTo(System.Double, System.Double) -> System.Void
+  OrielWeb.WebviewWindow :: EmitEvent(System.String, System.String) -> System.Void
+  OrielWeb.WebviewWindow :: EmitEvent(System.String, T, System.Text.Json.Serialization.Metadata.JsonTypeInfo`1[T]) -> System.Void
+  OrielWeb.WebviewWindow :: EndDrag() -> System.Void
+  OrielWeb.WebviewWindow :: EvaluateJs(System.String) -> System.Threading.Tasks.Task`1[System.String]
+  OrielWeb.WebviewWindow :: EventForwarding : OrielWeb.OrielWindowEventKind (get=True, set=True)
+  OrielWeb.WebviewWindow :: Focus() -> System.Void
+  OrielWeb.WebviewWindow :: GoBack() -> System.Void
+  OrielWeb.WebviewWindow :: GoForward() -> System.Void
+  OrielWeb.WebviewWindow :: HasExplicitMenuBar : System.Boolean (get=True, set=True)
+  OrielWeb.WebviewWindow :: Hide() -> System.Void
+  OrielWeb.WebviewWindow :: InnerPosition : OrielWeb.OrielPosition (get=True, set=False)
+  OrielWeb.WebviewWindow :: InnerSize : OrielWeb.OrielSize (get=True, set=False)
+  OrielWeb.WebviewWindow :: InvokeOnUiThread(System.Action, System.Nullable`1[System.TimeSpan] = optional) -> System.Void
+  OrielWeb.WebviewWindow :: IsAlwaysOnTop : System.Boolean (get=True, set=False)
+  OrielWeb.WebviewWindow :: IsClosable : System.Boolean (get=True, set=False)
+  OrielWeb.WebviewWindow :: IsDecorated : System.Boolean (get=True, set=False)
+  OrielWeb.WebviewWindow :: IsEnabled : System.Boolean (get=True, set=False)
+  OrielWeb.WebviewWindow :: IsFocused : System.Boolean (get=True, set=False)
+  OrielWeb.WebviewWindow :: IsFullscreen : System.Boolean (get=True, set=False)
+  OrielWeb.WebviewWindow :: IsMaximizable : System.Boolean (get=True, set=False)
+  OrielWeb.WebviewWindow :: IsMaximized : System.Boolean (get=True, set=False)
+  OrielWeb.WebviewWindow :: IsMinimizable : System.Boolean (get=True, set=False)
+  OrielWeb.WebviewWindow :: IsMinimized : System.Boolean (get=True, set=False)
+  OrielWeb.WebviewWindow :: IsOnUiThread : System.Boolean (get=True, set=False)
+  OrielWeb.WebviewWindow :: IsResizable : System.Boolean (get=True, set=False)
+  OrielWeb.WebviewWindow :: IsVisible : System.Boolean (get=True, set=False)
+  OrielWeb.WebviewWindow :: Label : System.String (get=True, set=False)
+  OrielWeb.WebviewWindow :: Maximize() -> System.Void
+  OrielWeb.WebviewWindow :: Minimize() -> System.Void
+  OrielWeb.WebviewWindow :: MoveTo(System.Int32, System.Int32) -> System.Void
+  OrielWeb.WebviewWindow :: OuterPosition : OrielWeb.OrielPosition (get=True, set=False)
+  OrielWeb.WebviewWindow :: OuterSize : OrielWeb.OrielSize (get=True, set=False)
+  OrielWeb.WebviewWindow :: PostToUiThread(System.Action) -> System.Boolean
+  OrielWeb.WebviewWindow :: Reload() -> System.Void
+  OrielWeb.WebviewWindow :: RequestUserAttention(System.Nullable`1[OrielWeb.OrielUserAttention]) -> System.Void
+  OrielWeb.WebviewWindow :: Resize(System.Int32, System.Int32) -> System.Void
+  OrielWeb.WebviewWindow :: Restore() -> System.Void
+  OrielWeb.WebviewWindow :: ScaleFactor : System.Double (get=True, set=False)
+  OrielWeb.WebviewWindow :: SetAlwaysOnBottom(System.Boolean) -> System.Void
+  OrielWeb.WebviewWindow :: SetAppMenuBar(System.Collections.Generic.IReadOnlyList`1[OrielWeb.OrielMenuItem]) -> System.Void
+  OrielWeb.WebviewWindow :: SetBackgroundColor(System.UInt32) -> System.Void
+  OrielWeb.WebviewWindow :: SetBadgeCount(System.Nullable`1[System.Int32]) -> System.Void
+  OrielWeb.WebviewWindow :: SetBadgeLabel(System.String) -> System.Void
+  OrielWeb.WebviewWindow :: SetClosable(System.Boolean) -> System.Void
+  OrielWeb.WebviewWindow :: SetContentProtected(System.Boolean) -> System.Void
+  OrielWeb.WebviewWindow :: SetCursorGrab(System.Boolean) -> System.Void
+  OrielWeb.WebviewWindow :: SetCursorIcon(OrielWeb.OrielCursorIcon) -> System.Void
+  OrielWeb.WebviewWindow :: SetCursorPosition(System.Double, System.Double) -> System.Void
+  OrielWeb.WebviewWindow :: SetCursorVisible(System.Boolean) -> System.Void
+  OrielWeb.WebviewWindow :: SetDecorations(System.Boolean) -> System.Void
+  OrielWeb.WebviewWindow :: SetEffects(OrielWeb.OrielEffects) -> System.Void
+  OrielWeb.WebviewWindow :: SetEnabled(System.Boolean) -> System.Void
+  OrielWeb.WebviewWindow :: SetFocusable(System.Boolean) -> System.Void
+  OrielWeb.WebviewWindow :: SetFullscreen(System.Boolean) -> System.Void
+  OrielWeb.WebviewWindow :: SetFullscreenOnMonitor(System.Int32, System.Int32) -> System.Void
+  OrielWeb.WebviewWindow :: SetIcon(System.String) -> System.Void
+  OrielWeb.WebviewWindow :: SetIconFromBytes(System.Byte[]) -> System.Void
+  OrielWeb.WebviewWindow :: SetIconFromRgba(System.Byte[], System.Int32, System.Int32) -> System.Void
+  OrielWeb.WebviewWindow :: SetIgnoreCursorEvents(System.Boolean) -> System.Void
+  OrielWeb.WebviewWindow :: SetMaxSize(System.Int32, System.Int32) -> System.Void
+  OrielWeb.WebviewWindow :: SetMaximizable(System.Boolean) -> System.Void
+  OrielWeb.WebviewWindow :: SetMinSize(System.Int32, System.Int32) -> System.Void
+  OrielWeb.WebviewWindow :: SetMinimizable(System.Boolean) -> System.Void
+  OrielWeb.WebviewWindow :: SetOnTop(System.Boolean) -> System.Void
+  OrielWeb.WebviewWindow :: SetOverlayIcon(OrielWeb.OrielImage) -> System.Void
+  OrielWeb.WebviewWindow :: SetProgressBar(OrielWeb.OrielProgressBarStatus, System.Nullable`1[System.Double]) -> System.Void
+  OrielWeb.WebviewWindow :: SetResizable(System.Boolean) -> System.Void
+  OrielWeb.WebviewWindow :: SetShadow(System.Boolean) -> System.Void
+  OrielWeb.WebviewWindow :: SetSimpleFullscreen(System.Boolean) -> System.Void
+  OrielWeb.WebviewWindow :: SetSkipTaskbar(System.Boolean) -> System.Void
+  OrielWeb.WebviewWindow :: SetTitle(System.String) -> System.Void
+  OrielWeb.WebviewWindow :: SetTitleBarStyle(OrielWeb.OrielTitleBarStyle) -> System.Void
+  OrielWeb.WebviewWindow :: SetVisibleOnAllWorkspaces(System.Boolean) -> System.Void
+  OrielWeb.WebviewWindow :: SetWindowMenuBar(System.Collections.Generic.IReadOnlyList`1[OrielWeb.OrielMenuItem]) -> System.Void
+  OrielWeb.WebviewWindow :: SetZoom(System.Double) -> System.Void
+  OrielWeb.WebviewWindow :: Show() -> System.Void
+  OrielWeb.WebviewWindow :: ShowContextMenu(System.Collections.Generic.IReadOnlyList`1[OrielWeb.OrielMenuItem]) -> System.Void
+  OrielWeb.WebviewWindow :: ShowContextMenu(System.Collections.Generic.IReadOnlyList`1[OrielWeb.OrielMenuItem], System.Nullable`1[OrielWeb.OrielPosition]) -> System.Void
+  OrielWeb.WebviewWindow :: ShowContextMenu(System.Collections.Generic.IReadOnlyList`1[OrielWeb.OrielMenuItem], System.Nullable`1[OrielWeb.OrielPosition], System.Nullable`1[System.TimeSpan]) -> System.Void
+  OrielWeb.WebviewWindow :: ShowDialog(System.String, System.String = optional, System.String = optional, OrielWeb.MessageButtons = optional, System.String = optional, System.String = optional) -> System.Nullable`1[OrielWeb.MessageResult]
+  OrielWeb.WebviewWindow :: ShowFolderDialog(System.String = optional, System.String = optional) -> System.String
+  OrielWeb.WebviewWindow :: ShowMessage(System.String, System.String = optional, OrielWeb.OrielMessageBoxIcon = optional) -> System.Void
+  OrielWeb.WebviewWindow :: ShowOpenFileDialog(OrielWeb.OrielOpenFileDialogOptions) -> System.String[]
+  OrielWeb.WebviewWindow :: ShowOpenFileDialog(System.String = optional, System.String = optional, System.String = optional) -> System.String
+  OrielWeb.WebviewWindow :: ShowSaveFileDialog(OrielWeb.OrielSaveFileDialogOptions) -> System.String
+  OrielWeb.WebviewWindow :: ShowSaveFileDialog(System.String = optional, System.String = optional, System.String = optional) -> System.String
+  OrielWeb.WebviewWindow :: StartResizeDragging(OrielWeb.OrielResizeDirection) -> System.Void
+  OrielWeb.WebviewWindow :: ThemeOverride : System.Nullable`1[OrielWeb.OrielTheme] (get=True, set=True)
+  OrielWeb.WebviewWindow :: Title : System.String (get=True, set=False)
+  OrielWeb.WebviewWindow :: ToggleFullscreen() -> System.Boolean
+  OrielWeb.WebviewWindow :: ToggleMaximize() -> System.Boolean
+  OrielWeb.WebviewWindow :: ToggleOnTop() -> System.Boolean
+  OrielWeb.WebviewWindow :: event Closed : System.Action
+  OrielWeb.WebviewWindow :: event Closing : System.Action`1[OrielWeb.OrielCloseRequestEventArgs]
+  OrielWeb.WebviewWindow :: event ConsoleMessage : System.Action`1[OrielWeb.OrielConsoleMessageEventArgs]
+  OrielWeb.WebviewWindow :: event ContextMenuItemClicked : System.Action`1[System.String]
+  OrielWeb.WebviewWindow :: event FileDropped : System.Action`1[OrielWeb.OrielFileDropEventArgs]
+  OrielWeb.WebviewWindow :: event FocusChanged : System.Action`1[System.Boolean]
+  OrielWeb.WebviewWindow :: event Loaded : System.Action
+  OrielWeb.WebviewWindow :: event MaximizedChanged : System.Action`1[System.Boolean]
+  OrielWeb.WebviewWindow :: event MessageReceived : System.Action`1[OrielWeb.OrielMessageReceivedEventArgs]
+  OrielWeb.WebviewWindow :: event Moved : System.Action`1[OrielWeb.OrielPositionChangedEventArgs]
+  OrielWeb.WebviewWindow :: event NavigationCompleted : System.Action`1[OrielWeb.OrielNavigationCompletedEventArgs]
+  OrielWeb.WebviewWindow :: event NavigationStarting : System.Action`1[System.String]
+  OrielWeb.WebviewWindow :: event Resized : System.Action`1[OrielWeb.OrielSizeChangedEventArgs]
+  OrielWeb.WebviewWindow :: event ScaleFactorChanged : System.Action`1[System.Double]
+  OrielWeb.WebviewWindow :: event TitleChanged : System.Action`1[System.String]
+type OrielWeb.Ipc.IOrielCommandRouter
+type OrielWeb.Ipc.OrielChannel
+type OrielWeb.Ipc.OrielCommandAttribute
+type OrielWeb.Ipc.OrielCommandFailedEventArgs
+type OrielWeb.Ipc.OrielCommandInvokedEventArgs
+type OrielWeb.Ipc.OrielCommandRegistry
+type OrielWeb.Ipc.OrielEventSink
+type OrielWeb.Ipc.OrielIpcErrorCodes
+type OrielWeb.Ipc.OrielIpcException
+type OrielWeb.Ipc.OrielIpcRejectedEventArgs
+type OrielWeb.Ipc.OrielIpcRejectionLayer
+type OrielWeb.Ipc.OrielJson
+type OrielWeb.MessageButtons
+type OrielWeb.MessageResult
+type OrielWeb.Oriel
+type OrielWeb.OrielAccelerator
+type OrielWeb.OrielApp
+type OrielWeb.OrielAppBuilder
+type OrielWeb.OrielAppInfo
+type OrielWeb.OrielAssetFileServer
+type OrielWeb.OrielCapabilityOptions
+type OrielWeb.OrielCloseRequestEventArgs
+type OrielWeb.OrielConsoleMessageEventArgs
+type OrielWeb.OrielContextMenuPolicy
+type OrielWeb.OrielCursorIcon
+type OrielWeb.OrielDiagnosticEventArgs
+type OrielWeb.OrielDiagnostics
+type OrielWeb.OrielDragEventArgs
+type OrielWeb.OrielDragEventType
+type OrielWeb.OrielEffect
+type OrielWeb.OrielEffectState
+type OrielWeb.OrielEffects
+type OrielWeb.OrielExitEventArgs
+type OrielWeb.OrielExitTimeoutEventArgs
+type OrielWeb.OrielFileDropEventArgs
+type OrielWeb.OrielFileFilter
+type OrielWeb.OrielImage
+type OrielWeb.OrielImageFormatException
+type OrielWeb.OrielLibrary
+type OrielWeb.OrielMenuItem
+type OrielWeb.OrielMenuRole
+type OrielWeb.OrielMessageBoxIcon
+type OrielWeb.OrielMessageReceivedEventArgs
+type OrielWeb.OrielMonitor
+type OrielWeb.OrielNavigationCompletedEventArgs
+type OrielWeb.OrielNotificationOptions
+type OrielWeb.OrielNotificationRecord
+type OrielWeb.OrielNotificationSchedule
+type OrielWeb.OrielOpenFileDialogOptions
+type OrielWeb.OrielPathScope
+type OrielWeb.OrielPathVariables
+type OrielWeb.OrielPosition
+type OrielWeb.OrielPositionChangedEventArgs
+type OrielWeb.OrielProgressBarStatus
+type OrielWeb.OrielResizeDirection
+type OrielWeb.OrielSaveFileDialogOptions
+type OrielWeb.OrielScheduleEvery
+type OrielWeb.OrielScheduleInterval
+type OrielWeb.OrielShellOptions
+type OrielWeb.OrielSize
+type OrielWeb.OrielSizeChangedEventArgs
+type OrielWeb.OrielTheme
+type OrielWeb.OrielTitleBarStyle
+type OrielWeb.OrielTray
+type OrielWeb.OrielTrayButtonState
+type OrielWeb.OrielTrayEvent
+type OrielWeb.OrielTrayEventType
+type OrielWeb.OrielTrayMouseButton
+type OrielWeb.OrielTrayOptions
+type OrielWeb.OrielTrayPoint
+type OrielWeb.OrielTrayRect
+type OrielWeb.OrielUserAttention
+type OrielWeb.OrielWebView2RuntimeMissingEventArgs
+type OrielWeb.OrielWindowEventKind
+type OrielWeb.OrielWindowOptions
+type OrielWeb.WebviewWindow
