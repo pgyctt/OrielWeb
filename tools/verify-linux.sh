@@ -58,7 +58,7 @@
 #   ./tools/verify-linux.sh --stages selftest    # 只跑自检（逗号分隔：selftest,shell,smoke,all）
 #   ./tools/verify-linux.sh --seconds 60         # 运行取证每条路径的观察窗（默认 30 秒）
 #   ./tools/verify-linux.sh --backend x11        # 运行取证只跑强制 X11 那条路径
-#   ./tools/verify-linux.sh --rid linux-arm64
+#   ./tools/verify-linux.sh --rid linux-arm64  # 指定 RID（默认按 uname -m 推断）
 #   ./tools/verify-linux.sh --demo PATH          # 指定可执行产物
 #   ./tools/verify-linux.sh --out DIR            # 日志与截图目录（默认 <仓库根>/linux-verify-out）
 #   ./tools/verify-linux.sh --app-arg --hidden   # 透传参数给 demo（可重复）
@@ -89,7 +89,7 @@ set -uo pipefail
 
 ORIG_ARGS=("$@")
 
-RID="${RUNTIME_ID:-linux-x64}"
+RID="${RUNTIME_ID:-}"
 CONFIG="${CONFIG:-Release}"
 OBSERVE_SECONDS=30
 DO_PUBLISH=1
@@ -122,6 +122,18 @@ while [[ $# -gt 0 ]]; do
         *)            echo "未知参数：$1" >&2; usage >&2; exit 2 ;;
     esac
 done
+
+if [[ -z "$RID" ]]; then
+    # 按架构推断，**不能写死 linux-x64**：在 arm64 机器上交叉发布 x64 的 AOT 产物，
+    # 链接阶段就会失败（ld.bfd: unrecognised emulation mode: elf_x86_64），
+    # 而失败点在 "Generating native code" 之后，看起来像 AOT 工具链的问题——
+    # 0.4.8 新增的 smoke-linux-arm64 首轮就是这么红的。
+    case "$(uname -m)" in
+        aarch64|arm64) RID="linux-arm64" ;;
+        x86_64|amd64)  RID="linux-x64" ;;
+        *)             echo "不认识的架构 $(uname -m)，请用 --rid 指定" >&2; exit 2 ;;
+    esac
+fi
 
 case "$BACKEND" in
     auto|wayland|x11) ;;
