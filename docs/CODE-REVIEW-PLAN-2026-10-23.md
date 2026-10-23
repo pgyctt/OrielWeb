@@ -344,6 +344,12 @@ pwsh tools/verify-matrix.ps1     # 退出码 0，且能对故意篡改的矩阵�
 
 验收：新增 `SymlinkScopeTests`——临时目录建 symlink 指向 scope 外文件，`fs.readTextFile` 必须报 `path_not_allowed`。**Windows 上创建符号链接需要 `SeCreateSymbolicLinkPrivilege`**：测试若因权限无法创建，必须 `Assert.Skip("缺少 SeCreateSymbolicLinkPrivilege")` 并把原因打进输出，不允许静默跳过（本项目"跳过的门禁等于没有门禁"）。
 
+> **执行记录（0.4.11 补）**：0.4.9 只解析了候选路径，漏了**模式那一侧**。macOS 的 `/var` 是
+> `/private/var` 的符号链接，于是"真实路径"对"字面模式"，**所有 `fs.*` 都被拒**——
+> Windows 与 Linux 上不可能复现，是 0.4.8 新加的 `smoke-macos-x64` 首轮抓到的。
+> 教训：这类"两边都要搬到同一空间"的归一，**任何一侧缺席都只在某个平台上才有症状**；
+> 补上的用例是 `ScopeRootItselfIsALink_PathStillAllowed`（scope 根目录本身是链接）。
+
 **R6.2 `InvokeOnUiThread` 加超时**
 
 现状：`OrielApp.cs:1039` 与 `WebviewWindow.cs:904` 的 `done.Wait()` 无参 = 无限等待。已有 `IsExiting` 前置检查，但覆盖不到"UI 线程卡在一条长命令或原生调用里"。此时后台线程永久阻塞，且没有任何诊断。

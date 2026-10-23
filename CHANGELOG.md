@@ -7,6 +7,29 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
+## 0.4.11 - 2026-10-23
+
+### 修复
+
+- **macOS 上所有 `fs.*` 命令被拒**（0.4.9 的回归）：0.4.9 让候选路径解析符号链接后，
+  scope 判定变成"真实路径"对"字面模式"的比较。macOS 的 `/var` 是 `/private/var` 的符号链接，
+  于是 `/private/var/folders/...` 永远匹配不上声明里的 `/var/folders/...`——**只要 scope 路径
+  里出现过符号链接（macOS 上必然出现），任何 `fs.*` 调用都返回 `path_not_allowed`**。
+
+  现在模式这一侧的**静态前缀**也解析到真实路径（`OrielLinkResolver.ResolvePattern`），
+  两边在同一空间比较。安全性不变：解析的是用户配置的可信前缀，候选路径仍只认真实路径，
+  "allowed 目录里放链接指向外部"照旧被拒。
+
+  **影响面**：仅 macOS 用户受影响，0.4.9 / 0.4.10 两个版本不可用于 macOS。
+  Windows 与 Linux 上该回归不可复现——这正是 0.4.8 新加的 macOS CI 存在的意义。
+
+### 维护
+
+- `tools/verify-linux.sh` 的 RID 改为按 `uname -m` 推断（原先写死 `linux-x64`）：
+  在 arm64 机器上会去交叉发布 x64 的 AOT 产物，链接阶段报
+  `ld.bfd: unrecognised emulation mode: elf_x86_64`，看起来像 AOT 工具链的问题。
+  `smoke-linux-arm64` 首轮就是这么红的。
+
 ## 0.4.10 - 2026-10-23
 
 ### 维护
