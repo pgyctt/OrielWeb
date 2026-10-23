@@ -6,13 +6,21 @@
 dotnet add package OrielWeb
 ```
 
-| 平台 | Webview | 状态 |
-|---|---|---|
-| Windows x64/arm64 | WebView2 (Evergreen) | ✅ 真机验证（IPC 往返、单测、AOT 发布） |
-| Linux x64 | WebKitGTK 4.1 | ✅ 真机验证（WSL2 + WSLg；X11 与 Wayland 双后端） |
-| macOS arm64 | WKWebView | ✅ 真机验证（GitHub 托管 runner） |
-| Linux arm64 | WebKitGTK 4.1 | ⚠️ 编译通过 + xvfb 冒烟；未在真机运行 |
-| macOS x64 | WKWebView | ⚠️ 编译通过；未在真机运行 |
+| 平台 | Webview | 状态 | 仓库内可核对的证据 |
+|---|---|---|---|
+| Windows x64/arm64 | WebView2 (Evergreen) | ✅ 真机验证（IPC 往返、单测、AOT 发布） | `ci:compile-windows`、`ci:smoke-windows` |
+| Linux x64 | WebKitGTK 4.1 | ✅ 真机验证（WSL2 + WSLg；X11 与 Wayland 双后端） | `ci:compile-linux`、`ci:smoke-linux` |
+| macOS arm64 | WKWebView | ✅ 真机验证（GitHub 托管 runner） | `ci:smoke-macos` |
+| Linux arm64 | WebKitGTK 4.1 | ⚠️ CI 自检（原生 arm64，待首轮绿）；未在真机桌面运行 | `ci:compile-linux`、`ci:smoke-linux-arm64` |
+| macOS x64 | WKWebView | ⚠️ CI 自检（`macos-15-intel`，待首轮绿）；此前只做过 IL 编译 | `ci:compile-macos`、`ci:smoke-macos-x64` |
+
+> **"证据"列不是形容词，是可核对的引用**：`ci:<job>` 指向 `.github/workflows/ci.yml` 里的 job 名，
+> 由 `tools/verify-matrix.ps1` 在 `test` job 里校验；引用一个不存在的 job 会让 CI 红。
+> 这条规则的由来：2026-10-23 评审发现 arm64 那行写着"xvfb 冒烟"而仓库里只有 IL 交叉编译——
+> 一句无法复现的话，比一句难看的实话贵得多。
+>
+> macOS 的 Intel runner 在 2025-12-04 随 `macos-13` 退役，现用 `macos-15-intel`（可用到 2027 年秋）；
+> Linux arm64 用 `ubuntu-24.04-arm`（公开仓库免费，原生 4 vCPU）。
 
 **完整 API 与各能力的取舍记录见 [docs/API.md](docs/API.md)**；尚未完成与待真机验证的部分见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 

@@ -295,6 +295,23 @@ pwsh tools/verify-matrix.ps1     # 退出码 0，且能对故意篡改的矩阵�
 
 矩阵里不再出现"仓库里无法复现"的状态描述。
 
+**实施结果（2026-10-23，随 0.4.8 交付）**
+
+| 动作 | 状态 | 说明 |
+|---|---|---|
+| 1 核实 runner | ✅ | `macos-13` 已于 **2025-12-04 退役**；Intel 的替代品是 `macos-15-intel`（可用到 2027 年秋）。Linux arm64 用 `ubuntu-24.04-arm`（公开仓库免费，原生 4 vCPU） |
+| 2 补 job | ✅ | `smoke-linux-arm64` 复用 `verify-linux.sh --stages selftest`；`smoke-macos-x64` 复用 `verify-macos.sh` 全套（脚本按 `uname -m` 选 RID，Intel 上自动走 `osx-x64`） |
+| 3 矩阵可核对 | ✅ | 矩阵加"证据"列，每行用 `ci:<job>` 引用 |
+| 4 一致性校验 | ✅ | `tools/verify-matrix.ps1` 接进 `test` job：引用不存在的 job 直接红；反向提示"有 job 没进矩阵" |
+
+> **两个新 job 的矩阵状态写的是"待首轮绿"，不是"已通过"**——本地无法验证它们，
+> 所以不敢写 ✅。这正是这一批要消灭的那类话：状态必须与仓库里能跑出来的东西对齐。
+> 首轮 CI 通过后再把 ⚠️ 改成 ✅，这是唯一诚实的顺序。
+>
+> `smoke-macos-x64` 顺带补上了一个**已经发生过**的盲区：0.4.3 修的 NSRect ABI 崩溃
+> （Intel 上建第一个窗口就 SIGABRT）正是因为 CI 只跑 `osx-arm64`。新增这条线之后，
+> 同类问题会在 PR 上就暴露。
+
 ---
 
 ### R6 — 两处边界补强

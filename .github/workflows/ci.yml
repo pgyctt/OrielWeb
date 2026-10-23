@@ -102,6 +102,13 @@ jobs:
         shell: pwsh
         run: pwsh tools/verify-package.ps1
 
+      - name: Platform matrix points at real jobs
+        # README 的平台矩阵用 `ci:<job>` 标注每行状态的证据。引用一个不存在的 job 就红——
+        # 2026-10-23 评审的教训：矩阵里一句"xvfb 冒烟"在仓库里找不到任何对应物，
+        # 而它看起来完全像证据。把承诺变成可核对的引用，是唯一防得住这类漂移的办法。
+        shell: pwsh
+        run: pwsh tools/verify-matrix.ps1
+
   compile-windows:
     # 与 compile-linux / compile-macos 同属"编译并产出可执行产物"这一组；
     # Windows 侧这里额外检查 AOT 产物是否存在与大小（smoke-windows 依赖它）。
@@ -318,6 +325,82 @@ jobs:
         with:
           name: macos-smoke-evidence
           path: ${{ runner.temp }}/macos-verify-out
+          if-no-files-found: warn
+          retention-days: 14
+
+  smoke-linux-arm64:
+    # Linux arm64 此前只有 IL 交叉编译（compile-linux 的第二个 RID），
+    # 从来没有在 arm64 上真正跑起来过——README 却写着"xvfb 冒烟"。
+    # ubuntu-24.04-arm 对公开仓库免费且是原生 arm64，依赖包与 x64 同名，
+    # 所以这里跑与 smoke-linux 同一套 selftest。
+    runs-on: ubuntu-24.04-arm
+    needs: [compile-linux]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          APT_OPTS="-o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=2"
+          sudo apt-get update $APT_OPTS
+          sudo apt-get install -y $APT_OPTS libwebkit2gtk-4.1-dev libgtk-3-dev xvfb x11-utils zlib1g-dev clang
+
+      - uses: ./.github/actions/setup-dotnet-nuget
+
+      - name: Start Xvfb and wait until it accepts connections
+        # 与 smoke-linux 同款等待：xvfb-run -a 不等 X server 就绪，会偶发 "cannot open display"。
+        run: |
+          Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp > "$RUNNER_TEMP/xvfb.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if xdpyinfo -display :99 > /dev/null 2>&1; then
+              echo "Xvfb :99 就绪（第 ${i} 次探测）"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Xvfb 30 秒内仍未就绪：" >&2
+          cat "$RUNNER_TEMP/xvfb.log" >&2
+          exit 1
+
+      - name: Self-tests (arm64)
+        # 只跑 selftest：托盘/通知取证（shell 阶段）依赖 dbus 与通知守护，
+        # 与架构无关，x64 那条线已经覆盖，这里不值得再配一套。
+        env:
+          DISPLAY: ':99'
+        run: bash tools/verify-linux.sh --stages selftest --backend x11 --out "$RUNNER_TEMP/linux-arm64-out"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64-evidence
+          path: ${{ runner.temp }}/linux-arm64-out
+          if-no-files-found: warn
+          retention-days: 14
+
+  smoke-macos-x64:
+    # macOS x64 此前**只编译不运行**。0.4.3 的 NSRect ABI 崩溃（Intel 上建第一个窗口就
+    # SIGABRT）正是这类盲区的产物：CI 只跑 osx-arm64，它永远看不见。
+    # macos-13 已于 2025-12-04 退役，Intel 的替代品是 macos-15-intel（可用到 2027 年秋）。
+    runs-on: macos-15-intel
+    needs: [compile-macos]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-dotnet-nuget
+
+      - name: Smoke run with evidence (Intel)
+        # 复用 arm64 那条线的全套：publish → 组装 .app → 自检 → 截图。
+        # 脚本按 uname -m 选 RID，在 Intel 上自动走 osx-x64，无需额外参数。
+        run: bash tools/verify-macos.sh --out "$RUNNER_TEMP/macos-x64-out"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-x64-evidence
+          path: ${{ runner.temp }}/macos-x64-out
           if-no-files-found: warn
           retention-days: 14
 
