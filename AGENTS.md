@@ -23,3 +23,15 @@
 
 - 提交说明使用中文，遵循「类型: 简明描述」格式。
 - 涉及多步排查的问题，在回复中记录现象、定位过程、根因与最终修复，便于后续复盘。
+
+## 4. Agent 资产目录（强制）
+
+- **唯一事实来源**：所有 Agent 资产（技能、规则、命令、子代理、记忆、MCP 配置模板等）必须存放在仓库根目录 `.agents/` 下。
+- **禁止私有点目录**：不得创建、写入、复制或提交任何 Agent 私有点目录，包括但不限于 `.claude/`、`.cursor/`、`.codex/`、`.dsh/`、`.gemini/`、`.copilot/`、`.windsurf/`、`.aider/`、`.workbuddy/`、`.cline/`、`.roo/`、`.kiro/`、`.trae/`、`.qwen/`、`.opencode/`。该清单非穷举。
+- **禁止私有规则文件**：不得创建 `.cursorrules`、`.clinerules`、`.windsurfrules`、`.aider.conf.yml`、`.github/copilot-instructions.md` 等单工具私有规则文件；通用入口 `AGENTS.md` 除外。
+- **技能路径**：技能必须为 `.agents/skills/<name>/SKILL.md`，保持一层深度，目录名与 `SKILL.md` 中的 `name` 一致。
+- **工具兼容**：工具若强制要求私有点目录，视为不兼容，停止使用；不得为其创建私有目录、私有规则文件或指向 `.agents/` 的符号链接兼容入口。
+- **迁移**：发现已有私有点目录时，将内容迁移到 `.agents/` 对应位置，更新引用并删除原目录；不得保留双份。
+- **非 Agent 点目录**：`.git/`、`.github/`、`.vscode/` 等基础设施目录不受本规则约束，但不得用于存放 Agent 资产；`.github/` 不得放置 `copilot-instructions.md` 等 Agent 私有规则。
+- **检查与阻断**：提交前和 CI 必须检查禁止目录及私有规则文件；`.gitignore` 应忽略常见私有 Agent 点目录。
+- **冲突处理**：工具自动创建私有点目录时，立即停止、删除，并将所需内容改放到 `.agents/`；无法改放则报告，不得静默降级。
