@@ -7,7 +7,12 @@
   "homepage": "https://github.com/pgyctt/OrielWeb",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pgyctt/OrielWeb.git"
+    "url": "https://github.com/pgyctt/OrielWeb.git",
+    "directory": "packages/api"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "keywords": [
     "orielweb",
@@ -93,7 +98,10 @@
   "scripts": {
     "test": "node --test tests/*.test.mjs",
     "typecheck": "tsc -p . --noEmit",
-    "build:types": "tsc -p tsconfig.types.json"
+    "clean:types": "node -e \"require('node:fs').rmSync('types',{recursive:true,force:true})\"",
+    "build:types": "npm run clean:types && tsc -p tsconfig.types.json && node -e \"require('node:fs').copyFileSync('src/types.d.ts','types/types.d.ts')\"",
+    "check:types": "node scripts/check-published-types.mjs",
+    "prepublishOnly": "npm test && npm run typecheck && npm run build:types && npm run check:types"
   },
   "devDependencies": {
     "@tauri-apps/api": "^2.12.0",

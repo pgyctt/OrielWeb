@@ -128,11 +128,17 @@ const PROGRESS_STATUSES = new Set(['none', 'normal', 'indeterminate', 'paused', 
  * 把宿主返回的尺寸对象包成 {@link LogicalSize} 实例。
  *
  * @param {unknown} raw
- * @returns {LogicalSize}
+ * @returns {import('./dpi.js').LogicalSize}
  * @remarks
  * 宿主给的是 `{ type, width, height }` 的普通对象；包成类实例是为了让 `instanceof LogicalSize`
  * 成立、并能原样喂回 `setSize()`（那里按 `type` 分派）。两者形状本就一致，所以这里只做包装不回读校验——
  * 真拿到畸形值会在调用点立刻炸，比在这里静默补默认值好。
+ *
+ * 类型位置写 `import('./dpi.js').LogicalSize` 而不是裸 `LogicalSize`：本模块末尾有
+ * `export { LogicalSize } from './dpi.js'`（对标 Tauri 的转出），声明发射器会认定该名字
+ * 已经"在模块里"而**不再补 import**，产出的 `window.d.ts` 于是引用了一个未定义的名字
+ * （消费者 `skipLibCheck: false` 时报 TS2304）。包内 `typecheck` 用的是 `skipLibCheck: true`，
+ * 所以这个洞在发 npm 之前一直没被看见——是打包后装进干净目录才验出来的。
  */
 function toLogicalSize(raw) {
     const value = /** @type {{ width?: number, height?: number }} */ (raw ?? {});
@@ -143,7 +149,7 @@ function toLogicalSize(raw) {
  * 把宿主返回的位置对象包成 {@link LogicalPosition} 实例；理由同 {@link toLogicalSize}。
  *
  * @param {unknown} raw
- * @returns {LogicalPosition}
+ * @returns {import('./dpi.js').LogicalPosition}
  */
 function toLogicalPosition(raw) {
     const value = /** @type {{ x?: number, y?: number }} */ (raw ?? {});
@@ -1712,7 +1718,11 @@ export class Window {
     // 字段名（width/height/x/y）与 Tauri 一致，返回的对象又能直接喂回 setSize/setPosition，
     // 所以迁移代码通常感觉不到差别。
 
-    /** 客户区尺寸（逻辑像素）。需要 `window.innerSize` 被允许。 */
+    /**
+     * 客户区尺寸（逻辑像素）。需要 `window.innerSize` 被允许。
+     *
+     * @returns {Promise<import('./dpi.js').LogicalSize>}
+     */
     async innerSize() {
         return toLogicalSize(await invoke('window.innerSize', { label: this.label }));
     }
@@ -1720,6 +1730,7 @@ export class Window {
     /**
      * 整窗尺寸（逻辑像素）。
      *
+     * @returns {Promise<import('./dpi.js').LogicalSize>}
      * @remarks
      * Linux/Wayland 下可能与 `innerSize()` 相等——合成器不告诉客户端装饰尺寸。
      * 需要 `window.outerSize` 被允许。
@@ -1728,7 +1739,11 @@ export class Window {
         return toLogicalSize(await invoke('window.outerSize', { label: this.label }));
     }
 
-    /** 窗口左上角（屏幕逻辑坐标）。需要 `window.outerPosition` 被允许。 */
+    /**
+     * 窗口左上角（屏幕逻辑坐标）。需要 `window.outerPosition` 被允许。
+     *
+     * @returns {Promise<import('./dpi.js').LogicalPosition>}
+     */
     async outerPosition() {
         return toLogicalPosition(await invoke('window.outerPosition', { label: this.label }));
     }
@@ -1736,6 +1751,7 @@ export class Window {
     /**
      * 客户区左上角（屏幕逻辑坐标）。
      *
+     * @returns {Promise<import('./dpi.js').LogicalPosition>}
      * @remarks
      * Linux 上目前恒等于 `outerPosition()`（GTK 不暴露装饰偏移）。
      * 需要 `window.innerPosition` 被允许。

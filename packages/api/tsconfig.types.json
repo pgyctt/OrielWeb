@@ -5,6 +5,18 @@
 // 而不写 `types` 会让 `import { listen } from '@orielweb/api/event'` 在消费方
 // 变成隐式 any。这与 D-1 的"无打包器"不冲突：这里产的是类型，不是运行时代码，
 // `exports.default` 仍然直接指向 `src/*.js`。
+//
+// 两件容易踩的事，都记录在这里免得下次"优化"掉：
+//
+//   1. `src/types.d.ts` 是手写的传输层契约，**tsc 不会为 .d.ts 输入产出任何文件**，
+//      所以它不会出现在 `types/` 里。但 `types/internal.d.ts` 末尾有
+//      `import("./types.js")`，少了这份副本，消费方在 `skipLibCheck: false` 下会报
+//      TS2307。因此 `build:types` 在 tsc 之后把它拷成 `types/types.d.ts`
+//      （`.js` 说明符按 ESM 惯例解析到同名 `.d.ts`）。
+//   2. 不写 `exclude: ["src/internal.js"]`。它看着像"内部模块不产出声明"，实际不生效：
+//      `internal.js` 被 `core.js` / `tray.js` 等导入，导入进来的文件一律进 program，
+//      照样产出 `internal.d.ts`——而 `tray.d.ts` 确实要 `from './internal.js'` 取
+//      `__setDebugWarnings`，所以它本来就该产出。
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
@@ -14,6 +26,5 @@
     "declarationDir": "./types",
     "stripInternal": true
   },
-  "include": ["src/**/*.js", "src/**/*.d.ts"],
-  "exclude": ["src/internal.js"]
+  "include": ["src/**/*.js", "src/**/*.d.ts"]
 }

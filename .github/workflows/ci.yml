@@ -84,17 +84,32 @@ jobs:
         run: npx --no-install tsc -p . --noEmit
 
       - name: Frontend API types are up to date
-        # types/ 是 `tsc -p tsconfig.types.json` 的产物，**提交进仓库**（包的 exports.types 指向它）。
+        # types/ 是 `npm run build:types` 的产物，**提交进仓库**（包的 exports.types 指向它）。
         # 这里重新生成再比对：手改了 src 却忘了重新生成时，消费方会拿到过期的 .d.ts，
         # 而症状是"IDE 显示的方法签名与运行期不一致"——极难归因。宁可在 PR 上红。
         #
         # 为什么不干脆在发布时生成：那样漂移只会在 publish 那一刻才被发现，
         # 而那时已经没有办法 review 差异了。
+        #
+        # `npm run build:types` 而不是裸 `tsc`：这个脚本会先清空 types/ 再生成，并把
+        # `src/types.d.ts` 拷成 `types/types.d.ts`（tsc 不为 .d.ts 输入产出文件，而
+        # `types/internal.d.ts` 要 `import("./types.js")` 指向它）。用裸 tsc 的话，
+        # 少掉的那份副本永远是"历史遗留"，比对不出"这次忘了重新生成"。
+        #
+        # `check:types` 是发布闸：包内 `typecheck` 用 `skipLibCheck: true`，声明文件
+        # 自身引用不存在的名字（TS2304/TS2307）在本地一路绿、消费者一装就红。
+        # `git status --porcelain` 而不是 `git diff`：新增的产物文件（如上面那份副本）
+        # 在 diff 里看不见。
         run: |
           cd packages/api
-          npx --no-install tsc -p tsconfig.types.json
+          npm run build:types
+          npm run check:types
           cd ../..
-          git diff --exit-code packages/api/types/
+          if [ -n "$(git status --porcelain --untracked-files=all -- packages/api/types)" ]; then
+            git status --porcelain --untracked-files=all -- packages/api/types
+            echo "::error::packages/api/types 与 src 不一致——忘了提交重新生成的结果？"
+            exit 1
+          fi
 
       - name: Package build logic (in-package MSBuild targets)
         # 包内 buildTransitive/OrielWeb.targets 的消费链路：打包 → 零配置消费工程 → 断言

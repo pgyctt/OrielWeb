@@ -8,18 +8,23 @@ export function toHostEventName(eventName: string): string;
 /**
  * 订阅一个事件。
  *
+ * `T` 是 payload 的类型，用法与 Tauri 一致：`listen<MyPayload>('x', (e) => e.payload.id)`。
+ * 不写类型实参时 `T` 退回 `any`——迁移过来的代码即使一处都没标注，也不会因为
+ * 把 `payload` 从 `any` 收紧成 `unknown` 而整片报错。
+ *
+ * @template [T=any]
  * @param {string} eventName 事件名（如 `resize`、`tauri://resize`、自定义名）。
- * @param {(event: { event: string, id: number, payload: any }) => void} handler
+ * @param {(event: { event: string, id: number, payload: T }) => void} handler
  * @param {{ target?: string | { label: string } }} [options]
  *   `target` 是 Tauri 的过滤参数（只在那个窗口里生效）。本库**目前忽略它**——
  *   事件本来就只发给本窗口，跨窗口定向要用 `emitTo`。传了不会报错，但也不改变行为。
  * @returns {(() => void) & PromiseLike<() => void>} 退订函数；它同时是 thenable，
  *   所以 `await listen(...)` 也成立（见 {@link asThenable}）。
  */
-export function listen(eventName: string, handler: (event: {
+export function listen<T = any>(eventName: string, handler: (event: {
     event: string;
     id: number;
-    payload: any;
+    payload: T;
 }) => void, options?: {
     target?: string | {
         label: string;
@@ -28,16 +33,17 @@ export function listen(eventName: string, handler: (event: {
 /**
  * 订阅一个事件，收到**一次**后自动退订（对标 Tauri 的 `once`）。
  *
+ * @template [T=any]
  * @param {string} eventName
- * @param {(event: { event: string, id: number, payload: any }) => void} handler
+ * @param {(event: { event: string, id: number, payload: T }) => void} handler
  * @param {{ target?: string | { label: string } }} [options]
  * @returns {(() => void) & PromiseLike<() => void>} 退订函数；在事件到达前调用它可以取消订阅。
  *   与 {@link listen} 一样是 thenable，`await once(...)` 也成立。
  */
-export function once(eventName: string, handler: (event: {
+export function once<T = any>(eventName: string, handler: (event: {
     event: string;
     id: number;
-    payload: any;
+    payload: T;
 }) => void, options?: {
     target?: string | {
         label: string;

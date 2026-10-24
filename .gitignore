@@ -19,6 +19,8 @@ obj/
 
 ## Node（packages/api 的开发依赖）
 node_modules/
+# `npm pack` / `npm publish --dry-run` 会在包目录留下 tarball，它是产物不是源码
+packages/api/*.tgz
 
 ## Build results
 [Dd]ebug/
