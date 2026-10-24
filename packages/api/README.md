@@ -13,7 +13,7 @@ import { invoke } from '@orielweb/api/core';
 npm install @orielweb/api
 ```
 
-> **发布状态**：0.4.14 起发布到 npm（`@orielweb/api`，公开，MIT）。版本号与 NuGet 包
+> **发布状态**：0.4.15 起发布到 npm（`@orielweb/api`，公开，MIT）。版本号与 NuGet 包
 > `OrielWeb` 同步取自根 `Directory.Build.props`，两边始终是同一个 `X.Y.Z`。
 >
 > 发布走手动一步：`npm publish` 需要 2FA 或带 bypass 2FA 的 Granular Token，
@@ -98,12 +98,16 @@ const un = await win.onCloseRequested(async () => {
 
 ## 怎么把它引进页面
 
-包**没有打包器依赖**，`exports` 直接指向 `src/*.js`。两条路：
+包**没有打包器依赖**，`exports` 直接指向 `src/*.js`。三条路：
+
+```sh
+npm install @orielweb/api
+```
 
 | 场景 | 做法 |
 |---|---|
-| 有打包器（Vite / esbuild / …） | `import { invoke } from '@orielweb/api/core'` —— 裸标识符由打包器解析 |
-| 没有打包器（内嵌静态页） | 两种：配一个 import map；或直接 `import ... from './vendor/orielweb-api/core.js'` |
+| 有打包器（Vite / esbuild / …） | `import { invoke } from '@orielweb/api/core'` —— 裸标识符由打包器解析，无需额外配置 |
+| 没有打包器（内嵌静态页） | 两种：配一个 import map（映射到 `node_modules/@orielweb/api/src/*.js`）；或把 `src/*.js` 拷进产物后走相对路径 `./vendor/orielweb-api/core.js` |
 
 `samples/OrielDemo` 走的是第二条路的相对路径形式（它要把包源码内嵌进程序集，
 见 `OrielDemo.csproj` 的 vendor 段落——**直接内嵌源码而不是复制一份**，所以不存在副本漂移）：

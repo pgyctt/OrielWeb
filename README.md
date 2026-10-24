@@ -407,6 +407,28 @@ Linux 与 Windows 两条支持用 `--stages` / `-Stages` 只跑某一阶段；�
 `publish-vm-payload.ps1`（VM 部署验证用的自包含非 AOT 载荷）、
 `make-macos-app.sh`（组装 macOS `.app`）、`fake-notification-service.py` / `fake-notify-send.py`（通知替身）。
 
+**前端包（`packages/api`）的测试与发布**：
+
+```bash
+cd packages/api
+npm ci && npm test && npm run typecheck   # 单测 + JSDoc 类型
+npm run build:types && npm run check:types # 重新生成 types/ 并过发布闸门
+```
+
+`check:types` 是发布专用的一关：包内 `typecheck` 用 `skipLibCheck: true`，**看不见
+`types/*.d.ts` 自己的错**（声明文件引用了不存在的名字，本地全绿、消费者一装就红）。
+它用 `skipLibCheck: false` 把声明重新过一遍 tsc，并按 `exports` 逐条核对文件真实存在；
+挂在 `prepublishOnly` 上，任一步红都不会上传。
+
+**npm 发布是手动的一步，不在 CI 里**：npm 要求发布者带 2FA，而 `npm login` 拿到的 token
+**不带** bypass 2FA，直接 `npm publish` 必然 403。做法是建一个勾了 bypass 2FA 的
+Granular Access Token，写进**临时** `.npmrc`（`//registry.npmjs.org/:_authToken=...`）后
+`npm publish --userconfig=<那个文件>`，用完立即删除——不要写进仓库或用户级 `.npmrc`。
+
+一条容易吃亏的规则：**tarball 是快照**。包页上的 README、LICENSE、`description` 都取自
+上传那一刻的文件，发出去就改不了，只能发新版本。所以文档定稿要排在 `npm publish` 之前
+（0.4.14 → 0.4.15 就是因为先发布、后改 README）。
+
 ## 平台运行要求
 
 | 平台 | 要求 |
