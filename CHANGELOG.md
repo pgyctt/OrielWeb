@@ -9,6 +9,40 @@
 
 ## 0.4.14 - 2026-10-24
 
+### 新增
+
+- **`@orielweb/api` 发布到 npm**：`npm install @orielweb/api`。版本号与 NuGet 包同源
+  （根 `Directory.Build.props` 的 `<Version>`），两边始终是同一个 `X.Y.Z`；`MIT`，
+  44 个文件 / 168 kB，`exports` 的 17 个入口一一对应 `@tauri-apps/api` 的模块名。
+
+  发布前发现并修掉的三处缺陷，**都是包内 `typecheck` 看不见的**（它用 `skipLibCheck: true`
+  把 `types/*.d.ts` 整个跳过，而消费者那边的症状正好都在声明文件里）：
+
+  1. `types/window.d.ts` 用了 `LogicalSize` / `LogicalPosition` 却没有 import（TS2304）。
+     根因是模块末尾那行对标 Tauri 的 `export { LogicalSize } from './dpi.js'`——声明发射器
+     认定名字"已在作用域"就不再补 import。只改私有 helper 的 `@returns` 无效，
+     `innerSize()` 等 4 个公开方法的返回类型是**推断**出来的，要给它们补显式类型。
+  2. `types/internal.d.ts` 引用 `./types.js`，而 `types/types.d.ts` 从未被打包（TS2307）。
+     tsc 不为 `.d.ts` 输入产出文件，需要在 `build:types` 里补一次拷贝。
+  3. `listen` / `once` 不支持 `listen<T>(...)`（TS2558）。Tauri 的签名是泛型的，
+     而"迁移只改 import 前缀"是这个包的全部卖点——最常见的写法一撞就红。补
+     `@template [T=any]`：显式写类型实参时 payload 是 `T`，不写时退回 `any` 而不是 `unknown`，
+     这样一处都没标注的旧代码不会因为收紧而整片变红。
+
+  防复发：新增 `scripts/check-published-types.mjs`（`npm run check:types`），按 `exports`
+  逐条核对 `types`/`default` 指向的文件真实存在，再用 `skipLibCheck: false` 把全部声明过一遍
+  tsc；挂进 `prepublishOnly`。CI 的"types 是最新的"那步同步改成 `npm run build:types`，
+  并把比对从 `git diff` 换成 `git status --porcelain`——新增的产物文件在 diff 里看不见。
+
+  发布流程本身有一处与直觉相反的约束（记下来免得下次再撞）：npm 现在要求发布者带 2FA，
+  而 `npm login` 拿到的 token **不带** bypass 2FA，直接 `npm publish` 必然 403
+  （`Two-factor authentication or granular access token with bypass 2fa enabled is required`）。
+  要么账号开 TOTP 后每次带 `--otp=`，要么用勾了 bypass 2FA 的 Granular Access Token。
+
+  验证方式是"装进干净目录"而不是"单测通过"：从 registry 真实安装后，17 个入口全部可
+  import、深层路径 `@orielweb/api/src/internal.js` 被 `exports` 拦住、消费方在
+  `skipLibCheck: false` 下 `bundler` 与 `node16` 两种解析都通过。
+
 ### 维护
 
 - **契约自检迁出示例工程**（R4c）：26 个自检（`NavSelfTest` … `VisualSelfTest`）与

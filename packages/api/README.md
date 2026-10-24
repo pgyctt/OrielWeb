@@ -9,11 +9,21 @@ import { invoke } from '@tauri-apps/api/core';
 import { invoke } from '@orielweb/api/core';
 ```
 
-> **尚未发布到 npm**：`package.json` 里没有 `publishConfig`，`release.yml` 也没有 npm 发布步骤。
-> 所以下面那种 `import '@orielweb/api/core'` 的写法，前提是**应用自己把这个目录装进依赖**——
-> `npm install <仓库路径>/packages/api`、workspace 引用，或像 `samples/OrielDemo` 那样直接把
-> `src/*.js` 内嵌进产物（`OrielDemo.csproj` 的 vendor 段，**内嵌源码而不是复制副本**，所以不存在副本漂移）。
-> 本仓库的 CI 不发布前端包，只跑它的单测与类型检查。
+```sh
+npm install @orielweb/api
+```
+
+> **发布状态**：0.4.14 起发布到 npm（`@orielweb/api`，公开，MIT）。版本号与 NuGet 包
+> `OrielWeb` 同步取自根 `Directory.Build.props`，两边始终是同一个 `X.Y.Z`。
+>
+> 发布走手动一步：`npm publish` 需要 2FA 或带 bypass 2FA 的 Granular Token，
+> `npm login` 拿到的 token 直接发会 403。`prepublishOnly` 会先跑单测、类型检查、
+> 重新生成 `types/` 并过 `npm run check:types` 闸门（`scripts/check-published-types.mjs`），
+> 任一步红都不会上传。
+>
+> 不用 npm 也可以：`npm install <仓库路径>/packages/api`、workspace 引用，或像
+> `samples/OrielDemo` 那样直接把 `src/*.js` 内嵌进产物（`OrielDemo.csproj` 的 vendor 段，
+> **内嵌源码而不是复制副本**，所以不存在副本漂移）。
 
 ## 设计取舍
 

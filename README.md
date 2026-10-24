@@ -98,6 +98,13 @@ internal partial class AppJsonContext : JsonSerializerContext;
 </script>
 ```
 
+> 上面的 `window.oriel` 是最小可运行形态，等价于 Tauri 的 `__TAURI_INTERNALS__`——能用，但不是公开 API。
+> 应用代码建议用 npm 包 `@orielweb/api`：模块名与 `@tauri-apps/api` 一一对应，迁移只改 import 前缀。
+>
+> ```sh
+> npm install @orielweb/api
+> ```
+
 **两条容易踩的约定**：
 
 - 应用自己的命令**不要用 `win.` 或 `tray.` 前缀**——那是库保留的命令前缀，始终放行、不受能力配置约束，
