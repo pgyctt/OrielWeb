@@ -1,7 +1,7 @@
 using System.Text.Json;
 using OrielWeb;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 窗口 API 命令族自检（<c>--selftest window</c>）：按 label 寻址 + 能力门禁。

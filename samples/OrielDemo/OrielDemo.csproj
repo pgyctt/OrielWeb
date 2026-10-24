@@ -29,6 +29,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\OrielWeb\OrielWeb.csproj" />
+    <!-- 契约自检（selftest 开关）的实现。它包含 26 个自检与那套测试夹具配置；
+         放在这里是为了让"跨平台契约测试"有一个不属于示例工程的归属。
+         仍然编进同一个二进制：CI 的 verify 脚本 publish 一次、跑完三个阶段的假设不变。 -->
+    <ProjectReference Include="..\..\tests\OrielWeb.Conformance\OrielWeb.Conformance.csproj" />
     <!-- 分析器不随 ProjectReference 传递：消费项目需直接引用生成器 -->
     <ProjectReference Include="..\..\src\OrielWeb.Generators\OrielWeb.Generators.csproj"
                       OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />

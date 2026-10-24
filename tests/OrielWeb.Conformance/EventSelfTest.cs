@@ -1,7 +1,7 @@
 using System.Text.Json;
 using OrielWeb;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 事件模块自检（<c>--selftest event</c>）：<c>event.emit</c> 的广播与定向投递。
@@ -28,7 +28,7 @@ internal static class EventSelfTest
     private const string ProbeEvent = "probe.event";
     private const string SecondLabel = "event-probe";
 
-    /// <summary>内嵌资源的虚拟主机名，必须与 <c>UseEmbeddedAssets(host)</c> 一致（见 Program.AssetHost）。</summary>
+    /// <summary>内嵌资源的虚拟主机名，必须与 <c>UseEmbeddedAssets(host)</c> 一致（见 demo 的 Program.AssetHost 与 ConformanceRun.Attach）。</summary>
     private const string AssetHost = "app.oriel";
 
     /// <summary>当前处于哪个阶段；回显按阶段分别计数，避免两个阶段的计数互相污染。</summary>

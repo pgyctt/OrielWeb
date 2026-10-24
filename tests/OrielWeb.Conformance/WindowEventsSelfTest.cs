@@ -1,6 +1,6 @@
 using OrielWeb;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 窗口几何/焦点事件自检（<c>--selftest windowevents</c>）。

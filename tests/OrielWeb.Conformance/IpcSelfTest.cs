@@ -1,7 +1,7 @@
 using System.Text.Json;
 using OrielWeb;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// IPC 自检：把「页面 console → 宿主」「页面 postMessage → 宿主」「宿主 EmitEvent → 页面」三条

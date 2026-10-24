@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 类库而不是可执行程序：CI 的三条 verify 脚本各自 publish 一次、用**同一个二进制**
+         跑完 selftest / shell / smoke 三个阶段。做成第二个 exe 会让每个平台多一次 AOT 发布，
+         还要再打一个 .app bundle 并各自 codesign——成本翻倍，而收益只是"能单独启动"。
+         自检代码的归属才是这一批要解决的事，所以由本库持有，demo 保留一个转发入口。 -->
+    <OutputType>Library</OutputType>
+    <RootNamespace>OrielConformance</RootNamespace>
+    <!-- 自检不是 NuGet 包 -->
+    <IsPackable>false</IsPackable>
+    <!-- 本库带着 [OrielCommand] 声明（capability / channel 两个自检各定义自己的探针命令），
+         需要源生成器产路由。生成器不随 ProjectReference 传递，必须直接引用。 -->
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\OrielWeb\OrielWeb.csproj" />
+    <ProjectReference Include="..\..\src\OrielWeb.Generators\OrielWeb.Generators.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

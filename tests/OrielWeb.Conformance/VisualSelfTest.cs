@@ -1,6 +1,6 @@
 using OrielWeb;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 窗口观感自检（对标 Tauri 2 的 <c>setTitleBarStyle</c> / <c>setEffects</c> / <c>setShadow</c>）。

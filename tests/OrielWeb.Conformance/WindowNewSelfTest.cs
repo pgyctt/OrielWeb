@@ -1,7 +1,7 @@
 using System.Text.Json;
 using OrielWeb;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 页面建窗自检（<c>--selftest windownew</c>）：<c>window.new</c> 真的能建出一个窗口。

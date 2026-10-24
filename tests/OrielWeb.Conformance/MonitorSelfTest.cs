@@ -1,6 +1,6 @@
 using OrielWeb;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 显示器 API 自检（对标 Tauri 2 的 <c>Monitor</c> 与五个查询函数）。

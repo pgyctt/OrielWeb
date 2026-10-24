@@ -1,6 +1,6 @@
 using OrielWeb;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 退出语义自检（**子进程取证**，由脚本驱动）。

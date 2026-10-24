@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 自检用的环境探针：当前进程是否处在一个**有图形会话**的 macOS 里。

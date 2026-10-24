@@ -1,6 +1,6 @@
 using OrielWeb;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 关闭接管自检（<c>--selftest close</c>）：页面的"可阻止关闭"。

@@ -1,6 +1,6 @@
 using OrielWeb;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 多窗口自检：运行时新建窗口、每个窗口各有一套会话、关窗语义。

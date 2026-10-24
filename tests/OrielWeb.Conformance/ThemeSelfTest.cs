@@ -1,6 +1,6 @@
 using OrielWeb;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 主题自检：宿主能否读到系统主题，以及主题能否经 <c>theme.changed</c> 事件送达页面。

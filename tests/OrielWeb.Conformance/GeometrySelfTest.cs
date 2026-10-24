@@ -1,7 +1,7 @@
 using System.Text.Json;
 using OrielWeb;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 窗口尺寸语义自检（<c>--selftest geometry</c>）。

@@ -2,7 +2,7 @@ using System.Text.Json;
 using OrielWeb;
 using OrielWeb.Ipc;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 流式回传自检（<c>--selftest channel</c>）：页面 <c>new Channel()</c> → 作为参数发出去 →

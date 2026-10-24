@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 观感自检用的窗口截图：把**当前窗口**按合成后的真实颜色存成 PNG。

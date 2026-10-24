@@ -1,6 +1,6 @@
 using OrielWeb;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 托盘与通知的自检（无人交互）：创建托盘、设置一份覆盖各形态的菜单、尝试投递一条通知，

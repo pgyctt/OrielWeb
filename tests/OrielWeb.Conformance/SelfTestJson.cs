@@ -1,4 +1,4 @@
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 自检脚本用的最小 JSON 拼装。

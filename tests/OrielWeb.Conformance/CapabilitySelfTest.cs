@@ -2,7 +2,7 @@ using System.Text.Json;
 using OrielWeb;
 using OrielWeb.Ipc;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 能力模型自检（无人交互）：让**页面真实调用**两条命令，断言一条能通、一条被拒。

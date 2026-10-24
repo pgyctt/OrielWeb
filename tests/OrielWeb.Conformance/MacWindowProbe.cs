@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 观感自检用的 AppKit 取证器：把一个窗口的**实际观感状态**读回来。

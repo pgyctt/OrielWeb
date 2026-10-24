@@ -1,7 +1,7 @@
 using System.Text.Json;
 using OrielWeb;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 页面菜单自检（<c>--selftest menu</c>）：<c>menu.popup</c> 真的能弹出一个原生菜单。

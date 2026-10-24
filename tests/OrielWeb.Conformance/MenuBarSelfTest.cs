@@ -1,7 +1,7 @@
 using System.Text.Json;
 using OrielWeb;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 菜单栏自检（<c>--selftest menubar</c>）：<c>Menu.setAsWindowMenu</c> / <c>setAsAppMenu</c>

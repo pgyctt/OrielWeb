@@ -1,6 +1,6 @@
 using OrielWeb;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 单实例自检（**双进程协作**，由脚本驱动）。
@@ -34,7 +34,7 @@ internal static class SingleInstanceSelfTest
                 Failed = true;
                 Console.WriteLine("SINGLE-INSTANCE: FAIL（15 秒内没有收到第二实例的通知）");
                 Console.Out.Flush();
-                Program.Window?.PostToUiThread(() => Program.Window?.Close());
+                ConformanceRun.Window?.PostToUiThread(() => ConformanceRun.Window?.Close());
             },
             null,
             TimeSpan.FromSeconds(15),

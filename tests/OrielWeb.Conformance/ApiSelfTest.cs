@@ -1,7 +1,7 @@
 using System.Text.Json;
 using OrielWeb;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 前端包自检（<c>--selftest api</c>）：<c>@orielweb/api</c> 在**真实页面**里能不能用。
@@ -157,9 +157,11 @@ internal static class ApiSelfTest
 
                 check('core.isTauri() 在宿主里为 true', core.isTauri() === true, core.isTauri());
 
-                // 真的发一条命令并拿到返回值——这是"包能驱动宿主"的最小证据
-                const todos = await core.invoke('todo.list');
-                check('core.invoke 能往返', Array.isArray(todos), Array.isArray(todos) ? todos.length : typeof todos);
+                // 真的发一条命令并拿到返回值——这是"包能驱动宿主"的最小证据。
+                // 用自检自己的 conf.list，而不是示例应用的业务命令：契约测试不该因为
+                // "Todo 示例改了"而红，那种失败的报错信息指向的是 Todo，不是契约。
+                const listed = await core.invoke('conf.list');
+                check('core.invoke 能往返', Array.isArray(listed), Array.isArray(listed) ? listed.length : typeof listed);
 
                 // convertFileSrc 尚未实现（P1-2）：必须**明确抛错**，不能返回一个看似可用的 URL
                 // convertFileSrc 现在**能用**了（F2），所以这里验契约而不是"抛错"。
@@ -206,13 +208,14 @@ internal static class ApiSelfTest
                     (await app.supportsMultipleWindows()) === true, 'ok');
 
                 // demo 的能力名单里没有任何 app.* 条目——这几条能跑通就是"只读元信息放行"的证据
-                check('app.* 元信息无需能力声明即可用', true, '见 Program.cs 的能力名单');
+                check('app.* 元信息无需能力声明即可用', true, '见 ConformanceRun.AllowCapabilities');
 
                 // ---- fs（F4b-2b）：两道关（命令授权 + 路径 scope）----
                 const fs = await import(vendor + '/fs.js');
 
-                // demo 把 fs 的 scope 声明在临时目录下（见 Program.cs），所以这里能真读写
-                const fsRoot = await core.invoke('demo.fsRoot');
+                // 能力声明把 fs 的 scope 钉在临时目录下（见 ConformanceRun.AllowApiCommands），
+                // 所以这里能真读写；两边用的是同一个 ConformanceCommands.FsRootPath。
+                const fsRoot = await core.invoke('conf.fsRoot');
 
                 // **先把上次运行留下的清掉**：自检必须幂等，否则第二次跑会因为
                 // "目录已存在"（非递归 mkdir 会报错）或"文件已存在"而失败。
@@ -342,10 +345,9 @@ internal static class ApiSelfTest
                 check('autostart.isEnabled 返回布尔（只读，不改系统状态）',
                     typeof (await autostart.isEnabled()) === 'boolean', 'ok');
 
-                // 三族的命令都**不是**始终放行，而 demo 的能力名单里没有它们——
-                // 所以这里能跑通说明"调用方是自检自己注入的脚本"这条路不受门禁影响？
-                // 不是：demo 在 Program.cs 里显式声明了它们。这条断言钉的是那份声明存在。
-                check('平台集成命令需要显式声明（见 Program.cs）', true, 'ok');
+                // 三族的命令都**不是**始终放行。这条能跑通，说明自检的能力名单里
+                // 确实显式声明了它们——断言钉的是那份声明的存在。
+                check('平台集成命令需要显式声明', true, '见 ConformanceRun.AllowApiCommands');
 
                 // ---- clipboard（F6）：真读写一次 ----
                 //
@@ -541,9 +543,9 @@ internal static class ApiSelfTest
                     resolved !== joined && resolved.includes(path.sep() + 'sub'),
                     resolved);
 
-                // path.* 整族放行：demo 的能力名单里**没有**任何 path.* 条目
-                // （见 Program.cs），所以这几条能跑通本身就是"放行生效"的证据。
-                check('path.* 无需能力声明即可用（整族放行）', true, '见 Program.cs 的能力名单');
+                // path.* 整族放行：能力名单里**没有**任何 path.* 条目，
+                // 所以这几条能跑通本身就是"整族放行生效"的证据。
+                check('path.* 无需能力声明即可用（整族放行）', true, '整族放行');
 
                 // ---- 目录解析（F4b-1）：真宿主上逐格取值 ----
                 const home = await path.homeDir();
@@ -649,11 +651,11 @@ internal static class ApiSelfTest
                 //
                 // 拿 `no.such.command` 试会得到 not_allowed —— 那是**正确**行为：
                 // deny-by-default 下未声明的命令在授权层就被拒，压根走不到路由查找，
-                // 于是它也不泄露"这个命令存不存在"。而 `todo.nonexistent` 命中了
-                // Allow("todo.*")，能走到路由查找，才会给出 unknown_command。
+                // 于是它也不泄露"这个命令存不存在"。而 `conf.nonexistent` 命中了
+                // Allow("conf.*")，能走到路由查找，才会给出 unknown_command。
                 let unknownCode = 'unset';
                 try {
-                    await core.invoke('todo.nonexistent');
+                    await core.invoke('conf.nonexistent');
                 } catch (e) {
                     unknownCode = e && e.code;
                 }
@@ -677,7 +679,7 @@ internal static class ApiSelfTest
                 // 而那种失效在单测里看不出来（mock 不走真桥接）。
                 let perCallOk = false;
                 try {
-                    await core.invoke('todo.list', null, { timeout: 5000 });
+                    await core.invoke('conf.list', null, { timeout: 5000 });
                     perCallOk = true;
                 } catch (e) {
                     perCallOk = false;

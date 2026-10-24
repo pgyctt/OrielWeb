@@ -1,6 +1,6 @@
 using OrielWeb;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 导航自检：把「前进 / 后退 / 刷新 + 导航事件（开始 / 完成 / 失败）」变成无人交互也可判定的断言。

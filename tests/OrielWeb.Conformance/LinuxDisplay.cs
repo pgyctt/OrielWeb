@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 自检用的环境探针：当前会话的 GDK 后端是不是 Wayland。

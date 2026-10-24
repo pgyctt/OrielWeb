@@ -1,6 +1,6 @@
 using OrielWeb;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// <c>oriel://</c> 这条投递通道的**事实探针**：把页面的来源与几项"来源决定的能力"如实打出来，

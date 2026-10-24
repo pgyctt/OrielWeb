@@ -1,6 +1,6 @@
 using OrielWeb;
 
-namespace OrielDemo;
+namespace OrielConformance;
 
 /// <summary>
 /// 托盘 API 自检（对标 Tauri 2 的托盘能力面）。

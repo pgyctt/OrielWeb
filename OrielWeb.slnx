@@ -2,5 +2,6 @@
   <Project Path="src/OrielWeb/OrielWeb.csproj" />
   <Project Path="src/OrielWeb.Generators/OrielWeb.Generators.csproj" />
   <Project Path="samples/OrielDemo/OrielDemo.csproj" />
+  <Project Path="tests/OrielWeb.Conformance/OrielWeb.Conformance.csproj" />
   <Project Path="tests/OrielWeb.Tests/OrielWeb.Tests.csproj" />
 </Solution>
