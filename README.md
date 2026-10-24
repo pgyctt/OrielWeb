@@ -393,6 +393,7 @@ macOS 那条还要把它打成 `.app` 并 codesign——做成第二个 exe 会�
 三者都支持 `--stages` / `-Stages` 只跑某一阶段、`--no-publish` / `-Publish` 控制是否先发布，
 并在失败时逐阶段给结论 + 写一条 GitHub 注解。其余脚本是**跨平台或专项**的，不带平台名：
 `verify-package.ps1`（包内 targets 的消费链路）、`publish.ps1` / `wsl_publish.ps1`（发布与打包）、
+`publish-vm-payload.ps1`（VM 部署验证用的自包含非 AOT 载荷）、
 `make-macos-app.sh`（组装 macOS `.app`）、`fake-notification-service.py` / `fake-notify-send.py`（通知替身）。
 
 ## 平台运行要求

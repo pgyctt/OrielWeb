@@ -232,16 +232,43 @@ demo 现在显式设 false——模板图只适合单色线条图标。
 ## 5. 复现
 
 ```powershell
+# 1) 在仓库根目录生成载荷（-Rid 换成目标平台，见下面的表）
+pwsh tools\publish-vm-payload.ps1 -Rid linux-x64
+
+# 2) 推送 + 执行。deploy-run.ps1 属于外部仓库 hyperv-vm\scripts，不在本仓库里
 cd hyperv-vm\scripts
 .\test-lab.ps1                 # 先看三平台是否连通
 .\start-lab.ps1 -TimeoutSec 300
-
-# 发布 + 推送 + 执行（每个平台一次）
-dotnet publish samples\OrielDemo -c Release -r linux-x64 --self-contained true -p:PublishAot=false -o .drill\vm\linux-x64
-.\deploy-run.ps1 -Payload .drill\vm\linux-x64 -Command './OrielDemo --selftest window'
+.\deploy-run.ps1 -Payload <仓库>\.drill\vm\linux-x64 -Command './OrielDemo --selftest window'
 
 # macOS 上要逐个模式跑（没有 timeout 命令，用脚本自带看门狗）
 ```
+
+四个载荷各自对应一次验证，命名就是 RID：
+
+| 载荷 | 用于 |
+|---|---|
+| `.drill\vm\linux-x64` | Linux VM（X11 与 Wayland 两个后端） |
+| `.drill\vm\osx-x64` | macOS VM（Intel） |
+| `.drill\vm\osx-visual` | 观感验证时另发的一份（同参数，见 §5.1），与 `osx-x64` 只差 `OrielDemo.dll` |
+| `.drill\vm\win-x64` | Windows VM |
+
+Windows 载荷用 `tools/publish-vm-payload.ps1` 生成，与其余三个走同一组参数：
+
+```powershell
+pwsh tools\publish-vm-payload.ps1 -Rid win-x64
+.\deploy-run.ps1 -Payload .drill\vm\win-x64 -Command '.\OrielDemo.exe --selftest window'
+```
+
+`--self-contained true -p:PublishAot=false` 这组参数不是可选项，脚本把它们和一条断言放在一起：
+**发布完必须是 JIT 运行时**（输出目录里要有 `coreclr`）。漏掉 `-p:PublishAot=false` 会得到 AOT 产物，
+而 AOT 不能从宿主机交叉发布到别的平台（需要目标平台的链接器），症状是 link 阶段报
+`unrecognised emulation mode`——看起来像工具链坏了，实际是参数给错了。
+
+Windows 侧的载荷不能用**交叉发布**顶替：`deploy-run.ps1` 是把载荷推给目标机再执行，
+而 Windows VM 上跑的必须是 win-x64 的应用宿主与托管依赖。这也正是这条线存在的理由——
+CI 的 `smoke-windows` 跑在托管 runner 上（有 SDK、有 NuGet 缓存），VM 这条验的是**干净机器没有 SDK 也能跑**。
+两者不重复。
 
 Linux 侧要显式给显示后端：`DISPLAY=:0 XAUTHORITY=$HOME/.Xauthority`，
 验 X11 时再加 `GDK_BACKEND=x11`。
