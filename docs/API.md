@@ -646,7 +646,7 @@ window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
 | `deny` 优先 | 两条都命中按拒绝算。"先宽泛 allow、再 deny 挖例外"是最常见的写法，若 allow 优先那条 deny 等于没写 |
 | 默认拒绝 | 两条都不命中即拒绝 |
 | `win.` 前缀始终放行 | 那是无边框窗口的标题栏按钮与拖动，只操作自己那个窗口，不是"能力"；它们由库内建，自定义同名命令会被遮蔽。**应用自己的命令请避开这个前缀**。`tray.` 前缀同理 |
-| **`window.` 族只放行一组** | 它比 `win.*` 大得多（有 `window.setIcon`、`window.setSkipTaskbar` 这类真正的能力），所以**不整族放行**；只有标题栏必需的那组（`minimize` / `toggleMaximize` / `toggleFullscreen` / `toggleOnTop` / `close` / `destroy` / `drag*` / `pickFile` / `contextMenu`）与一组只读状态查询（`isVisible` / `isMaximized` / `isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop` / `isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `theme` / `title`）例外。逐条理由见 `OrielCapabilityRules.AlwaysAllowedWindowCommands` |
+| **`window.` 族只放行一组** | 它比 `win.*` 大得多（有 `window.setIcon`、`window.setSkipTaskbar` 这类真正的能力），所以**不整族放行**；只放行下面 **31 条**，其余一律要显式 `Allow`。逐条理由见 `OrielCapabilityRules.AlwaysAllowedWindowCommands`，那里每个分组都写了"为什么它进得来"<br>① 标题栏按钮：`minimize` / `toggleMaximize` / `toggleFullscreen` / `toggleOnTop` / `close` / `destroy`<br>② 拖动：`drag` / `dragStart` / `dragTo` / `dragEnd`<br>③ 与 `win.*` 同源的两个入口：`pickFile` / `contextMenu`<br>④ 只读状态查询：`isVisible` / `isMaximized` / `isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop` / `isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `isEnabled` / `theme` / `title`<br>⑤ 显示器查询：`currentMonitor` / `primaryMonitor` / `availableMonitors` / `monitorFromPoint` / `cursorPosition`（屏幕布局与光标位置是页面本来就能感知的环境信息，不读任何窗口内容） |
 | **`event.emit` 不放行** | 库内建但**不**始终放行的命令之一。它让一个窗口的页面能驱动**另一个窗口**的行为（跨窗口指令通道），而自绘标题栏完全不依赖它——没有开后门的理由。要用必须显式 `Allow("event.emit")` 或 `Allow("event.*")`。注意它只保留了这一个**名字**，`event.` 前缀本身不保留 |
 | **`app.exit` / `app.show` / `app.hide` 不放行** | 同族里的只读元信息（`app.getName` 等）整组放行，但这三条会改变应用状态：退出、隐藏全部窗口。它们不是"页面本该有的信息"，而是**应用得点头的能力**——页面能退出应用这件事，不该因为名字在 `app.` 族里就默认成立。要用必须显式 `Allow("app.exit")` 等（Debug 构建不受影响，全放行） |
 | 只管 `invoke` | 单向的 `postMessage` 没有命令名，由来源与令牌两层覆盖 |
@@ -1172,7 +1172,7 @@ Tauri 那边回到创建 `Menu` 的那个 JS 上下文——单窗口应用两�
 
 ### 11.2 `@orielweb/api`（推荐）
 
-模块名与 `@tauri-apps/api` 一一对应，迁移 = 换 import 前缀。当前已提供 `core` / `event` / `window` / `dpi` / `mocks` / `path` / `app` / `fs` / `opener` / `notification` / `autostart` / `clipboard` / `dialog` / `image` / `menu` / `webviewWindow`（16 个）。
+模块名与 `@tauri-apps/api` 一一对应，迁移 = 换 import 前缀。当前已提供 `core` / `event` / `window` / `dpi` / `mocks` / `path` / `app` / `fs` / `opener` / `notification` / `autostart` / `clipboard` / `dialog` / `image` / `menu` / `tray` / `webviewWindow`（17 个，与 `packages/api/package.json` 的 `exports` 逐项一致）。
 
 > 真正要换的不只是 import：**`invoke('plugin:fs|write_file')` 这类命令名、测试夹具里的线格式、
 > `__TAURI_INTERNALS__` 探测**都要跟着换。对照表与真实卡点清单见
@@ -1212,6 +1212,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 | `dpi` | `LogicalSize` / `PhysicalSize` / `LogicalPosition` / `PhysicalPosition` + 归一与换算（`toPhysical` / `toLogical`） |
 | `image` | `Image`（`fromPath` / `fromBytes` / `new`）+ `transformImage`。**与 Tauri 的本质分歧**：Tauri 的 `Image` 是资源表 handle（持 `rid`、有 `close()`），本库没有资源表——它是**页面侧字节容器**，因此**没有 `close()`**（迁移代码里的 `await image.close()` 会抛 `TypeError`，宁可当场炸也不要带着错误的心智模型继续写）。`rgba()` / `size()` 是本地值，但签名仍是 `Promise`（`await` 照样能跑）。尺寸解析（PNG 的 IHDR、ICO 的 `ICONDIRENTRY`，其中宽高字段的 **0 表示 256**）在页面侧完成；解码**像素**才请宿主（`window.decodeImage`），结果缓存 |
 | `menu` | `Menu` / `Submenu` / `MenuItem` / `CheckMenuItem` / `IconMenuItem` / `PredefinedMenuItem` / `NativeIcon` / `itemFromKind`。**弹出与菜单栏都做了**：`Menu.popup(at?, window?)`、`setAsAppMenu()`、`setAsWindowMenu(window?)`（见 §10.2）。菜单树是**页面侧的纯数据**（没有 `rid`），每次整棵发给宿主；`action` 经 `menu.itemclicked` 事件回到页面。另加一条本库扩展 `close()`（关掉在屏菜单，见 §10） |
+| `tray` | `TrayIcon`：静态 `new` / `getById` / `removeById`，实例 `setIcon` / `setMenu` / `setTooltip` / `setTitle` / `setVisible` / `setIconAsTemplate` / `setMenuOnLeftClick` / `onEvent` / `close`。**句柄是 id 字符串而不是 Resource**（本库没有资源表），所以 `rid` 只是 `id` 的别名补壳，debug 下调它会打警告；`tempDirPath` / `setTempDirPath` 同理不生效（图标不落盘）。底层就是 §7 的 `oriel.tray`，两者同名同义 |
 | `mocks` | `mockIPC` / `mockWindows` / `mockEmit` / `mockConvertFileSrc` / `clearMocks` |
 
 ### `path` 模块
@@ -1510,6 +1511,11 @@ c.Allow(OrielAssetFileServer.ScopeCommand, s => s.AllowPath("$APPDATA/images/**"
 > 目标在 scope 外就拒绝（`path_not_allowed`）。指向 scope 内的链接照常可用；
 > 目标不存在的写路径跳过解析（`ResolveLinkTarget` 对不存在的路径没有意义）。
 > 解析失败（链接成环、跨卷、权限不足）一律**不放行**。
+>
+> **scope 模式本身也要解析到同一路径空间**（0.4.11 起）：只解析候选路径会造出"两边不在同一坐标系"。
+> macOS 上 `/var` 本身就是 `/private/var` 的链接，于是解析后的 `/private/var/…` 永远匹配不上声明里的
+> `/var/…`——**整个平台上的 `fs.*` 全部被拒**。现在的做法是：模式的**静态前缀**（通配符之前那段）
+> 解析后拼回后缀；通配之后的段不是具体路径，不能拿去做文件系统访问，也就不解析。
 
 理由：
 
@@ -2026,11 +2032,11 @@ sudo apt-get install -y fonts-noto-cjk   # 中文界面必需，否则渲染成�
 | 事件投递取证（`--selftest event`） | `event.emit` 的**跨窗口**投递：广播（发起窗口自己也收到）、定向（只有目标收到）、定向到不存在的窗口返回 0 且不抛。断言靠探针页面回显 label——证明"页面 → 宿主 → 页面"整条通路是通的 |
 | 关闭接管取证（`--selftest close`） | 四条路径逐条取证：**页面阻止**（什么都不做 → 窗口必须留开）、**页面放行**（调 `win.destroy` → 必须真的关掉）、**宿主否决优先**（`Closing` 里 Cancel → 页面**不该**收到事件）、**未接管**（直接关掉且页面不该收到事件）。另有"`Destroy()` 能强制关掉被接管的窗口"这条逃生口断言 |
 | 窗口 API 取证（`--selftest window`） | **按 label 寻址**：主窗口发命令、作用到另一个窗口（`hide`/`show` 用宿主侧 `IsVisible` 取证；`setTitle` 用 `window.title` 读回**双向**确认——改到了目标、没改到发起者）；**能力门禁两侧**：白名单命令（`window.isVisible`）放行、未声明的（`window.setResizable`）被拒且理由是权限；`window.destroy` 只关目标不关发起者 |
-| 前端包取证（`--selftest api`） | **包在真实页面里可用**：18 项断言覆盖五个模块——ESM 动态 import 能加载、`core.invoke` 能往返、`dpi` 舍入复刻 .NET 的 ToEven、`TauriEvent` 与 Tauri 同名同值、`getCurrentWindow().label` 是宿主注入值、`getAllWindows` 含本窗口、`mocks.isMocked()` 在真宿主里为 `false`。这是唯一一处"包真被页面 import 并调用"的取证——包的单测跑在 Node 里，那一侧没有浏览器环境 |
-| 无人自检（`OrielDemo --selftest <名字>`） | `nav` `ipc` `theme` `single-instance` `shell` `capability` `multiwindow` `scheme` `exit` `exit-timeout` `threading` `tray` `tray-js` `geometry` `geometry-frameless` `windowevents` `event` `close` `window` `api`——自己驱动页面、打印结论行、以退出码表达成败 |
+| 前端包取证（`--selftest api`） | **包在真实页面里可用**：**90 余处断言覆盖 13 个模块**（`core` / `dpi` / `path` / `event` / `app` / `fs` / `dialog` / `mocks` / `window` / `clipboard` / `opener` / `autostart` / `notification`）——ESM 动态 import 能加载、`core.invoke` 能往返、`dpi` 舍入复刻 .NET 的 ToEven、`TauriEvent` 与 Tauri 同名同值、`getCurrentWindow().label` 是宿主注入值、`getAllWindows` 含本窗口、`mocks.isMocked()` 在真宿主里为 `false`，以及各模块「能用 / 该被拒」的两侧断言。这是唯一一处"包真被页面 import 并调用"的取证——包的单测跑在 Node 里，那一侧没有浏览器环境 |
+| 无人自检（`OrielDemo --selftest <名字>`） | 26 个模式：`nav` `ipc` `theme` `single-instance` `shell` `capability` `multiwindow` `scheme` `exit` `exit-timeout` `threading` `tray` `tray-js` `geometry` `geometry-frameless` `windowevents` `event` `close` `window` `windownew` `monitors` `menu` `menubar` `api` `channel` `visuals`——自己驱动页面、打印结论行、以退出码表达成败。实现住在 `tests/OrielWeb.Conformance`（0.4.14 起），demo 只保留转发入口 |
 | 几何/焦点事件取证（`--selftest windowevents`） | `Resized`（程序调 `Resize` 后参数应为逻辑像素的客户区）、`Moved`（`MoveTo` 后应为屏幕逻辑坐标）、`FocusChanged`（**再建一个窗口抢焦点 → 收到 false；关掉它 → 收到 true**）、以及去重（重复设同一尺寸不再触发）。三平台的原生来源完全不同，只能逐平台真机取证——"我接上了信号"与"事件真的到了"是两件事 |
 | 尺寸语义取证（`--selftest geometry` / `geometry-frameless`） | **三平台尺寸语义一致性**。前者用**装饰窗口**取证：`WithSize(800,600)` 的客户区必须是 `800x600`（修复前 Windows 上是 `784x561`，原因见下面 §1 的 `WithSize` 说明），并再验一次运行期 `Resize(640,480)`。后者用**无边框窗口**取证反面：客户区不该被多做一次"客户区 → 整窗"换算 |
-| 托盘后端取证（`--selftest tray`） | 26 项：`app.png`/`app.ico` **双格式解码**、多托盘（建两个 + 按 id 取回 + 互不影响）、图标对象与**模板标记**如实回读、运行期换图（对象与路径两条入口）、菜单、显隐、标题、按 id 移除、重复 id 抛异常 |
+| 托盘后端取证（`--selftest tray`） | 20 余项（断言数随平台略变，macOS 无图形会话时整套 SKIP）：`app.png`/`app.ico` **双格式解码**、多托盘（建两个 + 按 id 取回 + 互不影响）、图标对象与**模板标记**如实回读、运行期换图（对象与路径两条入口）、菜单、显隐、标题、按 id 移除、重复 id 抛异常 |
 | 托盘前端取证（`--selftest tray-js`） | 页面真实调用 `oriel.tray`：`new` → `getById` → `getAll` → 全部 `set*` → `close` → `onEvent`，回显逐条结论。证明**前后端 API 同名同义且命令往返真的通** |
 | 退出语义取证（`--selftest exit` / `exit-timeout`） | 正常退出：`Exiting` 与 `ExitCompleted` 都触发、退出码 `0`。超时强杀：在 `Run()` 返回后堵死 UI 线程（复现现场"清理卡住"），断言看门狗在 `ExitTimeoutDuration` 后强制结束进程、退出码为 `ForceExitCode`（`2`），且 `ExitTimeout` 事件先于强杀触发。**必须子进程取证**：`Environment.Exit` 会把测试运行器一起带走 |
 | 线程归属取证（`--selftest threading`） | 在真实消息循环里断言 `IsOnUiThread` 的真值（UI 线程上 `true`、后台线程上 `false`）、`InvokeOnUiThread` 的动作确实执行在 UI 线程上、`PostToUiThread` 正常路径返回 `true` 且回调落在 UI 线程 |
@@ -2038,22 +2044,38 @@ sudo apt-get install -y fonts-noto-cjk   # 中文界面必需，否则渲染成�
 | 手动验证操作台（直接运行 demo） | 托盘、通知、对话框、拖放、右键菜单、图标等**只能人眼**判定项，每项都写了预期 |
 | Velopack 打包 | Windows **每 push** 跑（`vpk pack` 成功、安装产物齐备、更新包与清单按约定已删）；Linux/macOS 只在 release 跑（三平台各自的产物形态见 §12） |
 
-**CI 覆盖（`.github/workflows/ci.yml`）**——上表里"机器可判定"的项都进了 CI，三平台各自跑：
+**CI 覆盖（`.github/workflows/ci.yml`）**——上表里"机器可判定"的项都进了 CI，10 个 job 分三类：
 
 | Job | 覆盖 |
 |---|---|
-| `test` | 单测（含图像解码器、托盘事件与选项、内建 `tray.*` 命令）+ 桥接 JS 测试 + `dotnet format` 门禁 + 包内 targets 的消费链路（`tools/verify-package.ps1`） |
-| `smoke-linux` | `tools/verify-linux.sh` 一次跑完三阶段：`selftest` + `shell`（托盘/通知/Shell/自启）+ `smoke`（运行取证与截图） |
-| `smoke-windows` | `tools/verify-windows.ps1` 一次跑完三阶段：`smoke` + `pack`（Velopack）+ `selftest` |
-| `smoke-macos` | `tools/verify-macos.sh`（自检 + 运行取证 + 截图）+ 非本机架构的 AOT 发布 |
+| `test` | 构建 + 单测 + `dotnet format` 门禁 + 桥接 JS 测试 + 迁移夹具（`mock-ipc.test.mjs`）+ 前端包单测/`tsc`/类型产物新鲜度 + 包内 targets 消费链路（`tools/verify-package.ps1`）+ 平台矩阵引用校验（`tools/verify-matrix.ps1`） |
+| `compile-windows` | AOT 发布 + 产物存在性与大小检查（`smoke-windows` 依赖它） |
+| `compile-linux` | `linux-x64` / `linux-arm64` 交叉编译 + `linux-x64` AOT 发布 |
+| `compile-macos` | `osx-arm64` / `osx-x64` IL 交叉编译（运行验证由 `smoke-macos` 承担） |
+| `smoke-windows` | `tools/verify-windows.ps1` 三阶段：`smoke` + `pack`（Velopack 打包与产物断言）+ `selftest` |
+| `smoke-linux` | `tools/verify-linux.sh` 三阶段：`selftest` + `shell`（托盘/通知/Shell/自启）+ `smoke`（运行取证与截图） |
+| `smoke-linux-arm64` | 与 `smoke-linux` 同一套，跑在原生 arm64 runner（`ubuntu-24.04-arm` + Xvfb） |
+| `smoke-macos` | `tools/verify-macos.sh`（arm64：自检 + 运行取证 + 截图）+ 交叉发布 `osx-x64` 的 AOT |
+| `smoke-macos-x64` | 同一套自检跑在 `macos-15-intel` 上——补的就是"只编译不运行"那个盲区 |
+| `benchmark` | 性能基线（只在 `main` 与手动触发时跑；PR 上共享 runner 的噪声会让"回归 20%"变成狼来了） |
 
 **三平台的验证脚本命名与职责一一对应**（`verify-linux.sh` / `verify-windows.ps1` / `verify-macos.sh`），
-每个平台一个脚本、内部按阶段分节，CI 里各自只调用一行；都支持只跑某一阶段
-（`--stages` / `-Stages`）与"是否先发布"（`--no-publish` / `-Publish`）。
+每个平台一个脚本、内部按阶段分节，CI 里各自只调用一行。Linux 与 Windows 两条支持只跑某一阶段
+（`--stages` / `-Stages`），三条都支持"是否先发布"（`--no-publish` / `-Publish`）；
+**macOS 那条没有阶段开关**——它是单一流程（签名 → 组装 `.app` → 自检 → 运行取证 → 截图），
+拆开跑反而会缺前置，所以只提供 `--seconds` / `--rid` / `--out` / `--no-publish`。
 
-自检阶段覆盖的模式（三平台一致）：`nav` `ipc` `capability` `multiwindow` `scheme` `threading`
-`tray` `tray-js` `exit` `exit-timeout` `single-instance`；Linux 与 macOS 另跑 `theme` 的**深浅双路径**
-（Windows 没有像 `GTK_THEME` 那样可靠的"造值"入口，只跑一次读得到即可）。
+自检阶段跑的模式：三条线**共同**的是这 20 个——`nav` `ipc` `capability` `multiwindow` `scheme`
+`threading` `tray` `tray-js` `geometry` `geometry-frameless` `windowevents` `event` `close` `window`
+`windownew` `monitors` `menu` `menubar` `api` `channel`。其余六个的编排各不相同：
+
+- `theme`：Windows/macOS 与上面那 20 个同轮跑一次；Linux 用 `GTK_THEME` 造**深浅两条路径**，并断言两侧结论不同。
+- `single-instance`：必须起**两个进程**（首实例等通知、次实例分流退出），只能由脚本编排。
+- `exit` / `exit-timeout`：必须**子进程**（`Environment.Exit` 会把测试运行器一起带走），且要同时判结论行与退出码。
+- `shell`：只在 Linux 的 `shell` 阶段跑——它要一个真实的 D-Bus 会话和一个替身通知服务（`tools/fake-notification-service.py`），
+  Windows/macOS 上这部分交给手动验证操作台（`--manual-check`）由人确认。
+- `visuals`：**不在 CI**——它验的是"材质、Dock 图标、标题栏三档看起来对不对"，只能人眼判定
+  （跑法见 [CROSS-PLATFORM-VERIFICATION.md](CROSS-PLATFORM-VERIFICATION.md) §5.1）。
 
 > **workflow 里只留"调用一行脚本"**：验证逻辑全部落在 `tools/` 下的独立脚本里。
 > 内联在 `ci.yml` 里的大段 shell/PowerShell **没法在本地跑、没法单独 review**，

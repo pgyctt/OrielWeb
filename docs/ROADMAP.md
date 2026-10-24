@@ -3,18 +3,16 @@
 只记**还没做**的和**还没在真机上验过**的。已落地的能力、用法与取舍记录见 [API.md](API.md)。
 结构与质量线的改进批次（R0–R7）见 [代码健康度改进计划](CODE-REVIEW-PLAN-2026-10-23.md)（2026-10-23 评审后）。
 
-## API 与 Tauri 2 对齐（进行中）
+## API 与 Tauri 2 对齐（已完成）
 
-完整差异分析与分阶段清单见 [对齐审计](TAURI2-ALIGNMENT-AUDIT-2026-10-18.md) 与
-[执行计划](TAURI2-ALIGNMENT-EXECUTION-PLAN-2026-10-18.md)。只记**还没做**的前置项：
+B0–B24 全部完成，从 `0.4.0` 起分批发版。差异分析、分阶段清单与每批的取舍记录见
+[对齐审计](TAURI2-ALIGNMENT-AUDIT-2026-10-18.md)、
+[执行计划](TAURI2-ALIGNMENT-EXECUTION-PLAN-2026-10-18.md)（B0–B11）
+与[决策与补充批次](TAURI2-ALIGNMENT-DECISIONS-2026-10-20.md)（B12–B24）。
 
-| 缺口 | 为什么必须先做 |
-|---|---|
-| 没有 npm 包 / TS 类型（公开 API 只有注入的 `window.oriel`） | 所有模块的形状无法与 Tauri 一致，前端也不能 `import` |
-| 窗口没有 `label` | `getCurrentWindow` / `getByLabel` / `emitTo` / 按窗口授权全部做不了 |
-| 事件是裸 payload + 点分名，无 `{event,id,payload}`、无 target | `event` 模块无法对齐；内置窗口事件（resize/move/focus…）整体缺失 |
-| 几何只有 int 逻辑像素，无 `Logical/Physical`、无 `scaleFactor`；且 `Resize` 是外框、Tauri `setSize` 是客户区 | 所有 size/position API 形状不同，迁移后尺寸差一圈 |
-| 只有 `win.*` / `tray.*` 两个内建命名空间 | 无法按模块挂载与授权；新增 `window.*` 族必须过门禁（`win.*` 的后门不扩散） |
+对齐的**结果**不记在这份文件里：每个模块的形状、与 Tauri 的语义差异（含刻意保留的那些）在
+[API.md](API.md) 对应小节，迁移最容易踩的点在 [MIGRATION-FINDINGS](MIGRATION-FINDINGS.md)。
+这条线只剩下"还没在真机上验过"的部分，都在下面的清单里。
 
 ## 明确不做
 
@@ -97,7 +95,7 @@
 - 步骤：页面调用 `setIcon('/path/app.png')` 与 `setIcon(bytes)`（字节形式同一张图），
   以及 `setBackgroundColor('#2f2f2f')`。
 - 预期：图标真的变了（任务栏/Dock）；透明页面上能看到底色。
-- 说明：这三条的**命令层与解码**都有自动化覆盖（`--selftest window` 55 项，含非法 base64 被拒、
+- 说明：这三条的**命令层与解码**都有自动化覆盖（`--selftest window` 70 余项，含非法 base64 被拒、
   坏字节不抛），但**"看起来对不对"只能人眼判定**：
   - 宿主没有"读回当前图标/底色"的接口（加一个就是偷偷发明 API，会被对齐测试的 `EXTRAS` 拦住）；
   - macOS 的 `setIcon` 影响的是**整个应用**的 Dock 图标，不是单个窗口。

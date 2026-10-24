@@ -390,8 +390,12 @@ macOS 那条还要把它打成 `.app` 并 codesign——做成第二个 exe 会�
 | `verify-windows.ps1` | PowerShell | `smoke`（进程存活）+ `pack`（Velopack 打包与产物断言）+ `selftest`（机器断言） |
 | `verify-macos.sh` | bash | 自检 + 运行取证 + 截图（含签名与 `.app` 组装这两个 macOS 特有的前置） |
 
-三者都支持 `--stages` / `-Stages` 只跑某一阶段、`--no-publish` / `-Publish` 控制是否先发布，
-并在失败时逐阶段给结论 + 写一条 GitHub 注解。其余脚本是**跨平台或专项**的，不带平台名：
+Linux 与 Windows 两条支持用 `--stages` / `-Stages` 只跑某一阶段；三条都支持控制是否先发布
+（`--no-publish` / `-Publish`），并在失败时逐阶段给结论 + 写一条 GitHub 注解。
+**macOS 那条没有阶段开关**——它是单一流程（签名 → 组装 `.app` → 自检 → 运行取证 → 截图），
+拆开跑会缺前置，所以只提供 `--seconds` / `--rid` / `--out`。
+
+其余脚本是**跨平台或专项**的，不带平台名：
 `verify-package.ps1`（包内 targets 的消费链路）、`publish.ps1` / `wsl_publish.ps1`（发布与打包）、
 `publish-vm-payload.ps1`（VM 部署验证用的自包含非 AOT 载荷）、
 `make-macos-app.sh`（组装 macOS `.app`）、`fake-notification-service.py` / `fake-notify-send.py`（通知替身）。
