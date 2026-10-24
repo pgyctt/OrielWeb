@@ -371,6 +371,13 @@ CI 用单独 job 跑（只在 `main` 与手动触发，PR 上不跑——共享 
 
 `tools/` 下是验证与取证脚本，由 CI 调用；用法见各脚本头部的注释。
 
+**`--selftest` 的实现住在 `tests/OrielWeb.Conformance`**（0.4.14 起）。它是**类库**，不是独立程序：
+CI 的三条 verify 脚本各自 `publish` 一次，再用同一个二进制跑完 selftest / shell / smoke，
+macOS 那条还要把它打成 `.app` 并 codesign——做成第二个 exe 会让每个平台多一次 AOT 发布与签名，
+而收益只有"能单独启动"。所以 `ConformanceRun` 以库的形式被 demo 的转发入口调用，
+示例工程从 9,000+ 行降到 744 行。自检需要的能力名单也随实现一起搬走：那是**测试夹具**，
+不是示例应用的能力面，混在一起会让"这个应用需要什么权限"读不出来。
+
 **XML 注释策略**：`src/` 开了 `TreatWarningsAsErrors`，但 `NoWarn` 里保留 `CS1591`——公开成员**允许**没有 `<summary>`。
 这不是遗漏：本库的注释标准是"只写不显然的部分"（为什么这么做、边界在哪、踩过什么坑），
 而不是把方法名翻译一遍。某个 API 能用做什么，看 [docs/API.md](docs/API.md) 而不是看签名。

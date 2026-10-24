@@ -161,7 +161,7 @@ internal interface IBuiltInCommandFamily
 
 1. `OrielCommandRegistry`（`src/OrielWeb/Ipc/OrielCommandRegistry.cs:11`）是 `static`，`BuildIndex()` 在 dispatcher 构造时快照。`OrielCommandDispatcher` 的类注释却说"同一进程里创建多个应用时它们互不干扰"——那只在实例与 JSON 上下文层面成立，**命令名空间是全局的**。
 2. 生成器在每个程序集打 `[ModuleInitializer]` 注册**该程序集全部** `[OrielCommand]`。跨程序集同名命令在模块初始化期抛 `InvalidOperationException`，宿主看到的是 `TypeInitializationException`，栈不指向业务代码。
-3. **静态命令不受 `AddCommands<T>()` 约束**：`RequiresTarget == false` 时 dispatcher 直接调用，不查 factory。`samples/OrielDemo/CapabilityProbeCommands` 就是活例——它只在 selftest 分支才 `AddCommands`，但命令一直可达。开发者会把 `AddCommands` 读成"暴露开关"，实际静态命令恒可达；配合 `Allow("*")` 就是意外暴露面。
+3. **静态命令不受 `AddCommands<T>()` 约束**：`RequiresTarget == false` 时 dispatcher 直接调用，不查 factory。`CapabilityProbeCommands`（现在在 `tests/OrielWeb.Conformance`）就是活例——它只在 selftest 分支才 `AddCommands`，但命令一直可达。开发者会把 `AddCommands` 读成"暴露开关"，实际静态命令恒可达；配合 `Allow("*")` 就是意外暴露面。
 
 **动作**
 
@@ -281,6 +281,21 @@ dotnet run -c Release --project benchmarks/OrielWeb.Benchmarks -- --filter '*'
 
 验收：三个 `tools/verify-*.sh|ps1` 仍只调用一行；`--selftest` 的输出格式不变（外部脚本按行匹配，不能改）。
 
+> **实际形态是类库，不是独立 exe**（2026-10-24）。原计划只写了"抽到 "`tests/OrielWeb.Conformance`"，
+> 没说它是程序还是库；一开始按"独立宿主程序"设计，做完发现工具链的成本此前没算进去：
+> 三条 verify 脚本各自 `publish` 一次，再用**同一个二进制**跑 selftest / shell / smoke 三个阶段，
+> `verify-macos.sh` 还要把它打成 `.app` 并 codesign。做成第二个 exe 意味着每个平台多一次
+> AOT 发布、多打一个 bundle、多签一次名——而收益只有"能单独启动"。
+>
+> 计划原文那句"**demo 只保留一个转发入口**"本来就指向类库形态：入口还在 demo，
+> 实现归 conformance。所以最终做成 `OutputType=Library`，由 demo 的 `Program.cs`
+> 调用 `ConformanceRun` 的六个钩子（`AllowCapabilities` / `ConfigureWindow` / `Attach` /
+> `BeforeBuild` / `AfterBuild` / `AfterRun` + `ApplyExitCode`）。
+>
+> 代价是没有"独立 CI 入口"：跑自检仍然要启动 demo 的二进制。换来的是工具链零改动、
+> 发布成本不变。若将来真需要独立可执行文件，再加一个 30 行的宿主项目引用本库即可，
+> 不必重写自检。
+
 **风险**：R4 是本计划唯一"可能引入回归"的批次。缓解：R4a 只做文件搬运（`git mv` + 补 `partial` 关键字），一次提交一类文件，每个提交都能单独回滚。
 
 **实施状态（2026-10-23 更新）**
@@ -289,7 +304,7 @@ dotnet run -c Release --project benchmarks/OrielWeb.Benchmarks -- --filter '*'
 |---|---|---|
 | R4a 拆分 | ✅ 已完成（0.4.12） | 三个宿主各拆成 9 个 partial 分片，最大 737 行；成员整块搬运，零逻辑改动 |
 | R4b 纯函数化 | ✅ 已完成（0.4.13） | 抽出 10 个纯函数（3 个静态工具类），新增 **104 条**用例；测试总数 1,501 → 1,605 |
-| R4c conformance 项目 | ⬜ 未开始 | 与 R4a 无依赖关系，可单独开工 |
+| R4c conformance 项目 | ✅ 已完成（0.4.14） | 26 个自检 + 4 个平台探针迁出；demo 的 `Program.cs` 739 → 275 行，示例工程 9,000+ → 744 行 |
 
 **R4a 的做法与验收**：原计划写的是 `git mv` + 手工切分，实际改用 Roslyn 语法树
 按成员整块搬迁——手工切 715 个成员、10,077 行，出错方式是"漏了一个 `#region` 或
