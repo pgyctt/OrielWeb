@@ -91,6 +91,9 @@ async function resolveAgainstBase(fnName, path, options) {
     }
 
     const dir = await getter();
+    // 用 `/` 拼接是**跨仓隐式契约**：宿主侧 OrielPathScope.Normalize 会把混合分隔符
+    // 归一后再判 scope（Windows 上这里产出 `C:\...` + `/rel` 的混合串），所以本侧
+    // 不按平台选分隔符。改这里的拼接方式前，先看宿主侧的归一逻辑。
     return `${dir}/${path}`;
 }
 

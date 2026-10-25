@@ -498,6 +498,14 @@ export class Window {
      * @param {(event: { event: string, id: number, payload: any }) => void} handler
      * @returns {(() => void) & PromiseLike<() => void>} 退订函数；它同时是 thenable，
      *   所以 `await win.listen(...)` 与 `win.listen(...).then(...)` 都成立（见 `event` 模块）。
+     * @remarks
+     * **与 Tauri 的一处语义差别**：本方法不做按 label 过滤，它就是全局 `listen` 的同义词。
+     * 窗口几何/焦点类事件（resize/move/focus/scale）由宿主**只推给所属窗口的页面**，
+     * 所以"当前页面对自己的窗口调 listen"天然只收自己的事件；但对 `new Window('别的窗口')`
+     * 调它是等不到那个窗口的事件的——宿主把那些事件推给了**那个窗口的页面**，而事件
+     * payload 不带 label，本库也没有跨窗口订阅通道。从 Tauri 迁移且依赖了
+     * `winB.listen(...)` 收 B 窗口事件的代码，需要改成 B 页面自己 listen 后经
+     * `emitTo` 转发，或由宿主在 C# 侧订阅 `WebviewWindow.Resized`。
      */
     listen(event: string, handler: (event: {
         event: string;
@@ -505,7 +513,7 @@ export class Window {
         payload: any;
     }) => void): (() => void) & PromiseLike<() => void>;
     /**
-     * 订阅一次；收到第一条后自动退订。
+     * 订阅一次；收到第一条后自动退订。不过滤窗口（同 {@link listen} 的说明）。
      *
      * @param {string} event
      * @param {(event: { event: string, id: number, payload: any }) => void} handler

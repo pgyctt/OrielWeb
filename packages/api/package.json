@@ -25,7 +25,9 @@
     "src",
     "types"
   ],
+  "sideEffects": false,
   "exports": {
+    "./package.json": "./package.json",
     "./core": {
       "types": "./types/core.d.ts",
       "default": "./src/core.js"

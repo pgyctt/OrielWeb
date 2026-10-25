@@ -19,25 +19,32 @@ export function mockIPC(invoke: MockHandler): void;
  */
 export function mockEmit(eventName: string, payload?: unknown): void;
 /**
- * 登记"有哪些窗口"（供将来 window 模块的 `getAllWindows` 读取）。
+ * 登记"有哪些窗口"（对标 Tauri 的 `mockWindows`）。
  *
- * 现在调用不改变任何可观测行为——本包还没有 window 模块。提前提供是为了让
- * 迁移过来的测试代码不必等到那时才写。
+ * 第一个 label 是 mock 传输层上报的**本窗口**——`getCurrentWindow()` 会返回
+ * 它的句柄，后续改成别的 label 也会实时生效（getter，见 `mockIPC`）。
+ * 其余 label 供 `getAllWindows` 一类查询读取（`getMockWindowLabels`，内部用）。
  *
- * @param {string[]} labels
+ * 在 `mockIPC` 之前或之后调用都可以。
+ *
+ * @param {...string} labels
  * @returns {void}
  */
 export function mockWindows(...labels: string[]): void;
 /**
- * 取当前登记的窗口 label（内部用；window 模块落地后由它消费）。
+ * 取当前登记的窗口 label（内部用；`window.getAllWindows` 一类查询的 mock 数据源）。
  * @returns {string[]}
  */
 export function getMockWindowLabels(): string[];
 /**
- * 占位：对标 Tauri 的 `mockConvertFileSrc`。
+ * 让 mock 传输层支持 `convertFileSrc`（对标 Tauri 的 `mockConvertFileSrc`）。
  *
- * 本库还没有文件 asset 协议（见 core.js 的 `convertFileSrc`），所以这里只记录
- * 自定义协议名，供 `convertFileSrc` 实现时读取。
+ * 登记后 `core.convertFileSrc` 在 mock 下返回
+ * `<protocol>://file.oriel/<encodeURIComponent(path)>`；未登记时 mock 传输层
+ * 不提供该能力（`convertFileSrc` 如实抛"当前宿主不支持"，与旧宿主同语义）。
+ *
+ * 在 `mockIPC` 之前或之后调用都可以。注意 protocol 只影响 URL 前缀——
+ * 本库的文件内容固定走 `file.oriel` 这个 host，与真实宿主一致。
  *
  * @param {string} protocol
  * @returns {void}
@@ -53,8 +60,5 @@ export function clearMocks(): void;
  * @returns {boolean}
  */
 export function isMocked(): boolean;
-export type OrielTransport = {
-    invoke: (name: string, args?: Record<string, unknown>) => Promise<unknown>;
-    supportsPerCallTimeout?: boolean;
-};
+export type OrielTransport = import("./types.js").OrielTransport;
 export type MockHandler = (cmd: string, payload: Record<string, unknown> | null) => unknown;

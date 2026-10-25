@@ -314,15 +314,24 @@ function subscribe(eventName, handler, isOnce) {
 
     // unlisten 先声明后赋值：raw 里要引用它（once 在调用处理器之前退订），
     // 而 raw 又要在 unlisten 赋值之前交给底层通道。用一个可变槽位打断这个循环。
+    //
+    // 槽位是占位函数时被调用（唯一路径：某个 transport 在 on() 内部**同步**派发
+    // 缓冲事件——本库的桥接与 mock 都不这么做，这里是防御），说明 once 的退订
+    // 发生在真实 unlisten 就位之前：记下标记，等赋值后立刻补做——否则那条订阅
+    // 会一直留在底层通道里，第二次事件再进来时 once 已经失效。
+    let pendingOnceRelease = false;
+
     /** @type {() => void} */
-    let unlisten = () => {};
+    let unlisten = () => {
+        pendingOnceRelease = true;
+    };
 
     /** @type {Subscription} */
     const entry = {
         handler,
         raw: (payload) => {
             // once 必须在**调用处理器之前**退订：处理器里如果又触发同名事件，
-            // 它不该再被叫一次（那是 once 的定义）。
+            // 它不该再叫一次（那是 once 的定义）。
             if (isOnce) {
                 unlisten();
             }
@@ -359,6 +368,12 @@ function subscribe(eventName, handler, isOnce) {
 
     entry.unlisten = unlisten;
     set.add(entry);
+
+    // 同步派发过的 once：真实退订函数现在才就位，补做那次被占位函数记下的退订。
+    if (pendingOnceRelease) {
+        unlisten();
+    }
+
     return unlisten;
 }
 

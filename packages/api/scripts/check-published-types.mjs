@@ -31,6 +31,10 @@ const entrypoints = Object.entries(pkg.exports ?? {});
 if (entrypoints.length === 0) problems.push('package.json 没有 exports');
 
 for (const [subpath, target] of entrypoints) {
+  // `./package.json` 是给打包器/工具读的包自身元数据（npm 官方惯例），
+  // 它没有也不需要 types 声明——豁免，其余条目一律要求 types + default。
+  if (subpath === './package.json') continue;
+
   for (const field of ['types', 'default']) {
     const rel = target?.[field];
     if (typeof rel !== 'string') {
