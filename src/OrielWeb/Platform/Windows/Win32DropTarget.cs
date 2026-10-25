@@ -137,6 +137,16 @@ internal sealed unsafe class Win32DropTarget : IDisposable
 
     public void Dispose()
     {
+        // 幂等：宿主的 using、窗口关闭路径、异常回滚都可能调到这里，而 ReleaseCore
+        // 每次都会递减 _refCount——二次进入会把"OLE 仍持有的引用"提前扣到 0 并 FreeHandle，
+        // 与在途的 COM Release（ReleaseImpl → FromSelf）构成 use-after-free。
+        // 2026-10-25 评审发现：_registered 标志只保护了 Revoke 段，没有保护引用计数段。
+        if (_disposed)
+        {
+            return;
+        }
+        _disposed = true;
+
         if (_registered)
         {
             _registered = false;
@@ -149,6 +159,8 @@ internal sealed unsafe class Win32DropTarget : IDisposable
 
         ReleaseCore();
     }
+
+    private bool _disposed;
 
     /// <summary>少一个引用；归零时释放 GCHandle。</summary>
     private void ReleaseCore()

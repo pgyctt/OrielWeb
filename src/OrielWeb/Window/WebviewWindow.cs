@@ -371,6 +371,29 @@ public sealed class WebviewWindow : IOrielWindowControl
         backend.ContextMenuItemClicked += id => ContextMenuItemClicked?.Invoke(id);
         backend.FileDropped += args => FileDropped?.Invoke(args);
         backend.DragDrop += args => DragDropReceived?.Invoke(args);
+
+        // 补发一次初始几何。为什么必须：后端建窗是同步的（Windows 的 CreateWindowEx +
+        // ShowWindow 期间 WM_SIZE/WM_MOVE 就到了），而本方法在那之后才挂转发——建窗期
+        // 触发的 Resized/Moved 打在没有转发器的后端事件上，且后端的去重记账
+        // （_lastReportedSize）已把那个尺寸记为"已上报"，之后同尺寸不再触发。
+        // 于是"AddWindow(..., win => win.Resized += ...)"这种在创建前订阅的调用方
+        // 永远等不到第一次通知。补发把语义钉成：**订阅方至少收到一次当前值**。
+        // 只补几何两条：TitleChanged/Loaded 等其余事件要么创建期必然还没发生、
+        // 要么本来就有自己的补推（主题在每次 NavigationCompleted 后补推）。
+        try
+        {
+            OrielSize size = backend.InnerSize;
+            Resized?.Invoke(new OrielSizeChangedEventArgs(size.Width, size.Height));
+
+            OrielPosition position = backend.InnerPosition;
+            Moved?.Invoke(new OrielPositionChangedEventArgs(position.X, position.Y));
+        }
+        catch (Exception ex)
+        {
+            // 补发是尽力而为：查询在个别后端/时机下失败，不该让建窗本身失败
+            // （原始的建窗期丢失也只是"少一次通知"，这里不能比它更糟）。
+            OrielDiagnostics.Report($"[OrielWeb] 补发初始几何失败（忽略）：{ex.Message}");
+        }
     }
 
     // ---- 显示状态 ----

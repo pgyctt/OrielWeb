@@ -33,7 +33,11 @@ internal sealed class OrielCommandDispatcher
 {
     private readonly Dictionary<Type, Func<object>> _factories;
     private readonly ConcurrentDictionary<Type, object> _targets = [];
-    private readonly Dictionary<string, (IOrielCommandRouter Router, int Index)> _routes;
+    /// <summary>
+    /// 命令名 → (路由, 索引)。构造期快照，miss 且注册表修订号领先时重建（见 HandleInvokeAsync）——
+    /// 因此不设 readonly。引用赋值原子，热路径读它无需加锁。
+    /// </summary>
+    private Dictionary<string, (IOrielCommandRouter Router, int Index)> _routes;
     private readonly JsonSerializerContext? _jsonContext;
     private readonly OrielIpcGuard _guard;
 
@@ -47,10 +51,42 @@ internal sealed class OrielCommandDispatcher
         // O(router 数) + 每次加锁 + 一次数组分配（Snapshot 里的 [.. s_routers]），
         // README 声称的 O(1) 分发实际只成立于单个 router 内部。
         _routes = OrielCommandRegistry.BuildIndex();
+        _routesVersion = OrielCommandRegistry.Version;
     }
+
+    /// <summary>构建 <see cref="_routes"/> 快照时的注册表修订号（miss 时据此判断要不要重建）。</summary>
+    private long _routesVersion;
 
     /// <summary>本分发器用的门禁（测试据此取令牌，见 TestHarness）。</summary>
     internal OrielIpcGuard Guard => _guard;
+
+    /// <summary>
+    /// 解析命令路由：先查快照，miss 且注册表修订号领先时重建一次再查。
+    /// </summary>
+    /// <remarks>
+    /// miss 的两种情形要分开：① 真的没这个命令（拼错 / 没 AddCommands）；② 快照构建之后
+    /// 又有程序集被加载（运行期 <c>Assembly.Load</c> 插件），全局注册表领先于构造期快照。
+    /// ②的表现在过去是一句"未知命令"，而全局索引里明明有——排查者两边都查得到、就是对不上。
+    /// 重建只在 miss 且修订号落后时发生：热路径（命中）仍是一次字典查找零额外开销；
+    /// 拼错名字的持续 miss 也只重建一次（修订号追平后就不再重建）。
+    /// </remarks>
+    private bool TryResolveRoute(string name, out (IOrielCommandRouter Router, int Index) route)
+    {
+        if (_routes.TryGetValue(name, out route))
+        {
+            return true;
+        }
+
+        long registryVersion = OrielCommandRegistry.Version;
+        if (registryVersion == _routesVersion)
+        {
+            return false;
+        }
+
+        _routes = OrielCommandRegistry.BuildIndex();
+        _routesVersion = registryVersion;
+        return _routes.TryGetValue(name, out route);
+    }
 
     /// <summary>
     /// 应用命令执行完成时触发（成功与失败都有）。由 <see cref="OrielApp.CommandInvoked"/> 转发给应用。
@@ -154,7 +190,7 @@ internal sealed class OrielCommandDispatcher
         }
 
 
-        if (!_routes.TryGetValue(name, out var route))
+        if (!TryResolveRoute(name, out var route))
         {
             ReplyError(sink, id, ErrorReply.Text($"未知命令 '{name}'。请确认方法已标注 [OrielCommand] 且所在程序集被应用引用。", OrielIpcErrorCodes.UnknownCommand));
             return;

@@ -79,6 +79,14 @@ internal sealed class LinuxWebMessageHandler : IIpcReplySink
         {
             // 非 OrielWeb 消息，忽略
         }
+        catch (Exception ex)
+        {
+            // 宿主订阅者（RaiseConsoleMessage / RaiseMessageReceived → 应用回调）抛出的异常
+            // 不能逃到 GTK 的 script-message trampoline。对比 GtkMenu.OnActivate 的同款
+            // 全量兜底：用户回调的错归用户（诊断可见），框架的命归框架。Windows（WebView2
+            // 的事件机制）与 macOS 侧由各自宿主兜，这里补齐 Linux 的缺口。
+            OrielDiagnostics.Report($"[OrielWeb] 处理页面消息时抛异常（已吞，不影响后续消息）：{ex}");
+        }
         return 0;
     }
 

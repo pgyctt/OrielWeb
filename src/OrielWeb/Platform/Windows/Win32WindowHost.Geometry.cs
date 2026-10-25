@@ -402,6 +402,14 @@ internal partial class Win32WindowHost
 
     public void MoveTo(int x, int y)
     {
+        // 窗口已销毁时直接返回：_hwnd 为 0 时 GetDpiForWindow 也给 0，
+        // LogicalPixels.ToPhysical(x, 0) 会把目标坐标算成 0（DPI 无效 → 无效坐标），
+        // SetWindowPos 虽然无害但语义混乱。同文件 InnerSize / CurrentScaleFactor 同款守卫。
+        if (_hwnd == 0)
+        {
+            return;
+        }
+
         // x/y 是屏幕逻辑坐标（API.md 的契约，三平台一致），按当前窗口 DPI 折算成物理像素——
         // 与 Resize/最小尺寸共用 LogicalPixels（评审 2026-10-08 发现 2：此前只有尺寸折算）。
         uint dpi = Win32.GetDpiForWindow(_hwnd);
@@ -414,6 +422,12 @@ internal partial class Win32WindowHost
 
     public void Resize(int width, int height)
     {
+        // 守卫理由同 MoveTo：销毁后的 Resize 只会把 0 DPI 折算出的 0x0 设给一个不存在的窗口。
+        if (_hwnd == 0)
+        {
+            return;
+        }
+
         // width/height 是**逻辑像素的客户区**（与 Linux gtk_window_resize、macOS setContentSize: 同语义）：
         //   1. 逻辑 → 物理（按当前窗口 DPI）；
         //   2. 客户区 → 整窗（仅 framed；frameless 的客户区已等于整窗）。

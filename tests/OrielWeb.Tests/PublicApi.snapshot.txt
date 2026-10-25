@@ -20,6 +20,7 @@
   OrielWeb.Ipc.OrielCommandInvokedEventArgs :: Name : System.String (get=True, set=False)
   OrielWeb.Ipc.OrielCommandInvokedEventArgs :: Succeeded : System.Boolean (get=True, set=False)
   OrielWeb.Ipc.OrielCommandRegistry :: AddRouter(OrielWeb.Ipc.IOrielCommandRouter) -> System.Void
+  OrielWeb.Ipc.OrielCommandRegistry :: Version : System.Int64 (get=True, set=False)
   OrielWeb.Ipc.OrielEventSink :: BeginInvoke(System.String, System.String, System.AsyncCallback, System.Object) -> System.IAsyncResult
   OrielWeb.Ipc.OrielEventSink :: EndInvoke(System.IAsyncResult) -> System.Void
   OrielWeb.Ipc.OrielEventSink :: Invoke(System.String, System.String) -> System.Void

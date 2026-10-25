@@ -2025,6 +2025,18 @@ public sealed class OrielApp : IDisposable
     {
         EnsureApartment();
 
+        // 防重入：一个 OrielApp 实例只跑一次消息循环。二次 Run 曾被静默放行——旧后端不
+        // Dispose、ThemeChanged 重复挂接，且 RunMessageLoop 的防重入标志在后端实例上
+        // （新后端防不住旧的循环），第二次会建出一个无窗口的消息循环并永久阻塞
+        // （2026-10-25 评审 P2）。想"再来一次"应当 new 一个应用，而不是复用实例。
+        if (_runStarted)
+        {
+            throw new InvalidOperationException(
+                "Run() 只能调用一次：消息循环已在此实例上启动过。要再启动一个应用，" +
+                "请创建新的 OrielApp 实例（Oriel.CreateBuilder().Build()）。");
+        }
+        _runStarted = true;
+
         // 单实例判定已在构造期（Build()）做完——见 IsSecondaryInstance 的说明。这里只剩分流：
         // 第二实例不建窗、不进消息循环，打印契约标记后返回（退出码保持 0）。
         // 下面这行是 tools/verify-macos.sh 与 demo 自检 grep 的**契约标记**，不要改措辞。
@@ -2100,6 +2112,9 @@ public sealed class OrielApp : IDisposable
         // 收尾，那段时间仍受看门狗保护（超时一样会强杀），这正是"Quit 保证退出"的兜底所在。
         CompleteExit("库侧退出清理完成，Run() 即将返回");
     }
+
+    /// <summary>Run() 是否已在此实例上启动过（防重入，见 Run 的说明）。</summary>
+    private bool _runStarted;
 
     /// <summary>退出尚未开始时补一次 <see cref="BeginExit"/>（自然退出路径：所有窗口关闭、平台落出循环）。</summary>
     private void BeginExitIfNotStarted()
@@ -2187,6 +2202,16 @@ public sealed class OrielApp : IDisposable
 
     public void Dispose()
     {
+        // 幂等 + 置空：Run() 的退出路径会先 Dispose 一次，宿主的 using / 手动收尾会再来一次
+        // （两处都是合法写法）。不置空 _backend 的话，Dispose 之后 PostToMainThread /
+        // InvokeOnUiThread 拿到的是已释放后端——那种失败（GTK/WK 的已释放对象异常）
+        // 很难从调用方定位。2026-10-25 评审 P3。
+        if (_disposed)
+        {
+            return;
+        }
+        _disposed = true;
+
         _singleInstanceServer?.Dispose();
         _singleInstanceLock?.Dispose();
         // 托盘先于后端释放：它的原生资源要靠后端所在的消息循环/主线程清理。
@@ -2211,5 +2236,8 @@ public sealed class OrielApp : IDisposable
         // 关掉监视器不需要消息循环，但拖到后面就可能对着已销毁的窗口推事件。
         FsWatchers.Dispose();
         _backend?.Dispose();
+        _backend = null;
     }
+
+    private bool _disposed;
 }

@@ -20,6 +20,25 @@ public static class OrielCommandRegistry
     private static readonly Dictionary<string, IOrielCommandRouter> s_index = new(StringComparer.Ordinal);
     private static readonly object s_gate = new();
 
+    /// <summary>注册表的修订号：<see cref="AddRouter"/> 每加入新命令就 +1。</summary>
+    /// <remarks>
+    /// 给分发器的"快照过期检测"用：路由索引在分发器构造期一次性快照（热路径无锁），
+    /// 运行期 <c>Assembly.Load</c> 进来的插件程序集会让全局索引领先于快照——
+    /// 分发器在查不到命令时比对修订号，发现领先就重建一次（见 OrielCommandDispatcher）。
+    /// </remarks>
+    public static long Version
+    {
+        get
+        {
+            lock (s_gate)
+            {
+                return s_version;
+            }
+        }
+    }
+
+    private static long s_version;
+
     /// <summary>注册一个路由。命令名与既有注册或内建命令冲突时抛 <see cref="InvalidOperationException"/>。</summary>
     public static void AddRouter(IOrielCommandRouter router)
     {
@@ -43,6 +62,8 @@ public static class OrielCommandRegistry
                 }
                 s_index[name] = router;
             }
+
+            s_version++;
         }
     }
 
