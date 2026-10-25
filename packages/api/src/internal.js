@@ -79,3 +79,49 @@ export function warnCompat(message) {
         console.warn(`[orielweb] ${message}`);
     }
 }
+
+// ---------------------------------------------------------------------------
+// 关闭接管的订阅计数（按窗口 label）
+//
+// 退订时**不能无脑关掉宿主接管**：两个组件各自 `onCloseRequested` 时，先卸载的那个
+// 会把接管关掉，另一个的 `preventDefault()` 随之失效——症状是"我明明拦了，窗口还是关了"，
+// 而且只在"组件顺序变了"的时候出现。只有归零才关。
+//
+// 放在 internal 而不是 window.js：`clearMocks()` 也要能清它，而 mocks 不该 import window
+// （那会绕出一圈依赖）。这里两边都够得着。
+// ---------------------------------------------------------------------------
+
+/** @type {Map<string, number>} */
+const closeInterceptRefs = new Map();
+
+/**
+ * 记一次订阅。
+ *
+ * @param {string} label
+ */
+export function refCloseIntercept(label) {
+    closeInterceptRefs.set(label, (closeInterceptRefs.get(label) ?? 0) + 1);
+}
+
+/**
+ * 退一次订阅。
+ *
+ * @param {string} label
+ * @returns {boolean} 是否**归零**（true = 调用方该去关掉宿主接管了）。
+ */
+export function unrefCloseIntercept(label) {
+    const next = (closeInterceptRefs.get(label) ?? 0) - 1;
+
+    if (next > 0) {
+        closeInterceptRefs.set(label, next);
+        return false;
+    }
+
+    closeInterceptRefs.delete(label);
+    return true;
+}
+
+/** 测试钩子：清空计数（`clearMocks` 会调它，避免用例之间互相污染）。 */
+export function resetCloseInterceptRefs() {
+    closeInterceptRefs.clear();
+}

@@ -24,11 +24,13 @@
 //   3. **图标暂不支持**：IconMenuItem 存在、可构造、可加入菜单，但 `setIcon` 抛错
 //      （图标要资源表，见 README）。菜单项会画成普通文本项。
 //
-//   4. **`popup()` 的完成时机与 Tauri 不同**：Tauri 的文档说"菜单一显示就 resolve"。
-//      本库 **Windows 与 macOS 都是阻塞的**（Win32 的 TrackPopupMenuEx、AppKit 的
-//      popUpMenuPositioningItem: 都会一直跟踪到用户选择或点外面），只有 **Linux 立即返回**
-//      （GTK 的菜单是异步的）。**别在 `await menu.popup()` 之后假设"用户已经选过了"**
-//      ——三个平台不一致，action 才是可靠的回传通道。
+//   4. **`popup()` 的 Promise 时机与 Tauri 不同，但可观察行为一致**：Tauri 把显示动作
+//      丢到主线程队列后**立即 resolve**；本库 **Windows 与 macOS 都阻塞到用户选择**
+//      （Win32 的 TrackPopupMenuEx、AppKit 的 popUpMenuPositioningItem: 都会一直跟踪到
+//      用户选择或点外面），只有 **Linux 立即返回**（GTK 的菜单是异步的）。
+//      注意这不是"本库更糟"：Tauri 那边主线程同样被同一个原生调用挡住，所以
+//      resolve 之后的代码在两个库里都要等菜单关闭才能跑。
+//      **别在 `await menu.popup()` 之后假设"用户已经选过了"**——action 才是可靠的回传通道。
 //
 //   5. **`setAsWindowMenu` 在 macOS 上抛错**（Tauri 也是 Unsupported）：菜单在 macOS 是
 //      应用级的，没有"某个窗口的菜单栏"这回事。那边只能用 `setAsAppMenu`。

@@ -13,7 +13,7 @@
 //     而不是返回一个假值——返回假值的后果是页面按错误信息渲染。
 
 import { invoke } from './core.js';
-import { getTransport } from './internal.js';
+import { getTransport, refCloseIntercept, unrefCloseIntercept } from './internal.js';
 import { listen, once, emit, emitTo, TauriEvent } from './event.js';
 // 图像字节的共享工具：与 `image.js` 共用同一份，免得两边对"越界字节要不要拦"分叉。
 import { toImageBytes, bytesToBase64, assertImageFormat } from './image-bytes.js';
@@ -419,11 +419,15 @@ export const EffectState = Object.freeze({
 /**
  * 关闭请求事件（对标 Tauri 的 `CloseRequestedEvent`）。
  *
- * 与 Tauri 的**关键差别**：Tauri 的 `preventDefault()` 能真的阻止关闭；本库的关闭
- * 语义是"页面什么都不做窗口就不关"（见 {@link Window.onCloseRequested}），
- * `preventDefault()` 在这里是**记录意图**（`isPreventDefault()` 可查）——
- * 它不会改变任何行为，因为"没关"本来就是默认。迁移代码的
- * `event.preventDefault()` 不必删，但它在本库里不产生额外效果。
+ * **语义与 Tauri 一致**：`preventDefault()` 真的会阻止关闭。不调用它时，
+ * `onCloseRequested` 的包装层会在 handler 跑完后调 `destroy()`——
+ * 所以"要不要关"由这个调用决定，而不是"什么都不做"。
+ *
+ * ```js
+ * await win.onCloseRequested(async (event) => {
+ *   if (!(await confirmDiscard())) event.preventDefault();
+ * });
+ * ```
  */
 export class CloseRequestedEvent {
     /**
@@ -439,7 +443,7 @@ export class CloseRequestedEvent {
         this._preventDefault = false;
     }
 
-    /** 记录"调用方不希望窗口关"（本库是记录意图，不改变行为——见类说明）。 */
+    /** 阻止窗口关闭（阻止的是 `onCloseRequested` 包装层的默认 `destroy()`）。 */
     preventDefault() {
         this._preventDefault = true;
     }
@@ -1778,27 +1782,30 @@ export class Window {
     /**
      * 订阅本窗口的关闭请求（对标 Tauri 的 `onCloseRequested`）。
      *
-     * @param {(event: { event: string, id: number, payload: any, preventDefault: () => void }) => void} handler
+     * @param {(event: import('./window.js').CloseRequestedEvent) => void | Promise<void>} handler
      * @returns {Promise<() => void>} 退订函数（`await` 拿到，与 Tauri 一致）。
      * @remarks
-     * **与 Tauri 的关键差别**：Tauri 在回调里调 `event.preventDefault()` 就能阻止关闭；
-     * 本库是**反向**的——宿主挂起关闭、等页面决定，页面**同意**才调 `destroy()`：
+     * **语义与 Tauri 一致：默认关闭，`event.preventDefault()` 才留下。**
      *
      * ```js
-     * const un = await getCurrentWindow().onCloseRequested(async () => {
-     *   if (await confirmDiscard()) {
-     *     await getCurrentWindow().destroy();   // 同意关闭
+     * const un = await getCurrentWindow().onCloseRequested(async (event) => {
+     *   if (await hasUnsavedChanges()) {
+     *     event.preventDefault();          // 不关
      *   }
-     *   // 不同意：什么都不做，窗口留在打开状态
+     *   // 不调用：handler 返回后窗口关闭
      * });
      * ```
      *
-     * 为什么不做成 Tauri 那样：Windows 的 `WM_CLOSE` 是**同步消息**、页面回执是异步 IPC，
-     * 宿主没法"等你回调跑完再决定"。所以只能让页面主动补上关闭那一步。
+     * 关闭的默认动作是**库替你做的**：handler（含 async）执行完之后，若没调用
+     * `preventDefault()`，本方法会调 `destroy()`。这与 Tauri 的实现是同一段逻辑
+     * （`if (!evt.isPreventDefault()) await this.destroy()`），所以迁移代码不用改。
      *
-     * 传进来的 `event.preventDefault` 是个**空操作**——它存在只是为了让
-     * `event.preventDefault()` 这种写法不报错。真正的"阻止"是"什么都不做"。
-     * 这一点必须写清楚，否则迁移代码会以为调了它就等于阻止了。
+     * 为什么能这么做：Windows 的 `WM_CLOSE` 是**同步消息**、页面回执是异步 IPC，
+     * 宿主没法在中途等回调。所以宿主只负责"挂起 + 推事件"，"关不关"这一半由
+     * 页面侧的这层包装补上——异步回调跑完后它自己调 `destroy()`，不占用宿主线程。
+     *
+     * **handler 抛错时窗口保持打开**（与 Tauri 一致：异常中断后续的 `destroy`）。
+     * 差别只在于会把错误打进 console——未处理的 rejection 在页面里很难定位。
      *
      * 前置条件：宿主必须开了关闭接管（`OrielWindowOptions.InterceptClose`
      * 或 `window.setCloseIntercept`），否则点关闭会直接关掉、回调永远不来。
@@ -1811,8 +1818,11 @@ export class Window {
 
         // 自动打开接管：订阅了却没有接管 = 回调永远不来，而那种"配了没反应"
         // 是最难排查的。失败要报出来（与事件转发的处理一致）。
+        let interceptAcquired = false;
         try {
             await invoke('window.setCloseIntercept', { label: this.label, enabled: true });
+            refCloseIntercept(this.label);
+            interceptAcquired = true;
         } catch (error) {
             console.error(
                 '@orielweb/api/window: 无法打开关闭接管，onCloseRequested 的回调不会触发。' +
@@ -1820,22 +1830,58 @@ export class Window {
                 '请在宿主侧允许 `window.setCloseIntercept`，或用 OrielWindowOptions.InterceptClose 静态开启。');
         }
 
-        const unlisten = listen(TauriEvent.WINDOW_CLOSE_REQUESTED, (event) => {
-            handler({
-                event: event.event,
-                id: event.id,
-                payload: event.payload,
-                // 空操作：见上面的说明。保留它是为了让迁移代码的 `event.preventDefault()`
-                // 不抛 TypeError——那会让一个本来只是"语义不同"的差异变成崩溃。
-                preventDefault: () => {},
-            });
+        // async：`preventDefault()` 可能发生在 handler 的任意 await 之后，
+        // 必须等它跑完才能判定。listener 的返回值会被丢弃，但内部的 await 照常执行。
+        const unlisten = listen(TauriEvent.WINDOW_CLOSE_REQUESTED, async (event) => {
+            const closeEvent = new CloseRequestedEvent(event);
+
+            try {
+                await handler(closeEvent);
+            } catch (error) {
+                console.error(
+                    '@orielweb/api/window: onCloseRequested 的 handler 抛错，窗口保持打开。' +
+                    `原因：${errorText(error)}`);
+                return;
+            }
+
+            if (closeEvent.isPreventDefault()) {
+                return;
+            }
+
+            // 默认动作。失败要说出来：静默的话现象就是"点了关闭没反应"，
+            // 而那与"页面拦下了关闭"长得一模一样。
+            try {
+                await this.destroy();
+            } catch (error) {
+                console.error(
+                    '@orielweb/api/window: 关闭请求已放行，但 destroy 失败，窗口仍然打开。' +
+                    `原因：${errorText(error)}`);
+            }
         });
 
+        let released = false;
+
         return async () => {
+            // 幂等：调用方可能既在卸载钩子里退订、又在别处退一次。
+            if (released) {
+                return;
+            }
+
+            released = true;
             unlisten();
 
-            // 退订最后一个监听者时把接管关掉：留着它会让窗口在没人处理的情况下
-            // 点关闭没反应（挂起后没人 destroy）。这是"订阅驱动"该有的收尾。
+            if (!interceptAcquired) {
+                return;
+            }
+
+            // 还有别的组件在订阅时**不能**关接管：关掉之后它们的 preventDefault
+            // 会静默失效（症状是"我拦了，窗口还是关了"）。只有归零才关。
+            if (!unrefCloseIntercept(this.label)) {
+                return;
+            }
+
+            // 归零后必须关掉：留着它会让窗口在没人处理的情况下点关闭没反应
+            // （宿主挂起、没人 destroy）。这是"订阅驱动"该有的收尾。
             try {
                 await invoke('window.setCloseIntercept', { label: this.label, enabled: false });
             } catch {

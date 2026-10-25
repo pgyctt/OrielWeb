@@ -8,7 +8,7 @@
 //   * 本库**没有 window 概念**（尚未有 window 模块），所以 `mockWindows` 只做占位——
 //     它记录 label 列表，等 window 模块落地后由它读。现在调用不会报错，但也不影响任何行为。
 
-import { setTransportOverride, hasTransportOverride } from './internal.js';
+import { setTransportOverride, hasTransportOverride, resetCloseInterceptRefs } from './internal.js';
 
 /**
  * @typedef {{
@@ -173,6 +173,9 @@ export function clearMocks() {
     // 事件订阅表也要清：不清的话上一条用例订阅的处理器会在下一条用例的 mockEmit 里
     // 继续被调用，而那两个用例本该互不干扰——这种污染最难查（症状是"单跑通过、连跑失败"）。
     mockListeners = new Map();
+    // 关闭接管的订阅计数也要清：它是按窗口 label 记的，留着会让下一条用例的
+    // 退订逻辑以为"还有别人在订阅"，于是不去关宿主接管。
+    resetCloseInterceptRefs();
     setTransportOverride(null);
 }
 

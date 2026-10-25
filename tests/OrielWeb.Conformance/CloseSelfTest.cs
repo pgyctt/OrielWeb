@@ -21,6 +21,14 @@ namespace OrielConformance;
 ///   <item><b>未接管</b>：InterceptClose 关着 → 直接关掉，页面不该收到事件。</item>
 /// </list>
 /// <para>
+/// <b>这里的"页面"指裸 <c>window.oriel</c>，不是 <c>@orielweb/api</c>。</b>
+/// 两层分工不同：宿主只管"挂起 + 推事件"，"关不关"由页面侧决定。API 包的
+/// <c>onCloseRequested</c> 在这之上补了与 Tauri 一致的语义——handler 跑完后未调
+/// <c>preventDefault()</c> 就调 <c>destroy()</c>。所以上面第 1 条（什么都不做 →
+/// 窗口留着）是**宿主契约**，不是页面 API 的默认行为；页面 API 那边"什么都不做"
+/// 等于"关"。两者的测试分别归这里与 <c>packages/api/tests/window.test.mjs</c>。
+/// </para>
+/// <para>
 /// 结论行：<c>CLOSE-SELFTEST: PASS</c> / <c>FAIL（…）</c>。
 /// </para>
 /// </remarks>

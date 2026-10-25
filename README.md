@@ -405,7 +405,9 @@ Linux 与 Windows 两条支持用 `--stages` / `-Stages` 只跑某一阶段；�
 其余脚本是**跨平台或专项**的，不带平台名：
 `verify-package.ps1`（包内 targets 的消费链路）、`publish.ps1` / `wsl_publish.ps1`（发布与打包）、
 `publish-vm-payload.ps1`（VM 部署验证用的自包含非 AOT 载荷）、
-`make-macos-app.sh`（组装 macOS `.app`）、`fake-notification-service.py` / `fake-notify-send.py`（通知替身）。
+`make-macos-app.sh`（组装 macOS `.app`）、`fake-notification-service.py` / `fake-notify-send.py`（通知替身）、
+`check-tauri-leaks.mjs`（迁移项目自查：`__TAURI_INTERNALS__` / `plugin:` 命令名 / `tauri://` 事件名，
+见 [MIGRATION-FINDINGS](docs/MIGRATION-FINDINGS.md#8-迁移前自查check-tauri-leaks)）。
 
 **前端包（`packages/api`）的测试与发布**：
 

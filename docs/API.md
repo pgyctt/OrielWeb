@@ -66,7 +66,7 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 
 | 属性 | 默认 | 链式写法 |
 |---|---|---|
-| `bool InterceptClose` | `false` | `WithInterceptClose(bool = true)`。**让页面接管关闭**：用户点关闭时推一个 `close-requested` 事件给页面，窗口**先不销毁**；页面同意就调 `WebviewWindow.Destroy()`，不同意就什么都不做。对标 Tauri 2 的 `onCloseRequested` + `preventDefault`。**宿主的 `Closing` 优先**（置了 `Cancel` 就不再问页面）；**页面加载完成前不生效**（事件送不到未加载的页面，挂起只会让窗口变成点 X 没反应） |
+| `bool InterceptClose` | `false` | `WithInterceptClose(bool = true)`。**让页面接管关闭**：用户点关闭时推一个 `close-requested` 事件给页面，窗口**先不销毁**，由页面决定关不关（`@orielweb/api` 的 `onCloseRequested` 会在 handler 结束后按"没 preventDefault 就 destroy"处理，与 Tauri 2 一致）。**宿主的 `Closing` 优先**（置了 `Cancel` 就不再问页面）；**页面加载完成前不生效**（事件送不到未加载的页面，挂起只会让窗口变成点 X 没反应）。页面侧订阅 `onCloseRequested` 时会自动打开它 |
 | `OrielWindowEventKind EventForwarding` | `None` | 哪几类宿主事件**转发给页面**（`Resize` / `Move` / `Focus`）。**默认全关**：尺寸与位置事件在拖动时每个像素来一次（已按 0.5 逻辑像素去重，但一次跨屏拖动仍有上千条），而推给页面在 macOS/Linux 上是一次 JS 求值。JS 包在页面 `listen` 到对应事件名时会自动打开它（见 §11 与 `window.setEventForwarding`） |
 | `string Label` | `"main"` | `WithLabel(string)`。**窗口的稳定标识**（对标 Tauri 2 的 `Window.label`），也是寻址单位：`OrielApp.GetWindow(label)` 按它取窗口。字符集限字母/数字/`-`/`.`/`_`，**自动归一小写**（三平台的大小写规则不同，不归一会出现"只在某个平台错配"）。**同一应用内必须唯一**，重复会在建窗时抛 `InvalidOperationException`——不会自动改名（自动改名会让 `emitTo('main', …)` 发到错误窗口且毫无症状）。页面侧读 `window.oriel.label` |
 | `string Title` | `"Oriel"` | `WithTitle(string)` |
@@ -395,12 +395,17 @@ WebviewWindow? again = app.GetWindow("settings");   // 按 label 取回（不存
 | 顺序 | 判据 | 结果 |
 |---|---|---|
 | 1 | 宿主的 `Closing` 里置了 `Cancel` | **否决**：窗口不关，**且不再问页面**（应用说"不许关"就该立刻生效，不该先问页面再被拒绝——那会让页面收到一个它无权决定的通知，还会把宿主的否决误当成"用户在确认框点了取消"） |
-| 2 | `CloseInterceptEnabled` 且页面已加载完成 | **挂起**：推 `close-requested` 给页面，窗口**不销毁**。页面同意就调 `Destroy()`，不同意就什么都不做 |
+| 2 | `CloseInterceptEnabled` 且页面已加载完成 | **挂起**：推 `close-requested` 给页面，窗口**不销毁**。关不关由页面决定——`@orielweb/api` 的 `onCloseRequested` 在 handler 跑完后，没调 `preventDefault()` 就调 `Destroy()`（与 Tauri 的默认语义一致） |
 | 3 | 以上都不成立 | **放行**：真正销毁窗口 |
 
 > **为什么必须"挂起"而不是"等待"**：Windows 的 `WM_CLOSE` 是**同步消息**，页面回执却是异步 IPC。
 > 在消息处理里等回执等于把 UI 线程锁死（而回执的处理本身也要 UI 线程）——必然死锁。
-> 所以只能"当场不销毁 + 推事件"，由页面稍后主动调 `Destroy()` 补上那一步。这也是 Tauri 的做法。
+> 所以只能"当场不销毁 + 推事件"，由页面稍后主动调 `Destroy()` 补上那一步。Tauri 也是这个形态：
+> 宿主挂起，`onCloseRequested` 的包装层在 handler 结束后补 `destroy()`。
+>
+> **宿主的挂起只管"不销毁"，不替你判断该不该关**。裸用 `window.oriel` 的页面（不经过
+> `@orielweb/api`）拿到 `close-requested` 之后必须自己调 `window.destroy`，否则窗口会一直开着
+> ——那不是"默认阻止"，是"没人收尾"。
 >
 > **页面没加载完不挂起**：那条 `close-requested` 送不到未加载的页面，挂起只会让窗口变成点 X 没反应
 > ——用户唯一的出路是任务管理器。这与 `win.*` 后门要防的是同一类事故。
@@ -1118,7 +1123,7 @@ document.addEventListener('contextmenu', (e) => {
 |---|---|---|---|
 | 菜单对象 | Rust 侧资源（持 `rid`） | 页面侧纯数据 | `new Menu()` / `append` / `items()` **不发 IPC**，因此不可能失败；`popup()` / `setAs*()` 之后改菜单不影响已装上的那份（快照） |
 | `action` 回传 | 回调挂在资源上 | `menu.itemclicked` 事件 + 本次的 id 前缀 | 只有**有 `id` 的项**能挂 `action`；**弹出**一次只有一个在屏上，**菜单栏**多条并存 |
-| `popup()` 完成时机 | 文档说"菜单一显示就 resolve" | **Windows 与 macOS 阻塞到用户选择**；只有 Linux 立即 resolve | **别在 `await menu.popup()` 之后假设用户已经选过了**，可靠信号是 `action` |
+| `popup()` 完成时机 | Promise 在菜单显示后立即 resolve（主线程随后被原生菜单阻塞） | **Windows 与 macOS 阻塞到用户选择**；只有 Linux 立即 resolve | **别在 `await menu.popup()` 之后假设用户已经选过了**，可靠信号是 `action`。两边的可观察行为其实一致：主线程都被原生菜单挡着，resolve 之后的代码同样要等菜单关闭 |
 | `close()` | 来自 `Resource`，释放 `rid` | 本库扩展：**关掉在屏菜单**（等价 Esc） | Windows 上 `popup` 阻塞时，这是页面唯一能用代码关掉菜单的路 |
 | `setIcon` | 设置图标 | **抛错**（没有图像资源表） | `IconMenuItem` 能构造、能加入菜单，但画成普通文本项 |
 | `setAsAppMenu` / `setAsWindowMenu` 的**返回值** | 还给你 Rust 侧那份菜单资源 | 还给你**页面侧记的**上一份 `Menu` | 多页面各看各的；单窗口应用完全一致。`close()` 对它没有意义 |
@@ -1185,10 +1190,10 @@ import { listen, TauriEvent } from '@orielweb/api/event';
 const win = getCurrentWindow();
 console.log(win.label);                       // 我是哪个窗口（宿主注入）
 
-// 关闭接管：**本库是"页面同意才关"**，与 Tauri 的 preventDefault 相反
-const un = await win.onCloseRequested(async () => {
-  if (await confirmDiscard()) await win.destroy();   // 同意关闭
-  // 不同意：什么都不做，窗口留在打开状态
+// 关闭接管：**与 Tauri 一致**——默认关闭，preventDefault() 才留下
+const un = await win.onCloseRequested(async (event) => {
+  if (!(await confirmDiscard())) event.preventDefault();
+  // 不调 preventDefault：handler 返回后窗口关闭（库替你调 destroy）
 });
 
 // 内置事件用 Tauri 名；包内会翻译成宿主事件名，并按需打开转发
@@ -1210,7 +1215,7 @@ await listen(TauriEvent.WINDOW_RESIZED, (e) => console.log(e.payload.width, e.pa
 | `clipboard` | `readText` / `writeText` / `clear` + `readImage` / `writeImage`（PNG）/ `writeHtml`（HTML + 纯文本回退）/ `writeSecret`（请求不进历史） |
 | `dialog` | `open` / `save` / `message` / `ask` / `confirm` |
 | `dpi` | `LogicalSize` / `PhysicalSize` / `LogicalPosition` / `PhysicalPosition` + 归一与换算（`toPhysical` / `toLogical`） |
-| `image` | `Image`（`fromPath` / `fromBytes` / `new`）+ `transformImage`。**与 Tauri 的本质分歧**：Tauri 的 `Image` 是资源表 handle（持 `rid`、有 `close()`），本库没有资源表——它是**页面侧字节容器**，因此**没有 `close()`**（迁移代码里的 `await image.close()` 会抛 `TypeError`，宁可当场炸也不要带着错误的心智模型继续写）。`rgba()` / `size()` 是本地值，但签名仍是 `Promise`（`await` 照样能跑）。尺寸解析（PNG 的 IHDR、ICO 的 `ICONDIRENTRY`，其中宽高字段的 **0 表示 256**）在页面侧完成；解码**像素**才请宿主（`window.decodeImage`），结果缓存 |
+| `image` | `Image`（`fromPath` / `fromBytes` / `new`）+ `transformImage`。**与 Tauri 的本质分歧**：Tauri 的 `Image` 是资源表 handle（持 `rid`、`close()` 释放 Rust 侧记录），本库没有资源表——它是**页面侧字节容器**。`close()` 自 B14 起是**补壳**：存在、无副作用（没有宿主资源可释放），debug 模式下打一条警告，迁移代码不必删这一句。`rgba()` / `size()` 是本地值，但签名仍是 `Promise`（`await` 照样能跑）。尺寸解析（PNG 的 IHDR、ICO 的 `ICONDIRENTRY`，其中宽高字段的 **0 表示 256**）在页面侧完成；解码**像素**才请宿主（`window.decodeImage`），结果缓存 |
 | `menu` | `Menu` / `Submenu` / `MenuItem` / `CheckMenuItem` / `IconMenuItem` / `PredefinedMenuItem` / `NativeIcon` / `itemFromKind`。**弹出与菜单栏都做了**：`Menu.popup(at?, window?)`、`setAsAppMenu()`、`setAsWindowMenu(window?)`（见 §10.2）。菜单树是**页面侧的纯数据**（没有 `rid`），每次整棵发给宿主；`action` 经 `menu.itemclicked` 事件回到页面。另加一条本库扩展 `close()`（关掉在屏菜单，见 §10） |
 | `tray` | `TrayIcon`：静态 `new` / `getById` / `removeById`，实例 `setIcon` / `setMenu` / `setTooltip` / `setTitle` / `setVisible` / `setIconAsTemplate` / `setMenuOnLeftClick` / `onEvent` / `close`。**句柄是 id 字符串而不是 Resource**（本库没有资源表），所以 `rid` 只是 `id` 的别名补壳，debug 下调它会打警告；`tempDirPath` / `setTempDirPath` 同理不生效（图标不落盘）。底层就是 §7 的 `oriel.tray`，两者同名同义 |
 | `mocks` | `mockIPC` / `mockWindows` / `mockEmit` / `mockConvertFileSrc` / `clearMocks` |

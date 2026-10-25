@@ -55,21 +55,22 @@ npm install @orielweb/api
 | `menu` | ✅ 菜单树（`Menu` / `MenuItem` / `PredefinedMenuItem` / `Submenu` / `CheckMenuItem` / `IconMenuItem`）+ `popup` / `setAsAppMenu` / `setAsWindowMenu` |
 | `tray` | ✅ `TrayIcon`（B12，静态 3 + 实例 8），形状与 Tauri 一致 |
 
-## 关闭接管：语义与 Tauri **相反**
+## 关闭接管：语义与 Tauri 一致
 
-Tauri 在回调里 `preventDefault()` 阻止关闭；本库是**宿主挂起、页面同意才关**：
+默认关闭，`preventDefault()` 才留下。handler（含 async）跑完后，没调 `preventDefault()`
+库会替你调 `destroy()`——迁移代码不用改：
 
 ```js
 const win = getCurrentWindow();
-const un = await win.onCloseRequested(async () => {
-  if (await confirmDiscard()) await win.destroy();   // 同意关闭
-  // 不同意：什么都不做，窗口留在打开状态
+const un = await win.onCloseRequested(async (event) => {
+  if (!(await confirmDiscard())) event.preventDefault();   // 不关
+  // 不调：handler 返回后窗口关闭
 });
 ```
 
-传进回调的 `event.preventDefault` 是**空操作**——保留它只是为了让迁移代码不抛 `TypeError`。
-为什么不做成 Tauri 那样：Windows 的 `WM_CLOSE` 是同步消息、页面回执是异步 IPC，
-宿主没法"等你回调跑完再决定"。订阅会自动打开宿主侧的关闭接管开关。
+宿主侧的形态是"挂起 + 推事件"（Windows 的 `WM_CLOSE` 是同步消息、页面回执是异步 IPC，
+宿主没法在中途等回调），"关不关"那一半由页面侧的包装层补上，与 Tauri 的实现是同一段逻辑。
+订阅会自动打开宿主侧的关闭接管开关，退订时关掉。
 
 ## `window` 方法的能力要求
 

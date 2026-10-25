@@ -7,6 +7,46 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
+## 未发布
+
+### 变更
+
+- **`onCloseRequested` 的语义改成与 Tauri 一致：默认关闭，`preventDefault()` 才留下。**
+  此前是反向的——宿主挂起关闭后，页面**同意**才调 `destroy()`，`preventDefault()` 是空操作。
+  现在 handler（含 async）跑完后，没调 `preventDefault()` 就由包装层补上 `destroy()`，
+  与 Tauri 的 `if (!evt.isPreventDefault()) await this.destroy()` 是同一段逻辑。
+
+  **这是一处行为变更**：依赖旧语义（"什么都不做就不关"）的应用，升级后点关闭会真的关掉。
+  反过来，从 Tauri 迁过来的代码**不需要再手工补 `destroy()`**——原先那一步现在由库做，
+  多调一次也仍然成立（`destroy()` 幂等）。
+
+  handler 抛错时窗口保持打开（与 Tauri 一致：异常中断后续的 `destroy`），
+  但会把错误打进 console——未处理的 rejection 在页面里很难定位。
+
+  迁移文案与示例已同步：`packages/api/README.md`、`docs/API.md`（§1 关闭管线、§11.2）。
+
+### 新增
+
+- **`tools/check-tauri-leaks.mjs`：迁移泄漏的静态检查。** 扫四类编译器看不见的字符串：
+  `__TAURI_INTERNALS__`、`@tauri-apps/*` 导入、`plugin:x|y` 命令名、`tauri://` 事件名。
+  每条给出行列、症状与改法；退出码 `1` 可直接当 CI 门禁；`--json` / `--ignore=路径前缀`。
+
+  为什么不做运行时兼容标记：`"__TAURI_INTERNALS__" in window` 要求它为 `false`，
+  而"检测到有人读它"要求能观察这次读取——`in` 无法拦截，`defineProperty` 一挂上去
+  就变 `true`，两个目标互斥。挂空对象更糟（探测通过、调 `.transformCallback` 才炸）。
+  这些字符串在源码里可见，所以只能静态查。自测 10 条在 `tools/check-tauri-leaks.test.mjs`。
+
+### 修复
+
+- **`docs/API.md` 与 `src/image.js` 顶部注释还说 `Image` 没有 `close()`、调用会抛
+  `TypeError`。** B14 起已有补壳 `close()`（无副作用，debug 打警告）。文档落后于实现。
+
+- **`menu.popup()` 的"完成时机差异"被记成了本库独有的问题。** 查上游实现：muda 的
+  Windows 路径是同步 `TrackPopupMenu`、macOS 是同步 `popUpMenuPositioningItem:`，
+  Tauri 的主线程同样被阻塞到菜单关闭。差别只在 Promise 的状态机（Tauri 立即 resolve），
+  而 resolve 之后的代码同样要等主线程空出来——**可观察行为一致**。表述已更正，
+  "别用 `await popup()` 判断用户选了什么"这条仍然成立（可靠信号是 `menu.itemClicked`）。
+
 ## 0.5.0 - 2026-10-25
 
 ### 变更

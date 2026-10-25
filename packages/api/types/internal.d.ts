@@ -21,4 +21,19 @@ export function __setDebugWarnings(enabled: boolean): void;
 /** 补壳/平台差异的可观测信号：debug 模式下 console.warn，其余静默（保证零删改）。 */
 /** @param {string} message */
 export function warnCompat(message: string): void;
+/**
+ * 记一次订阅。
+ *
+ * @param {string} label
+ */
+export function refCloseIntercept(label: string): void;
+/**
+ * 退一次订阅。
+ *
+ * @param {string} label
+ * @returns {boolean} 是否**归零**（true = 调用方该去关掉宿主接管了）。
+ */
+export function unrefCloseIntercept(label: string): boolean;
+/** 测试钩子：清空计数（`clearMocks` 会调它，避免用例之间互相污染）。 */
+export function resetCloseInterceptRefs(): void;
 export type OrielTransport = import("./types.js").OrielTransport;

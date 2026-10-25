@@ -73,14 +73,18 @@ public sealed class OrielWindowOptions
     /// <remarks>
     /// <para>
     /// 置真后：用户点关闭（或程序调 <see cref="WebviewWindow.Close"/>）会推一个
-    /// <c>close-requested</c> 事件给页面，窗口**先不销毁**。页面同意关闭就调
-    /// <see cref="WebviewWindow.Destroy"/>，不同意就什么都不做。
-    /// 对标 Tauri 2 的 <c>onCloseRequested</c> + <c>preventDefault</c>。
+    /// <c>close-requested</c> 事件给页面，窗口**先不销毁**，关不关由页面决定。
+    /// 页面侧 <c>@orielweb/api</c> 的 <c>onCloseRequested</c> 在 handler 跑完后，
+    /// 没调 <c>preventDefault()</c> 就调 <see cref="WebviewWindow.Destroy"/>——
+    /// 与 Tauri 2 的 <c>onCloseRequested</c> + <c>preventDefault</c> 是同一段逻辑。
+    /// 裸用 <c>window.oriel</c> 的页面必须自己调 <c>Destroy</c>，否则窗口会一直开着：
+    /// 那是"没人收尾"，不是"默认阻止"。
     /// </para>
     /// <para>
-    /// <b>为什么必须是显式开关，不能"页面监听了就自动接管"</b>：Windows 的 <c>WM_CLOSE</c>
-    /// 是同步消息，宿主必须**当场**决定销不销毁，没有机会先问页面"你监听了吗"。
-    /// 所以"页面要接管"这件事必须提前登记。
+    /// <b>为什么宿主不自己判断"页面监听了吗"</b>：Windows 的 <c>WM_CLOSE</c>
+    /// 是同步消息，宿主必须**当场**决定销不销毁，没有机会先问页面。
+    /// 所以"页面要接管"必须提前登记——页面侧的 <c>onCloseRequested</c> 在订阅时登记它
+    /// （<c>window.setCloseIntercept</c>），退订时注销。
     /// </para>
     /// <para>
     /// 运行期可改（<see cref="WebviewWindow.CloseInterceptEnabled"/>）：页面常常只在

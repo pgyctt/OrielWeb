@@ -107,6 +107,7 @@ node tools/migration-drill/drill.mjs --app lumos     # 只跑一个
 
 漏改的后果不是报错，是**应用静默走进浏览器降级分支**：mock 数据、禁用的按钮、不注册的监听。
 改法是一行：`isTauri()`（本库 `core` 导出，判的是 `window.oriel.invoke`）。
+这类字符串现在有独立的扫描工具，见 §8（`tools/check-tauri-leaks.mjs`）。
 
 **#2 测试夹具。** random-frame 的测试直接给 `window.__TAURI_INTERNALS__` 装一个假 `invoke`，
 按 **Tauri 的线格式**断言（`plugin:fs|write_file` / `plugin:dialog|save`）。迁移后运行时会读
@@ -267,3 +268,33 @@ process / updater）——不是漏做，是判过之后不做。它们的迁移
 **这条腐化的形态值得记住**：演练工具自己的映射表**没有任何断言盯着**，它既不是账本的
 一部分（不在 `tauri-alignment.test.mjs` 里），也不是类型检查的对象。B24 因此加了一条
 账本级的基线断言（`EXPECTED_GAPS`），但 "映射表" 这一层仍然只靠人读——写在这里当已知缺口。
+
+## 8. 迁移前自查：`check-tauri-leaks`
+
+§3 的 #1 / #2 是**编译器看不见**的两类，也是 §6 认定的"比所有缺能力项加起来更影响迁移"
+的那两类。类型检查帮不上忙，但它们都是源码里**可见的字符串**，所以用文本扫描能 100% 查全。
+
+```bash
+# 扫目标项目（不是对本库跑）
+node tools/check-tauri-leaks.mjs ../my-tauri-app
+```
+
+| 规则 | 命中什么 | 为什么必须改 |
+|---|---|---|
+| `internals` | `__TAURI_INTERNALS__` | 本库没有这个对象，探测**恒为 false** → 应用静默走进浏览器降级分支 |
+| `tauri-import` | `@tauri-apps/*` | 迁移后这些包不在了；工具会给出对应的 `@orielweb/api/*` |
+| `plugin-command` | `plugin:fs\|read_text_file` 一类 | 本库按点分命名；已知的给确定对应，未知的指路到 §4 |
+| `tauri-event` | `tauri://...` | 事件名不同，照搬监听不会触发 |
+
+退出码 `1` 表示有命中，可以直接挂进 CI。`--json` 给机器读；`--ignore=a,b` 跳过路径前缀
+——**自己写的兼容垫片**（有意保留 `__TAURI_INTERNALS__` 的那种）要放进去，否则它会
+一直出现在报告里。
+
+**为什么不提供运行时兼容标记**：`"__TAURI_INTERNALS__" in window` 要求它是 `false`，
+而"检测到有人读了它"要求能观察到这次读取——`in` 无法拦截，`defineProperty` 一挂上去
+`in` 就变 `true`，两个目标互斥。挂空对象更糟：探测通过、调 `.transformCallback` 才炸，
+故障点从"启动时降级"挪到"运行到某分支时崩"。所以只能在源码层查。
+
+工具的自测在 `tools/check-tauri-leaks.test.mjs`（10 条）：行列号、模块名映射、
+已知/未知命令名、`node_modules` 跳过但 `tests` 不跳（测试桩是泄漏的常见藏身处）。
+

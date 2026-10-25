@@ -4,8 +4,8 @@
 //   1. **命令名与参数形状**：Tauri 的方法名 ≠ 我们的命令名（setAlwaysOnTop → window.setOnTop、
 //      unmaximize → window.restore），映射写错的表现是"调了没反应"或"报未知命令"；
 //   2. **PhysicalSize 的换算**：要除以缩放比。不换算的话在 Retina/150% 屏上窗口会大 2 倍；
-//   3. **onCloseRequested 的语义**：本库是"页面同意才 destroy"，与 Tauri 的 preventDefault
-//      **相反**，所以订阅时要自动打开关闭接管、退订时要关掉。
+//   3. **onCloseRequested 的语义**：与 Tauri 一致——默认关闭，`preventDefault()` 才留下。
+//      所以订阅时要自动打开关闭接管、退订时要关掉，handler 跑完后要补上 destroy。
 //
 // 运行：node --test packages/api/tests/window.test.mjs
 
@@ -469,14 +469,59 @@ test('onCloseRequested：订阅时自动打开接管，退订时关掉', async (
     clearMocks();
 });
 
-test('onCloseRequested：回调收到的 event.preventDefault 是空操作（与 Tauri 语义相反）', async () => {
+/** 等一轮宏任务：async 监听器的续体排在微任务里，setTimeout 能确保它跑完。 */
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test('onCloseRequested：多个订阅者时，只退订一个不关接管', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main');
+    setTransportOverride(transport);
+
+    const win = new Window('main');
+    const first = await win.onCloseRequested(() => {});
+    const second = await win.onCloseRequested(() => {});
+
+    calls.length = 0;
+    await first();
+
+    // 先卸载的那个组件若把接管关掉，另一个的 preventDefault 会静默失效
+    assert.deepEqual(calls, []);
+
+    await second();
+    assert.deepEqual(calls, [['window.setCloseIntercept', { label: 'main', enabled: false }]]);
+
+    clearMocks();
+});
+
+test('onCloseRequested：退订幂等，重复调用不会重复关接管', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main');
+    setTransportOverride(transport);
+
+    const unlisten = await new Window('main').onCloseRequested(() => {});
+
+    calls.length = 0;
+    await unlisten();
+    await unlisten();
+
+    assert.equal(calls.length, 1, '第二次退订应当是空操作');
+
+    clearMocks();
+});
+
+test('onCloseRequested：handler 没调 preventDefault 时默认关闭（与 Tauri 一致）', async () => {
     clearMocks();
 
     /** @type {Array<(payload: unknown) => void>} */
     const rawListeners = [];
+    /** @type {Array<[string, any]>} */
+    const calls = [];
     setTransportOverride({
         label: 'main',
-        async invoke() { return null; },
+        async invoke(name, args) {
+            calls.push([name, args]);
+            return null;
+        },
         on(name, listener) {
             if (name === 'close-requested') {
                 rawListeners.push(listener);
@@ -487,19 +532,143 @@ test('onCloseRequested：回调收到的 event.preventDefault 是空操作（与
     });
 
     let called = 0;
-    await new Window('main').onCloseRequested((event) => {
-        called++;
-        // 这两条都必须不抛：迁移代码会写 preventDefault()，
-        // 而本库的"阻止"是"什么都不做"。
-        event.preventDefault();
-        assert.equal(typeof event.preventDefault, 'function');
-    });
+    await new Window('main').onCloseRequested(() => { called++; });
 
     assert.equal(rawListeners.length, 1, '应当订阅宿主侧的 close-requested');
+
     rawListeners[0](null);
+    await tick();
+
     assert.equal(called, 1);
+    // Tauri 的包装就是 `if (!evt.isPreventDefault()) await this.destroy()`
+    assert.deepEqual(calls.at(-1), ['window.destroy', { label: 'main' }]);
 
     clearMocks();
+});
+
+test('onCloseRequested：preventDefault 真的阻止关闭', async () => {
+    clearMocks();
+
+    /** @type {Array<(payload: unknown) => void>} */
+    const rawListeners = [];
+    /** @type {Array<[string, any]>} */
+    const calls = [];
+    setTransportOverride({
+        label: 'main',
+        async invoke(name, args) {
+            calls.push([name, args]);
+            return null;
+        },
+        on(name, listener) {
+            if (name === 'close-requested') {
+                rawListeners.push(listener);
+            }
+
+            return () => {};
+        },
+    });
+
+    await new Window('main').onCloseRequested((event) => {
+        assert.equal(typeof event.preventDefault, 'function');
+        event.preventDefault();
+    });
+
+    rawListeners[0](null);
+    await tick();
+
+    assert.equal(
+        calls.some(([name]) => name === 'window.destroy'),
+        false,
+        'preventDefault 之后不该再发 destroy');
+
+    clearMocks();
+});
+
+test('onCloseRequested：异步 handler 里的 preventDefault 也算数', async () => {
+    clearMocks();
+
+    // 这条钉的是一个具体的回归：判定若发生在 handler 返回之前，
+    // `await 确认框(); event.preventDefault()` 就变成"拦了没用、窗口照样关"。
+    /** @type {Array<(payload: unknown) => void>} */
+    const rawListeners = [];
+    /** @type {Array<[string, any]>} */
+    const calls = [];
+    setTransportOverride({
+        label: 'main',
+        async invoke(name, args) {
+            calls.push([name, args]);
+            return null;
+        },
+        on(name, listener) {
+            if (name === 'close-requested') {
+                rawListeners.push(listener);
+            }
+
+            return () => {};
+        },
+    });
+
+    await new Window('main').onCloseRequested(async (event) => {
+        await tick();
+        event.preventDefault();
+    });
+
+    rawListeners[0](null);
+    await tick();
+    await tick();
+
+    assert.equal(
+        calls.some(([name]) => name === 'window.destroy'),
+        false,
+        'await 之后的 preventDefault 必须仍然有效');
+
+    clearMocks();
+});
+
+test('onCloseRequested：handler 抛错时窗口保持打开，且不静默', async () => {
+    clearMocks();
+
+    const originalError = console.error;
+    /** @type {string[]} */
+    const logged = [];
+    console.error = (/** @type {any} */ ...args) => { logged.push(args.join(' ')); };
+
+    try {
+        /** @type {Array<(payload: unknown) => void>} */
+        const rawListeners = [];
+        /** @type {Array<[string, any]>} */
+        const calls = [];
+        setTransportOverride({
+            label: 'main',
+            async invoke(name, args) {
+                calls.push([name, args]);
+                return null;
+            },
+            on(name, listener) {
+                if (name === 'close-requested') {
+                    rawListeners.push(listener);
+                }
+
+                return () => {};
+            },
+        });
+
+        await new Window('main').onCloseRequested(() => {
+            throw new Error('确认框炸了');
+        });
+
+        rawListeners[0](null);
+        await tick();
+
+        // 与 Tauri 一致：异常中断后续的 destroy。差别只在于不静默。
+        assert.equal(calls.some(([name]) => name === 'window.destroy'), false);
+        assert.equal(logged.length, 1);
+        assert.match(logged[0], /handler 抛错/);
+        assert.match(logged[0], /确认框炸了/);
+    } finally {
+        console.error = originalError;
+        clearMocks();
+    }
 });
 
 test('onCloseRequested：handler 必须是函数', async () => {

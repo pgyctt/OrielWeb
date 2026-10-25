@@ -152,7 +152,8 @@ internal static class OrielCapabilityRules
     /// <list type="bullet">
     ///   <item><description><c>minimize</c> / <c>toggleMaximize</c> / <c>toggleFullscreen</c> /
     ///     <c>toggleOnTop</c> / <c>close</c> / <c>destroy</c>：标题栏按钮本身。
-    ///     <c>destroy</c> 必须在——它同时是"关闭接管"里页面同意关闭的出口，
+    ///     <c>destroy</c> 必须在——它同时是"关闭接管"里页面放行关闭的出口
+    ///     （<c>onCloseRequested</c> 的包装层在 handler 未 <c>preventDefault</c> 时调它），
     ///     拒掉它会让确认后的关闭永远走不完。</description></item>
     ///   <item><description><c>drag*</c>：无边框窗口的拖动，没有它窗口根本挪不动。</description></item>
     ///   <item><description><c>pickFile</c> / <c>contextMenu</c>：与 <c>win.*</c> 侧同源的两个入口。
