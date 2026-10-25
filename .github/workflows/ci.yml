@@ -100,6 +100,12 @@ jobs:
         # 自身引用不存在的名字（TS2304/TS2307）在本地一路绿、消费者一装就红。
         # `git status --porcelain` 而不是 `git diff`：新增的产物文件（如上面那份副本）
         # 在 diff 里看不见。
+        #
+        # **必须显式 `shell: bash`**：Windows runner 默认是 pwsh，而下面这段是 bash 语法
+        # （`if [ -n "$(...)" ]`）。不加的后果是 ParserError 而不是"检查不通过"——
+        # 0.5.0 的 CI 就是这么红的：报错行是那句 `echo "::error::..."`，看起来像脚本判断失败，
+        # 实际是 pwsh 根本没读懂第 5 行。
+        shell: bash
         run: |
           cd packages/api
           npm run build:types
