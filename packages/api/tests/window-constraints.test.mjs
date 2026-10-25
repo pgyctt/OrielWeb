@@ -112,6 +112,34 @@ test('setMaxSize 收与 setSize 同样的形状，null 表示取消上限', asyn
     clearMocks();
 });
 
+test('setMaxSize(PhysicalSize)：除以缩放比换算成逻辑尺寸（与 setSize/setMinSize 一致）', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', { 'window.scaleFactor': 2 });
+    setTransportOverride(transport);
+
+    // 2026-10-25 评审发现 setMaxSize 曾漏掉换算：Retina 上物理 1600x1200 的上限
+    // 原样下发，实际允许的窗口会比预期大一倍。修复后应先查 scaleFactor 再发 800x600。
+    await new Window('main').setMaxSize({ type: 'Physical', width: 1600, height: 1200 });
+
+    assert.deepEqual(calls.map((c) => c[0]), ['window.scaleFactor', 'window.setMaxSize']);
+    assert.deepEqual(calls[1][1].value, { width: 800, height: 600 });
+
+    clearMocks();
+});
+
+test('setMaxSize(LogicalSize)：原样发出，不查缩放比', async () => {
+    clearMocks();
+    const { calls, transport } = makeTransport('main', { 'window.scaleFactor': 2 });
+    setTransportOverride(transport);
+
+    await new Window('main').setMaxSize({ type: 'Logical', width: 900, height: 700 });
+
+    assert.deepEqual(calls.map((c) => c[0]), ['window.setMaxSize']);
+    assert.deepEqual(calls[0][1].value, { width: 900, height: 700 });
+
+    clearMocks();
+});
+
 test('setMaximizable / setMinimizable 走布尔校验与同一形状', async () => {
     clearMocks();
     const { calls, transport } = makeTransport('main', {

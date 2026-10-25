@@ -436,7 +436,12 @@ export class Window {
      * @param {import('./dpi.js').SizeObject | {width: number, height: number} | [number, number] | null} size
      *   与 `setSize` 收同样的形状；传 `null` 表示**取消**上限。
      * @returns {Promise<void>}
-     * @remarks 需要 `Allow("window.setMaxSize")`。
+     * @remarks
+     * 需要 `Allow("window.setMaxSize")`。
+     *
+     * `PhysicalSize` 会先除以缩放比换算成逻辑尺寸（与 `setSize`/`setMinSize` 一致）。
+     * 2026-10-25 评审发现本方法曾漏掉这一步：物理上限在 2x 屏上原样下发，
+     * 实际上限会比调用方预期大一倍。
      */
     setMaxSize(size: import("./dpi.js").SizeObject | {
         width: number;

@@ -871,18 +871,31 @@ export class Window {
      * @param {import('./dpi.js').SizeObject | {width: number, height: number} | [number, number] | null} size
      *   与 `setSize` 收同样的形状；传 `null` 表示**取消**上限。
      * @returns {Promise<void>}
-     * @remarks 需要 `Allow("window.setMaxSize")`。
+     * @remarks
+     * 需要 `Allow("window.setMaxSize")`。
+     *
+     * `PhysicalSize` 会先除以缩放比换算成逻辑尺寸（与 `setSize`/`setMinSize` 一致）。
+     * 2026-10-25 评审发现本方法曾漏掉这一步：物理上限在 2x 屏上原样下发，
+     * 实际上限会比调用方预期大一倍。
      */
-    setMaxSize(size) {
+    async setMaxSize(size) {
         if (size === null || size === undefined) {
-            return invoke('window.setMaxSize', { label: this.label, value: { width: 0, height: 0 } });
+            await invoke('window.setMaxSize', { label: this.label, value: { width: 0, height: 0 } });
+            return;
         }
 
         const normalized = normalizeSize(size);
+        let { width, height } = normalized;
 
-        return invoke('window.setMaxSize', {
+        if (normalized.type === 'Physical') {
+            const factor = await scaleFactorOf(this.label);
+            width = physicalToLogical(width, factor);
+            height = physicalToLogical(height, factor);
+        }
+
+        await invoke('window.setMaxSize', {
             label: this.label,
-            value: { width: normalized.width, height: normalized.height },
+            value: { width: Math.round(width), height: Math.round(height) },
         });
     }
 
