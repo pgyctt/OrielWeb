@@ -61,12 +61,16 @@ if ($missing.Count -gt 0) {
         ($missing -join '、'), ($jobs -join '、'))
 }
 
-# 4. 反向提示：验证类 job 没被任何一行引用，说明矩阵可能漏了某个平台
+# 4. 反向校验：验证类 job 没被任何一行引用，说明矩阵可能漏了某个平台。
+#    2026-10-25 评审前只 Write-Warning：job 从矩阵里掉出去 CI 照样绿——
+#    "验证没做"比"验证失败"更难被发现，因为它没有红色。升级为失败。
+#    新增的验证 job 要么写进矩阵（README 对应行加 `ci:<job>`），要么改名
+#    避开 compile-/smoke- 前缀（那两个前缀就是"平台矩阵证据"的命名空间）。
 $verificationJobs = @($jobs | Where-Object { $_ -match '^(compile|smoke)-' })
 $undocumented = @($verificationJobs | Where-Object { $_ -notin $references })
 if ($undocumented.Count -gt 0) {
-    Write-Warning ("这些验证 job 没有出现在平台矩阵里：{0}。`n" +
-        '如果不是漏了，就把它们加进某一行（或从 CI 里删掉）——否则"矩阵"与"实际覆盖"会再次分叉。' -f
+    throw ("这些验证 job 没有出现在平台矩阵里：{0}。`n" +
+        '把它们加进 README 对应行（`ci:<job>`），或从 CI 里删掉——否则"矩阵"与"实际覆盖"会再次分叉。' -f
         ($undocumented -join '、'))
 }
 

@@ -48,7 +48,9 @@ jobs:
             exe: OrielDemo
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: ./.github/actions/setup-dotnet-nuget
 
       - name: Install dependencies
         if: runner.os == 'Linux'
@@ -57,20 +59,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev zlib1g-dev clang
-
-      - name: Cache NuGet packages
-        # 与 ci.yml 同款：键取 csproj 与 Directory.Build.props 的哈希，restore-keys 兜回退。
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
-
-      - name: Setup .NET 10
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
 
       - name: Publish demo (${{ matrix.rid }})
         # DebugType=none：不带 pdb/dbg/dSYM，三个平台的包都只留可执行文件
@@ -214,7 +202,7 @@ jobs:
           zip -r "OrielWeb-demo-${{ matrix.rid }}.zip" "OrielDemo.app"
 
       - name: Upload demo
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: demo-${{ matrix.rid }}
           path: |
@@ -234,21 +222,11 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Cache NuGet packages
-        # 与 ci.yml 同款：键取 csproj 与 Directory.Build.props 的哈希，restore-keys 兜回退。
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
-
-      - name: Setup .NET 10
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
+      # 缓存与 SDK 两步走 composite：本文件原先手写了两份与 ci.yml 逐字符相同的样板——
+      # composite 的存在理由就是"改缓存键要改 7 遍"，手写版会在下一次改键时静默分叉。
+      - uses: ./.github/actions/setup-dotnet-nuget
 
       - name: Require green CI on this commit
         # **发布闸：同 commit 的 CI 必须绿，否则拒绝发布。**
@@ -268,8 +246,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $sha = "${{ github.sha }}"
-          $deadline = (Get-Date).AddMinutes(20)
-          Write-Output "等待 commit $sha 的 CI 结论（最多 20 分钟）…"
+          # 60 分钟：CI 自己的单 job 超时就给到 20-40 分钟（smoke-macos 30、benchmark 40），
+          # 三平台矩阵加排队整条跑完常超 20 分钟——上限小于被等对象的最坏时长，
+          # 意味着"tag 与 commit 同时推送"这种最正常的用法会被误判成失败（2026-10-25 评审 P2）。
+          $deadline = (Get-Date).AddMinutes(60)
+          Write-Output "等待 commit $sha 的 CI 结论（最多 60 分钟）…"
           while ((Get-Date) -lt $deadline) {
             $runs = gh run list --commit $sha --workflow ci.yml --limit 1 --json status,conclusion,url | ConvertFrom-Json
             if ($runs.Count -eq 0) {
@@ -288,7 +269,7 @@ jobs:
             }
             Start-Sleep -Seconds 30
           }
-          throw "等待 CI 超时（20 分钟）：该 commit 可能没有触发过 ci.yml。拒绝发布——'没验过'不能当成'验过'。"
+          throw "等待 CI 超时（60 分钟）：该 commit 可能没有触发过 ci.yml。拒绝发布——'没验过'不能当成'验过'。"
 
       - name: Test
         # 发布前再跑一遍（tag 推送不会触发 ci.yml 的 push 触发器）
@@ -308,10 +289,17 @@ jobs:
           if ($tag -ne $version) {
             throw "标签 v$tag 与包版本 $version 不一致：先改 Directory.Build.props 的 Version，再打对应标签"
           }
-          Write-Output "版本一致：$version"
+
+          # CHANGELOG 闸：版本号改了但 CHANGELOG 忘了补条目，按当前发布频率（月发 29 版）
+          # 漂移只是时间问题。条目形如 `## 0.5.0`（文件里真实存在的一行，见文件头）。
+          $changelog = Get-Content CHANGELOG.md -Raw
+          if ($changelog -notmatch "(?m)^## $([regex]::Escape($version))\b") {
+            throw "CHANGELOG.md 里没有 `## $version` 的条目：发布 = 改版本 + 补 CHANGELOG + 打 tag 三连，缺一不可"
+          }
+          Write-Output "版本一致：$version（CHANGELOG 已有该版本条目）"
 
       - name: Download the demo zips
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: demo-*
           path: dist
@@ -320,7 +308,7 @@ jobs:
 
       - name: Attach assets to the GitHub release
         # 放在推 NuGet 之前：推送失败（如未配置 NUGET_API_KEY）不影响 Release 资产
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |
             dist/nuget/*.nupkg
@@ -335,10 +323,15 @@ jobs:
         # 给出比"文件不存在"更清楚的错误。
         # --skip-duplicate：重复推送同一版本不再报错（幂等）
         shell: pwsh
+        # 凭据走 env 而不是模板插值：插值进命令行的值对进程列表可见，且值里若含引号/$
+        # 会参与 pwsh 语义解析。GitHub 日志脱敏只挡精确匹配——env 是标准做法（同 job 的
+        # GH_TOKEN 已是这种写法）。
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
           $packages = @(Get-ChildItem -Path dist/nuget -Filter *.nupkg)
           if ($packages.Count -eq 0) {
             throw "dist/nuget 里没有 nupkg——先确认上一步 Pack 的产物"
           }
           Write-Output "推送 $($packages.Count) 个包：$($packages.Name -join ', ')"
-          dotnet nuget push $packages.FullName --source https://api.nuget.org/v3/index.json --api-key "${{ secrets.NUGET_API_KEY }}" --skip-duplicate
+          dotnet nuget push $packages.FullName --source https://api.nuget.org/v3/index.json --api-key "$env:NUGET_API_KEY" --skip-duplicate

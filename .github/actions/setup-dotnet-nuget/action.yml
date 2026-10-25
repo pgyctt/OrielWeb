@@ -19,7 +19,7 @@ runs:
     - name: Cache NuGet packages
       # 每个 job 都要 restore，缓存 ~/.nuget/packages 能省掉大半下载时间。
       # 键取 csproj 与 Directory.Build.props 的哈希：依赖一变就换键，restore-keys 兜住回退。
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ~/.nuget/packages
         key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
@@ -27,6 +27,6 @@ runs:
           ${{ runner.os }}-nuget-
 
     - name: Setup .NET
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
       with:
         dotnet-version: ${{ inputs.dotnet-version }}
