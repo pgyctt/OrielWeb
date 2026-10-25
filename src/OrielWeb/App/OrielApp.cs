@@ -217,7 +217,13 @@ public sealed class OrielApp : IDisposable
     /// <summary>
     /// 应用当前**存活**的窗口（关闭的会自动摘掉）。
     /// </summary>
-    public IReadOnlyList<WebviewWindow> Windows => _windows;
+    /// <remarks>
+    /// 返回的是**调用瞬间的快照**：窗口集合由 UI 线程维护（<see cref="CreateWindow"/> / 关闭记账），
+    /// 任何线程都可能读这个属性——直接暴露活列表会让跨线程遍历与 UI 线程的增删竞态
+    /// （症状是 "Collection was modified"）。快照的代价是每次一个小数组分配，
+    /// 窗口数量级下可以忽略。
+    /// </remarks>
+    public IReadOnlyList<WebviewWindow> Windows => _windows.ToArray();
 
     private readonly List<WebviewWindow> _windows = [];
 
@@ -244,16 +250,26 @@ public sealed class OrielApp : IDisposable
     /// <remarks>
     /// "不覆盖显式设过的窗口"这条语义与 Tauri 对齐（原文 "had one set explicitly"）。
     /// 判断在 <see cref="WebviewWindow.SetAppMenuBar"/> 里做，这里只负责遍历。
+    /// 套用到窗口是原生菜单操作，编组到 UI 线程执行（与 <see cref="ShowAllWindows"/> 同款理由）；
+    /// Run() 之前调用只记账（同 <see cref="SetTheme"/> 的处理）。
     /// </remarks>
     public void SetAppMenuBar(IReadOnlyList<OrielMenuItem> items)
     {
         ArgumentNullException.ThrowIfNull(items);
         _appMenuBarItems = items;
 
-        foreach (WebviewWindow window in _windows.ToArray())
+        if (_backend is null)
         {
-            window.SetAppMenuBar(items);
+            return; // Run() 之前：没有窗口可套用，记账由建窗路径消费。
         }
+
+        InvokeOnUiThread(() =>
+        {
+            foreach (WebviewWindow window in _windows.ToArray())
+            {
+                window.SetAppMenuBar(items);
+            }
+        });
     }
 
     /// <summary>
@@ -311,13 +327,16 @@ public sealed class OrielApp : IDisposable
     /// 这一点很关键——返回一个死窗口会让调用方拿到一个所有方法都抛异常的对象，
     /// 而"窗口已关闭"这个事实在异常文案里往往看不出来。
     /// </para>
+    /// <para>
+    /// 任意线程可调：遍历的是快照（<see cref="Windows"/> 同款理由），不与 UI 线程的增删竞态。
+    /// </para>
     /// </remarks>
     public WebviewWindow? GetWindow(string label)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(label);
         string normalized = OrielWindowOptions.ValidateLabel(label);
 
-        foreach (WebviewWindow window in _windows)
+        foreach (WebviewWindow window in _windows.ToArray())
         {
             if (string.Equals(window.Label, normalized, StringComparison.Ordinal))
             {
@@ -353,10 +372,13 @@ public sealed class OrielApp : IDisposable
     /// 与 <c>IsFocused</c> 一样按**窗口**判而不是按应用判：多窗口应用里同时只有一个 key window，
     /// 所以循环第一个命中的就是答案，不需要比较先后。
     /// </para>
+    /// <para>
+    /// 任意线程可调：遍历的是快照（<see cref="Windows"/> 同款理由）。
+    /// </para>
     /// </remarks>
     public WebviewWindow? GetFocusedWindow()
     {
-        foreach (WebviewWindow window in _windows)
+        foreach (WebviewWindow window in _windows.ToArray())
         {
             if (window.IsFocused)
             {
@@ -582,28 +604,42 @@ public sealed class OrielApp : IDisposable
     /// </remarks>
     public void SetTheme(OrielTheme? theme)
     {
-        _themeOverride = theme;
-
-        foreach (WebviewWindow window in _windows)
+        // Run() 之前没有窗口可套用（建窗时也不读应用级覆写），此时的调用只是记账——
+        // 保持原先"未运行也能调"的行为，不因编组而新抛异常。
+        if (_backend is null)
         {
-            // 已经有自己的覆写的窗口不动（Tauri 的 `App.setTheme` 只改"默认值"）
-            if (window.ThemeOverride is not null)
-            {
-                continue;
-            }
-
-            try
-            {
-                window.Backend.SetTheme(theme);
-                PushTheme(window, EffectiveTheme(window));
-            }
-            catch (NotSupportedException)
-            {
-                // 该平台不支持（Linux 的 GTK 无"按窗口选主题"入口）：保持原样，
-                // 但仍把当前生效值推给页面——页面至少知道自己现在是什么主题。
-                PushTheme(window, EffectiveTheme(window));
-            }
+            _themeOverride = theme;
+            return;
         }
+
+        // 窗口级 SetTheme 是原生调用（DwmSetWindowAttribute / NSAppearance / GtkSettings），
+        // 与 ShowAllWindows 同款理由必须编组到 UI 线程——2026-10-25 评审发现本方法曾直接在
+        // 调用线程遍历执行，是同文件里唯一漏掉这条线的窗口遍历。已在 UI 线程时同步执行（零开销）。
+        InvokeOnUiThread(() =>
+        {
+            _themeOverride = theme;
+
+            foreach (WebviewWindow window in _windows.ToArray())
+            {
+                // 已经有自己的覆写的窗口不动（Tauri 的 `App.setTheme` 只改"默认值"）
+                if (window.ThemeOverride is not null)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    window.Backend.SetTheme(theme);
+                    PushTheme(window, EffectiveTheme(window));
+                }
+                catch (NotSupportedException)
+                {
+                    // 该平台不支持（Linux 的 GTK 无"按窗口选主题"入口）：保持原样，
+                    // 但仍把当前生效值推给页面——页面至少知道自己现在是什么主题。
+                    PushTheme(window, EffectiveTheme(window));
+                }
+            }
+        });
     }
 
     /// <summary>
@@ -635,7 +671,7 @@ public sealed class OrielApp : IDisposable
     private void OnThemeChanged(OrielTheme theme)
     {
         ThemeChanged?.Invoke(theme);
-        foreach (WebviewWindow window in _windows)
+        foreach (WebviewWindow window in _windows.ToArray())
         {
             // 推的是"这窗口现在显示成什么"（含覆写），不是裸的系统值
             PushTheme(window, EffectiveTheme(window));
@@ -719,7 +755,7 @@ public sealed class OrielApp : IDisposable
             ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
         RequireDataStoreSupport(backend);
 
-        foreach (WebviewWindow window in _windows)
+        foreach (WebviewWindow window in _windows.ToArray())
         {
             if (window.DataStoreIdentifier == identifier)
             {
@@ -1419,7 +1455,7 @@ public sealed class OrielApp : IDisposable
     private void BroadcastTrayEvent(OrielTrayEvent e)
     {
         string payload = TrayEventJson(e);
-        foreach (WebviewWindow window in _windows)
+        foreach (WebviewWindow window in _windows.ToArray())
         {
             window.EmitEvent(TrayEventName, payload);
         }
@@ -1438,7 +1474,7 @@ public sealed class OrielApp : IDisposable
     /// </remarks>
     private void BroadcastTrayMenuItemClick(string id)
     {
-        foreach (WebviewWindow window in _windows)
+        foreach (WebviewWindow window in _windows.ToArray())
         {
             PushMenuItemClick(window, id);
         }
@@ -2139,7 +2175,7 @@ public sealed class OrielApp : IDisposable
     /// <summary>把窗口前置并激活，随后把"第二实例的启动参数"交给应用的回调（若有）。</summary>
     private void ActivateAllWindows(IReadOnlyList<string> secondaryArgs)
     {
-        foreach (WebviewWindow window in _windows)
+        foreach (WebviewWindow window in _windows.ToArray())
         {
             window.Show();
             window.Focus();
