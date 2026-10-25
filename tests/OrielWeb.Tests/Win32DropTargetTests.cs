@@ -60,6 +60,23 @@ public sealed class Win32DropTargetTests
         => Assert.Empty(Win32FileDropReader.Read(0));
 
     [Fact]
+    public void Dispose_IsIdempotent()
+    {
+        // 2026-10-25 评审 P2：二次 Dispose 曾会再递减一次引用计数。这里没有 OLE 会话
+        // （不 Register），能钉住的是"幂等契约的表面"——两次调用都不抛、不崩；
+        // 注册路径上那次多余的递减会提前 FreeHandle、与在途 COM Release 构成
+        // use-after-free，那部分由 conformance 的拖放自检在真机上守。
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var target = new Win32DropTarget(0, static _ => { });
+        target.Dispose();
+        target.Dispose();
+    }
+
+    [Fact]
     public void Vtbl_HasSevenDistinctNonZeroSlots()
     {
         if (!OperatingSystem.IsWindows())

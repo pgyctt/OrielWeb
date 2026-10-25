@@ -47,6 +47,35 @@
   而 resolve 之后的代码同样要等主线程空出来——**可观察行为一致**。表述已更正，
   "别用 `await popup()` 判断用户选了什么"这条仍然成立（可靠信号是 `menu.itemClicked`）。
 
+- **2026-10-25 全面评审的修复批次（P1×3 + P2×13 + P3 一组，8 个独立提交）。**
+  页面侧与宿主侧各一处 P1 行为缺陷、一处测试矩阵缺口：
+
+  - `window.setMaxSize(PhysicalSize)` 漏了物理→逻辑换算（`setSize`/`setMinSize` 都有），
+    2x/150% 屏上窗口上限会比调用方预期大一倍；
+  - `OrielApp.SetTheme` / `SetAppMenuBar` 是仅有的两处漏掉 UI 线程编组的窗口遍历
+    （GTK/AppKit 后台线程调原生 API 属未定义行为）；`Windows` / `GetWindow` /
+    `GetFocusedWindow` 直接暴露活列表，跨线程读会与 UI 线程增删竞态——集合一律快照，
+    遍历一律编组；
+  - 单测 CI 矩阵从 `[windows-latest]` 扩到三平台（Linux 侧已在 WSL2 验证 1611 条全绿），
+    Linux/macOS 专属单测此前从未在对应平台执行过。
+
+  宿主侧生命周期八处：`Win32DropTarget.Dispose` 幂等（消除与在途 COM Release 的
+  use-after-free 面）、`WebviewWindow.Attach` 挂转发后**补发一次初始几何**（建窗期同步到达的
+  WM_SIZE/WM_MOVE 此前永久丢失）、`Run()` 防重入、`OrielApp.Dispose` 幂等并置空后端、
+  Linux 消息入口补异常兜底、`Send` 分两级（同线程同步执行 + 跨线程诊断）、
+  分发器 miss 时按注册表修订号重建快照（运行期 `Assembly.Load` 的插件命令可达，
+  新增 `OrielCommandRegistry.Version`）、Win32 `MoveTo`/`Resize` 补销毁守卫。
+
+  页面侧：`mockWindows` / `mockConvertFileSrc` 从死占位变为真实现（getter 动态生效，
+  `getCurrentWindow()` 在纯 mock 下可用）；`OrielTransport` 两份漂移的类型定义合一。
+
+  发布链：第三方 action 全部 pin 到 commit SHA；`NUGET_API_KEY` 改 env 传递；
+  等待同 commit CI 变绿的上限 20→60 分钟；CHANGELOG 版本闸（必须含 `## <版本>` 条目）；
+  `verify-matrix.ps1` 反向缺口从警告升级为失败。
+
+  结构：`InvokeOnUiThread` 两份同构实现下沉到 `OrielUiInvoke`；conformance 退出码判定
+  从 24 项布尔或长链改为字典驱动（漏登记启动即红，不再静默变绿）。
+
 ## 0.5.0 - 2026-10-25
 
 ### 变更

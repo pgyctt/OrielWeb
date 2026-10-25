@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using OrielWeb;
 using OrielWeb.Ipc;
 using Xunit;
@@ -460,5 +461,50 @@ public sealed class DispatcherTests
         var (reply, _) = await DispatchAsync(dispatcher, "t.echo", new { text = "你好" });
         Assert.True(reply.RootElement.GetProperty("ok").GetBoolean());
         Assert.Equal("你好", reply.Value().GetString());
+    }
+
+    [Fact]
+    public async Task CommandsRegistered_AfterDispatcherConstruction_AreReachable()
+    {
+        // 2026-10-25 评审 P2：路由索引是构造期快照，运行期 Assembly.Load 的插件命令
+        // 此前拿到误导性的"未知命令"。修复后 miss 且注册表修订号领先时重建快照。
+        // 这里用运行期 AddRouter 模拟"插件程序集加载后 ModuleInitializer 跑了"。
+        OrielCommandDispatcher dispatcher = CreateDispatcher(withFactory: false);
+
+        // 构造之后才注册：第一次 invoke 应命中（而不是"未知命令"）
+        OrielCommandRegistry.AddRouter(new LateRegisteredRouter());
+
+        var (reply, _) = await DispatchAsync(dispatcher, LateRegisteredRouter.CommandName, new { });
+        Assert.True(reply.RootElement.GetProperty("ok").GetBoolean(),
+            "运行期注册的命令应当可达：分发器需要在 miss 时重建路由快照");
+        Assert.Equal("late", reply.Value().GetString());
+
+        // 一个真的不存在的命令仍然是"未知命令"——重建不是"什么都放行"
+        var (unknown, _) = await DispatchAsync(dispatcher, "t.definitely-not-registered", new { });
+        Assert.False(unknown.RootElement.GetProperty("ok").GetBoolean());
+    }
+
+    /// <summary>
+    /// 模拟运行期加载的插件路由：<c>AddRouter</c> 在分发器构造之后才被调用。
+    /// </summary>
+    /// <remarks>
+    /// 真实场景是 <c>Assembly.Load</c> 后生成器的 ModuleInitializer 注册插件命令；
+    /// 单测里没有第二个程序集，手写一个最小路由走同一条注册表路径。
+    /// </remarks>
+    private sealed class LateRegisteredRouter : IOrielCommandRouter
+    {
+        public const string CommandName = "t.late-registered";
+
+        public IReadOnlyList<string> CommandNames => [CommandName];
+
+        public Type? TargetType => null;
+
+        public bool RequiresTarget => false;
+
+        public int Route(string name) => name == CommandName ? 0 : -1;
+
+        public ValueTask<object?> InvokeAsync(
+            int index, object? target, JsonElement args, JsonSerializerContext? jsonContext, OrielEventSink? sink)
+            => ValueTask.FromResult<object?>("late");
     }
 }

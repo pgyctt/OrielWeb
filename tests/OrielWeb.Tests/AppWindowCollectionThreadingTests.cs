@@ -76,4 +76,20 @@ public sealed class AppWindowCollectionThreadingTests
 
         Assert.Throws<ArgumentNullException>(() => app.SetAppMenuBar(null!));
     }
+
+    [Fact]
+    public void Dispose_IsIdempotent_AndClearsBackend()
+    {
+        // Run() 的退出路径会先 Dispose 一次，宿主的 using / 手动收尾会再来一次——
+        // 两次都是合法写法。2026-10-25 评审 P3：此前无幂等标志也不置空 _backend，
+        // Dispose 后的投递会拿到已释放后端的难定位异常。
+        OrielApp app = Oriel.CreateBuilder().Build();
+
+        app.Dispose();
+        app.Dispose();
+
+        // Dispose 之后 _backend 应已置空：后续投递拿到「应用尚未运行」的明确异常，
+        // 而不是已释放后端的 GTK/WK 难定位异常。
+        Assert.Throws<InvalidOperationException>(() => app.PostToMainThread(() => { }));
+    }
 }
