@@ -62,6 +62,23 @@ internal partial class Win32WindowHost : IWindowBackend
     /// </remarks>
     private bool _handedOff;
 
+    /// <summary>
+    /// "隐藏启动 + 最大化"时挂起的最大化意图，由 <see cref="Show"/> 兑现。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 为什么不在创建期直接建立最大化状态：<c>ShowWindow(SW_SHOWMAXIMIZED)</c> 会先把窗口
+    /// map 到屏幕上，<c>WithHidden()</c> 的契约是"从没露过面"；换成
+    /// <c>SetWindowPlacement(showCmd = SW_SHOWMAXIMIZED)</c> 也一样——实测调用返回后
+    /// <c>IsWindowVisible</c> 与 <c>IsZoomed</c> 立刻都是 true，不是只写一条"下次显示时用"的记录。
+    /// </para>
+    /// <para>
+    /// 所以这里只记意图，等 <see cref="Show"/> 用 <c>SW_SHOWMAXIMIZED</c> 一次到位：
+    /// 窗口从"从未显示"直接以最大化出现，既没有 map→unmap 的可见帧，也没有"先还原再撑满"的跳变。
+    /// </para>
+    /// </remarks>
+    private bool _maximizeOnShow;
+
     internal nint _hwnd;
 
     private IComObject<ICoreWebView2Environment>? _environment;
@@ -482,15 +499,28 @@ internal partial class Win32WindowHost : IWindowBackend
     }
 
     /// <summary>
-    /// 显示窗口：**先** <c>SW_SHOW</c> 宿主，**再**把 WebView2 置为可见。
+    /// 显示窗口：**先**让宿主上屏（必要时直接以最大化出现），**再**把 WebView2 置为可见。
     /// </summary>
     /// <remarks>
     /// 与 <see cref="Hide"/> 成对，二者共同维护一条**跨平台不变量**（见 <see cref="Hide"/> 的说明）。
     /// 顺序不能反：宿主先可见、渲染面后可见，恢复过程不会出现"有窗口、没内容"的空框帧。
+    /// <para>
+    /// 上屏命令按创建期挂起的最大化意图二选一，而不是无条件 <c>SW_SHOW</c>：
+    /// <c>SW_SHOW</c> 是"以当前大小和位置显示"，而 <c>WithHidden() + WithMaximized()</c> 起手的
+    /// 窗口从未建立 <c>WS_MAXIMIZE</c>（见 <see cref="_maximizeOnShow"/>），
+    /// 无条件 SW_SHOW 会让它按还原态出现。
+    /// </para>
     /// </remarks>
     public void Show()
     {
-        Win32.ShowWindow(_hwnd, Win32Constants.SW_SHOW);
+        Win32.ShowWindow(
+            _hwnd,
+            _maximizeOnShow ? Win32Constants.SW_SHOWMAXIMIZED : Win32Constants.SW_SHOW);
+
+        // 意图只兑现一次：此后再 Show 应当服从"最后一次显式状态变更"
+        // （Maximize/Restore/Minimize 等都会清掉它）。
+        _maximizeOnShow = false;
+
         SetControllerVisible(true);
     }
 
@@ -533,9 +563,33 @@ internal partial class Win32WindowHost : IWindowBackend
         Win32.SetFocus(_hwnd);
     }
 
-    public void Maximize() => Win32.ShowWindow(_hwnd, Win32Constants.SW_SHOWMAXIMIZED);
-    public void Minimize() => Win32.ShowWindow(_hwnd, Win32Constants.SW_SHOWMINIMIZED);
-    public void Restore() => Win32.ShowWindow(_hwnd, Win32Constants.SW_RESTORE);
+    /// <summary>
+    /// 显式改变窗口状态：调用方已经表过态，创建期挂起的"待最大化"不再代表最新意图。
+    /// </summary>
+    /// <remarks>
+    /// 清 <see cref="_maximizeOnShow"/> 是必要的：否则"隐藏启动 + 最大化"的窗口在被
+    /// <c>Restore()</c> 还原后，下一次 <see cref="Show"/> 又会把它撑满——用户看到的是
+    /// "还原按钮点了没用，藏一下再出来又最大化了"。
+    /// </remarks>
+    public void Maximize()
+    {
+        _maximizeOnShow = false;
+        Win32.ShowWindow(_hwnd, Win32Constants.SW_SHOWMAXIMIZED);
+    }
+
+    /// <inheritdoc cref="Maximize"/>
+    public void Minimize()
+    {
+        _maximizeOnShow = false;
+        Win32.ShowWindow(_hwnd, Win32Constants.SW_SHOWMINIMIZED);
+    }
+
+    /// <inheritdoc cref="Maximize"/>
+    public void Restore()
+    {
+        _maximizeOnShow = false;
+        Win32.ShowWindow(_hwnd, Win32Constants.SW_RESTORE);
+    }
 
     /// <summary>IPC 回执通道：必须切回 UI 线程（WebView2 的 COM 绑定在 STA）。</summary>
     private sealed class UiThreadReplySink(Win32WindowHost host) : IIpcReplySink

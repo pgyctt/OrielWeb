@@ -180,6 +180,12 @@ internal partial class Win32WindowHost
             Center();
         }
 
+        // 可见性与最大化是**两个正交维度**，不能塞进同一条三元链：Hidden 优先时只发了
+        // SW_HIDE，SW_SHOWMAXIMIZED 那条分支从未执行，WS_MAXIMIZE 因此从未建立——
+        // 之后 Show() 的 SW_SHOW 只能把窗口按还原态显示（下游 2026-10-25 报的正是这个组合）。
+        // 隐藏启动时把最大化记成"待生效"，由 Show() 一次到位；见 _maximizeOnShow 的说明。
+        _maximizeOnShow = _options.Hidden && _options.Maximized;
+
         int showCommand = _options.Hidden ? Win32Constants.SW_HIDE
             : _options.Maximized ? Win32Constants.SW_SHOWMAXIMIZED
             : Win32Constants.SW_SHOW;
