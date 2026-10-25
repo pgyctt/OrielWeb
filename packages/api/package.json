@@ -1,6 +1,6 @@
 {
   "name": "@orielweb/api",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "OrielWeb 页面侧 API：模块名与 @tauri-apps/api 一一对应，迁移只需替换 import 前缀。",
   "type": "module",
   "license": "MIT",
