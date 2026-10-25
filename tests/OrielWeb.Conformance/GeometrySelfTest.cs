@@ -47,14 +47,19 @@ internal static class GeometrySelfTest
     private const int Tolerance = 2;
 
     /// <summary>
-    /// 当前环境是否有窗口管理器（决定"位置"那几条断言适不适用）。
+    /// 当前环境是否有窗口管理器（决定"位置"与"最大化"这类断言适不适用）。
     /// </summary>
     /// <remarks>
     /// 判据由验证脚本设置（<c>ORIEL_HAS_WM=1</c>，它在 X11 下查 <c>_NET_SUPPORTING_WM_CHECK</c>）；
     /// 未设置时只有非 Linux 才认为有 WM。没有 WM 时 <c>gtk_window_move</c> 是空操作，
     /// 位置断言验的是环境而不是库。
+    /// <para>
+    /// <c>internal</c> 而非 <c>private</c>：<see cref="WindowStateSelfTest"/> 的最大化断言
+    /// 依赖同一个判据（没有 WM 时 <c>gtk_window_maximize</c> 同样不会被兑现），
+    /// 两处必须一致，不能让判据分叉。
+    /// </para>
     /// </remarks>
-    private static readonly bool HasWindowManager =
+    internal static readonly bool HasWindowManager =
         !OperatingSystem.IsLinux()
         || Environment.GetEnvironmentVariable("ORIEL_HAS_WM") == "1";
 

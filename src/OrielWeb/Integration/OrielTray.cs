@@ -47,6 +47,15 @@ public sealed class OrielTray : IDisposable
     public string Id => _backend.Id;
 
     /// <summary>
+    /// 自检探针（生产代码不读）。
+    /// </summary>
+    /// <remarks>
+    /// 只暴露"能不能合成一次事件"，而不是整个 <see cref="ITrayBackend"/>：
+    /// <c>--selftest tray</c> 要的仅此而已，不该顺带拿到后端的全部控制权。
+    /// </remarks>
+    internal ITrayEventProbe? EventProbe => _backend as ITrayEventProbe;
+
+    /// <summary>
     /// 是否允许**左键点击弹出菜单**（默认 false：左键只触发 <see cref="Clicked"/>，菜单走右键）。
     /// </summary>
     /// <remarks>

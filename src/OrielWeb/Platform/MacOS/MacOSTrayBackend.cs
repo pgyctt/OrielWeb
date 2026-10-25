@@ -23,7 +23,7 @@ namespace OrielWeb.Platform.MacOS;
 /// 彩色品牌图标必须置 false，否则会被系统按 alpha 重绘成单色剪影。
 /// </para>
 /// </remarks>
-internal sealed class MacOSTrayBackend : ITrayBackend
+internal sealed class MacOSTrayBackend : ITrayBackend, ITrayEventProbe
 {
     /// <summary>NSVariableStatusItemLength：宽度随内容自适应。</summary>
     private const double VariableStatusItemLength = -1;
@@ -286,6 +286,10 @@ internal sealed class MacOSTrayBackend : ITrayBackend
     /// <summary>状态项创建成功且未被隐藏（macOS 的状态项一旦创建就会出现在菜单栏）。</summary>
     public bool IsVisible
         => _statusItem != 0 && ObjCRuntime.SendBoolRet(_statusItem, ObjCRuntime.Sel("isVisible"));
+
+    /// <inheritdoc/>
+    void ITrayEventProbe.RaiseSynthetic(TraySyntheticEvent kind, string? itemId)
+        => TrayEventProbeDispatch.Raise(Id, Clicked, EventReceived, MenuItemClicked, kind, itemId);
 
     public void Dispose()
     {

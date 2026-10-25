@@ -27,7 +27,7 @@ internal sealed class ConformanceRun
 {
     /// <summary><c>--selftest</c> 认得的名字。加一个自检要同时改这里与 <see cref="Attach"/>。</summary>
     internal static readonly string[] Names =
-        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowevents", "event", "close", "window", "windownew", "monitors", "menu", "menubar", "api", "channel", "visuals"];
+        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowstate", "windowevents", "event", "close", "window", "windownew", "monitors", "menu", "menubar", "api", "channel", "visuals"];
 
     /// <summary>主窗口。单实例自检的看门狗要在超时时关掉它。</summary>
     internal static WebviewWindow? Window;
@@ -65,6 +65,7 @@ internal sealed class ConformanceRun
     private bool TrayJs => Is("tray-js");
     private bool Geometry => Is("geometry");
     private bool GeometryFrameless => Is("geometry-frameless");
+    private bool WindowState => Is("windowstate");
     private bool WindowEvents => Is("windowevents");
     private bool Event => Is("event");
     private bool Close => Is("close");
@@ -272,6 +273,15 @@ internal sealed class ConformanceRun
             w.WithUrl("https://app.oriel/event-probe.html");
         }
 
+        if (WindowState)
+        {
+            // **建窗形态就是被测对象**：隐藏启动 + 最大化。
+            // 这正是 API.md「首帧闸门（推荐用法）」的写法加上"最大化启动"这个自然诉求，
+            // Windows 后端曾在两者组合时丢掉最大化意图（见 WindowStateSelfTest 的说明）。
+            // 断言全在 Loaded 之后由自检发 `Show()` 触发，这里只负责把窗口造成那个形态。
+            w.WithHidden().WithMaximized();
+        }
+
         if (Visuals)
         {
             // 观感页：**透明背景**。不透明页面会把窗口材质整个盖住，
@@ -295,7 +305,9 @@ internal sealed class ConformanceRun
         // 三平台尺寸语义的偏差就测不出来——而那正是这个自检要抓的缺陷。
         // geometry-frameless 则相反，专门验"换算没被套到无边框窗口上"。
         // visuals 同理要用装饰窗口：titleBarStyle 的三档只在**有标题栏**的窗口上才有意义。
-        if (!Geometry && !Visuals)
+        // windowstate 也用装饰窗口：最大化的标准形态在带标题栏的窗口上，与无边框相比
+        // 少一层"WS_POPUP 也支持最大化吗"的干扰。
+        if (!Geometry && !Visuals && !WindowState)
         {
             w.WithFrameless();
         }
@@ -365,6 +377,12 @@ internal sealed class ConformanceRun
         {
             // 反面：frameless 窗口不该被套上"客户区 → 整窗"的换算。
             win.Loaded += () => GeometrySelfTest.AttachFrameless(win.App, win);
+        }
+
+        if (WindowState)
+        {
+            // Loaded 时窗口仍是隐藏态（WithHidden），自检从这里开始驱动 Show/Hide/Show。
+            win.Loaded += () => WindowStateSelfTest.Attach(win.App, win);
         }
 
         if (WindowEvents)
@@ -553,6 +571,7 @@ internal sealed class ConformanceRun
         ["tray-js"] = () => TraySelfTest.Failed,
         ["geometry"] = () => GeometrySelfTest.Failed,
         ["geometry-frameless"] = () => GeometrySelfTest.Failed,
+        ["windowstate"] = () => WindowStateSelfTest.Failed,
         ["windowevents"] = () => WindowEventsSelfTest.Failed,
         ["event"] = () => EventSelfTest.Failed,
         ["close"] = () => CloseSelfTest.Failed,

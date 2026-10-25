@@ -102,3 +102,45 @@ internal interface ITrayBackend : IDisposable
     /// </summary>
     bool IsVisible { get; }
 }
+
+/// <summary>
+/// 自检探针：把一次**合成**事件从后端的派发点走一遍。
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>为什么需要它</b>：真实的托盘点击要由系统把鼠标事件送进托盘区，**无法无头自动化**。
+/// 但"接线断了"——<see cref="OrielTray"/> 构造时漏订阅某个后端事件、或订阅到错的事件——
+/// 恰恰是这类代码最常见的回归形态（0.4.1 就有一次 <c>CreateTray</c> 漏接
+/// <c>MenuItemClicked</c>，症状是"托盘菜单点了没反应"）。这个探针把那一类变成机器断言：
+/// 它**不证明**"系统真的把点击送来了"，只证明"事件从后端发出后一路能到达公开事件"。
+/// </para>
+/// <para>
+/// 生产代码里**没有任何调用点**，唯一的调用方是 <c>--selftest tray</c>。
+/// 做成独立接口而不是往 <see cref="ITrayBackend"/> 上加成员：这是可选的测试能力，
+/// 不该成为将来每个新后端都必须兑现的契约。
+/// </para>
+/// <para>
+/// 真实的"左键单击 → <see cref="OrielTray.Clicked"/> 送达"仍只能人眼验证，
+/// 已登记在 <c>docs/ROADMAP.md</c> 的 Windows 人眼项里。
+/// </para>
+/// </remarks>
+internal interface ITrayEventProbe
+{
+    /// <summary>触发一次合成事件，走与真实事件相同的派发路径。</summary>
+    /// <param name="kind">要触发的环节。</param>
+    /// <param name="itemId">菜单项 id（仅 <see cref="TraySyntheticEvent.MenuItemClicked"/> 使用）。</param>
+    void RaiseSynthetic(TraySyntheticEvent kind, string? itemId = null);
+}
+
+/// <summary>合成事件的环节（见 <see cref="ITrayEventProbe"/>）。</summary>
+internal enum TraySyntheticEvent
+{
+    /// <summary>无参数的点击事件（<see cref="ITrayBackend.Clicked"/>）。</summary>
+    Clicked,
+
+    /// <summary>富事件（<see cref="ITrayBackend.EventReceived"/>）。</summary>
+    TrayEvent,
+
+    /// <summary>菜单项点击（<see cref="ITrayBackend.MenuItemClicked"/>）。</summary>
+    MenuItemClicked,
+}

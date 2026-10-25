@@ -16,7 +16,7 @@
 # ============================ 三个阶段 ============================
 #
 # 【自检】机器断言（结论行判定）
-#   nav ipc capability multiwindow scheme threading tray tray-js geometry geometry-frameless
+#   nav ipc capability multiwindow scheme threading tray tray-js geometry geometry-frameless windowstate
 #   theme（深浅两条路径必须给出**不同**结论）
 #   exit / exit-timeout（子进程；**同时**判结论行与退出码）
 #   single-instance（双进程：第二个应立即成功退出并通知首实例）
@@ -312,13 +312,14 @@ run_mode() {
 }
 
 section "自检：机器断言（结论行判定）"
-for mode in nav ipc capability multiwindow scheme threading tray tray-js geometry geometry-frameless windowevents event close window windownew monitors menu menubar api channel; do
+for mode in nav ipc capability multiwindow scheme threading tray tray-js geometry geometry-frameless windowstate windowevents event close window windownew monitors menu menubar api channel; do
     case "$mode" in
         threading) pattern='^THREADING-SELFTEST: ' ;;
         tray)      pattern='^TRAY-SELFTEST: ' ;;
         tray-js)   pattern='^TRAY-JS-SELFTEST: ' ;;
         geometry)  pattern='^GEOMETRY-SELFTEST: ' ;;
         geometry-frameless) pattern='^GEOMETRY-SELFTEST: ' ;;
+        windowstate) pattern='^WINDOWSTATE-SELFTEST: ' ;;
         windowevents) pattern='^WINDOWEVENTS-SELFTEST: ' ;;
         event)     pattern='^EVENT-SELFTEST: ' ;;
         close)     pattern='^CLOSE-SELFTEST: ' ;;

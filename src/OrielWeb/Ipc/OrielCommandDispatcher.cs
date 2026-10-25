@@ -8,6 +8,11 @@ using System.Buffers;
 
 [assembly: InternalsVisibleTo("OrielWeb.Tests")]
 
+// 契约自检要合成一次托盘事件，验证"后端事件 → OrielTray 公开事件"这条订阅链路：
+// 入口是 internal 的 ITrayEventProbe（见其说明）。它不是公共 API 的候选——
+// 生产代码里没有任何调用点，唯一调用方是 --selftest tray。
+[assembly: InternalsVisibleTo("OrielWeb.Conformance")]
+
 // 基准项目要直接调 HandleInvokeAsync 与资源/路径查找（都是 internal）：
 // 通过这些类型的公开面绕一圈，测到的就不是热路径本身了。
 [assembly: InternalsVisibleTo("OrielWeb.Benchmarks")]

@@ -21,7 +21,7 @@ namespace OrielWeb.Platform.Windows;
 /// <c>wParam</c> = 图标 ID、<c>lParam</c> 低字 = 鼠标消息——正好能分辨是哪一个托盘。
 /// </para>
 /// </remarks>
-internal sealed unsafe class Win32TrayBackend : ITrayBackend
+internal sealed unsafe class Win32TrayBackend : ITrayBackend, ITrayEventProbe
 {
     /// <summary>
     /// 进程内唯一的图标 ID 分配器。
@@ -322,6 +322,10 @@ internal sealed unsafe class Win32TrayBackend : ITrayBackend
 
     /// <summary><c>Shell_NotifyIcon(NIM_ADD)</c> 是否成功（失败时托盘静默缺失，见 <see cref="Add"/>）。</summary>
     public bool IsVisible => _added && !_hidden;
+
+    /// <inheritdoc/>
+    void ITrayEventProbe.RaiseSynthetic(TraySyntheticEvent kind, string? itemId)
+        => TrayEventProbeDispatch.Raise(Id, Clicked, EventReceived, MenuItemClicked, kind, itemId);
 
     public void Dispose()
     {

@@ -8,7 +8,8 @@ namespace OrielConformance;
 /// <remarks>
 /// <para>
 /// 由 <c>--selftest tray</c> 启用。取证的是**后端**（C# 侧）能做的事：多托盘、按 id 取回、
-/// 图标解码成对象、模板标记、菜单、显隐、标题、移除。前端（<c>oriel.tray</c>）那一半
+/// 图标解码成对象、模板标记、菜单、显隐、标题、移除，以及**事件订阅链路**
+/// （用后端的合成派发入口验证"后端事件 → 公开事件"这一段没断）。前端（<c>oriel.tray</c>）那一半
 /// 由 <c>--selftest tray-js</c> 取证——它驱动页面真实调用内建 <c>tray.*</c> 命令。
 /// </para>
 /// <para>
@@ -104,6 +105,38 @@ internal static class TraySelfTest
             Check(app.Trays.Count >= 2, $"托盘表里有多个托盘（{app.Trays.Count} 个）");
             Check(ReferenceEquals(app.GetTray("selftest-a"), first), "GetTray 按 id 取回同一个句柄");
             Check(app.GetTray("no-such-tray") is null, "GetTray 对不存在的 id 返回 null");
+
+            // 2b) 订阅链路：CreateTray 之后，句柄必须真的挂上了后端的事件。
+            //
+            // 真实的托盘点击要由系统把鼠标事件送进托盘区，**无法无头自动化**；但"接线断了"
+            // 恰是这类代码最常见的回归（0.4.1 就有一次 CreateTray 漏接 MenuItemClicked，
+            // 症状是"托盘菜单点了没反应"）。这里用后端内置的合成派发入口把"后端 → 句柄"
+            // 这一段走一遍：它不证明系统真的送来了点击，只证明事件发出来之后一路能到达公开事件。
+            int clickedCount = 0;
+            int trayEventCount = 0;
+            string? menuItemId = null;
+
+            first.Clicked += () => clickedCount++;
+            first.TrayEvent += _ => trayEventCount++;
+            first.MenuItemClicked += id => menuItemId = id;
+
+            if (first.EventProbe is { } probe)
+            {
+                probe.RaiseSynthetic(TraySyntheticEvent.Clicked);
+                Check(clickedCount == 1, "订阅链路：后端 Clicked → OrielTray.Clicked");
+
+                probe.RaiseSynthetic(TraySyntheticEvent.TrayEvent);
+                Check(trayEventCount == 1, "订阅链路：后端 EventReceived → OrielTray.TrayEvent");
+
+                probe.RaiseSynthetic(TraySyntheticEvent.MenuItemClicked, "selftest-item");
+                Check(menuItemId == "selftest-item", "订阅链路：后端 MenuItemClicked → OrielTray.MenuItemClicked（id 原样到达）");
+            }
+            else
+            {
+                // 后端没实现探针就是失败：这条断言的价值全在"每个平台都真的能被验证"，
+                // 缺一个平台等于那个平台的接线仍然无人看守。
+                Check(false, "托盘后端未实现 ITrayEventProbe：订阅链路无从验证");
+            }
 
             // 3) 图标对象与模板标记如实回读
             Check(ReferenceEquals(first.Icon, png), "托盘句柄持有传进去的图标对象");

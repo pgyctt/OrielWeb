@@ -27,7 +27,7 @@ namespace OrielWeb.Platform.Linux;
 /// Linux: Unsupported）。因此这里只报 Click（按键未知）。
 /// </para>
 /// </remarks>
-internal sealed unsafe class GtkTrayBackend : ITrayBackend
+internal sealed unsafe class GtkTrayBackend : ITrayBackend, ITrayEventProbe
 {
     /// <summary>statusIcon 指针 → 后端实例。静态 trampoline 没有 this，只能按指针回查。</summary>
     private static readonly Dictionary<nint, GtkTrayBackend> s_icons = [];
@@ -210,6 +210,10 @@ internal sealed unsafe class GtkTrayBackend : ITrayBackend
     }
 
     public bool IsVisible => _statusIcon != 0 && GtkNative.GtkStatusIconIsEmbedded(_statusIcon) != 0;
+
+    /// <inheritdoc/>
+    void ITrayEventProbe.RaiseSynthetic(TraySyntheticEvent kind, string? itemId)
+        => TrayEventProbeDispatch.Raise(Id, Clicked, EventReceived, MenuItemClicked, kind, itemId);
 
     public void Dispose()
     {
