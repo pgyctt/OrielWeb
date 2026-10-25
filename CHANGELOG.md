@@ -7,6 +7,66 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
+## 未发布
+
+### 修复
+
+- **Windows：`WithHidden()` + `WithMaximized()` 起手的窗口以还原态出现。** 创建期把"可见性"
+  与"最大化"塞进了一条三元链，`Hidden` 优先时只发 `SW_HIDE`，`SW_SHOWMAXIMIZED` 那条分支
+  **从未执行**，`WS_MAXIMIZE` 因此从未建立——之后 `Show()` 的 `SW_SHOW`（"以当前大小和位置
+  显示"）只能把窗口按还原态摆出来。应用侧唯一的补救是再调一次 `Maximize()`，代价是一次
+  肉眼可见的"先还原后撑满"跳变。
+
+  现在创建期只记下"待生效的最大化意图"，`Show()` 直接发 `SW_SHOWMAXIMIZED` 一次到位：
+  既没有上述跳变，也没有"先 `SW_SHOWMAXIMIZED` 再 `SW_HIDE`"那条路线的 map→unmap 可见帧。
+  `Maximize()` / `Minimize()` / `Restore()` 会清掉该意图，此后以最后一次显式状态为准。
+  Linux（`gtk_window_maximize`）与 macOS（`zoom:`）本来就把两个维度分成两步，不受影响。
+
+  触发面不小：它正好踩在 `docs/API.md` §3「首帧闸门（推荐用法）」的写法上——
+  `WithHidden()` 建窗 → 页面首屏就绪 → 宿主 `Show()`，只是多加了一个 `WithMaximized()`；
+  而工控/看板类应用几乎都要最大化启动。0.3.4 修"隐藏仍吃点击"时写过"`WithFrameless` /
+  `WithHidden` / `WithMaximized` 调用方无需改动"——三个选项单独用确实都没问题，
+  **坏的是组合态**，而组合态此前没有任何断言（见下一条）。
+
+- **`docs/ROADMAP.md` 补登"托盘点按的真实送达（Windows）"人眼项。** 此前只登记了
+  "图标显示效果"与"悬停事件送达"，`Clicked` 本身不在清单里——"托盘左键单击能还原窗口"
+  是绝大多数托盘应用的默认交互，漏测的代价比多一行清单高。
+
+### 新增
+
+- **`--selftest windowstate`：窗口状态的机器断言。** 建窗形态就是被测对象
+  （`WithHidden().WithMaximized()`），`Loaded` 之后依次断言：
+
+  - `Show()` 之后**直接最大化**（上面那条缺陷的回归守卫）；
+  - `Hide()` → `IsVisible == false` → `Show()` → `IsVisible == true` 的往返；
+  - 最大化状态跨 `Hide`/`Show` 往返不丢。
+
+  第二条是 0.3.4 那个 P0（`Hide()` 只对宿主发 `SW_HIDE`，WebView2 的顶层渲染窗口继续浮在
+  桌面上吃点击，现场表现是"点桌面没反应"，极易被误判成系统故障）的守卫——`IsVisible` 就是
+  为观测它加的属性，加进来之后一直没有断言。**修好的缺陷没有守卫，等于只是暂时好了。**
+
+  能力边界写在自检注释里：Windows 的 `IsVisible` 读的是宿主 HWND 的 `WS_VISIBLE`，
+  它证明"宿主确实被藏了"，不证明渲染面也一起藏了（那是另一个顶层窗口，只有
+  `ICoreWebView2Controller.IsVisible` 能答）。这条挡的是"`Hide()`/`Show()` 整体失效或调用链
+  断了"，不是渲染面的残余。
+
+- **`--selftest tray` 增加订阅链路断言。** 真实的托盘点击要由系统把鼠标事件送进托盘区，
+  做不到无头自动化；但"接线断了"是这类代码最常见的回归形态——0.4.1 就有一次
+  `CreateTray` 漏接 `MenuItemClicked`，症状正是"托盘菜单点了没反应"。这里用后端内置的
+  **合成派发入口**（`ITrayEventProbe`，生产代码零调用点，三平台后端各实现一行委托转发）
+  把"后端事件 → `OrielTray.Clicked` / `TrayEvent` / `MenuItemClicked`"这一段走一遍：
+  它不证明系统真的送来了点击，但能挡住接线断掉那一类。
+
+### 验证
+
+- 两条新断言都做了**阴性对照**（Windows 11 真机）：
+  - 把 `Show()` 退回无条件 `SW_SHOW` → `--selftest windowstate` 报 2 项失败、退出码 `1`；
+  - 把 `MenuItemClicked` 的转发接成错误参数 → `--selftest tray` 报 1 项失败、退出码 `1`。
+  恢复修复后两者均 `PASS`、退出码 `0`。
+- 顺带记录一条实测结论（推翻了原提案里的一个假设）：隐藏态调
+  `SetWindowPlacement(showCmd = SW_SHOWMAXIMIZED)` **会立即让窗口上屏并最大化**，
+  不是"只写一条下次显示时用的记录"——所以它不能用来实现"隐藏地建立最大化意图"。
+
 ## 0.5.1 - 2026-10-25
 
 ### 变更

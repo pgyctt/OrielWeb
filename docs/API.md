@@ -75,7 +75,7 @@ Oriel.CreateBuilder(args)   // → OrielAppBuilder
 | `int? X` / `int? Y` | `null` | `At(int, int)`（顺带把 `Center` 置 false）。窗口**左上角**落在屏幕逻辑坐标 (x,y)——三平台一致（Linux 在 map 前发出 move 请求，最终落点由窗口管理器确认） |
 | `bool Center` | `true` | `Centered(bool = true)` |
 | `bool Resizable` | `true` | `WithResizable(bool = true)` |
-| `bool Fullscreen` / `bool OnTop` / `bool Maximized` | 均 `false` | `WithFullscreen()` / `WithOnTop()` / `WithMaximized()`（各带 `bool = true`） |
+| `bool Fullscreen` / `bool OnTop` / `bool Maximized` | 均 `false` | `WithFullscreen()` / `WithOnTop()` / `WithMaximized()`（各带 `bool = true`）。`Maximized` **可与 `Hidden` 组合**：隐藏启动 + 最大化时，`Show()` 会直接以最大化出现（不经过"先还原再撑满"的跳变，也不先上屏再藏）。`Maximize()` / `Minimize()` / `Restore()` 会覆盖这个创建期意图 |
 | `bool Frameless` | `false` | `WithFrameless(bool = true)`（无边框，见 §2） |
 | `bool Hidden` | `false` | `WithHidden(bool = true)`（窗口不上屏，页面照常加载、IPC 照常往返） |
 | `string? Url` | `null` | `WithUrl(string)`。`null` = 内嵌资源首页（`oriel://<host>/index.html`）；指向内嵌资源时写 `oriel://<host>/…`（`https://<host>/…` 是兼容别名，导航前会归一）。**已知边界**：别名只在**窗口初始 URL** 上归一；页面运行期自己跳到 `https://<host>/…` 不会被改写——那是真网络请求，且来源不可信（桥接不会安装） |
@@ -2038,8 +2038,9 @@ sudo apt-get install -y fonts-noto-cjk   # 中文界面必需，否则渲染成�
 | 关闭接管取证（`--selftest close`） | 四条路径逐条取证：**页面阻止**（什么都不做 → 窗口必须留开）、**页面放行**（调 `win.destroy` → 必须真的关掉）、**宿主否决优先**（`Closing` 里 Cancel → 页面**不该**收到事件）、**未接管**（直接关掉且页面不该收到事件）。另有"`Destroy()` 能强制关掉被接管的窗口"这条逃生口断言 |
 | 窗口 API 取证（`--selftest window`） | **按 label 寻址**：主窗口发命令、作用到另一个窗口（`hide`/`show` 用宿主侧 `IsVisible` 取证；`setTitle` 用 `window.title` 读回**双向**确认——改到了目标、没改到发起者）；**能力门禁两侧**：白名单命令（`window.isVisible`）放行、未声明的（`window.setResizable`）被拒且理由是权限；`window.destroy` 只关目标不关发起者 |
 | 前端包取证（`--selftest api`） | **包在真实页面里可用**：**90 余处断言覆盖 13 个模块**（`core` / `dpi` / `path` / `event` / `app` / `fs` / `dialog` / `mocks` / `window` / `clipboard` / `opener` / `autostart` / `notification`）——ESM 动态 import 能加载、`core.invoke` 能往返、`dpi` 舍入复刻 .NET 的 ToEven、`TauriEvent` 与 Tauri 同名同值、`getCurrentWindow().label` 是宿主注入值、`getAllWindows` 含本窗口、`mocks.isMocked()` 在真宿主里为 `false`，以及各模块「能用 / 该被拒」的两侧断言。这是唯一一处"包真被页面 import 并调用"的取证——包的单测跑在 Node 里，那一侧没有浏览器环境 |
-| 无人自检（`OrielDemo --selftest <名字>`） | 26 个模式：`nav` `ipc` `theme` `single-instance` `shell` `capability` `multiwindow` `scheme` `exit` `exit-timeout` `threading` `tray` `tray-js` `geometry` `geometry-frameless` `windowevents` `event` `close` `window` `windownew` `monitors` `menu` `menubar` `api` `channel` `visuals`——自己驱动页面、打印结论行、以退出码表达成败。实现住在 `tests/OrielWeb.Conformance`（0.4.14 起），demo 只保留转发入口 |
+| 无人自检（`OrielDemo --selftest <名字>`） | 27 个模式：`nav` `ipc` `theme` `single-instance` `shell` `capability` `multiwindow` `scheme` `exit` `exit-timeout` `threading` `tray` `tray-js` `geometry` `geometry-frameless` `windowstate` `windowevents` `event` `close` `window` `windownew` `monitors` `menu` `menubar` `api` `channel` `visuals`——自己驱动页面、打印结论行、以退出码表达成败。实现住在 `tests/OrielWeb.Conformance`（0.4.14 起），demo 只保留转发入口 |
 | 几何/焦点事件取证（`--selftest windowevents`） | `Resized`（程序调 `Resize` 后参数应为逻辑像素的客户区）、`Moved`（`MoveTo` 后应为屏幕逻辑坐标）、`FocusChanged`（**再建一个窗口抢焦点 → 收到 false；关掉它 → 收到 true**）、以及去重（重复设同一尺寸不再触发）。三平台的原生来源完全不同，只能逐平台真机取证——"我接上了信号"与"事件真的到了"是两件事 |
+| 窗口状态取证（`--selftest windowstate`） | **隐藏启动 + 最大化**的组合（`WithHidden().WithMaximized()` → `Show()`）：`Show()` 之后必须**直接**最大化（0.5.1 之前 Windows 会按还原态出现——创建期把两个正交维度塞进一条三元链，`SW_SHOWMAXIMIZED` 从未执行），并验 `Hide → IsVisible=false → Show → IsVisible=true` 的往返与"最大化状态跨往返不丢"。后者是 0.3.4 那个 P0（`Hide()` 只藏宿主、WebView2 渲染面仍浮在桌面上吃点击）的守卫：`IsVisible` 就是为观测它加的，此前没有任何断言 |
 | 尺寸语义取证（`--selftest geometry` / `geometry-frameless`） | **三平台尺寸语义一致性**。前者用**装饰窗口**取证：`WithSize(800,600)` 的客户区必须是 `800x600`（修复前 Windows 上是 `784x561`，原因见下面 §1 的 `WithSize` 说明），并再验一次运行期 `Resize(640,480)`。后者用**无边框窗口**取证反面：客户区不该被多做一次"客户区 → 整窗"换算 |
 | 托盘后端取证（`--selftest tray`） | 20 余项（断言数随平台略变，macOS 无图形会话时整套 SKIP）：`app.png`/`app.ico` **双格式解码**、多托盘（建两个 + 按 id 取回 + 互不影响）、图标对象与**模板标记**如实回读、运行期换图（对象与路径两条入口）、菜单、显隐、标题、按 id 移除、重复 id 抛异常 |
 | 托盘前端取证（`--selftest tray-js`） | 页面真实调用 `oriel.tray`：`new` → `getById` → `getAll` → 全部 `set*` → `close` → `onEvent`，回显逐条结论。证明**前后端 API 同名同义且命令往返真的通** |
@@ -2070,9 +2071,9 @@ sudo apt-get install -y fonts-noto-cjk   # 中文界面必需，否则渲染成�
 **macOS 那条没有阶段开关**——它是单一流程（签名 → 组装 `.app` → 自检 → 运行取证 → 截图），
 拆开跑反而会缺前置，所以只提供 `--seconds` / `--rid` / `--out` / `--no-publish`。
 
-自检阶段跑的模式：三条线**共同**的是这 20 个——`nav` `ipc` `capability` `multiwindow` `scheme`
-`threading` `tray` `tray-js` `geometry` `geometry-frameless` `windowevents` `event` `close` `window`
-`windownew` `monitors` `menu` `menubar` `api` `channel`。其余六个的编排各不相同：
+自检阶段跑的模式：三条线**共同**的是这 21 个——`nav` `ipc` `capability` `multiwindow` `scheme`
+`threading` `tray` `tray-js` `geometry` `geometry-frameless` `windowstate` `windowevents` `event` `close`
+`window` `windownew` `monitors` `menu` `menubar` `api` `channel`。其余六个的编排各不相同：
 
 - `theme`：Windows/macOS 与上面那 20 个同轮跑一次；Linux 用 `GTK_THEME` 造**深浅两条路径**，并断言两侧结论不同。
 - `single-instance`：必须起**两个进程**（首实例等通知、次实例分流退出），只能由脚本编排。

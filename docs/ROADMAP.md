@@ -187,7 +187,21 @@ B0–B24 全部完成，从 `0.4.0` 起分批发版。差异分析、分阶段�
 - 若不符：Linux 上 GNOME Shell 未装扩展、或 Wayland 会话下本就不显示，属平台事实。
 - 状态：**托盘 API 的机器断言已补齐**（2026-10-14）：`--selftest tray` 覆盖多托盘、图标对象、
   模板标记、菜单、显隐、标题、按 id 移除（Windows 真机 26 项全过）；`--selftest tray-js` 覆盖
-  页面经 `oriel.tray` 的完整命令往返。**图标最终显示效果与悬停事件的真实送达仍是人眼项**。
+  页面经 `oriel.tray` 的完整命令往返。2026-10-25 又补了**订阅链路**：用后端的合成派发入口
+  断言"后端事件 → `OrielTray.Clicked` / `TrayEvent` / `MenuItemClicked`"这一段没断。
+  **图标最终显示效果、悬停事件的真实送达、以及左键单击本身仍是人眼项**（见下一节）。
+
+#### 托盘点按的真实送达（Windows）
+- 环境：Windows 任务栏有通知区的桌面。
+- 步骤：`OrielDemo --manual-check`，对托盘图标左键单击、右键单击、再点一个菜单项。
+- 预期：左键触发 `Clicked`（操作台会回显）；右键弹出菜单；点菜单项触发 `MenuItemClicked` 并带上该项 id。
+- 为什么只能人眼：`--selftest tray` 的合成派发只证明"事件从后端发出后能到达公开事件"，
+  **不能**证明系统真的把点击送进来了。0.3.5 把回调切到 `NOTIFYICON_VERSION_4`（图标 id 移到
+  `HIWORD(lParam)`、`NIN_SELECT` 取代旧的 `WM_LBUTTONUP`）——这类"换了底层消息、上层语义不变"
+  的重构，只有真机能判定。
+- 若不符：先订阅 `RawEvent` 看有没有原始回调（有 = 送达正常，问题在识别或弹菜单；
+  没有 = 回调通道本身有问题，检查 `uCallbackMessage` 与专属消息窗口）。
+- 状态：**未复验**（0.5.1 之后未在真机点过）。
 
 #### 托盘事件在 Linux / macOS 上的送达
 - 环境：Linux（GTK）与 macOS（AppKit）桌面各一次。
