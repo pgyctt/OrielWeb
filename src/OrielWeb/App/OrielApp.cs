@@ -59,6 +59,12 @@ public sealed class OrielApp : IDisposable
         // `arm` 用 System.Threading.Timer 的一次性模式：每次触发后由登记表决定下一次
         // （固定周期 / 日历匹配 / 不再重复），而不是让 Timer 自己按固定周期跑——
         // 后者在"错过一整段"（机器睡眠）之后会挤出一串迟到的通知。
+        //
+        // 用本地 `DateTimeOffset.Now`（而不是 UtcNow）是**对的**，2026-10-25 评审曾疑虑
+        // DST 回拨会双发/迟发，核实为不成立：① DateTimeOffset 的减法与比较都是绝对时刻
+        // 语义（带 offset），Arm 的 delay 与 Fire 的 now<due 判定不受壁钟重复影响；
+        // ② 日历匹配（NextAfter）需要本地语义——"每天 9:00"指的是用户的本地 9 点，
+        // 文档（OrielScheduleInterval）与 Tauri 的系统闹钟语义一致。
         Notifications = new OrielNotificationRegistry(
             static () => DateTimeOffset.Now,
             static (delay, callback) => _ = new Timer(_ => callback(), null, delay, Timeout.InfiniteTimeSpan),
@@ -1041,55 +1047,19 @@ public sealed class OrielApp : IDisposable
     /// </param>
     public void InvokeOnUiThread(Action action, TimeSpan? timeout = null)
     {
-        ArgumentNullException.ThrowIfNull(action);
-
+        // 未运行/已释放时抛明确的异常（而不是对 null 后端的空引用）——Dispose 会把 _backend
+        // 置空，这条检查同时覆盖"没跑过"与"跑完已收尾"两种情形。
         var backend = _backend ?? throw new InvalidOperationException("应用尚未运行（未调用 Run()）。");
-        if (backend.IsOnUiThread())
-        {
-            action();
-            return;
-        }
 
-        if (IsExiting)
-        {
-            throw new InvalidOperationException(
-                "应用正在退出：消息循环已停止，InvokeOnUiThread 投递的动作不会被处理。" +
-                "退出途中请只做与 UI 无关的收尾，或用 TryPostToMainThread 做尽力投递。");
-        }
-
-        using var done = new ManualResetEventSlim(false);
-        Exception? failure = null;
-        if (!backend.PostToMainThread(() =>
-            {
-                try
-                {
-                    action();
-                }
-                catch (Exception ex)
-                {
-                    failure = ex;
-                }
-                finally
-                {
-                    done.Set();
-                }
-            }))
-        {
-            throw new InvalidOperationException("InvokeOnUiThread 失败：调度通道已失效（回调已被丢弃）。");
-        }
-
-        if (!done.Wait(timeout ?? Timeout.InfiniteTimeSpan))
-        {
-            throw new TimeoutException(
-                $"InvokeOnUiThread 在 {timeout} 内没有完成：UI 线程可能被长任务占用" +
-                "（一条慢命令、一个不返回的模态原生调用）。各条命令的耗时见 CommandInvoked。");
-        }
-
-        if (failure is not null)
-        {
-            // 原样抛出：编组不该改写调用方异常的类型与栈（用 ExceptionDispatchInfo 保住栈）
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
-        }
+        // 实现在 OrielUiInvoke（与 WebviewWindow.InvokeOnUiThread 同构，差异只剩通道与文案）
+        OrielWeb.Platform.OrielUiInvoke.Run(
+            action,
+            timeout,
+            isOnUiThread: backend.IsOnUiThread(),
+            isExiting: IsExiting,
+            post: backend.PostToMainThread,
+            exitingAdvice: "退出途中请只做与 UI 无关的收尾，或用 TryPostToMainThread 做尽力投递。",
+            postFailedMessage: "InvokeOnUiThread 失败：调度通道已失效（回调已被丢弃）。");
     }
 
     /// <summary>退出流程是否已经开始（<see cref="Quit"/> 已调用，或消息循环已经结束）。</summary>

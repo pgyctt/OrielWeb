@@ -527,36 +527,61 @@ internal sealed class ConformanceRun
         }
     }
 
+    /// <summary>名字 → 失败判定。<see cref="ApplyExitCode"/> 遍历这张表。</summary>
+    /// <remarks>
+    /// 此前是 24 项布尔或的长链：新增自检忘挂进链条不会报错，只会**静默变绿**
+    /// （2026-10-25 评审 P2 点名的结构性风险）。字典化后 <see cref="Names"/> 里的
+    /// 每个名字都必须有条目——缺了启动即红，"忘了"从静默漏检变成显式失败。
+    /// tray 与 tray-js 共用一张失败标志；exit 的超时模式不在这里判（见其条目）。
+    /// </remarks>
+    private static readonly Dictionary<string, Func<bool>> ExitFailures = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["nav"] = () => NavSelfTest.Failed,
+        ["ipc"] = () => IpcSelfTest.Failed,
+        ["theme"] = () => ThemeSelfTest.Failed,
+        ["single-instance"] = () => SingleInstanceSelfTest.Failed,
+        ["shell"] = () => ShellSelfTest.Failed,
+        ["capability"] = () => CapabilitySelfTest.Failed,
+        ["multiwindow"] = () => MultiWindowSelfTest.Failed,
+        ["scheme"] = () => SchemeSelfTest.Failed,
+        // exit 判的是进程退出码（ExitSelfTest 已把结论写进去）；超时模式故意堵死 UI
+        // 线程，它的成败由 verify 脚本按"是否被看门狗强杀"判定，不在这里重复。
+        ["exit"] = () => !ExitSelfTest.TimeoutMode && Environment.ExitCode != 0,
+        ["exit-timeout"] = static () => false,
+        ["threading"] = () => ThreadingSelfTest.Failed,
+        ["tray"] = () => TraySelfTest.Failed,
+        ["tray-js"] = () => TraySelfTest.Failed,
+        ["geometry"] = () => GeometrySelfTest.Failed,
+        ["geometry-frameless"] = () => GeometrySelfTest.Failed,
+        ["windowevents"] = () => WindowEventsSelfTest.Failed,
+        ["event"] = () => EventSelfTest.Failed,
+        ["close"] = () => CloseSelfTest.Failed,
+        ["window"] = () => WindowSelfTest.Failed,
+        ["windownew"] = () => WindowNewSelfTest.Failed,
+        ["monitors"] = () => MonitorSelfTest.Failed,
+        ["menu"] = () => MenuSelfTest.Failed,
+        ["menubar"] = () => MenuBarSelfTest.Failed,
+        ["api"] = () => ApiSelfTest.Failed,
+        ["channel"] = () => ChannelSelfTest.Failed,
+        ["visuals"] = () => VisualSelfTest.Failed,
+    };
+
     /// <summary>把自检成败映射到进程退出码（CI 的脚本据此判定，结论行由各自检打印）。</summary>
     internal void ApplyExitCode()
     {
-        bool failed =
-            (Nav && NavSelfTest.Failed)
-            || (Ipc && IpcSelfTest.Failed)
-            || (Theme && ThemeSelfTest.Failed)
-            || (SingleInstance && SingleInstanceSelfTest.Failed)
-            || (Shell && ShellSelfTest.Failed)
-            || (Capability && CapabilitySelfTest.Failed)
-            || (MultiWindow && MultiWindowSelfTest.Failed)
-            || (Scheme && SchemeSelfTest.Failed)
-            || (Exit && !ExitSelfTest.TimeoutMode && Environment.ExitCode != 0)
-            || (Threading && ThreadingSelfTest.Failed)
-            || (Geometry && GeometrySelfTest.Failed)
-            || (GeometryFrameless && GeometrySelfTest.Failed)
-            || (WindowEvents && WindowEventsSelfTest.Failed)
-            || (Event && EventSelfTest.Failed)
-            || (Close && CloseSelfTest.Failed)
-            || (WindowTest && WindowSelfTest.Failed)
-            || (WindowNew && WindowNewSelfTest.Failed)
-            || (Monitors && MonitorSelfTest.Failed)
-            || (Menu && MenuSelfTest.Failed)
-            || (MenuBar && MenuBarSelfTest.Failed)
-            || (Api && ApiSelfTest.Failed)
-            || (Channel && ChannelSelfTest.Failed)
-            || (Visuals && VisualSelfTest.Failed)
-            || ((Tray || TrayJs) && TraySelfTest.Failed);
+        // 完整性断言：Names 的每个名字都必须有失败判定。这是字典化换来的防漏——
+        // 长链时代忘挂一条只会静默变绿，现在缺条目在**任何一次**自检启动时就红。
+        foreach (string name in Names)
+        {
+            if (!ExitFailures.ContainsKey(name))
+            {
+                throw new InvalidOperationException(
+                    $"自检 '{name}' 没有退出码判定（ConformanceRun.ExitFailures 缺条目）——" +
+                    "宁可启动失败，也不要静默变绿。");
+            }
+        }
 
-        if (failed)
+        if (_name is not null && ExitFailures[_name]())
         {
             Environment.ExitCode = 1;
         }

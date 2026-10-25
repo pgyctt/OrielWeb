@@ -96,8 +96,11 @@ public sealed class OrielAppBuilder
     /// 注册 STJ 源生成的 <see cref="JsonSerializerContext"/>：DTO 命令参数/返回值由此实现 AOT 安全序列化。
     /// </summary>
     /// <remarks>
-    /// 上下文**按应用实例持有**（存在这里，随 <see cref="OrielApp"/> 传给 IPC 分发器），
-    /// 不写任何全局静态状态——因此同一进程里创建多个应用时，它们各用各的类型信息。
+    /// 上下文**按应用实例持有**（存在这里，随 <see cref="OrielApp"/> 传给 IPC 分发器）——
+    /// 同一进程里创建多个应用时，它们各用各的类型信息。
+    /// 注意这句话只对 <b>JSON 上下文</b>成立：命令**注册表**（OrielCommandRegistry）是
+    /// 进程级静态（生成器的 ModuleInitializer 在程序集加载时写入），多应用共享——
+    /// 那是有意设计（注册与"哪个应用要用"无关，见 OrielCommandRegistry 的说明）。
     /// </remarks>
     public OrielAppBuilder UseJsonContext(JsonSerializerContext context)
     {

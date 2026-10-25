@@ -894,54 +894,16 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// </param>
     public void InvokeOnUiThread(Action action, TimeSpan? timeout = null)
     {
-        ArgumentNullException.ThrowIfNull(action);
-
-        if (Backend.IsOnUiThread())
-        {
-            action();
-            return;
-        }
-
-        if (App.IsExiting)
-        {
-            throw new InvalidOperationException(
-                "应用正在退出：消息循环已停止，InvokeOnUiThread 投递的动作不会被处理。" +
-                "退出途中请只做与 UI 无关的收尾，或用 PostToUiThread 做尽力投递。");
-        }
-
-        using var done = new ManualResetEventSlim(false);
-        Exception? failure = null;
-        if (!Backend.PostToUiThread(() =>
-            {
-                try
-                {
-                    action();
-                }
-                catch (Exception ex)
-                {
-                    failure = ex;
-                }
-                finally
-                {
-                    done.Set();
-                }
-            }))
-        {
-            throw new InvalidOperationException(
-                "InvokeOnUiThread 失败：调度通道已失效（应用正在退出或窗口已销毁）。");
-        }
-
-        if (!done.Wait(timeout ?? Timeout.InfiniteTimeSpan))
-        {
-            throw new TimeoutException(
-                $"InvokeOnUiThread 在 {timeout} 内没有完成：UI 线程可能被长任务占用" +
-                "（一条慢命令、一个不返回的模态原生调用）。");
-        }
-
-        if (failure is not null)
-        {
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
-        }
+        // 实现在 OrielUiInvoke（与 OrielApp.InvokeOnUiThread 同构，差异只剩通道与文案）：
+        // 这边投递走窗口后端（PostToUiThread），退出建议指向同名的尽力投递 API。
+        OrielWeb.Platform.OrielUiInvoke.Run(
+            action,
+            timeout,
+            isOnUiThread: Backend.IsOnUiThread(),
+            isExiting: App.IsExiting,
+            post: Backend.PostToUiThread,
+            exitingAdvice: "退出途中请只做与 UI 无关的收尾，或用 PostToUiThread 做尽力投递。",
+            postFailedMessage: "InvokeOnUiThread 失败：调度通道已失效（应用正在退出或窗口已销毁）。");
     }
 
     /// <summary>向页面推送一个自定义事件（页面侧 <c>window.oriel.on(name, handler)</c> 接收）。</summary>
