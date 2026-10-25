@@ -13,11 +13,21 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# 最小权限：CI 只需要读仓库内容。不声明的话 GITHUB_TOKEN 拿的是仓库默认权限
+# （可能是可写）——release.yml 已做同款声明，这里对齐。
+permissions:
+  contents: read
+
 jobs:
   test:
     strategy:
+      # 单测跑满三平台：测试套件里有大量平台专属用例（LinuxMappings / GdkStructLayout /
+      # MacOSMappings / FsWatcherRegistry 的平台分支），只在 Windows 上跑等于
+      # Linux/macOS 的那部分从未在对应平台执行过（2026-10-25 评审 P1）。
+      # fail-fast 关掉：三平台的结果互相独立，一个平台挂了也要看到另外两个的完整结果。
+      fail-fast: false
       matrix:
-        os: [windows-latest]
+        os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     # 默认超时是 6 小时。缺了这一行，一次 apt/网络挂起会把整个 run 拖到天亮——
     # 2026-10-23 就发生过：compile-linux 卡在 apt-get update 上 25 分钟仍无输出。
@@ -41,6 +51,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22.x'
+          # npm 缓存：@tauri-apps/api 与官方插件（参照实现）每次全量下载要 1-2 分钟，
+          # 三平台矩阵下乘 3。NuGet 那边 composite action 早有缓存，这里对齐。
+          cache: npm
+          cache-dependency-path: packages/api/package-lock.json
 
       - name: Bridge JS tests
         # 三平台桥接脚本（windows/macos/linux）行为一致性；P0-2/P0-3 的回归防护。
@@ -53,7 +67,7 @@ jobs:
         # 以及本文件自身不该残留多余的字面量。
         run: node --test tools/migration-drill/fixtures/mock-ipc.test.mjs
 
-      - name: Frontend API tests
+      - name: Frontend API deps (npm ci)
         # @orielweb/api 的单元测试（core / dpi / event / mocks）。它是页面侧公开 API 的载体，
         # 形状错了的表现是"前端迁移后行为不对"，而那种问题在 C# 侧一个断言都抓不到。
         # 无构建步骤（JS + JSDoc），所以直接跑 node --test。
