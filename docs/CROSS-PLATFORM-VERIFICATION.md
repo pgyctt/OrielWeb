@@ -308,30 +308,17 @@ Dock、菜单栏位置），**颜色与细节看自截 PNG**。材质的模糊�
 
 ### 5.3 观感基线
 
-取证图存在 `docs/verification/macos/`。除最后一张外都来自"自截"，颜色真实。
+2026-10 那轮的截图取证（原 `docs/verification/macos/`）已不随仓库分发。下面的结论仍按当时的
+真机观察逐条保留；要复核，按第 4 节的步骤在真机上重跑一遍。
 
-**`titleBarStyle = visible`**：系统标题栏 + 标题居中 + 红绿灯三键 + 内容从标题栏下方开始。
-
-![titleBarStyle=visible](verification/macos/titlebar-visible.png)
-
-**`titleBarStyle = transparent`**：标题栏与内容融为一体（分隔线消失），标题仍在、内容位置不变。
-
-![titleBarStyle=transparent](verification/macos/titlebar-transparent.png)
-
-**`titleBarStyle = overlay`**：标题消失，内容整体上移并延伸到标题栏之下，只剩红绿灯浮在上面。
-对比前一张的档位卡片纵向位置即可看出这段位移。
-
-![titleBarStyle=overlay](verification/macos/titlebar-overlay.png)
-
-**`setEffects(sidebar)`**：`NSVisualEffectView` 已挂上、页面透明。这张里客户区仍是纯白——
-不是材质没生效，是这台 VM 没有 GPU 合成，模糊出不来（第 6 节）。
-
-![setEffects(sidebar)](verification/macos/effects-sidebar.png)
-
-**托盘图标**（此图为 Hyper-V 缩略图，颜色失真；看的是"那一格有没有东西"）：
-菜单栏左侧的输入法图标 "A" 左边多了一个 18 点的应用图标。
-
-![托盘图标](verification/macos/tray-menu-bar.png)
+- **`titleBarStyle = visible`**：系统标题栏 + 标题居中 + 红绿灯三键 + 内容从标题栏下方开始。
+- **`titleBarStyle = transparent`**：标题栏与内容融为一体（分隔线消失），标题仍在、内容位置不变。
+- **`titleBarStyle = overlay`**：标题消失，内容整体上移并延伸到标题栏之下，只剩红绿灯浮在上面。
+  对比上一项即可看出这段位移（当时看的是档位卡片的纵向位置）。
+- **`setEffects(sidebar)`**：`NSVisualEffectView` 已挂上、页面透明。当时客户区仍是纯白——
+  不是材质没生效，是那台 VM 没有 GPU 合成，模糊出不来（第 6 节）。
+- **托盘图标**：菜单栏左侧的输入法图标 "A" 左边多了一个 18 点的应用图标。这一项当时靠
+  Hyper-V 缩略图判读，颜色失真，能确认的只是"那一格里有东西"。
 
 ## 6. 已知限制
 

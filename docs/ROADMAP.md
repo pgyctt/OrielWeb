@@ -1,14 +1,15 @@
 # OrielWeb 路线图
 
 只记**还没做**的和**还没在真机上验过**的。已落地的能力、用法与取舍记录见 [API.md](API.md)。
-结构与质量线的改进批次（R0–R7）见 [代码健康度改进计划](CODE-REVIEW-PLAN-2026-10-23.md)（2026-10-23 评审后）。
+
+> 过程文档不留在仓库里。2026-10 那轮的评审计划、对齐审计与三份阶段计划
+> （`CODE-REVIEW-PLAN-2026-10-23`、`TAURI2-ALIGNMENT-AUDIT-2026-10-18`、
+> `TAURI2-ALIGNMENT-EXECUTION-PLAN-2026-10-18`、`TAURI2-ALIGNMENT-DECISIONS-2026-10-20`）
+> 已移除：它们记录的是"怎么排的"，而结论已经沉淀到 API.md 的对应小节。
 
 ## API 与 Tauri 2 对齐（已完成）
 
-B0–B24 全部完成，从 `0.4.0` 起分批发版。差异分析、分阶段清单与每批的取舍记录见
-[对齐审计](TAURI2-ALIGNMENT-AUDIT-2026-10-18.md)、
-[执行计划](TAURI2-ALIGNMENT-EXECUTION-PLAN-2026-10-18.md)（B0–B11）
-与[决策与补充批次](TAURI2-ALIGNMENT-DECISIONS-2026-10-20.md)（B12–B24）。
+B0–B24 全部完成，从 `0.4.0` 起分批发版。分阶段清单与每批的取舍记录随那批计划文档一并移除。
 
 对齐的**结果**不记在这份文件里：每个模块的形状、与 Tauri 的语义差异（含刻意保留的那些）在
 [API.md](API.md) 对应小节，迁移最容易踩的点在 [MIGRATION-FINDINGS](MIGRATION-FINDINGS.md)。

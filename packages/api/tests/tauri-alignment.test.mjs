@@ -209,8 +209,7 @@ const GAPS = {
  * 反而没人看。这里把它钉成常量：任何增减都必须改这份基线，而改它的人一定会
  * 读到下面这段"为什么只剩这些"。
  *
- * B24 的实地核对结果（与 docs/TAURI2-ALIGNMENT-DECISIONS-2026-10-20.md §2.1 的
- * 计划说法**不一致**，以这里为准）：
+ * B24 的实地核对结果（与当时的计划说法**不一致**，以这里为准）：
  *
  *   * `core` 7 条——**没有插件体系**这一件事的全部投影（Resource / PluginListener /
  *     addPluginListener / transformCallback / checkPermissions / requestPermissions /
@@ -614,7 +613,7 @@ const METHOD_GAP_GROUPS = [
     //   * B22：十条平台开关 + setEffects / clearEffects + 四条任务栏
     //     （setBadgeCount / setBadgeLabel / setProgressBar / setOverlayIcon）
     //
-    // B22 的做法推翻了两条旧的方针判断（见 docs/TAURI2-ALIGNMENT-DECISIONS-2026-10-20.md §5）：
+    // B22 的做法推翻了两条旧的方针判断（当时的决策记录 §5）：
     // "跨平台不一致的不做"改成"做，不支持的平台抛 not_supported"。
     // 于是【A·】分类**不再表示"不做"**，只表示"做但平台受限"——具体矩阵在
     // docs/API.md 的 B22 支持表里，逐平台一行。
