@@ -24,6 +24,13 @@ dotnet add package OrielWeb
 
 **完整 API 与各能力的取舍记录见 [docs/API.md](docs/API.md)**；尚未完成与待真机验证的部分见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
+想按 Tauri 的写法对照？[`samples/TauriExamples`](samples/TauriExamples/README.md) 是官方
+`tauri/examples` 的五份逐项移植（commands / state / multiwindow / splashscreen / drag），
+每个目录都写明了"页面代码到底改了哪几行"——包括那些**没改**的地方。
+
+想逐个 API 点着看？[`samples/ApiDemo`](samples/ApiDemo/README.md) 是已实现 API 的主验证台：
+17 个模块、300+ 个可运行动作，一条 API 一行，回执里直接看到成功值、错误码或平台差异。
+
 ## 快速开始
 
 要求 **.NET 10 SDK**（本库只提供 `net10.0` 目标）。
@@ -407,7 +414,9 @@ Linux 与 Windows 两条支持用 `--stages` / `-Stages` 只跑某一阶段；�
 `publish-vm-payload.ps1`（VM 部署验证用的自包含非 AOT 载荷）、
 `make-macos-app.sh`（组装 macOS `.app`）、`fake-notification-service.py` / `fake-notify-send.py`（通知替身）、
 `check-tauri-leaks.mjs`（迁移项目自查：`__TAURI_INTERNALS__` / `plugin:` 命令名 / `tauri://` 事件名，
-见 [MIGRATION-FINDINGS](docs/MIGRATION-FINDINGS.md#8-迁移前自查check-tauri-leaks)）。
+见 [MIGRATION-FINDINGS](docs/MIGRATION-FINDINGS.md#8-迁移前自查check-tauri-leaks)）、
+`verify-api-demo.mjs`（ApiDemo 的无人点击验证：连 WebView2 的 CDP 端口，把面板里的按钮逐个点一遍；
+需要 Windows 桌面，用法见 [ApiDemo 的 README](samples/ApiDemo/README.md)）。
 
 **前端包（`packages/api`）的测试与发布**：
 
