@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>ApiDemo</RootNamespace>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <IsPackable>false</IsPackable>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 页面里的图像/托盘图标用**内联 16×16 PNG**（见 wwwroot/panes/common.js），
+         不依赖随产物分发的文件：executableDir 在 Windows 上按设计不支持。
+         这里只留 exe 自身的图标。 -->
+    <None Include="app.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\OrielWeb\OrielWeb.csproj" />
+    <!-- 分析器不随 ProjectReference 传递：少了它 [OrielCommand] 不会生成路由 -->
+    <ProjectReference Include="..\..\src\OrielWeb.Generators\OrielWeb.Generators.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 与 OrielDemo 相同的写法：仓库内用 ProjectReference 时 buildTransitive 不生效，
+         必须自己声明带 LogicalName 的内嵌资源（原因见根 README「内嵌页面资源」）。 -->
+    <EmbeddedResource Include="wwwroot\**\*"
+                      LogicalName="$(AssemblyName).wwwroot/$([System.String]::Copy('%(RecursiveDir)').Replace('\','/'))%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\packages\api\src\*.js"
+                      LogicalName="$(AssemblyName).wwwroot/vendor/orielweb-api/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

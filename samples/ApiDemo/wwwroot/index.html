@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Oriel API Demo</title>
+    <link rel="stylesheet" href="app.css">
+</head>
+<body>
+    <div class="shell">
+        <aside class="sidebar">
+            <div class="brand">
+                <span class="mark">O</span>
+                <div>
+                    <strong>Oriel API Demo</strong>
+                    <small>已实现 API 的主验证台</small>
+                </div>
+            </div>
+
+            <nav id="nav" class="nav" aria-label="模块"></nav>
+
+            <footer class="sidebar-foot">
+                <span id="host-platform">platform …</span>
+                <span id="host-version">version …</span>
+            </footer>
+        </aside>
+
+        <main class="main">
+            <div id="pane" class="pane-host"></div>
+        </main>
+    </div>
+
+    <section id="log-panel" class="log-panel">
+        <header class="log-head">
+            <button id="log-toggle" class="log-toggle" aria-expanded="true">
+                <span class="chevron" aria-hidden="true">▾</span>
+                回执日志
+                <span id="log-count" class="log-count">0</span>
+            </button>
+            <div class="log-actions">
+                <button id="log-clear" class="tiny">清空</button>
+            </div>
+        </header>
+        <ol id="log-list" class="log-list"></ol>
+    </section>
+
+    <!-- 未捕获错误转发给宿主：二十来个 ES 模块里任何一处 import/拼写错误都会白屏，
+         而白屏时的 devtools 不一定打开着。这两行让命令行启动也能看到原因。 -->
+    <script>
+        (() => {
+            const report = (text) => {
+                console.error(text);
+                window.oriel?.invoke("demo.pageerror", { message: text }).catch(() => {});
+            };
+            window.addEventListener("error", (event) => {
+                report(`${event.message} @ ${event.filename}:${event.lineno}:${event.colno}`);
+            });
+            window.addEventListener("unhandledrejection", (event) => {
+                const reason = event.reason;
+                report(`unhandledrejection: ${reason?.stack ?? reason?.message ?? reason}`);
+            });
+        })();
+    </script>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>
