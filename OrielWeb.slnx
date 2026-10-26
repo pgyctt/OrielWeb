@@ -2,6 +2,16 @@
   <Project Path="src/OrielWeb/OrielWeb.csproj" />
   <Project Path="src/OrielWeb.Generators/OrielWeb.Generators.csproj" />
   <Project Path="samples/OrielDemo/OrielDemo.csproj" />
+  <!-- API 主验证台：把已实现的方法逐个做成可点的入口。它跑的是公开 API，
+       编不过或跑不通都意味着能力面已经失真。 -->
+  <Project Path="samples/ApiDemo/ApiDemo.csproj" />
+  <!-- Tauri 官方示例的移植组。进解决方案是为了让它们跟主代码一起被编译：
+       五个工程都只依赖公开 API，编不过就说明迁移故事已经失真。 -->
+  <Project Path="samples/TauriExamples/Commands/TauriCommands.csproj" />
+  <Project Path="samples/TauriExamples/State/TauriState.csproj" />
+  <Project Path="samples/TauriExamples/MultiWindow/TauriMultiWindow.csproj" />
+  <Project Path="samples/TauriExamples/Splashscreen/TauriSplashscreen.csproj" />
+  <Project Path="samples/TauriExamples/Drag/TauriDrag.csproj" />
   <Project Path="tests/OrielWeb.Conformance/OrielWeb.Conformance.csproj" />
   <Project Path="tests/OrielWeb.Tests/OrielWeb.Tests.csproj" />
 </Solution>
