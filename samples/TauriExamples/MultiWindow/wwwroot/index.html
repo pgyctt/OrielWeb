@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tauri 示例 · MultiWindow</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header class="page-header">
+        <div>
+            <h1>Tauri 示例 · MultiWindow</h1>
+            <p class="subtitle">
+                移植自 <code>tauri/examples/multiwindow</code>：页面建窗、按 label 发消息、监听消息。
+                三件事在原文里就是页面 API，本库的模块名与调用形状与它一一对应。
+            </p>
+        </div>
+        <span class="badge">当前窗口：<code id="current-label">…</code></span>
+    </header>
+
+    <main>
+        <section class="panel">
+            <h2>用 label 给某个窗口发消息</h2>
+            <form id="send-form" autocomplete="off">
+                <input id="send-message" type="text" placeholder="消息内容" required>
+                <input id="send-label" type="text" value="main" placeholder="目标窗口 label" required>
+                <button type="submit">发送</button>
+            </form>
+            <p class="note">
+                走 <code>emitTo(label, 'message', payload)</code>。目标窗口不存在时静默丢弃
+                （与 Tauri 的 <code>emitTo</code> 一致）——多窗口应用里窗口随时会被关掉，
+                把"发晚了"变成异常只会让收尾代码随机炸掉。
+            </p>
+        </section>
+
+        <section class="panel">
+            <h2>新建窗口</h2>
+            <form id="new-form" autocomplete="off">
+                <input id="new-label" type="text" placeholder="label（应用内唯一）" required>
+                <input id="new-title" type="text" placeholder="标题" required>
+                <button type="submit">创建</button>
+            </form>
+            <p class="note">
+                <code>new WebviewWindow(label, { title })</code> 在构造时立刻发起
+                <code>window.new</code>；结果在 <code>w.created</code> 上。
+                这与 Tauri 的"同步返回实例 + <code>once('tauri://created')</code>"
+                是<strong>唯一</strong>一处调用形状差异。
+            </p>
+        </section>
+
+        <section class="panel grow">
+            <h2>收到的消息</h2>
+            <pre id="messages" class="messages"></pre>
+            <p id="status" class="status" role="status"></p>
+        </section>
+    </main>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>

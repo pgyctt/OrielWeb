@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Import Project="..\Sample.props" />
+
+  <PropertyGroup>
+    <RootNamespace>TauriDrag</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    移植自 tauri/examples/drag（Apache-2.0 / MIT）。
+    原文是一个 data-tauri-drag-region 的语义测试矩阵；这里保留可测的几项，
+    并把本库**没有**的两种取值（"deep" / "false"）换成等价写法，逐条写在页面上。
+  -->
+
+</Project>

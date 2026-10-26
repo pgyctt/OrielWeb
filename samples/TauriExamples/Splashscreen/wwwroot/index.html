@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tauri 示例 · Splashscreen</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <main class="stage">
+        <h1>这是主窗口</h1>
+        <p class="subtitle">
+            移植自 <code>tauri/examples/splashscreen</code>。它在 2 秒内是隐藏的
+            （对应 <code>tauri.conf.json</code> 的 <code>"visible": false</code>），
+            由页面里那个定时器触发 <code>close_splashscreen</code> 之后才显示。
+        </p>
+
+        <section class="card">
+            <div class="row">
+                <span class="dot"></span>
+                <span>主窗口页面已加载，倒计时结束后切换</span>
+                <strong id="countdown">2.0s</strong>
+            </div>
+            <p class="note">
+                窗口隐藏时页面照常运行——DOM 就绪、定时器照走、IPC 照常往返。
+                所以"先隐藏预热、准备好再显示"不需要任何额外机制。
+            </p>
+        </section>
+
+        <section class="card">
+            <h2>这个示例想说明的两件事</h2>
+            <ol>
+                <li>启动画面只是<strong>另一个普通窗口</strong>：400×200、无边框、指定一个 URL。</li>
+                <li>切换靠一条命令：按 label 取窗口，关掉启动画面，显示主窗口。</li>
+            </ol>
+            <p class="note">
+                原文把这两个窗口写在配置里；本库写在 <code>Program.cs</code> 的两次
+                <code>AddWindow</code> 里——没有配置文件，也没有"配置与代码谁优先"。
+            </p>
+        </section>
+    </main>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>

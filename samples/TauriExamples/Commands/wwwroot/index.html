@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tauri 示例 · Commands</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header class="page-header">
+        <div>
+            <h1>Tauri 示例 · Commands</h1>
+            <p class="subtitle">
+                移植自 <code>tauri/examples/commands</code>：命令的五种形态。
+                页面代码只换了 import 前缀，命令名一个没改。
+            </p>
+        </div>
+        <span class="badge">C# 命令 · 零反射 IPC</span>
+    </header>
+
+    <main class="layout">
+        <section class="cards">
+            <article class="card">
+                <header>
+                    <code>greet</code>
+                    <span class="tag">同步 · 有返回值</span>
+                </header>
+                <p>最朴素的一条。Tauri 的 <code>#[tauri::command] fn greet(...)</code> 在这里是 <code>[OrielCommand("greet")]</code>。</p>
+                <div class="row">
+                    <input id="greet-name" type="text" value="World" autocomplete="off">
+                    <button id="greet-run">调用</button>
+                </div>
+            </article>
+
+            <article class="card">
+                <header>
+                    <code>async_simple_command</code>
+                    <span class="tag">异步 · 无返回值</span>
+                </header>
+                <p>命令内部 <code>await Task.Delay(400)</code>，页面不会卡住；回执是 <code>null</code>。</p>
+                <div class="row">
+                    <input id="async-arg" type="text" value="hello from the page" autocomplete="off">
+                    <button id="async-run">调用</button>
+                </div>
+            </article>
+
+            <article class="card">
+                <header>
+                    <code>simple_command_with_result</code>
+                    <span class="tag">Result</span>
+                </header>
+                <p>空字符串会走 <code>Err</code> 分支：页面从 <code>error.code</code> 拿到 <code>foo_error</code>。</p>
+                <div class="row">
+                    <input id="result-arg" type="text" value="not empty" autocomplete="off">
+                    <button id="result-ok">传正常值</button>
+                    <button id="result-err" class="ghost">传空值</button>
+                </div>
+            </article>
+
+            <article class="card">
+                <header>
+                    <code>command_arguments_struct</code>
+                    <span class="tag">DTO 参数</span>
+                </header>
+                <p>
+                    注意这一条的调用形状：Tauri 把整个 args 摊进结构体，本库按参数名取，
+                    所以多包了一层 <code>person</code>。
+                </p>
+                <div class="row">
+                    <input id="person-name" type="text" value="张三" autocomplete="off">
+                    <input id="person-age" type="number" value="30" min="0" max="150">
+                    <button id="person-run">调用</button>
+                </div>
+            </article>
+
+            <article class="card">
+                <header>
+                    <code>renamed_command_new</code>
+                    <span class="tag">rename</span>
+                </header>
+                <p>Rust 的 <code>rename</code> 属性对应本库特性里的字符串：C# 方法名不必与命令名一致。</p>
+                <div class="row">
+                    <button id="renamed-run">调用</button>
+                </div>
+            </article>
+
+            <article class="card note-card">
+                <header>
+                    <code>window_label</code>
+                    <span class="tag muted">形态差异</span>
+                </header>
+                <p>
+                    原文的这条命令靠注入 <code>Window</code> 取 label。本库不往命令里注入宿主对象
+                    （那会引入"参数是数据还是句柄"的第二套规则），label 在页面侧直接可读。
+                </p>
+                <div class="row">
+                    <button id="label-run">读取当前窗口 label</button>
+                </div>
+            </article>
+        </section>
+
+        <aside class="console">
+            <header>
+                <span>回执</span>
+                <button id="log-clear" class="tiny">清空</button>
+            </header>
+            <ol id="log" class="log"></ol>
+        </aside>
+    </main>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>

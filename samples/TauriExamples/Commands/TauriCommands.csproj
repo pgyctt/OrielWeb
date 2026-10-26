@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Import Project="..\Sample.props" />
+
+  <PropertyGroup>
+    <RootNamespace>TauriCommands</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    移植自 tauri/examples/commands（Apache-2.0 / MIT）。
+    只取五条有代表性的命令形态：同步、异步、Result、DTO 参数、rename。
+    原文里另外二十多条是同一个机制的排列组合（snake_case 变体、裸 future、Request/Response），
+    搬过来只会把"命令怎么注册"这件事淹掉。
+  -->
+
+</Project>

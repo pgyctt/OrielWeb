@@ -1,0 +1,259 @@
+:root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --text: #1b1f24;
+    --muted: #5c6672;
+    --border: #dfe3e8;
+    --accent: #2a5db0;
+    --ok: #1a7f37;
+    --err: #b3261e;
+    --code-bg: #eef1f5;
+    --mono: "Cascadia Code", "Consolas", "SF Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #16181c;
+        --panel: #1e2126;
+        --text: #e6e9ed;
+        --muted: #9aa4b0;
+        --border: #2f343b;
+        --accent: #7aa7ff;
+        --ok: #6fd48a;
+        --err: #ff8a80;
+        --code-bg: #262b31;
+    }
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+code {
+    font-family: var(--mono);
+    font-size: 0.92em;
+    background: var(--code-bg);
+    border-radius: 4px;
+    padding: 1px 5px;
+}
+
+.page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 28px 32px 18px;
+    border-bottom: 1px solid var(--border);
+}
+
+.page-header h1 {
+    margin: 0 0 4px;
+    font-size: 21px;
+    font-weight: 600;
+}
+
+.subtitle {
+    margin: 0;
+    max-width: 760px;
+    color: var(--muted);
+}
+
+.badge {
+    flex: none;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 360px;
+    gap: 24px;
+    padding: 24px 32px 32px;
+    align-items: start;
+}
+
+@media (max-width: 900px) {
+    .layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px;
+}
+
+.card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+}
+
+.card header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.card header code {
+    background: none;
+    padding: 0;
+    color: var(--accent);
+    font-size: 13px;
+}
+
+.card p {
+    margin: 0 0 12px;
+    color: var(--muted);
+}
+
+.tag {
+    flex: none;
+    padding: 1px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.tag.muted {
+    opacity: 0.75;
+}
+
+.row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+input {
+    flex: 1 1 120px;
+    min-width: 0;
+    padding: 6px 9px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+}
+
+input:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+}
+
+button {
+    flex: none;
+    padding: 6px 14px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: var(--accent);
+    color: #fff;
+    font: inherit;
+    cursor: pointer;
+}
+
+button:hover {
+    filter: brightness(1.08);
+}
+
+button:active {
+    transform: translateY(1px);
+}
+
+button.ghost {
+    background: transparent;
+    border-color: var(--border);
+    color: var(--text);
+}
+
+button.tiny {
+    padding: 2px 8px;
+    font-size: 12px;
+    background: transparent;
+    border-color: var(--border);
+    color: var(--muted);
+}
+
+.console {
+    position: sticky;
+    top: 24px;
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 48px);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.console > header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+}
+
+.log {
+    flex: 1;
+    margin: 0;
+    padding: 10px 14px 14px;
+    list-style: none;
+    overflow: auto;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.7;
+}
+
+.log li {
+    padding: 4px 0;
+    border-bottom: 1px dashed var(--border);
+    word-break: break-word;
+}
+
+.log li:last-child {
+    border-bottom: none;
+}
+
+.log .time {
+    color: var(--muted);
+    margin-right: 6px;
+}
+
+.log .ok {
+    color: var(--ok);
+}
+
+.log .err {
+    color: var(--err);
+}
+
+.log .empty {
+    color: var(--muted);
+    font-style: italic;
+}
+
+/* 最后一张卡是"形态差异"说明，不是一条真命令：用虚线边框把它与可点的卡片分开 */
+.note-card {
+    border-style: dashed;
+}

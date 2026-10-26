@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tauri 示例 · State</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <main class="stage">
+        <header class="head">
+            <h1>Tauri 示例 · State</h1>
+            <p>
+                移植自 <code>tauri/examples/state</code>。四个命令名与原文一致；
+                区别只在"计数器放在哪"——本库用命令类的共享实例，没有 <code>State&lt;T&gt;</code> 容器。
+            </p>
+        </header>
+
+        <section class="counter" aria-live="polite">
+            <span id="value" class="value">0</span>
+            <span class="unit">当前计数</span>
+        </section>
+
+        <div class="actions">
+            <button id="increment">increment (+1)</button>
+            <button id="decrement" class="ghost">decrement (−1)</button>
+            <button id="reset" class="ghost">reset (归零)</button>
+            <button id="get" class="ghost">get (只读)</button>
+        </div>
+
+        <p class="hint">
+            四条命令都落在<strong>同一个</strong> <code>Counter</code> 上。窗口关了再开、或者再开一个窗口
+            （同一进程）看到的都是这份状态——状态的生命周期跟着 <code>OrielApp</code>，
+            不是跟着页面。
+        </p>
+
+        <ol id="log" class="log" aria-label="调用日志"></ol>
+    </main>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>

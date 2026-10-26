@@ -1,0 +1,306 @@
+:root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --text: #1b1f24;
+    --muted: #5c6672;
+    --border: #dfe3e8;
+    --accent: #2a5db0;
+    --ok: #1a7f37;
+    --no: #b3261e;
+    --code-bg: #eef1f5;
+    --mono: "Cascadia Code", "Consolas", "SF Mono", monospace;
+    --titlebar: 40px;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #16181c;
+        --panel: #1e2126;
+        --text: #e6e9ed;
+        --muted: #9aa4b0;
+        --border: #2f343b;
+        --accent: #7aa7ff;
+        --ok: #6fd48a;
+        --no: #ff8a80;
+        --code-bg: #262b31;
+    }
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+code {
+    font-family: var(--mono);
+    font-size: 0.92em;
+    background: var(--code-bg);
+    border-radius: 4px;
+    padding: 1px 5px;
+}
+
+/* ---- 自绘标题栏 ---- */
+
+.titlebar {
+    position: fixed;
+    inset: 0 0 auto 0;
+    z-index: 10;
+    display: flex;
+    height: var(--titlebar);
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    user-select: none;
+}
+
+.titlebar-drag {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 14px;
+    min-width: 0;
+    cursor: grab;
+}
+
+.titlebar-drag:active {
+    cursor: grabbing;
+}
+
+.app-title {
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.hint {
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.win-btn {
+    flex: none;
+    width: 46px;
+    height: var(--titlebar);
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 15px;
+    cursor: pointer;
+}
+
+.win-btn:hover {
+    background: var(--code-bg);
+}
+
+.win-btn.close:hover {
+    background: #c42b1c;
+    color: #fff;
+}
+
+/* ---- 内容 ---- */
+
+main {
+    padding: calc(var(--titlebar) + 24px) 30px 30px;
+    max-width: 1080px;
+    margin: 0 auto;
+}
+
+.page-head h1 {
+    margin: 0 0 6px;
+    font-size: 21px;
+    font-weight: 600;
+}
+
+.page-head p {
+    margin: 0 0 20px;
+    color: var(--muted);
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+    gap: 14px;
+}
+
+.case {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px 16px;
+}
+
+.case h2 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 10px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.case h2 code {
+    font-size: 12px;
+    font-weight: 400;
+}
+
+.no,
+.yes {
+    display: inline-grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    font-size: 11px;
+    font-weight: 600;
+    color: #fff;
+    flex: none;
+}
+
+.no {
+    background: var(--no);
+}
+
+.yes {
+    background: var(--ok);
+}
+
+.box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    justify-content: center;
+    min-height: 84px;
+    padding: 12px;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    color: var(--muted);
+    text-align: center;
+    cursor: grab;
+}
+
+.box:active {
+    cursor: grabbing;
+}
+
+.box.plain {
+    cursor: text;
+    user-select: text;
+}
+
+.sub {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+}
+
+.box input {
+    width: 100%;
+    padding: 6px 9px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+}
+
+.box input:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+}
+
+.box button,
+#click-proof {
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.box button:hover,
+#click-proof:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* ---- 对照表 ---- */
+
+.compare {
+    margin-top: 24px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    overflow-x: auto;
+}
+
+.compare h2 {
+    margin: 0 0 12px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+th,
+td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+}
+
+th {
+    color: var(--muted);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.note {
+    margin: 12px 0 0;
+    color: var(--muted);
+    font-size: 12.5px;
+}
+
+/* ---- 轻提示 ---- */
+
+.toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%);
+    padding: 8px 16px;
+    border-radius: 8px;
+    background: var(--text);
+    color: var(--bg);
+    font-size: 13px;
+    box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
+}

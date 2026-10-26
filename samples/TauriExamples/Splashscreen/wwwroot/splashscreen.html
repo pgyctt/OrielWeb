@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>启动中</title>
+    <link rel="stylesheet" href="splash.css">
+</head>
+<body>
+    <!--
+        无边框窗口没有系统标题栏，所以整块背景都标成拖动区域。
+        这就是 drag 示例里的同一个属性，不需要写任何拖动代码。
+    -->
+    <main class="splash" data-oriel-drag-region>
+        <span class="logo" aria-hidden="true">O</span>
+        <div class="text">
+            <strong>OrielWeb</strong>
+            <span>Tauri 示例 · 正在启动</span>
+        </div>
+        <span class="spinner" role="status" aria-label="加载中"></span>
+        <button id="skip" type="button">跳过</button>
+    </main>
+
+    <script type="module" src="splash.js"></script>
+</body>
+</html>

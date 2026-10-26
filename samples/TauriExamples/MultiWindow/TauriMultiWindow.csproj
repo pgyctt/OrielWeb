@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Import Project="..\Sample.props" />
+
+  <PropertyGroup>
+    <RootNamespace>TauriMultiWindow</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    移植自 tauri/examples/multiwindow（Apache-2.0 / MIT）。
+    原文的 Rust 侧只有 setup 里建一个 "Third" 窗口，其余全在页面里做（建窗 + emitTo + listen）。
+    本库没有 setup 钩子，页面侧那条路反而一字未改——见 wwwroot/app.js。
+  -->
+
+</Project>

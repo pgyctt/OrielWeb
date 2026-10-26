@@ -1,0 +1,105 @@
+:root {
+    color-scheme: dark;
+    --bg-1: #1b2437;
+    --bg-2: #2b3b5c;
+    --fg: #f2f5fb;
+    --muted: #aebbd4;
+    --accent: #7aa7ff;
+    --mono: "Cascadia Code", "Consolas", "SF Mono", monospace;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+}
+
+body {
+    background: linear-gradient(135deg, var(--bg-1), var(--bg-2));
+    color: var(--fg);
+    font-family: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+    user-select: none;
+}
+
+.splash {
+    height: 100%;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-rows: 1fr auto;
+    align-items: center;
+    gap: 0 14px;
+    padding: 30px 26px 22px;
+    cursor: grab;
+}
+
+.splash:active {
+    cursor: grabbing;
+}
+
+.logo {
+    width: 46px;
+    height: 46px;
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    font-family: var(--mono);
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.text strong {
+    font-size: 18px;
+    letter-spacing: 0.02em;
+}
+
+.text span {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.spinner {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    border-top-color: var(--accent);
+    animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+button {
+    grid-column: 1 / -1;
+    justify-self: end;
+    padding: 4px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+button:hover {
+    color: var(--fg);
+    border-color: rgba(255, 255, 255, 0.4);
+}

@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Import Project="..\Sample.props" />
+
+  <PropertyGroup>
+    <RootNamespace>TauriState</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    移植自 tauri/examples/state（Apache-2.0 / MIT）。
+    原文只有四个命令与一个 Mutex 计数器；这里保持同样的四条命令、同样的命令名，
+    差别只在"状态放在哪"——见 Program.cs 顶部的说明。
+  -->
+
+</Project>

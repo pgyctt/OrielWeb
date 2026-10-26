@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tauri 示例 · Drag</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!--
+        无边框窗口的自绘标题栏。拖动区域只需要一个属性——没有一行拖动代码，
+        也不需要任何命令授权（win.* 始终放行）。
+    -->
+    <header class="titlebar">
+        <div class="titlebar-drag" data-oriel-drag-region>
+            <span class="app-title">Tauri 示例 · Drag</span>
+            <span class="hint">整条标题栏可拖；双击最大化 / 还原</span>
+        </div>
+        <button id="btn-min" class="win-btn" title="最小化" aria-label="最小化">–</button>
+        <button id="btn-close" class="win-btn close" title="关闭" aria-label="关闭">×</button>
+    </header>
+
+    <main>
+        <header class="page-head">
+            <h1>拖动区域的可测矩阵</h1>
+            <p>
+                移植自 <code>tauri/examples/drag</code>。原文列了 16 条用例测
+                <code>data-tauri-drag-region</code> 的语义；这里保留能直接对照的 6 条，
+                并在下面把两种本库没有的取值换成等价写法。
+            </p>
+        </header>
+
+        <section class="grid">
+            <article class="case">
+                <h2><span class="no">1</span>没有属性</h2>
+                <div class="box plain">按下并拖动 → 窗口不动（文本会被选中）</div>
+            </article>
+
+            <article class="case">
+                <h2><span class="yes">2</span><code>data-oriel-drag-region</code></h2>
+                <div class="box" data-oriel-drag-region>按下并拖动 → 窗口跟着走</div>
+            </article>
+
+            <article class="case">
+                <h2><span class="yes">3</span>区域内的按钮</h2>
+                <div class="box" data-oriel-drag-region>
+                    <span>按钮不会被拖动接管</span>
+                    <button id="click-proof">点我（拖动不生效）</button>
+                </div>
+            </article>
+
+            <article class="case">
+                <h2><span class="yes">4</span>区域内的输入框</h2>
+                <div class="box" data-oriel-drag-region>
+                    <input type="text" placeholder="能聚焦、能选中文本，不触发拖动">
+                </div>
+            </article>
+
+            <article class="case">
+                <h2><span class="yes">5</span><code>data-oriel-no-drag</code></h2>
+                <div class="box" data-oriel-drag-region>
+                    <span>外层可拖</span>
+                    <div class="sub" data-oriel-no-drag>这一块被显式排除，拖不动</div>
+                </div>
+            </article>
+
+            <article class="case">
+                <h2><span class="yes">6</span>区域内的嵌套文本</h2>
+                <div class="box" data-oriel-drag-region>
+                    <div class="sub"><span>点这里的文字也能拖（等价 Tauri 的 "deep"）</span></div>
+                </div>
+            </article>
+        </section>
+
+        <section class="compare">
+            <h2>Tauri 的三种取值 → 本库的写法</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Tauri</th>
+                        <th>本库</th>
+                        <th>说明</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>data-tauri-drag-region</code></td>
+                        <td><code>data-oriel-drag-region</code></td>
+                        <td>裸属性。子元素里的点击也算拖动，除非命中交互元素。</td>
+                    </tr>
+                    <tr>
+                        <td><code>="deep"</code></td>
+                        <td>裸属性即等价</td>
+                        <td>本库不做"只认直接命中"的模式，默认就是整棵子树。</td>
+                    </tr>
+                    <tr>
+                        <td><code>="false"</code></td>
+                        <td><code>data-oriel-no-drag</code></td>
+                        <td>把要排除的那块标出来，而不是把父级关掉。</td>
+                    </tr>
+                    <tr>
+                        <td>按标签 / <code>role</code> 排除</td>
+                        <td>内建排除表</td>
+                        <td>
+                            <code>button</code> / <code>input</code> / <code>select</code> /
+                            <code>textarea</code> / <code>a</code> / <code>contenteditable</code>
+                            始终不接管。不认 <code>role</code>——要排除请用 no-drag 属性。
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            <p class="note">
+                宿主也可以用 <code>WithDragRegion(selector)</code> 指定选择器，效果与在页面上写属性一致；
+                两个来源取并集。
+            </p>
+        </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" hidden></div>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>

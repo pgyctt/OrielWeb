@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Import Project="..\Sample.props" />
+
+  <PropertyGroup>
+    <RootNamespace>TauriSplashscreen</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    移植自 tauri/examples/splashscreen（Apache-2.0 / MIT）。
+    原文的两个窗口写在 tauri.conf.json 的 windows 数组里（主窗口 visible:false，
+    启动画面 400x200 无边框）；本库没有配置文件，等价写法是两次 AddWindow。
+  -->
+
+</Project>

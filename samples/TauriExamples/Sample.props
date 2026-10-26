@@ -1,0 +1,46 @@
+<Project>
+
+  <!--
+    Tauri 官方示例移植组的公共工程配置。
+
+    这五个工程刻意长得一模一样：它们不是五个产品，是**同一个迁移结论的五份证据**。
+    差异只允许出现在 Program.cs、命令类与 wwwroot 里——凡是"每个工程都得写但没人会读"的
+    机械配置，都收在这里，免得五份各错一处。
+
+    这三个 ItemGroup 在 samples/OrielDemo 里逐字出现过（那边写得更啰嗦），这里只解释一次：
+
+      1. ProjectReference 引用库本体 + 生成器。**生成器必须单独引用**：分析器不随
+         ProjectReference 传递，少了它 [OrielCommand] 不会生成任何路由。
+      2. wwwroot 内嵌。这里不能用"零配置"——零配置是 NuGet 包内 buildTransitive 的机制，
+         不随 ProjectReference 分发（原因见 README「内嵌页面资源」）。自己声明就必须带
+         显式 '/' 分隔符的 LogicalName，否则 app.min.js 会被推成 app/min.js（静默 404 白屏）。
+      3. 前端包源码直接内嵌到 wwwroot/vendor/orielweb-api/。页面 import 的就是包源码本身，
+         不存在"复制了一份、然后忘了同步"的漂移。
+  -->
+
+  <PropertyGroup>
+    <!-- WinExe：示例是桌面应用，不该在后面挂一个命令行窗口 -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- 示例不产 NuGet 包 -->
+    <IsPackable>false</IsPackable>
+    <!-- 与 OrielDemo 一致：示例应当证明"这套 API 在 Native AOT 下编得过" -->
+    <PublishAot>true</PublishAot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\OrielWeb\OrielWeb.csproj" />
+    <ProjectReference Include="..\..\..\src\OrielWeb.Generators\OrielWeb.Generators.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="wwwroot\**\*"
+                      LogicalName="$(AssemblyName).wwwroot/$([System.String]::Copy('%(RecursiveDir)').Replace('\','/'))%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\..\packages\api\src\*.js"
+                      LogicalName="$(AssemblyName).wwwroot/vendor/orielweb-api/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>
