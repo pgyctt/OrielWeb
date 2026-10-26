@@ -7,9 +7,21 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
-## 未发布
+## 0.5.2 - 2026-10-26
 
 ### 修复
+
+- **`currentMonitor()` / `primaryMonitor()` / `availableMonitors()` 返回的 `Monitor.position`
+  与 `Monitor.size` 字段全是 `undefined`。** 宿主从 0.5.0 起（B14 线格式）给的是
+  Tauri 2 的外部标记形状 `{ Physical: { x, y } }`，而 `window.js` 的 `toMonitor()`
+  还在读旧的内联形状 `raw.position.x`——于是 `monitor.position` 看着是个
+  `PhysicalPosition` 实例，`x`/`y` 却都是 `undefined`，`toLogical(scaleFactor)` 会算出 `NaN`。
+  单测夹具（`TWO_MONITORS`）也停在旧形状，所以这条缺陷在 424 条前端单测里一直是绿的。
+
+  现在 `toMonitor()` 改走 `normalizePosition` / `normalizeSize`（两种形状都能读），
+  夹具改成宿主真实的线格式，并补了一条"旧的内联 tag 仍可读"的回归用例。
+  发现方式是 `samples/ApiDemo` 的真机点击：`setFullscreenOnMonitor(primaryMonitor().position)`
+  报"字段 'x' 必须是有限数字（收到 undefined）"。
 
 - **Windows：`WithHidden()` + `WithMaximized()` 起手的窗口以还原态出现。** 创建期把"可见性"
   与"最大化"塞进了一条三元链，`Hidden` 优先时只发 `SW_HIDE`，`SW_SHOWMAXIMIZED` 那条分支
@@ -33,6 +45,33 @@
   是绝大多数托盘应用的默认交互，漏测的代价比多一行清单高。
 
 ### 新增
+
+- **`samples/ApiDemo`：已实现 API 的主验证台。** 对标 Tauri 的 `examples/api`，
+  17 个模块、300+ 个可运行动作，一条 API 一行：名字 / 参数 / 运行 / 回执。
+  覆盖 `core`（含 `Channel` 与四类错误形状）、`app`、`window`（60+ 个方法）、
+  `webviewWindow`、`event`、`path`（23 个目录 + 全部拼装函数）、`fs`（含句柄与监视）、
+  `dialog`、`clipboard`、`opener`、`notification`、`autostart`、`menu`、`tray`、
+  `image`、`dpi`、`dragdrop`。
+
+  与 `samples/OrielDemo` 的分工写在 `samples/ApiDemo/README.md`：那个是 CI 的契约自检载体，
+  这个是给人点的验证台。**覆盖总览页的数字由 panes 自身计算**，新增一条动作不需要改清单。
+
+  验证方式不是"看着像"：用 WebView2 的远程调试端口 + CDP 把 `core` / `path` / `dpi` / `image` /
+  `event` / `fs` / `window` / `tray` / `webviewWindow` / `app` 逐条点了一遍（跳过 close/destroy/
+  模态与外部副作用），失败项全部落在"预期失败"或已记录的平台差异上。上面那条 `Monitor` 缺陷
+  就是这轮点击抓到的。
+
+- **`samples/TauriExamples`：官方 `tauri/examples` 的五份逐项移植。**
+  `commands` / `state` / `multiwindow` / `splashscreen` / `drag`，每个目录一份 README 写明
+  "页面代码到底改了哪几行"。三条结论值得单独记：`state` 的页面**零改动**；
+  `multiwindow` 只多处理一个 `created` Promise（本库不发 `tauri://created`）；
+  `commands` 唯一必须改的是 DTO 参数多包一层（本库按参数名取值，不把 args 摊进结构体）；
+  `drag` 则是整段拖动脚本被删掉——它被桥接层接管了，页面只剩一个属性。
+
+  五个工程都进 `OrielWeb.slnx`：它们是"迁移能走通"的证据，编不过就说明结论失真。
+  没搬的那些（`api` / `isolation` / `multiwebview` / `resources` / `streaming` 等）在
+  `samples/TauriExamples/README.md` 里逐条写了原因，其中 `streaming` 是**能力边界**而非遗漏
+  （原文依赖自定义 scheme 的 Range 请求，本库的内嵌资源不支持 Range）。
 
 - **`--selftest windowstate`：窗口状态的机器断言。** 建窗形态就是被测对象
   （`WithHidden().WithMaximized()`），`Loaded` 之后依次断言：
@@ -380,7 +419,7 @@
 
 ### 维护
 
-R1 批次：内建命令分发从 10 段同构代码收成一张有序族表（[计划](docs/CODE-REVIEW-PLAN-2026-10-23.md)），
+R1 批次：内建命令分发从 10 段同构代码收成一张有序族表（当时的代码健康度改进计划），
 **无用户可感知变化**：
 
 - **`HandleInvokeAsync` 从 303 行降到 109 行**。10 个内建命令族（win / tray / event / path / fs / dialog /
@@ -396,7 +435,7 @@ R1 批次：内建命令分发从 10 段同构代码收成一张有序族表（[
 
 ### 维护
 
-内部结构与验证基线改进（[代码健康度改进计划](docs/CODE-REVIEW-PLAN-2026-10-23.md) 的 R0 批次），**无用户可感知变化**：
+内部结构与验证基线改进（代码健康度改进计划的 R0 批次），**无用户可感知变化**：
 
 - **CI 的缓存与 SDK 安装抽成 composite action**：`test` / `compile-*` / `smoke-*` 共 7 个 job
   各复制一份的 13 行样板收成 1 行调用（`.github/actions/setup-dotnet-nuget`）。
