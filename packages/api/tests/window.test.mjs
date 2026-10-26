@@ -844,20 +844,31 @@ test('四个 DRAG_* 都有宿主对应物', () => {
 //   * 单位是物理像素：150% 屏上 `size.width` 应当是 2880 而不是 1920。
 
 /** 一台 1920×1080 @1x 的主屏 + 一块 2560×1440 @2x 的副屏（副屏在主屏右侧）。 */
+// 形状用**宿主真实的线格式**（B14 起是 Tauri 2 的外部标记 `{ Physical: {...} }`）。
+// 旧夹具写的是内联 `{ x, y }`，于是 toMonitor 直接读 raw.position.x 的缺陷
+// 在单测里永远是绿的——ApiDemo 真机点 primaryMonitor() 才暴露出 undefined。
 const TWO_MONITORS = [
     {
         name: '\\\\.\\DISPLAY1',
-        position: { x: 0, y: 0 },
-        size: { width: 1920, height: 1080 },
+        position: { Physical: { x: 0, y: 0 } },
+        size: { Physical: { width: 1920, height: 1080 } },
         scaleFactor: 1,
     },
     {
         name: null,
-        position: { x: 1920, y: 0 },
-        size: { width: 2560, height: 1440 },
+        position: { Physical: { x: 1920, y: 0 } },
+        size: { Physical: { width: 2560, height: 1440 } },
         scaleFactor: 2,
     },
 ];
+
+/** 旧线格式（内联 tag）：读兼容仍然要成立。 */
+const LEGACY_MONITOR = {
+    name: 'legacy',
+    position: { type: 'Physical', x: 10, y: 20 },
+    size: { type: 'Physical', width: 800, height: 600 },
+    scaleFactor: 1.5,
+};
 
 test('availableMonitors：返回 dpi 类实例，键集与 Tauri 的 Monitor 一致', async () => {
     clearMocks();
@@ -953,6 +964,22 @@ test('primaryMonitor：走独立命令（主屏不一定是列表第一项）', 
     assert.equal(calls[0][0], 'window.primaryMonitor');
     assert.equal(monitor.position.x, 0);
     assert.equal(monitor.position.y, 0);
+
+    clearMocks();
+});
+
+test('monitor：旧的内联 tag 形状仍然能读（读兼容）', async () => {
+    clearMocks();
+    setTransportOverride(
+        makeTransport('main', { 'window.primaryMonitor': LEGACY_MONITOR }).transport);
+
+    const monitor = await primaryMonitor();
+
+    assert.equal(monitor.position.x, 10);
+    assert.equal(monitor.position.y, 20);
+    assert.equal(monitor.size.width, 800);
+    assert.equal(monitor.size.height, 600);
+    assert.equal(monitor.scaleFactor, 1.5);
 
     clearMocks();
 });

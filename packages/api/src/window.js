@@ -2140,10 +2140,17 @@ export async function getFocusedWindow() {
  * @internal
  */
 function toMonitor(raw) {
+    // 宿主从 B14 起给的是 Tauri 2 的外部标记形状 `{ Physical: { x, y } }`。
+    // 这里走 normalize*，两种形状（外部标记 / 旧的内联 tag）都能读——
+    // 直接读 `raw.position.x` 会在新线格式下得到 undefined，
+    // 症状是 Monitor.position/size 看着有对象、字段全是 undefined。
+    const position = normalizePosition(raw.position, 'Physical');
+    const size = normalizeSize(raw.size, 'Physical');
+
     return {
         name: raw.name ?? null,
-        position: new PhysicalPosition(raw.position.x, raw.position.y),
-        size: new PhysicalSize(raw.size.width, raw.size.height),
+        position: new PhysicalPosition(position.x, position.y),
+        size: new PhysicalSize(size.width, size.height),
         scaleFactor: raw.scaleFactor,
     };
 }
