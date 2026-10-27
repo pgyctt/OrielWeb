@@ -239,7 +239,7 @@ pwsh tools\publish-vm-payload.ps1 -Rid linux-x64
 cd hyperv-vm\scripts
 .\test-lab.ps1                 # 先看三平台是否连通
 .\start-lab.ps1 -TimeoutSec 300
-.\deploy-run.ps1 -Payload <仓库>\.drill\vm\linux-x64 -Command './OrielDemo --selftest window'
+.\deploy-run.ps1 -Payload <仓库>\dist\vm\linux-x64 -Command './OrielDemo --selftest window'
 
 # macOS 上要逐个模式跑（没有 timeout 命令，用脚本自带看门狗）
 ```
@@ -248,16 +248,16 @@ cd hyperv-vm\scripts
 
 | 载荷 | 用于 |
 |---|---|
-| `.drill\vm\linux-x64` | Linux VM（X11 与 Wayland 两个后端） |
-| `.drill\vm\osx-x64` | macOS VM（Intel） |
-| `.drill\vm\osx-visual` | 观感验证时另发的一份（同参数，见 §5.1），与 `osx-x64` 只差 `OrielDemo.dll` |
-| `.drill\vm\win-x64` | Windows VM |
+| `dist\vm\linux-x64` | Linux VM（X11 与 Wayland 两个后端） |
+| `dist\vm\osx-x64` | macOS VM（Intel） |
+| `dist\vm\osx-visual` | 观感验证时另发的一份（同参数，见 §5.1），与 `osx-x64` 只差 `OrielDemo.dll` |
+| `dist\vm\win-x64` | Windows VM |
 
 Windows 载荷用 `tools/publish-vm-payload.ps1` 生成，与其余三个走同一组参数：
 
 ```powershell
 pwsh tools\publish-vm-payload.ps1 -Rid win-x64
-.\deploy-run.ps1 -Payload .drill\vm\win-x64 -Command '.\OrielDemo.exe --selftest window'
+.\deploy-run.ps1 -Payload dist\vm\win-x64 -Command '.\OrielDemo.exe --selftest window'
 ```
 
 `--self-contained true -p:PublishAot=false` 这组参数不是可选项，脚本把它们和一条断言放在一起：

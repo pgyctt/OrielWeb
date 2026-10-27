@@ -3,8 +3,8 @@
  * B7 迁移演练工装。
  *
  * 做三件事，全部机械、无判断：
- *   1. 按 `apps.json` 里固定的 commit SHA 取真实 Tauri 2 应用源码（缓存到 .drill/，不入库）；
- *   2. 把 `@tauri-apps/*` 的 import 说明符按映射表改写成 `@orielweb/api/*`，写到 .drill/migrated/；
+ *   1. 按 `apps.json` 里固定的 commit SHA 取真实 Tauri 2 应用源码（缓存到 dist/migration-drill/，不入库）；
+ *   2. 把 `@tauri-apps/*` 的 import 说明符按映射表改写成 `@orielweb/api/*`，写到 dist/migration-drill/migrated/；
  *   3. 用**本库自己的类型声明**检查「改完之后每个被导入的符号是否真的存在」，
  *      并对可解析的调用跑一次 tsc（只保留与本库相关的诊断，外部依赖缺失的噪音丢掉）。
  *
@@ -13,7 +13,7 @@
  * 那个真正要紧的问题——**这些真实代码要的东西，我们到底有没有**。
  *
  * 用法：
- *   node tools/migration-drill/drill.mjs                 # 跑全部，打印摘要 + 写 .drill/report.json
+ *   node tools/migration-drill/drill.mjs                 # 跑全部，打印摘要 + 写 dist/migration-drill/report.json
  *   node tools/migration-drill/drill.mjs --no-typecheck  # 只做符号检查（快）
  *   node tools/migration-drill/drill.mjs --app lumos     # 只跑一个
  */
@@ -26,7 +26,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
-const DRILL = path.join(ROOT, '.drill');
+const DRILL = path.join(ROOT, 'dist', 'migration-drill');
 const APPS_DIR = path.join(DRILL, 'apps');
 const MIGRATED_DIR = path.join(DRILL, 'migrated');
 const TYPES_DIR = path.join(ROOT, 'packages', 'api', 'types');

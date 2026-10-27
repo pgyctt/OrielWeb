@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    生成用于 VM 部署验证的自包含载荷（`.drill/vm/<rid>/`）。
+    生成用于 VM 部署验证的自包含载荷（`dist/vm/<rid>/`）。
 
 .DESCRIPTION
     这批载荷的用途只有一个：推给**没有装 SDK 的干净机器**再执行，验证"目标机上不装 .NET 也能跑"。
@@ -20,7 +20,7 @@
     目标 RID。默认 win-x64。
 
 .PARAMETER Out
-    输出目录。默认 `.drill/vm/<rid>`，与 docs/CROSS-PLATFORM-VERIFICATION.md §5 的命名一致。
+    输出目录。默认 `dist/vm/<rid>`，与 docs/CROSS-PLATFORM-VERIFICATION.md §5 的命名一致。
 
 .EXAMPLE
     pwsh tools/publish-vm-payload.ps1 -Rid linux-x64
@@ -38,7 +38,7 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if (-not $Out) {
-    $Out = Join-Path $repoRoot ".drill/vm/$Rid"
+    $Out = Join-Path $repoRoot "dist/vm/$Rid"
 }
 
 $project = Join-Path $repoRoot 'samples/OrielDemo/OrielDemo.csproj'

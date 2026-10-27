@@ -84,10 +84,8 @@ tauri-project/
 # 基准产物（每次 dotnet run -c Release --project benchmarks/... 都会重新生成）
 BenchmarkDotNet.Artifacts/
 
-# B7 迁移演练的取样源码与改写产物（可随时由 tools/migration-drill 重新下载生成）。
+# B7 迁移演练的取样源码与改写产物：dist/migration-drill/（已由上面的 dist/ 覆盖）。
 # 第三方应用源码不入库：只保留固定 SHA 的清单与结论（docs/MIGRATION-FINDINGS.md）。
-/.drill/
-/.drill-run*.log
 
 ## AI 助手的私有资产目录（AGENTS.md §4）：唯一事实来源是 .agents/，这些一律不该进仓库。
 ## 忽略不是"允许存在"——发现时按要求把内容迁到 .agents/ 再删掉原目录，这里只挡误提交。

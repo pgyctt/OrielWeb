@@ -26,7 +26,7 @@
 | pier-dock | `pier-dock/pier-dock` @ `2eb10f34` | 2.1.0 | 96 | 多窗口/停靠；menu / webview / webviewWindow / mocks / autostart；React + framer-motion |
 | lumos | `DaiYiqq/lumos` @ `7887793e` | 2.12.4 | 45 | 对话框 + 流式长任务（`Channel`）；React |
 
-清单在 `tools/migration-drill/apps.json`。**第三方源码不入库**：工具按 SHA 下载到 `.drill/`
+清单在 `tools/migration-drill/apps.json`。**第三方源码不入库**：工具按 SHA 下载到 `dist/migration-drill/`
 （已 gitignore），仓库里只留清单与结论。
 
 ### 1.2 三条检查，为什么是这三条
@@ -44,7 +44,7 @@ tsc 那一步的过滤规则因此是按**符号解析来源**判定（诊断位
 ### 1.3 复现
 
 ```bash
-node tools/migration-drill/drill.mjs                 # 全流程，报告写到 .drill/report.json
+node tools/migration-drill/drill.mjs                 # 全流程，报告写到 dist/migration-drill/report.json
 node tools/migration-drill/drill.mjs --no-typecheck  # 只做模块/符号检查（秒级）
 node tools/migration-drill/drill.mjs --app lumos     # 只跑一个
 ```
