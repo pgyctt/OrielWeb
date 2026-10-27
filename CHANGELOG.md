@@ -7,6 +7,54 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
+## 0.5.3 - 2026-10-27
+
+### 变更
+
+- **Windows 平台不再依赖 `WebView2Aot` / `DirectNAot`（合计约 24 MB）。**
+  `WebView2Aot` 的 nuspec 把 `DirectNAot` 声明为硬依赖，而本库只用到 26 个 WebView2 类型、
+  69 个成员和 3 个 DirectComposition 接口——为 3% 的用量向每个消费方传递 24 MB。
+  现在绑定自备（`Platform/Windows/WebView2/`，只覆盖实际调到的接口，`internal` 不进公开 API）。
+
+  可感知的差别：
+
+  - `dotnet restore` 不再下载这两个包，消费方与 CI 的还原体积同时下降；
+  - Native AOT 单文件 8,188,928 → 7,172,608 字节（**-12.4%**）；
+  - AOT 编译：带 DirectN 时 ILLink 分析 20 分钟仍无产出，现在全量 AOT 13 秒完成。
+
+  体积收益没有想象中大，原因值得记下来：`DirectN.dll` 在磁盘上 22.8 MB，但 Native AOT
+  只链接可达代码，它真正进产物的部分只有 144 KB。**包大小与产物大小没有因果关系**。
+
+### 修复
+
+- **Windows：滚轮完全不起作用。** `COREWEBVIEW2_MOUSE_EVENT_KIND` 的三个值写错了：
+  `WHEEL` 用了 `0x020E`（那是水平滚轮）、`HORIZONTAL_WHEEL` 用了 `0x020F`、
+  `LEAVE` 用了 `0x020A`。垂直滚轮因此被当成水平滚动发给 WebView2，而 WebView2 收到一个
+  合法但语义不同的枚举值时既不报错也不提示——只能靠"页面不动"发现。整组
+  `VIRTUAL_KEYS` 也串了位（中键 / X1 / X2 / Shift / Ctrl），所以 Ctrl+滚轮缩放同样失效。
+  现在按上游元数据重写，并新增 `tests/OrielWeb.Tests/WebView2EnumTests.cs` 逐值钉住
+  29 个常量。`LEAVE` 的修正同时解决了"鼠标移出窗口后按钮 hover 残留"。
+
+- **Windows：窗口退出时崩溃（退出码 `0xC0000409`）。** `ComObject<T>` 包装再释放的
+  整体引用计数净变化是 **-1**：`ConvertToManaged` 命中内部缓存时不会再 AddRef，而
+  `Dispose` 无条件 Release 了一次。每包装一次就少减一次原生引用（事件参数、QI 结果、
+  多窗口共享的 Environment 都会命中），累积后对象被提前销毁，崩溃延迟到 GC 阶段才发生：
+  `Access Violation at ComObject.Finalize()`。现在构造时显式 `Marshal.AddRef`。
+
+- **Windows：创建 WebView2 环境时报 `E_INVALIDARG`（"Value does not fall within the
+  expected range"）。** `CoreWebView2EnvironmentOptions.TargetCompatibleBrowserVersion`
+  的默认值是空字符串，而 WebView2 的 loader 把非 null 的值当作"应用指定了版本"去解析，
+  空串解析失败即返回 `0x80070057`。现在懒求值取当前已安装的运行时版本，不再写死魔数——
+  上游 `WebView2Aot` 硬编码的是 `152.0.4191.47`，目标机装的是别的版本时会走
+  "按固定版本安装"那条路，报 `0x80070002`。
+
+### 新增
+
+- **`samples/OrielMinimal` 现在是可运行的最小窗口示例**：720×480 窗口加载内嵌页面，
+  显示 Hello OrielWeb!。此前它只打印内嵌资源名，看不到"从 NuGet 包消费"在运行期的样子。
+  无头通道保留为命令行参数 `--list-resources`——`tools/verify-package.ps1` 靠它断言
+  `LogicalName` 形状，而 CI 上没有图形会话。
+
 ## 0.5.2 - 2026-10-26
 
 ### 修复
