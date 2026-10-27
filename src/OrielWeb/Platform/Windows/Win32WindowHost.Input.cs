@@ -4,19 +4,17 @@ using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 using System.Text;
 using System.Text.Json;
-using DirectN.Extensions.Com;
+using OrielWeb.Platform.Windows.WebView2.Com;
 using OrielWeb.Ipc;
 using OrielWeb.Platform.Windows.Interop;
-using WebView2;
-using WebView2.Utilities;
+using OrielWeb.Platform.Windows.WebView2.Interop;
+using OrielWeb.Platform.Windows.WebView2.Utilities;
 
 // DirectN 全名空间导入会与本地的 Win32 结构（如 WINDOWPLACEMENT、RECT）冲突，故只取需要的类型。
-using DCompDevice = DirectN.IDCompositionDevice;
-using DCompFunctions = DirectN.Functions;
-using DCompHWND = DirectN.HWND;
-using DCompPoint = DirectN.POINT;
-using DCompTarget = DirectN.IDCompositionTarget;
-using DCompVisual = DirectN.IDCompositionVisual;
+using DCompDevice = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionDevice;
+using DCompPoint = OrielWeb.Platform.Windows.WebView2.Interop.WV2POINT;
+using DCompTarget = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionTarget;
+using DCompVisual = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionVisual;
 
 namespace OrielWeb.Platform.Windows;
 
@@ -78,16 +76,16 @@ internal partial class Win32WindowHost
     /// </remarks>
     private static void FilterEditingItems(ICoreWebView2ContextMenuRequestedEventArgs args)
     {
-        if (args.MenuItems is not { } items)
+        ICoreWebView2ContextMenuItemCollection? items = args.MenuItems;
+        if (items is null)
         {
             return;
         }
 
-        using (items)
         {
             for (uint i = items.Count; i > 0; i--)
             {
-                using IComObject<ICoreWebView2ContextMenuItem>? item = items.GetValueAtIndex(i - 1);
+                ICoreWebView2ContextMenuItem? item = items.GetValueAtIndex(i - 1);
                 if (item is null || !OrielContextMenuSupport.IsEditingWin32Name(item.Name))
                 {
                     items.RemoveValueAtIndex(i - 1);
@@ -268,7 +266,7 @@ internal partial class Win32WindowHost
     /// <b>应用显式设过图标时不生效</b>（见 <see cref="SetCursorIcon"/>）：否则页面每更新一次
     /// CSS 光标就把那次设置冲掉，"设了却看不到"会变成一条无法解释的现象。
     /// </remarks>
-    private void OnCursorChanged(object? sender, object args)
+    private void OnCursorChanged(object? sender, object? args)
     {
         if (_cursorIcon is not null)
         {
@@ -429,7 +427,7 @@ internal partial class Win32WindowHost
     /// </summary>
     private void ForwardMouseMessage(nint hwnd, uint message, nuint wParam, nint lParam)
     {
-        var controller = _compositionController?.Object;
+        ICoreWebView2CompositionController? controller = _compositionController?.Object;
         if (controller is null)
         {
             return;
@@ -490,7 +488,10 @@ internal partial class Win32WindowHost
         _lastMousePoint = point;
         _hasLastMousePoint = true;
 
-        controller.SendMouseInput(kind, keys, data, point);
+        // 显式转 int：接口方法是 (int, int, uint, WV2POINT)，传枚举会命中 NativeExtensions 里
+        // 那个同名同义的扩展（返回 void，内部 ThrowOnError），HRESULT 就此丢失。
+        // 该扩展已删除，这里保留显式转换作为形状提醒。
+        controller.SendMouseInput((int)kind, (int)keys, data, point);
     }
 
     /// <summary>补发一次 <c>COREWEBVIEW2_MOUSE_EVENT_KIND_LEAVE</c>。</summary>
@@ -509,8 +510,8 @@ internal partial class Win32WindowHost
         }
 
         controller.SendMouseInput(
-            COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_LEAVE,
-            COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS.COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_NONE,
+            (int)COREWEBVIEW2_MOUSE_EVENT_KIND.COREWEBVIEW2_MOUSE_EVENT_KIND_LEAVE,
+            (int)COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS.COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_NONE,
             0,
             _lastMousePoint);
     }

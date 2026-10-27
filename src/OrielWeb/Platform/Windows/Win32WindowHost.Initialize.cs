@@ -4,19 +4,17 @@ using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 using System.Text;
 using System.Text.Json;
-using DirectN.Extensions.Com;
+using OrielWeb.Platform.Windows.WebView2.Com;
 using OrielWeb.Ipc;
 using OrielWeb.Platform.Windows.Interop;
-using WebView2;
-using WebView2.Utilities;
+using OrielWeb.Platform.Windows.WebView2.Interop;
+using OrielWeb.Platform.Windows.WebView2.Utilities;
 
 // DirectN 全名空间导入会与本地的 Win32 结构（如 WINDOWPLACEMENT、RECT）冲突，故只取需要的类型。
-using DCompDevice = DirectN.IDCompositionDevice;
-using DCompFunctions = DirectN.Functions;
-using DCompHWND = DirectN.HWND;
-using DCompPoint = DirectN.POINT;
-using DCompTarget = DirectN.IDCompositionTarget;
-using DCompVisual = DirectN.IDCompositionVisual;
+using DCompDevice = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionDevice;
+using DCompTarget = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionTarget;
+using DCompVisual = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionVisual;
+using ComObject = OrielWeb.Platform.Windows.WebView2.Com.ComObject;
 
 namespace OrielWeb.Platform.Windows;
 
@@ -140,37 +138,27 @@ internal partial class Win32WindowHost
     /// </summary>
     /// <remarks>
     /// 直接用 dcomp.h 的 COM 接口，而不是 WinRT 的 Windows.UI.Composition：后者需要
-    /// net10.0-windows TFM，而本库面向跨平台的 net10.0。DirectNAot 正是 Win32 COM 的 AOT 绑定。
+    /// net10.0-windows TFM，而本库面向跨平台的 net10.0。绑定由本库自带的
+    /// <c>OrielWeb.Platform.Windows.WebView2</c> 提供，只覆盖这三个接口。
     /// </remarks>
-    private unsafe void SetupComposition()
+    private void SetupComposition()
     {
-        int hr = DCompFunctions.DCompositionCreateDevice(null, typeof(DCompDevice).GUID, out nint devicePtr);
-        if (hr < 0 || devicePtr == 0)
+        _dcompDevice = DComposition.CreateDevice();
+
+        _dcompDevice.Object.CreateTargetForHwnd(_hwnd, topmost: 1, out nint target).ThrowOnError();
+        _dcompTarget = ComObject.FromRequiredPointer<DCompTarget>(target);
+
+        _dcompDevice.Object.CreateVisual(out nint visual).ThrowOnError();
+        _dcompVisual = ComObject.FromRequiredPointer<DCompVisual>(visual);
+
+        // SetRoot 收的是 IUnknown*：从视觉的 RCW 取回原生指针，而不是把托管引用硬转。
+        if (!ComWrappers.TryGetComInstance(_dcompVisual.Object, out nint visualUnknown))
         {
-            throw new InvalidOperationException($"创建 DirectComposition 设备失败（HRESULT 0x{hr:X8}）。");
+            throw new InvalidOperationException("无法从 DirectComposition 视觉取出 IUnknown。");
         }
 
-        _dcompDevice = ComInterfaceMarshaller<DCompDevice>.ConvertToManaged((void*)devicePtr)
-            ?? throw new InvalidOperationException("DirectComposition 设备接口转换失败。");
-
-        hr = _dcompDevice.CreateTargetForHwnd(new DCompHWND(_hwnd), topmost: true, out var target);
-        if (hr < 0)
-        {
-            throw new InvalidOperationException($"创建 DirectComposition 窗口目标失败（HRESULT 0x{hr:X8}）。");
-        }
-        _dcompTarget = target;
-
-        hr = _dcompDevice.CreateVisual(out var visual);
-        if (hr < 0)
-        {
-            throw new InvalidOperationException($"创建 DirectComposition 视觉失败（HRESULT 0x{hr:X8}）。");
-        }
-        _dcompVisual = visual;
-
-        if (_dcompTarget.SetRoot(_dcompVisual) < 0 || _dcompDevice.Commit() < 0)
-        {
-            throw new InvalidOperationException("提交 DirectComposition 合成树失败。");
-        }
+        _dcompTarget.Object.SetRoot(visualUnknown).ThrowOnError();
+        _dcompDevice.Object.Commit().ThrowOnError();
     }
 
     private void PostCreate()

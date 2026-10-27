@@ -4,19 +4,17 @@ using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 using System.Text;
 using System.Text.Json;
-using DirectN.Extensions.Com;
+using OrielWeb.Platform.Windows.WebView2.Com;
 using OrielWeb.Ipc;
 using OrielWeb.Platform.Windows.Interop;
-using WebView2;
-using WebView2.Utilities;
+using OrielWeb.Platform.Windows.WebView2.Interop;
+using OrielWeb.Platform.Windows.WebView2.Utilities;
 
 // DirectN 全名空间导入会与本地的 Win32 结构（如 WINDOWPLACEMENT、RECT）冲突，故只取需要的类型。
-using DCompDevice = DirectN.IDCompositionDevice;
-using DCompFunctions = DirectN.Functions;
-using DCompHWND = DirectN.HWND;
-using DCompPoint = DirectN.POINT;
-using DCompTarget = DirectN.IDCompositionTarget;
-using DCompVisual = DirectN.IDCompositionVisual;
+using DCompDevice = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionDevice;
+
+using DCompTarget = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionTarget;
+using DCompVisual = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionVisual;
 
 namespace OrielWeb.Platform.Windows;
 

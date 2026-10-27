@@ -1,7 +1,8 @@
 using System.Runtime.InteropServices;
-using DirectN.Extensions.Com;
+using OrielWeb.Platform.Windows.WebView2.Com;
 using OrielWeb.Platform.Windows.Interop;
-using WebView2;
+using OrielWeb.Platform.Windows.WebView2.Interop;
+using OrielWeb.Platform.Windows.WebView2.Utilities;
 
 namespace OrielWeb.Platform.Windows;
 

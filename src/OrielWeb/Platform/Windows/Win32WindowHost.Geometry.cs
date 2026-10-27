@@ -4,19 +4,17 @@ using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 using System.Text;
 using System.Text.Json;
-using DirectN.Extensions.Com;
+using OrielWeb.Platform.Windows.WebView2.Com;
 using OrielWeb.Ipc;
 using OrielWeb.Platform.Windows.Interop;
-using WebView2;
-using WebView2.Utilities;
+using OrielWeb.Platform.Windows.WebView2.Interop;
+using OrielWeb.Platform.Windows.WebView2.Utilities;
 
 // DirectN 全名空间导入会与本地的 Win32 结构（如 WINDOWPLACEMENT、RECT）冲突，故只取需要的类型。
-using DCompDevice = DirectN.IDCompositionDevice;
-using DCompFunctions = DirectN.Functions;
-using DCompHWND = DirectN.HWND;
-using DCompPoint = DirectN.POINT;
-using DCompTarget = DirectN.IDCompositionTarget;
-using DCompVisual = DirectN.IDCompositionVisual;
+using DCompDevice = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionDevice;
+
+using DCompTarget = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionTarget;
+using DCompVisual = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionVisual;
 
 namespace OrielWeb.Platform.Windows;
 
@@ -51,7 +49,9 @@ internal partial class Win32WindowHost
             return;
         }
 
-        controller.Bounds = new DirectN.RECT
+        // 这里的 RECT 必须是 WebView2 绑定里的那一份：controller.Bounds 的原生签名要求它，
+        // 与项目自有的 Win32 RECT 同名但不同类型，所以显式全限定。
+        controller.Bounds = new WV2RECT
         {
             left = 0,
             top = 0,
@@ -108,7 +108,6 @@ internal partial class Win32WindowHost
             PushEventOnUi("resize", OrielEventPayload.Size(width, height));
         }
     }
-
 
     /// <summary>上报窗口位置（物理像素的窗口矩形 → 逻辑像素的左上角）；与上次相同则跳过。</summary>
     private void ReportPosition()

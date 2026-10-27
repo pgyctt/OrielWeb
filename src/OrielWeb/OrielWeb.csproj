@@ -13,10 +13,10 @@
     <RepositoryUrl>https://github.com/pgyctt/OrielWeb</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <!-- CA1416：Windows 平台层会调用带 SupportedOSPlatform 标注的 API（如 WebView2Aot 生成的接口）。
-         本库通过 PlatformBackendFactory 做运行时平台分派，静态分析器无法追踪该守卫；
+    <!-- CA1416/CA1422：Windows 平台层会调用带 SupportedOSPlatform 标注的 API（WebView2 COM 互操作、
+         Win32 P/Invoke）。本库通过 PlatformBackendFactory 做运行时平台分派，静态分析器无法追踪该守卫；
          逐类型标注会在跨平台入口处产生大规模传播，故在此统一抑制。 -->
-    <NoWarn>$(NoWarn);CS1591;CA1416</NoWarn>
+    <NoWarn>$(NoWarn);CS1591;CA1416;CA1422</NoWarn>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
@@ -52,12 +52,11 @@
          该属性来自还原图，与资产排除无关。
          PrivateAssets="all" 同样必要：该包还带 buildTransitive/ 目标，会作用到**引用本库的项目**，
          在它们的输出/发布目录里再复制一份 loader。本库对外不暴露该包的任何类型（WebView2 互操作
-         全部来自 WebView2Aot 的源生成绑定），因此它不该进入消费方的编译图。 -->
+         全部来自 Platform/Windows/WebView2 下的自带绑定），因此它不该进入消费方的编译图。 -->
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40"
                       ExcludeAssets="all"
                       PrivateAssets="all"
                       GeneratePathProperty="true" />
-    <PackageReference Include="WebView2Aot" Version="1.6.1" />
   </ItemGroup>
 
   <ItemGroup>

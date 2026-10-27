@@ -1,6 +1,6 @@
-using DirectN.Extensions.Com;
-using WebView2;
-using WebView2.Utilities;
+using OrielWeb.Platform.Windows.WebView2.Com;
+using OrielWeb.Platform.Windows.WebView2.Interop;
+using OrielWeb.Platform.Windows.WebView2.Utilities;
 
 namespace OrielWeb.Platform.Windows;
 
@@ -46,12 +46,12 @@ internal static class Win32AssetScheme
 
             // 与 Linux 的 register_uri_scheme_as_secure 对齐：决定 window.isSecureContext
             // （crypto.subtle、部分存储 API 看它）。
-            registration.put_TreatAsSecure(true);
+            registration.TreatAsSecure = true;
 
             // URL 里的 app.oriel 必须被当作 authority。少了这一条，Chromium 会把 oriel://app.oriel/x
             // 解析成"无主机的自定义 scheme"：页面来源变成 oriel://，可信前缀 oriel://app.oriel/ 配不上，
             // 表现为"窗口打开了、页面也在，但什么命令都没反应"。
-            registration.put_HasAuthorityComponent(true);
+            registration.HasAuthorityComponent = true;
 
             // AllowedOrigins 刻意留空：页面本身就在这个 scheme 下，同源请求不需要 CORS 条目；
             // 真需要从别处跨源访问内嵌资源时再加（那属于扩权，要有明确理由）。
@@ -97,10 +97,9 @@ internal static class Win32AssetScheme
         var handler = new CoreWebView2WebResourceRequestedEventHandler(
             (sender, args) => OnRequest(environment, args, store, host, authorizeFileRead));
 
-        // 订阅返回 void（生成的绑定不回报 HRESULT），失败会在"资源加载不出来"上体现；
-        // handler 的存活由调用方负责。
-        EventRegistrationToken token = default;
-        webView.add_WebResourceRequested(handler, ref token);
+        // 订阅本身不回报 HRESULT，失败会在"资源加载不出来"上体现；
+        // handler 的存活由调用方负责（它被窗口对象持有）。
+        webView.SubscribeWebResourceRequested(handler, out _);
         return handler;
     }
 
@@ -114,7 +113,7 @@ internal static class Win32AssetScheme
         // 任何异常都不能漏出去：这里跑在 WebView2 的回调里，抛出等于让引擎等一个永不到来的应答。
         try
         {
-            args.get_Request(out ICoreWebView2WebResourceRequest request).ThrowOnError();
+            ICoreWebView2WebResourceRequest? request = args.Request;
             if (request is null)
             {
                 return;
@@ -202,7 +201,7 @@ internal static class Win32AssetScheme
         string contentType)
     {
         string headers = $"Content-Type: {contentType}";
-        IComObject<ICoreWebView2WebResourceResponse>? response =
+        using IComObject<ICoreWebView2WebResourceResponse>? response =
             environment.CreateWebResourceResponse(content, statusCode, reasonPhrase, headers);
 
         if (response is null)
@@ -210,6 +209,6 @@ internal static class Win32AssetScheme
             return;
         }
 
-        args.put_Response(response.Object).ThrowOnError();
+        args.Response = response.Object;
     }
 }

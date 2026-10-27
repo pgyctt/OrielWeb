@@ -4,19 +4,17 @@ using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 using System.Text;
 using System.Text.Json;
-using DirectN.Extensions.Com;
+using OrielWeb.Platform.Windows.WebView2.Com;
 using OrielWeb.Ipc;
 using OrielWeb.Platform.Windows.Interop;
-using WebView2;
-using WebView2.Utilities;
+using OrielWeb.Platform.Windows.WebView2.Interop;
+using OrielWeb.Platform.Windows.WebView2.Utilities;
 
 // DirectN 全名空间导入会与本地的 Win32 结构（如 WINDOWPLACEMENT、RECT）冲突，故只取需要的类型。
-using DCompDevice = DirectN.IDCompositionDevice;
-using DCompFunctions = DirectN.Functions;
-using DCompHWND = DirectN.HWND;
-using DCompPoint = DirectN.POINT;
-using DCompTarget = DirectN.IDCompositionTarget;
-using DCompVisual = DirectN.IDCompositionVisual;
+using DCompDevice = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionDevice;
+
+using DCompTarget = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionTarget;
+using DCompVisual = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionVisual;
 
 namespace OrielWeb.Platform.Windows;
 
@@ -174,7 +172,7 @@ internal partial class Win32WindowHost
             // 键盘不需要转发：组合托管的 WebView 自己处理键盘输入，宿主只需在获得焦点时
             // 把焦点交给它（见下）。这与 AOTrino 的 Composition 宿主一致——它也只转发鼠标/指针。
             case Win32Constants.WM_SETFOCUS:
-                _controller?.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON.COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+                _controller?.MoveFocus((int)COREWEBVIEW2_MOVE_FOCUS_REASON.COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
                 ReportFocus(true);
                 return 0;
 

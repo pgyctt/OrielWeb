@@ -4,19 +4,17 @@ using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 using System.Text;
 using System.Text.Json;
-using DirectN.Extensions.Com;
+using OrielWeb.Platform.Windows.WebView2.Com;
 using OrielWeb.Ipc;
 using OrielWeb.Platform.Windows.Interop;
-using WebView2;
-using WebView2.Utilities;
+using OrielWeb.Platform.Windows.WebView2.Interop;
+using OrielWeb.Platform.Windows.WebView2.Utilities;
 
 // DirectN 全名空间导入会与本地的 Win32 结构（如 WINDOWPLACEMENT、RECT）冲突，故只取需要的类型。
-using DCompDevice = DirectN.IDCompositionDevice;
-using DCompFunctions = DirectN.Functions;
-using DCompHWND = DirectN.HWND;
-using DCompPoint = DirectN.POINT;
-using DCompTarget = DirectN.IDCompositionTarget;
-using DCompVisual = DirectN.IDCompositionVisual;
+using DCompDevice = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionDevice;
+
+using DCompTarget = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionTarget;
+using DCompVisual = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionVisual;
 
 namespace OrielWeb.Platform.Windows;
 
@@ -76,11 +74,11 @@ internal partial class Win32WindowHost
 
             // 把 WebView 作为视觉挂进我们建立的 DirectComposition 树。此后它不再是子窗口，
             // 因此窗口能收到 WM_NCHITTEST —— 这是边缘调整大小得以走系统原生路径的关键。
-            _compositionController.RootVisualTarget = _dcompVisual
+            _compositionController.RootVisualTarget = _dcompVisual?.Object
                 ?? throw new InvalidOperationException("DirectComposition 根视觉尚未建立。");
 
             // 挂上视觉后必须再提交一次，DComp 才会把它纳入当前的合成帧
-            _dcompDevice?.Commit();
+            _dcompDevice?.Object.Commit();
 
             // 组合控制器同时实现 ICoreWebView2Controller（bounds / visible / focus 等）
             _controller = _compositionController.Object as ICoreWebView2Controller
@@ -561,8 +559,9 @@ internal partial class Win32WindowHost
             return;
         }
 
-        // Profile 是 WebView2Aot 的扩展属性（IComObject<ICoreWebView2> → IComObject<ICoreWebView2Profile>?）。
-        IComObject<ICoreWebView2Profile>? profile = _webView.Profile;
+        // Profile 来自 ICoreWebView2_13 的 get_Profile；清除数据的方法在 Profile2 上，
+        // 所以这里直接拿升级后的接口。
+        IComObject<ICoreWebView2Profile2>? profile = _webView.Profile;
         if (profile is null)
         {
             OrielDiagnostics.Report("[OrielWeb] clearAllBrowsingData：拿不到 ICoreWebView2Profile，未清除。");
@@ -572,7 +571,7 @@ internal partial class Win32WindowHost
         _ = ClearBrowsingDataSafeAsync(profile);
     }
 
-    private static async Task ClearBrowsingDataSafeAsync(IComObject<ICoreWebView2Profile> profile)
+    private static async Task ClearBrowsingDataSafeAsync(IComObject<ICoreWebView2Profile2> profile)
     {
         try
         {

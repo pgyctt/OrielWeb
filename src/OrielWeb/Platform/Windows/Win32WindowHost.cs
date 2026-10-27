@@ -4,19 +4,17 @@ using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 using System.Text;
 using System.Text.Json;
-using DirectN.Extensions.Com;
+using OrielWeb.Platform.Windows.WebView2.Com;
 using OrielWeb.Ipc;
 using OrielWeb.Platform.Windows.Interop;
-using WebView2;
-using WebView2.Utilities;
+using OrielWeb.Platform.Windows.WebView2.Interop;
+using OrielWeb.Platform.Windows.WebView2.Utilities;
 
 // DirectN 全名空间导入会与本地的 Win32 结构（如 WINDOWPLACEMENT、RECT）冲突，故只取需要的类型。
-using DCompDevice = DirectN.IDCompositionDevice;
-using DCompFunctions = DirectN.Functions;
-using DCompHWND = DirectN.HWND;
-using DCompPoint = DirectN.POINT;
-using DCompTarget = DirectN.IDCompositionTarget;
-using DCompVisual = DirectN.IDCompositionVisual;
+using DCompDevice = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionDevice;
+using DCompPoint = OrielWeb.Platform.Windows.WebView2.Interop.WV2POINT;
+using DCompTarget = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionTarget;
+using DCompVisual = OrielWeb.Platform.Windows.WebView2.Interop.IDCompositionVisual;
 
 namespace OrielWeb.Platform.Windows;
 
@@ -104,9 +102,11 @@ internal partial class Win32WindowHost : IWindowBackend
 
     // DirectComposition 合成树。窗口用 WS_EX_NOREDIRECTIONBITMAP 创建，没有系统绘制的表面，
     // 内容完全由这棵树提供；WebView2 作为其中一个视觉（RootVisualTarget），因此它不再是子窗口。
-    private DCompDevice? _dcompDevice;
-    private DCompTarget? _dcompTarget;
-    private DCompVisual? _dcompVisual;
+    // 用 IComObject 持有而不是裸接口：设备/目标/视觉的生命周期与窗口严格绑定，
+    // 裸接口会被 GC 的时机决定释放点，DComp 上表现为随机的"提交后不可见"。
+    private IComObject<DCompDevice>? _dcompDevice;
+    private IComObject<DCompTarget>? _dcompTarget;
+    private IComObject<DCompVisual>? _dcompVisual;
 
     private bool _trackingMouseLeave;
 
