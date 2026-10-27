@@ -44,7 +44,7 @@
          **为什么这里要自己声明，而不是"零配置"**：本工程用 ProjectReference 引用库，而包的
          build/ 与 buildTransitive/ **不随 ProjectReference 分发**（那是 NuGet 包的机制），
          所以仓库内的示例拿不到自动内嵌——零配置只在从包消费时生效，见 samples/OrielMinimal
-         与 tools/verify-pack.ps1 的场景 A。
+         与 tools/verify-package.ps1 的场景 A。
 
          自己声明就必须带 LogicalName 的显式 '/' 分隔符（下面这行与 targets 自动生成的那行逐字符一致）。
          注意 %(RecursiveDir) 在 Windows 上带反斜杠，所以显式归一成 '/'——不归一的话子目录资源名会是

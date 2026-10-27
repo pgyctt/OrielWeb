@@ -123,7 +123,9 @@ function Invoke-SampleBuild {
         throw "$Label：没有产出 $dll。"
     }
 
-    $output = @(& dotnet $dll)
+    # 样例的默认行为是开窗（WinExe）。CI 上没有图形会话，直接跑会挂住等窗口关闭，
+    # 所以走它的无头通道：只打印内嵌资源名，不初始化 UI。
+    $output = @(& dotnet $dll --list-resources)
     if ($LASTEXITCODE -ne 0) {
         throw "$Label：运行产物失败（退出码 $LASTEXITCODE）。"
     }

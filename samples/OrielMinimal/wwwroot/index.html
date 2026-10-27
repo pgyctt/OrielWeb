@@ -2,14 +2,80 @@
 <html lang="zh-CN">
 <head>
     <meta charset="utf-8" />
+    <!-- 窗口标题跟随 document.title（与浏览器语义一致），所以这里写应用名；
+         问候语放在正文里，免得 WithTitle() 设的标题被页面顶掉。 -->
     <title>OrielMinimal</title>
-    <!-- 刻意引用两个**含点文件名**：它们正是"兼容反推"会推错的那一类。 -->
+    <!-- 刻意引用两个**含点文件名**：它们正是"兼容反推"会推错的那一类。
+         页面能正常加载，就说明包内 targets 产出的 LogicalName 没被压成 wwwroot.app.min.js。 -->
     <script src="app.min.js"></script>
     <script src="vendor.bundle.js"></script>
+    <style>
+        :root { color-scheme: light dark; }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+            background: #f7f7f5;
+            color: #1b1b19;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        main {
+            padding: 2rem 1.5rem;
+            text-align: center;
+            max-width: 30rem;
+        }
+
+        .mark {
+            width: 56px;
+            height: 56px;
+            margin-bottom: 1.25rem;
+        }
+
+        h1 {
+            margin: 0 0 .75rem;
+            font-size: 2.25rem;
+            font-weight: 600;
+            letter-spacing: -.02em;
+            line-height: 1.2;
+        }
+
+        p {
+            margin: 0;
+            font-size: .9375rem;
+            line-height: 1.75;
+            color: #6b6a65;
+        }
+
+        code {
+            font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+            font-size: .875em;
+            background: #e9e8e3;
+            padding: .1em .4em;
+            border-radius: 4px;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            body { background: #1a1a18; color: #ededeb; }
+            p { color: #a3a29d; }
+            code { background: #2d2d2a; }
+        }
+    </style>
 </head>
 <body>
-    <h1>OrielMinimal</h1>
-    <p>本页的资源全部由 OrielWeb 包内的 buildTransitive/OrielWeb.targets 自动嵌入。</p>
-    <img src="assets/img/logo.svg" alt="logo" width="32" height="32" />
+    <main>
+        <img class="mark" src="assets/img/logo.svg" alt="" />
+        <h1>Hello OrielWeb!</h1>
+        <p>
+            这个页面由 NuGet 包内的 <code>buildTransitive/OrielWeb.targets</code> 自动嵌入，
+            csproj 里没有一行 <code>EmbeddedResource</code>。
+        </p>
+    </main>
 </body>
 </html>
