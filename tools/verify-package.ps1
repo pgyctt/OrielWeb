@@ -165,10 +165,43 @@ Write-Host ''
 Write-Host '=== OrielWeb 包内 build logic 验证 ===' -ForegroundColor Cyan
 
 try {
-    # 干净的包缓存：同一个版本号重复 pack 时，NuGet 会拿旧的还原结果，
-    # 于是"改了 targets 却没生效"会伪装成通过。
-    $env:NUGET_PACKAGES = Join-Path $temp 'packages'
-    New-Item -ItemType Directory -Force -Path $env:NUGET_PACKAGES, $temp | Out-Null
+    # 只清 OrielWeb **自己那一个包**的缓存，不把整个 NUGET_PACKAGES 指到临时目录。
+    #
+    # 为什么要清：同一个版本号重复 pack 时，NuGet 会拿旧的解压结果，
+    # 于是"改了 targets 却没生效"会伪装成通过——这是本脚本存在的意义所在。
+    #
+    # 为什么不再整个指过去：那样每个场景都要从零还原全部依赖（含 NativeAOT 运行时包，
+    # 数百 MB × 4 个场景）。本地实测一轮 20 分钟以上，而 CI 的 test job 超时是 20 分钟——
+    # 这条验证会把整个 job 顶到红线上。需要"干净"的只有本库自己：其余依赖用共享缓存
+    # 不改变任何一条断言的结果（断言看的是资源名与构建日志，与依赖从哪来无关）。
+    #
+    # **全局包目录不能猜**：它可能被 NuGet.Config 的 globalPackagesFolder 或 NUGET_PACKAGES
+    # 改到任意位置（本机就是 D:\NuGet\packages）。猜错的后果不是报错，而是"清了个不存在的
+    # 目录"——旧包照旧命中，验证在旧产物上假通过。所以问 dotnet 自己。
+    $globalPackages = $null
+    $localsLine = (& dotnet nuget locals global-packages --list 2>&1 | Select-Object -First 1)
+    if ($localsLine -match 'global-packages:\s*(.+)$') {
+        $globalPackages = $Matches[1].Trim()
+    }
+
+    if ([string]::IsNullOrEmpty($globalPackages)) {
+        # 解析不到就退回默认位置，并明说——静默回退会让"没清到"看起来像"清干净了"。
+        $globalPackages = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.nuget/packages'
+        Write-Host "未能解析 dotnet 的全局包目录，按默认位置处理：$globalPackages" -ForegroundColor Yellow
+    }
+
+    $orielCache = Join-Path $globalPackages 'orielweb'
+    if (Test-Path $orielCache) {
+        Write-Host "清理本库的包缓存：$orielCache" -ForegroundColor DarkGray
+        Remove-Item $orielCache -Recurse -Force
+
+        # 删不掉就红，不要带着旧包继续跑——那会让整套断言失去意义。
+        if (Test-Path $orielCache) {
+            throw "无法清理本库的包缓存：$orielCache。请手动删除后重试（否则验证会拿旧包假通过）。"
+        }
+    }
+
+    New-Item -ItemType Directory -Force -Path $temp | Out-Null
 
     # ── 1. 打包 ─────────────────────────────────────────────────────
     if (-not $NoPack) {

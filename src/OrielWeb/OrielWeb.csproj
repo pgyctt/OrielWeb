@@ -94,10 +94,29 @@
       <_OrielGeneratorDll Include="@(Analyzer)" Condition="'%(Filename)' == 'OrielWeb.Generators'" />
     </ItemGroup>
 
+    <!-- `dotnet pack` 的 no-build 模式退路。
+         no-build 不跑 ResolveProjectReferences，@(Analyzer) 因此是空的——此前这里直接
+         触发下面的 <Error>，于是"先 build 再 pack（no-build）"这条最常见的发布流水线必然红。
+         退回到生成器项目的常规输出路径即可：那个文件正是 ResolveProjectReferences 本来会
+         交出来的同一份产物（同一个 Configuration）。 -->
+    <PropertyGroup>
+      <_OrielGeneratorFallback>$(MSBuildThisFileDirectory)..\OrielWeb.Generators\bin\$(Configuration)\netstandard2.0\OrielWeb.Generators.dll</_OrielGeneratorFallback>
+    </PropertyGroup>
+
+    <ItemGroup Condition="'@(_OrielGeneratorDll)' == '' And Exists('$(_OrielGeneratorFallback)')">
+      <_OrielGeneratorDll Include="$(_OrielGeneratorFallback)" />
+      <_OrielGeneratorFromFallback Include="$(_OrielGeneratorFallback)" />
+    </ItemGroup>
+
     <!-- 过滤靠程序集名硬匹配：生成器一旦改名而这里没跟上，包会静默失去代码生成能力，
-         消费者要到运行期才发现 IPC 全部失效。这里显式报错，把问题拦在发布前。 -->
+         消费者要到运行期才发现 IPC 全部失效。这里显式报错，把问题拦在发布前。
+         文案同时给出两条线索（改名 / 没构建过）——只报"没有生成器"会让 no-build 模式
+         的使用者去查一个并不存在的问题。 -->
     <Error Condition="'@(_OrielGeneratorDll)' == ''"
-           Text="PackSourceGeneratorDll：解析出的 @(Analyzer->Count()) 个分析器里没有 OrielWeb.Generators.dll —— 生成器项目是否改名了？请同步更新本目标的过滤条件。" />
+           Text="PackSourceGeneratorDll：找不到 OrielWeb.Generators.dll。解析到的 @(Analyzer->Count()) 个分析器里没有本生成器，回退路径也不存在：$(_OrielGeneratorFallback)。若用的是 `dotnet pack --no-build`，请先 `dotnet build src/OrielWeb.Generators -c $(Configuration)`；若生成器项目改过名，请同步更新本目标的过滤条件。" />
+
+    <Message Importance="normal" Condition="'@(_OrielGeneratorFromFallback)' != ''"
+             Text="OrielWeb: --no-build 打包，生成器取自回退路径 $(_OrielGeneratorFallback)。" />
 
     <ItemGroup>
       <None Include="@(_OrielGeneratorDll->'%(Identity)')" Pack="True" PackagePath="analyzers/dotnet/cs" Visible="false" />
