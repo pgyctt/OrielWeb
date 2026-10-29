@@ -3,8 +3,12 @@ name: release
 # 发布：推送 v* 标签（或手动触发——只有选了 v* 标签 ref 才会真正发布，
 # 其余 ref 下 publish job 直接跳过）。
 # 产物：GitHub Release（NuGet 包 + 三平台 demo 单文件）+ nuget.org。
-# 前置：仓库 Secrets 里配置 NUGET_API_KEY（nuget.org 的 Push API Key）；
-#       未配置时工作流在最后一步失败，但 Release 资产已在上传完毕（推 NuGet 放在最后）。
+# 前置（nuget.org 的 Trusted Publishing，仓库里不再有长期 API key）：
+#   1. nuget.org → Trusted Publishing 建一条 policy：Repository Owner=pgyctt、
+#      Repository=OrielWeb、Workflow File=release.yml（只填文件名，Environment 留空）；
+#   2. 仓库 Secrets 里配 NUGET_USER：nuget.org 的**用户名**（profile name），不是邮箱。
+#      它不是凭据（授权由 OIDC token + policy 完成），放 secret 只是为了不在日志里明文出现。
+#   缺任一项时工作流在最后一步失败，但 Release 资产已在上传完毕（推 NuGet 放在最后）。
 # 版本号唯一来源是根 Directory.Build.props 的 <Version>；
 # 标签必须与之一致（形如 vX.Y.Z 对应 X.Y.Z），下面的校验步骤会拦截不一致的发布。
 #
@@ -221,6 +225,16 @@ jobs:
     # 运行，拦不住那条路。非 tag ref 时本 job 显示为 skipped，属预期。
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: windows-latest
+    # job 级 permissions 是**整体覆盖**顶层的声明，不是合并——所以三项都要重写，
+    # 少写哪一项就等于把那一项降成 none：
+    #   contents: write —— checkout 与挂 Release 资产；
+    #   actions: read   —— 「Require green CI」用 gh run list 读同 commit 的结论；
+    #   id-token: write —— Trusted Publishing 换临时 key；缺了它 NuGet/login 直接 403。
+    # 只在这一 job 申请 OIDC：上面 demo job 不需要，最小权限不外扩。
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -307,7 +321,8 @@ jobs:
           merge-multiple: true
 
       - name: Attach assets to the GitHub release
-        # 放在推 NuGet 之前：推送失败（如未配置 NUGET_API_KEY）不影响 Release 资产
+        # 放在推 NuGet 之前：推送失败（policy 没建好、NUGET_USER 没配、OIDC 被拒）
+        # 不影响已经挂好的 Release 资产
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |
@@ -315,6 +330,20 @@ jobs:
             dist/nuget/*.snupkg
             dist/*.zip
             dist/releases/*
+
+      # 取临时 API key（Trusted Publishing）：把 GitHub 的 OIDC token 交给 nuget.org，
+      # 由它按 Trusted Publishing policy 校验后换发一把约 1 小时有效的 key——
+      # 仓库与 runner 里都不再有长期凭据，也就不存在"忘了轮换"这回事。
+      #
+      # **必须紧贴 push**：上面的「Require green CI」最坏要等满 60 分钟，而 key 的有效期
+      # 恰好也是 1 小时——login 若放在 job 开头，等 CI 等完 key 已经过期，
+      # 表现是 push 报 401/403，看起来像 policy 配错。
+      - name: NuGet login (OIDC → temp API key)
+        id: login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          # nuget.org 的**用户名**（profile name），不是邮箱
+          user: ${{ secrets.NUGET_USER }}
 
       - name: Push to nuget.org
         # 通配符必须由 shell 展开：PowerShell 不会给原生命令展开参数里的 *，
@@ -325,9 +354,9 @@ jobs:
         shell: pwsh
         # 凭据走 env 而不是模板插值：插值进命令行的值对进程列表可见，且值里若含引号/$
         # 会参与 pwsh 语义解析。GitHub 日志脱敏只挡精确匹配——env 是标准做法（同 job 的
-        # GH_TOKEN 已是这种写法）。
+        # GH_TOKEN 已是这种写法）。上面 login 输出的 key 已由 action 自己 setSecret。
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
         run: |
           $packages = @(Get-ChildItem -Path dist/nuget -Filter *.nupkg)
           if ($packages.Count -eq 0) {
