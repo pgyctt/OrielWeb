@@ -186,6 +186,10 @@ internal partial class Win32WindowHost : IWindowBackend
     // 强制销毁中：Destroy() 置它，用来让关闭路径上的判断看出"这次不受拦"。
     private bool _forceDestroy;
 
+    // 已为"通知 WebView2 父窗口位置"失败报过一次诊断。WM_MOVE 在拖动时每帧都来，
+    // 不设这个开关会把诊断通道刷满（见 NotifyWebViewParentMoved）。
+    private bool _parentMoveNotifyFailed;
+
     // 最近一次 NavigationStarting 的 URL。WebView2 的 NavigationCompleted 参数里没有 URL
     // （它只有 IsSuccess / WebErrorStatus / NavigationId），而事件参数要带上 URL，故在开始时缓存。
     private string _lastNavigationUri = string.Empty;

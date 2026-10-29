@@ -189,12 +189,10 @@ internal partial class Win32WindowHost
                 return 0;
 
             case Win32Constants.WM_MOVE:
-                // 注意：此处理论上应调用 controller.NotifyParentWindowPositionChanged()（槽 23），
-                // 但实测在窗口最大化等场景该调用会触发 AV（疑似本机运行时 ComWrappers/互操作问题），
-                // 且窗口位置变化由 WM_SIZE 的 put_Bounds 兜底，MVP 先跳过（见 API.md）。
-                //
-                // 但**上报位置**与那个调用无关，可以安全地做：页面拿不到可靠的窗口位置
-                // （window.screenX 在多屏与 HiDPI 下三平台行为不一致），只能由宿主上报。
+                // 先通知 WebView2，再上报位置：页面收到 `move` 事件后可能立刻开一个弹层
+                // （自定义下拉、日期选择器），而弹层的位置是 WebView2 按"父窗口位置"算的——
+                // 顺序反了的话那一次弹出仍然会落在旧位置上。
+                NotifyWebViewParentMoved();
                 ReportPosition();
                 return 0;
 
@@ -311,5 +309,42 @@ internal partial class Win32WindowHost
         }
 
         return Win32.DefWindowProcW(hwnd, message, wParam, lParam);
+    }
+
+    /// <summary>
+    /// 通知 WebView2"父窗口移动了"（<c>ICoreWebView2Controller::NotifyParentWindowPositionChanged</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>为什么必须显式通知</b>：组合宿主下 WebView 是合成树里的一个视觉、不是子窗口，系统不会
+    /// 替它跟踪父窗口位置。页面里的弹层（下拉、日期选择器、原生右键菜单）由 WebView2 自己按父窗口
+    /// 位置摆放，窗口移动后不通知就会**停在旧的屏幕坐标**，直到下一次布局把位置重新算对。
+    /// </para>
+    /// <para>
+    /// <b>最小化时跳过</b>：最小化窗口的 rect 是 <c>-32000</c> 附近的哨兵值，没有可用的位置；
+    /// 恢复时 WebView2 会随下一次 bounds 更新重新同步。
+    /// </para>
+    /// <para>
+    /// <b>失败只报一次</b>：拖动窗口时 <c>WM_MOVE</c> 每帧都来，逐次上报会把诊断通道刷满，
+    /// 而同一个运行时版本上的失败原因不会变。
+    /// </para>
+    /// </remarks>
+    private void NotifyWebViewParentMoved()
+    {
+        if (_controller is not { } controller || IsMinimized)
+        {
+            return;
+        }
+
+        int hr = controller.NotifyParentWindowPositionChanged();
+        if (hr >= 0 || _parentMoveNotifyFailed)
+        {
+            return;
+        }
+
+        _parentMoveNotifyFailed = true;
+        OrielDiagnostics.Report(
+            $"[OrielWeb] 通知 WebView2 父窗口位置失败（HRESULT 0x{hr:X8}）——" +
+            "页面内的弹层（下拉、日期选择器）可能在窗口移动后停在旧位置。");
     }
 }

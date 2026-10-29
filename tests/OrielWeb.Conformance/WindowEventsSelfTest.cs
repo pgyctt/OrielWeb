@@ -186,7 +186,13 @@ internal static class WindowEventsSelfTest
                     await WaitForAsync(
                         () => other.IsFocused || Count(focusEvents) > focusBefore, 5000);
 
-                    if (other.IsFocused)
+                    // 记下来：后面的"关掉它之后本窗口重新获焦"**只有在本窗口先失焦时才成立**。
+                    // 少了这个前提，上面 SKIP 掉的那一半会让下面必然失败——没失焦就不可能有获焦，
+                    // 于是一次"环境不允许抢焦点"被报成一条库的缺陷（2026-10-29 实测复现：
+                    // 同一个二进制连跑两次，一次 PASS 一次 FAIL）。
+                    bool otherTookFocus = other.IsFocused;
+
+                    if (otherTookFocus)
                     {
                         await WaitForAsync(() => Count(focusEvents) > focusBefore, 3000);
                         Check(
@@ -208,10 +214,12 @@ internal static class WindowEventsSelfTest
                     // focus-in 都不会到来。这条在 Linux 且无 WM 时跳过——
                     // 验的是环境事实，不是库的行为（同一现象在开发机上也曾因桌面会话
                     // 没把前台给这个进程而失败，见 CHANGELOG）。
+                    //
+                    // 同时要求 otherTookFocus：本窗口**先失焦**才谈得上"重新获焦"。
                     bool hasWindowManager =
                         !OperatingSystem.IsLinux()
                         || Environment.GetEnvironmentVariable("ORIEL_HAS_WM") == "1";
-                    if (hasWindowManager)
+                    if (hasWindowManager && otherTookFocus)
                     {
                         Check(
                             Count(focusEvents) > afterBlur,
@@ -221,7 +229,7 @@ internal static class WindowEventsSelfTest
                     {
                         Console.WriteLine(
                             "[windowevents-selftest] SKIP: 另一个窗口关闭后应收到 FocusChanged(true)" +
-                            "（当前环境没有窗口管理器，焦点不会回到本窗口）");
+                            "（当前环境没有窗口管理器，或本窗口本来就没失焦——焦点不会回到本窗口）");
                     }
                 }
 
