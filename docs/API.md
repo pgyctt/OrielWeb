@@ -516,10 +516,15 @@ WebviewWindow? again = app.GetWindow("settings");   // 按 label 取回（不存
 > 也没有 HWND 可用（下游反馈 2026-10-11 的 P1-2：他们原来"前端热区 + 2px 原生兜底"两套机制，
 > 迁移后完全依赖这一层）。
 >
-> **已知边界（Windows 窗口移动）**：窗口移动时**不**向 WebView2 组合宿主转发
-> `NotifyParentWindowPositionChanged`（实测在最大化等场景会触发访问违例，疑似本机运行时/互操作问题），
-> 所以页面内的弹层（下拉、日期选择器）在窗口移动后可能停在旧位置，直到下一次布局；
-> 尺寸变化走 `WM_SIZE` 的 bounds 更新，不受影响。
+> **Windows 窗口移动会通知 WebView2**：`WM_MOVE` 里调
+> `ICoreWebView2Controller::NotifyParentWindowPositionChanged`，页面内的弹层（下拉、日期选择器、
+> 原生右键菜单）因此跟随窗口一起移动。最小化时跳过（那时没有可用位置，恢复时随下一次 bounds
+> 更新重新同步），失败只在诊断通道报一次（拖动时 `WM_MOVE` 每帧都来，逐次报会把日志刷满）。
+>
+> 这条调用在 0.3.x 里被跳过过，当时的理由是"最大化场景触发访问违例"——那是**手写 vtable 后端**
+> 时代（`WebView2Slots` 常量那套，已在 0.5.3 换成 `[GeneratedComInterface]`）。当前绑定下不复现：
+> `--selftest windowstate`（隐藏 + 最大化启动、最大化跨 Hide/Show 往返）与
+> `windowevents` / `geometry` / `nav` / `ipc` 五项自检全部 PASS，调用返回 `S_OK`。
 
 窗口图标：`WithIcon(path)` 三平台各自落到真正有图标槽的位置——Windows `WM_SETICON`、Linux 窗口图标、
 macOS Dock 图标。**Windows 会主动从 exe 取图标**（`<ApplicationIcon>`），另外两个平台**没有等价来源**
@@ -768,6 +773,40 @@ throw new OrielIpcException("不存在 id=42 的待办事项。")
 | 入站消息规模 | 单条上限 **1 MiB**（字符数）。超限的入站消息**不解析即丢弃**，经 `IpcRejected` 的 `Size` 层上报——页面侧收不到回执（`id` 就在那份被丢弃的 JSON 里）。出站方向不设闸：回执 JSON 由宿主自己构造，规模由宿主负责 |
 | 取消 | **没有取消令牌**：`invoke` / `EvaluateJs` 发出去就只能等它回来（页面侧 30 秒超时是唯一出路）。命令函数也拿不到取消信号（生成器不注入 `CancellationToken`）——需要可中断的长活要么自己维护取消标志，要么拆成多次调用 |
 | 可信页面 DoS | **不在防线内**：可信页面可以把主线程堵住（自己写死循环、或让命令返回一个巨大的对象）。这不是门禁能解决的问题，只能靠页面自身与命令实现的纪律 |
+
+#### 逐消息来源校验的逐平台强度
+
+README 说的"来源"那一层其实由两道**独立**的检查组成：**注入期自检**（不可信来源根本不装桥接脚本）
+与**逐消息来源校验**（每条入站消息再判一次"它来自哪个文档"）。后者三个平台能拿到的信息不一样，
+强度因此不一样——**写清楚哪一层在哪弱**，比笼统说一句"有来源校验"有用：
+
+| 平台 | 判定依据 | 精度 |
+|---|---|---|
+| Windows | `WebMessageReceived.Source` | 逐消息、逐 frame |
+| macOS | `WKScriptMessage.frameInfo.securityOrigin` | 逐消息、逐 frame |
+| Linux | 窗口的"当前文档 URL"（`LinuxWindowHost.CurrentUrl`） | **顶级文档的快照**，不区分 frame |
+
+Linux 为什么退化：WebKitGTK 的经典 script-message 信号只给一个 `WebKitJavascriptResult`，
+**不带 frame 信息**；`script-message-with-reply` 变体同样没有。要精确到 frame 得改走
+`webkit_web_view_evaluate_javascript` 的请求-回执回环，那会打破"一份桥接脚本三平台共用"。
+
+退化的实际后果有两条，都不大，但都是真的：
+
+1. **不区分 frame**：可信顶级页面里嵌一个不可信 iframe，它发来的消息在这一层会被判成"可信"。
+   不过它在注入期自检就出局了：macOS/Linux **只往主帧注入**桥接脚本（`forMainFrameOnly: true` /
+   `INJECT_TOP_FRAME`），子帧里根本没有这份脚本；Windows 的
+   `AddScriptToExecuteOnDocumentCreated` 没有帧范围参数、脚本会进所有帧，但脚本开头按
+   `location.href` 前缀自检，不匹配就 `return`，`window.oriel` 不装、令牌字面量留在
+   `return` 之后的闭包里。两条路都拿不到令牌，而令牌校验只认令牌本身。
+2. **"导航开始时更新"留了一个窗口**：`_currentUrl` 在 `navigation.starting` 时就写成新 URL，
+   于是**不可信 → 可信**的导航期间旧文档还没卸载，那段时间它的消息在这一层会被判成可信。
+   反方向（可信 → 不可信）是立刻收紧的，不会出现"已经跳走了还放行"。
+
+所以 Linux 上的逐消息校验是**纵深防御里偏弱的一环**，不是唯一的一环：要利用它，攻击者还得有一份
+令牌，而那要求"不可信文档里跑过桥接脚本"——正是注入期自检挡住的。
+**换 WebKitGTK 的 API 解决不了这个问题**（信号本身不带 frame 信息），
+**让消息自报 frame 来源也不作数**（自报的值可伪造，不能当门禁依据）。
+真要补就得放弃三平台共用桥接脚本，收益与代价不成比例，因此这里选择如实记录而不是假装对齐。
 
 **逃生口：`JsonElement` 参数 / 返回值。** 命令方法直接收 `JsonElement` 时，生成器把页面 payload
 **原样**透传（不做逐参数解析）；返回值里的 `JsonElement` 也原样写进回执。两个好处：① 不必把 DTO
@@ -1521,6 +1560,14 @@ c.Allow(OrielAssetFileServer.ScopeCommand, s => s.AllowPath("$APPDATA/images/**"
 > macOS 上 `/var` 本身就是 `/private/var` 的链接，于是解析后的 `/private/var/…` 永远匹配不上声明里的
 > `/var/…`——**整个平台上的 `fs.*` 全部被拒**。现在的做法是：模式的**静态前缀**（通配符之前那段）
 > 解析后拼回后缀；通配之后的段不是具体路径，不能拿去做文件系统访问，也就不解析。
+>
+> **`stat` / `lstat` 怎么回答"这是不是链接"**（未发布）：`isSymlink` 说的是**入参本身**是不是链接，
+> 在解析之前取样——所以它真的会为 `true`（此前恒为 `false`：解析之后手上只剩目标）。
+> 两者的**唯一**差别在断链：`stat` 跟随 → 报 `FileNotFoundException`；`lstat` 不跟随 →
+> 返回 `isSymlink: true`、`isFile` / `isDirectory` 为 `false`、数值字段为 `0`。
+> 有效链接两者返回同一份（目标的）元数据——链接自身的长度与时间要 `lstat(2)`，而 `struct stat`
+> 的布局在 Linux x64 / Linux arm64 / macOS 上互不相同，不假装有两套。
+> 指向 scope 外的链接**连 `lstat` 都拒**：允许它等于把"scope 外有什么"变成可探测的信息。
 
 理由：
 

@@ -7,6 +7,94 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
+## 未发布
+
+### 修复
+
+- **`dotnet pack --no-build` 不再必然失败。**
+  `PackSourceGeneratorDll` 目标靠 `@(Analyzer)` 取生成器 DLL，而那个列表由
+  `ResolveProjectReferences` 在目标执行期填充——`--no-build` 不跑引用解析，列表为空，
+  于是"先 build 再 pack（no-build）"这条最常见的发布流水线必然红在打包这一步。
+  现在为空时回退到生成器项目的常规输出路径（同一个 `$(Configuration)`，正是
+  `ResolveProjectReferences` 本来会交出的同一份产物）；回退路径也不存在时照旧报错，
+  并把两条线索（生成器改名 / 没构建过）一起写进文案——只报"没有生成器"会让 no-build
+  的使用者去查一个并不存在的问题。
+  验证：`-c Release --no-build` 打包成功且包内 `analyzers/dotnet/cs/OrielWeb.Generators.dll`
+  仍在（35,328 B）；删掉该 DLL 后退出码 1，文案指向"先构建生成器"。
+
+- **`tools/verify-package.ps1` 不再把整个 NuGet 缓存搬到临时目录。**
+  原实现把 `NUGET_PACKAGES` 整体指向 `obj/verify-package/<id>/packages`，四个场景各自
+  从零还原全部依赖（含 NativeAOT 运行时包，数百 MB）——本地实测 23 分钟仍未跑完，
+  而 CI 的 `test` job 超时是 20 分钟，这条验证一直顶在红线上。
+  需要"干净"的其实只有本库自己：同一个版本号重复 pack 时 NuGet 会拿旧的解压结果，
+  于是"改了 targets 却没生效"会伪装成通过。现在只清 `orielweb` 这一个包的缓存，
+  其余依赖走共享缓存（不改变任何一条断言的结果）。
+  全局包目录**用 `dotnet nuget locals global-packages --list` 查真实路径，不猜**：
+  它可能被 `NuGet.Config` 的 `globalPackagesFolder` 或 `NUGET_PACKAGES` 改到任意位置
+  （本机就是 `D:\NuGet\packages`）。猜错的后果不是报错，而是"清了个不存在的目录"、
+  旧包照旧命中、验证在旧产物上假通过——所以清理后还会再断言目录确实消失，删不掉就红。
+  实测：同一台机器、同一套断言，**23 分钟未完成 → 28.3 秒通过**。
+
+- **`fs.stat` / `fs.lstat` 的 `isSymlink` 不再恒为 `false`，`fs.lstat` 对断链不再报错。**
+  授权层为了堵 scope 绕过，在判 scope **之前**就把路径逐段解析成最终目标（0.4.9 起）——
+  于是 `Stat` 拿到的永远是目标，"入参本身是链接"这件事在解析那一步就丢了。后果有两层：
+  `isSymlink` 恒 `false`（字段在，但没有任何路径能让它为真），以及 `lstat` 与 `stat`
+  在**任何**情况下都不可区分，包括断链（两者都报"路径不存在"）。
+  现在 `isSymlink` 在解析**之前**取样（判据是 `FileSystemInfo.LinkTarget`，不是
+  `FileAttributes.ReparsePoint`——后者对 junction 与 OneDrive 占位符同样为真），
+  沿授权链路传下来。可感知的行为：
+  - 有效链接：`stat` / `lstat` 返回同一份（目标的）元数据，`isSymlink` 都如实为 `true`；
+  - 断链：`stat` 跟随 → `FileNotFoundException`；`lstat` 不跟随 → 成功返回
+    `isSymlink: true`、`isFile` / `isDirectory` 为 `false`、数值字段为 `0`。
+  链接自身的长度与时间仍然拿不到（要 `lstat(2)`，而 `struct stat` 的布局在
+  Linux x64 / Linux arm64 / macOS 上互不相同）——不假装有两套，`docs/API.md` 与
+  `@orielweb/api` 的声明都按"差别只在断链"写。
+  **scope 仍按解析后的目标判**：指向 scope 外的链接连 `lstat` 都拒，否则
+  "scope 外有什么"会变成可探测的信息。
+  验证：新增 4 条用例（有效链接 / 断链 / 指向目录的链接 / `exists` 的目录分支）。
+
+- **`fs.exists` 不再重复授权同一个路径。**
+  原实现是 `File.Exists(AuthorizePath(...)) || Directory.Exists(AuthorizePath(...))`：
+  一次调用做两遍归一、两遍符号链接解析、两遍 scope 判定，而两次之间链接可能被换掉
+  （TOCTOU）——同一个路径于是在"文件判定"与"目录判定"上得到两个不同结论。
+  现在只授权一次，两次判定用同一个结果。
+
+- **路径 scope 判定不再每次分配两个数组。**
+  `OrielCapabilityOptions` 里每个模式都走 `IsAllowed(commandName, [pattern], [])`，
+  两个 `IReadOnlyList` 参数各自要一个数组；`fs` 族**每条**命令都要过这里，
+  所以是热路径上的常态分配。改为直接调 `OrielCapabilityMatch.Matches`，语义不变
+  （这一层只判"模式是否命中"，deny 在跨条目的两遍扫描里处理）。
+
+- **Windows：窗口移动时通知 WebView2（页面弹层不再停在旧位置）。**
+  `WM_MOVE` 里调 `ICoreWebView2Controller::NotifyParentWindowPositionChanged`。
+  组合宿主下 WebView 是合成树里的视觉、不是子窗口，系统不会替它跟踪父窗口位置——
+  不通知的话页面内的弹层（下拉、日期选择器、原生右键菜单）会停在移动前的屏幕坐标，
+  直到下一次布局。最小化时跳过（那时没有可用位置，恢复时随下一次 bounds 更新重新同步）；
+  失败只在诊断通道报一次（拖动时 `WM_MOVE` 每帧都来，逐次报会刷满日志）。
+  此前这里是**跳过**的，理由是"最大化场景触发访问违例"——那是手写 vtable 后端
+  （`WebView2Slots` 常量那套）时代的事，0.5.3 换成 `[GeneratedComInterface]` 后不复现：
+  `windowstate`（隐藏 + 最大化启动、最大化跨 Hide/Show 往返）与 `windowevents` /
+  `geometry` / `geometry-frameless` / `nav` / `ipc` 六项自检全部 PASS，
+  临时探针确认调用真的发生且返回 `S_OK`。
+
+- **`windowevents` 自检不再把"环境抢不到焦点"报成缺陷。**
+  它先 SKIP"另一个窗口没能获得焦点"，紧接着却仍然断言"关掉那个窗口后本窗口应收到
+  `FocusChanged(true)`"——没失焦就不可能有获焦，于是同一份二进制连跑两次会一次 PASS
+  一次 FAIL。现在后半条以"本窗口确实先失焦"为前提。自检里的假红灯比没有断言更糟：
+  它训练人忽略红灯。
+
+### 文档
+
+- **`docs/API.md` 新增「逐消息来源校验的逐平台强度」**（评审 P2-3）。
+  这一层三平台强度不同，此前只在代码注释里写了一句：Windows 用
+  `WebMessageReceived.Source`、macOS 用 `frameInfo.securityOrigin`，都是逐消息逐 frame；
+  **Linux 退化成"顶级文档 URL 快照"**——WebKitGTK 的 script-message 信号不带 frame 信息。
+  章节把"实际削弱了什么"写实：① 不区分 frame，但子帧拿不到桥接脚本（macOS/Linux 只注入主帧，
+  Windows 靠脚本开头的 `location.href` 自检 return），因此也拿不到令牌；
+  ② `_currentUrl` 在导航**开始**时更新，不可信 → 可信的导航期间旧文档的消息会被判成可信
+  （反方向立刻收紧）。结论是"纵深防御里偏弱的一环，不是唯一的一环"，
+  并写明换 WebKitGTK API 与"让消息自报来源"都不是解法。
+
 ## 0.5.3 - 2026-10-27
 
 ### 变更
