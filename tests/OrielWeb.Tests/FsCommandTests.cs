@@ -540,6 +540,89 @@ public sealed class FsCommandTests : IDisposable
         Assert.Equal("ok", InvokeWith<string>(app, "fs.readTextFile", new { path = file }));
     }
 
+    // ---- stat / lstat：followLinks 只影响断链（.NET 拿不到链接自身的元数据） ----
+
+    [Fact]
+    public void StatAndLStat_OnValidLink_BothReportSymlinkAndTargetMetadata()
+    {
+        // 有效链接：两者返回同一份（目标的）元数据，isSymlink 都如实为 true。
+        // 这是刻意的取舍，不是漏实现——FileSystemInfo 的 Length / 时间一律跟随，
+        // 链接自身的长度与时间要 lstat(2)，而 struct stat 的布局三个平台各不相同。
+        string target = Path.Combine(_root, "real.txt");
+        File.WriteAllText(target, "12345");
+
+        string link = Path.Combine(_root, "valid-link.txt");
+        CreateFileLink(link, target);
+
+        JsonElement stat = Invoke<JsonElement>("fs.stat", new { path = link });
+        JsonElement lstat = Invoke<JsonElement>("fs.lstat", new { path = link });
+
+        foreach (JsonElement info in new[] { stat, lstat })
+        {
+            Assert.True(info.GetProperty("isSymlink").GetBoolean());
+            Assert.True(info.GetProperty("isFile").GetBoolean());
+            Assert.Equal(5, info.GetProperty("size").GetInt64());
+        }
+    }
+
+    [Fact]
+    public void Stat_OnDirectoryLink_ReportsDirectoryAndSymlink()
+    {
+        // 指向目录的链接走的是 IsSymlink 的另一支（DirectoryInfo 而不是 FileInfo）。
+        // 这一支如果取错类型，isSymlink 会静默变成 false——而"链接指向目录"恰恰是
+        // scope 绕过最常用的形态，报错方向必须是"看得见它是链接"。
+        string real = Path.Combine(_root, "real-dir");
+        Directory.CreateDirectory(real);
+
+        string link = Path.Combine(_root, "dir-link");
+        CreateDirectoryLink(link, real);
+
+        JsonElement stat = Invoke<JsonElement>("fs.stat", new { path = link });
+
+        Assert.True(stat.GetProperty("isSymlink").GetBoolean());
+        Assert.True(stat.GetProperty("isDirectory").GetBoolean());
+        Assert.False(stat.GetProperty("isFile").GetBoolean());
+
+        // 目录的大小在 Tauri 里也是 0（不是"目录项占多少字节"）
+        Assert.Equal(0, stat.GetProperty("size").GetInt64());
+    }
+
+    [Fact]
+    public void LStat_OnDanglingLink_ReportsSymlinkWhileStatThrows()
+    {
+        // **这是 followLinks 唯一可兑现的语义差异**，也是 POSIX 上 stat/lstat 最实质的差别：
+        // 断链在 stat 眼里是"不存在"，在 lstat 眼里是"存在，且是个链接"。
+        // 清理 / 迁移 / 监视都会问"这个路径上到底还有没有东西"——答错会留下删不掉的残骸。
+        string missing = Path.Combine(_root, "never-created.txt");
+        string link = Path.Combine(_root, "dangling.txt");
+        CreateFileLink(link, missing);
+
+        Assert.Throws<FileNotFoundException>(
+            () => Invoke<JsonElement>("fs.stat", new { path = link }));
+
+        JsonElement lstat = Invoke<JsonElement>("fs.lstat", new { path = link });
+        Assert.True(lstat.GetProperty("isSymlink").GetBoolean());
+        Assert.False(lstat.GetProperty("isFile").GetBoolean());
+        Assert.False(lstat.GetProperty("isDirectory").GetBoolean());
+
+        // 数值字段是 0（"链接自身不可得"），不是编出来的长度 / 时间。
+        Assert.Equal(0, lstat.GetProperty("size").GetInt64());
+        Assert.Equal(0, lstat.GetProperty("mtime").GetInt64());
+    }
+
+    [Fact]
+    public void Exists_ReturnsTrueForDirectoryAndFile()
+    {
+        // 钉住目录分支：exists 要同时答"是文件"与"是目录"，而这两问必须用**同一个**
+        // 已授权路径（写成两次 AuthorizePath 会做两遍归一与链接解析，中间还有 TOCTOU 窗口）。
+        Directory.CreateDirectory(Path.Combine(_root, "dir"));
+        File.WriteAllText(Path.Combine(_root, "file.txt"), "x");
+
+        Assert.True(Invoke<bool>("fs.exists", new { path = Path.Combine(_root, "dir") }));
+        Assert.True(Invoke<bool>("fs.exists", new { path = Path.Combine(_root, "file.txt") }));
+        Assert.False(Invoke<bool>("fs.exists", new { path = Path.Combine(_root, "missing") }));
+    }
+
     private static string CreateOutsideDirectory()
     {
         string path = Path.Combine(Path.GetTempPath(), "oriel-outside-" + Guid.NewGuid().ToString("N"));

@@ -83,8 +83,14 @@ internal static class OrielBuiltInFsCommands
             case "fs.exists":
                 // exists 也要过 scope：不过的话它就成了一个"这台机器上有哪些文件"的探测器，
                 // 而那种信息在攻防里很有用（先枚举、再决定读什么）。
-                handler = static (window, command, args) => File.Exists(AuthorizePath(window, command, args, out _))
-                    || Directory.Exists(AuthorizePath(window, command, args, out _));
+                handler = static (window, command, args) =>
+                {
+                    // **只授权一次**：写成 File.Exists(AuthorizePath(...)) || Directory.Exists(AuthorizePath(...))
+                    // 会做两遍归一、两遍符号链接解析、两遍 scope 判定；而两次调用之间链接可能被换掉
+                    // （TOCTOU），于是同一个路径在"文件判定"与"目录判定"上得到两个不同的结论。
+                    string target = AuthorizePath(window, command, args, out _);
+                    return File.Exists(target) || Directory.Exists(target);
+                };
                 return true;
 
             case "fs.readDir":
@@ -96,11 +102,19 @@ internal static class OrielBuiltInFsCommands
                 return true;
 
             case "fs.stat":
-                handler = static (window, command, args) => Stat(AuthorizePath(window, command, args, out _), followLinks: true);
+                handler = static (window, command, args) =>
+                {
+                    string target = AuthorizePath(window, command, args, out _, out bool isSymlink);
+                    return Stat(target, isSymlink, followLinks: true);
+                };
                 return true;
 
             case "fs.lstat":
-                handler = static (window, command, args) => Stat(AuthorizePath(window, command, args, out _), followLinks: false);
+                handler = static (window, command, args) =>
+                {
+                    string target = AuthorizePath(window, command, args, out _, out bool isSymlink);
+                    return Stat(target, isSymlink, followLinks: false);
+                };
                 return true;
 
             // ---- 写 ----
@@ -567,12 +581,15 @@ internal static class OrielBuiltInFsCommands
     /// 然后归一后指到别处——这就是经典的 scope 绕过。归一是 <see cref="Path.GetFullPath(string)"/>。
     /// </para>
     /// <para>
-    /// <para>
     /// <b>符号链接在 scope 判定之前解析</b>（0.4.9 起）：allowed 目录里放一个指向外部的链接，
     /// 曾经能让文本层面的判定通过——scope 于是形同虚设。现在由 <see cref="OrielLinkResolver.Resolve"/>
     /// **逐段**解析到最终目标，再用它判 scope。目标不存在（写命令的常见情形）时跳过解析：
     /// <c>ResolveLinkTarget</c> 对不存在的路径没有意义。
     /// </para>
+    /// <para>
+    /// <b>返回的是解析后的路径</b>，所以调用方拿到的东西一律是"真实目标"——
+    /// 唯一的例外是 <c>fs.stat</c> / <c>fs.lstat</c>，它们要如实回答"入参是不是链接"，
+    /// 于是走下面那个带 <c>isSymlink</c> 的重载（在解析**之前**取样）。
     /// </para>
     /// </remarks>
     private static string AuthorizePath(
@@ -581,9 +598,24 @@ internal static class OrielBuiltInFsCommands
         JsonElement args,
         out JsonElement data,
         string argName = "path")
+        => AuthorizePath(window, command, args, out data, out _, argName);
+
+    /// <inheritdoc cref="AuthorizePath(IOrielWindowControl, string, JsonElement, out JsonElement, string)"/>
+    /// <remarks>
+    /// 比上面那个多出 <paramref name="isSymlink"/>：入参本身是不是符号链接，
+    /// **在解析之前**取样。解析之后拿到的永远是目标，链接自身的信息只在这一刻可见。
+    /// 参数本身的说明沿用被继承的那一份，不在这里重抄一遍（两处描述迟早会漂移）。
+    /// </remarks>
+    private static string AuthorizePath(
+        IOrielWindowControl window,
+        string command,
+        JsonElement args,
+        out JsonElement data,
+        out bool isSymlink,
+        string argName = "path")
     {
         string raw = OrielJson.GetRequiredArg<string>(args, argName, null);
-        string full = AuthorizeRawPath(window, command, raw, argName);
+        string full = AuthorizeRawPath(window, command, raw, argName, out isSymlink);
 
         // data 与 path 一起取出来：写命令两者都要，分两次取会让"取 path 时顺手验了 scope"
         // 这个顺序保证被拆散
@@ -604,13 +636,27 @@ internal static class OrielBuiltInFsCommands
     /// <remarks>
     /// 把这段单独抽出来是因为 <c>fs.watch</c> 收的是**数组**：每一项都要走完全相同的
     /// "归一 → 命令授权 → 路径 scope"，抄一份的话总有一天两处的顺序会不一样——
-    /// 而顺序错了就是 scope 绕过（见 <see cref="AuthorizePath"/> 的说明）。
+    /// 而顺序错了就是 scope 绕过（见
+    /// <see cref="AuthorizePath(IOrielWindowControl, string, JsonElement, out JsonElement, string)"/> 的说明）。
     /// </remarks>
     private static string AuthorizeRawPath(
         IOrielWindowControl window,
         string command,
         string raw,
         string argName)
+        => AuthorizeRawPath(window, command, raw, argName, out _);
+
+    /// <inheritdoc cref="AuthorizeRawPath(IOrielWindowControl, string, string, string)"/>
+    /// <remarks>
+    /// 比上面那个多出 <paramref name="isSymlink"/>，见 <see cref="IsSymlink"/>：
+    /// 它是"入参本身是不是链接"的唯一来源，必须在解析链接之前取。
+    /// </remarks>
+    private static string AuthorizeRawPath(
+        IOrielWindowControl window,
+        string command,
+        string raw,
+        string argName,
+        out bool isSymlink)
     {
         if (raw.Length == 0)
         {
@@ -652,6 +698,10 @@ internal static class OrielBuiltInFsCommands
         // allowed 目录里放一个指向 ~/.ssh/id_rsa 的链接就能读走它，而 scope 要防的正是这一层。
         // 注意模式那一侧也要解析（在 OrielPathScope 里做），否则 macOS 的 /var → /private/var
         // 会让两边永远对不上。
+        //
+        // **isSymlink 必须在这一行之前取**：解析之后手上只剩目标，"入参是链接"这件事
+        // 就永久丢失了——fs.stat / fs.lstat 的 isSymlink 字段曾经因此恒为 false。
+        isSymlink = IsSymlink(full);
         full = OrielLinkResolver.Resolve(full);
 
         if (!window.App.Guard.TryAuthorizePath(command, full, window.App.Info.Identifier, out string? reason))
@@ -663,6 +713,30 @@ internal static class OrielBuiltInFsCommands
         }
 
         return full;
+    }
+
+    /// <summary>入参路径本身是不是符号链接（**不跟随**：断链也答 true）。</summary>
+    /// <param name="full">已归一、尚未解析链接的绝对路径。</param>
+    /// <remarks>
+    /// <para>
+    /// 判据是 <see cref="FileSystemInfo.LinkTarget"/> 而不是
+    /// <see cref="FileAttributes.ReparsePoint"/>：后者对 junction、OneDrive 占位符同样为真，
+    /// 会把"不是链接"的东西报成链接。
+    /// </para>
+    /// <para>
+    /// <b>目录判定仍然要 <see cref="Directory.Exists(string)"/> 先试一次</b>：链接自身的
+    /// <c>LinkTarget</c> 在 <see cref="FileInfo"/> 与 <see cref="DirectoryInfo"/> 上都能读到，
+    /// 但选错类型会连带影响后续对该实例的其它读取；按"指向目录"与"其余"分两支，与
+    /// <see cref="OrielLinkResolver.Resolve"/> 的取法保持一致。
+    /// </para>
+    /// </remarks>
+    private static bool IsSymlink(string full)
+    {
+        FileSystemInfo info = Directory.Exists(full)
+            ? new DirectoryInfo(full)
+            : new FileInfo(full);
+
+        return info.LinkTarget is not null;
     }
 
     /// <summary>
@@ -861,18 +935,43 @@ internal static class OrielBuiltInFsCommands
     }
 
     /// <summary>取文件/目录的元信息（对标 Tauri 的 <c>stat</c> / <c>lstat</c>）。</summary>
+    /// <param name="path">授权层返回的绝对路径——**链接已被解析成目标**。</param>
+    /// <param name="isSymlink">
+    /// 入参本身是不是符号链接（授权层在解析**之前**取样）。<c>path</c> 是解析后的目标，
+    /// 这个标记是"链接自身"唯一的残留信息。
+    /// </param>
+    /// <param name="followLinks">
+    /// 是否跟随符号链接。**差别只在断链上**（见 remarks）：有效链接两者返回同一份元数据。
+    /// </param>
     /// <remarks>
     /// <para>
     /// 返回 <see cref="JsonElement"/> 的理由同 <see cref="ReadDir"/>。
     /// </para>
     /// <para>
-    /// <c>followLinks</c> 的差别只体现在"链接自身算不算文件"上：.NET 的
-    /// <see cref="FileSystemInfo"/> 对符号链接**跟随**（<c>Directory.Exists</c> 判的是目标），
-    /// 所以这里如实报告"它是个链接"，而不是假装 <c>lstat</c> 与 <c>stat</c> 有两套元数据——
-    /// 编出链接自身的长度/时间在 .NET 上要额外做系统调用，而本库目前不需要那个精度。
+    /// <b><c>followLinks</c> 只影响断链，不影响有效链接</b>——这是 .NET 能兑现的全部语义：
+    /// <see cref="FileSystemInfo"/> 的 <c>Length</c> / <c>LastWriteTimeUtc</c> 对符号链接
+    /// 一律**跟随**，要拿链接自身的长度与时间得上 <c>lstat(2)</c> 级别的系统调用，而
+    /// <c>struct stat</c> 的布局在 Linux x64 / Linux arm64 / macOS 上互不相同。所以：
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description><b>有效链接</b>：两者返回同一份（目标的）元数据，<c>isSymlink</c>
+    ///     都如实为 true。与 Tauri 的差别就在这里，不假装有两套。</description></item>
+    ///   <item><description><b>断链</b>：<c>stat</c> 跟随 → 目标不存在 → 报错（POSIX 同）；
+    ///     <c>lstat</c> 不跟随 → 链接自身存在 → 成功返回 <c>isSymlink: true</c>，
+    ///     <c>isFile</c> / <c>isDirectory</c> 为 false。数值字段给 <c>0</c> 表示
+    ///     "链接自身不可得"，而不是编一个假的长度/时间。</description></item>
+    /// </list>
+    /// <para>
+    /// 断链这一条不是锦上添花：它是 <c>lstat</c> 唯一能比 <c>stat</c> 多看到的东西，
+    /// 也是"这个路径上到底还有没有东西"这类判定的实际依据（清理、迁移、监视都会问）。
+    /// </para>
+    /// <para>
+    /// <b>scope 是按解析后的目标判的</b>，所以指向 scope 外的链接在授权层就被拒了——
+    /// 连"看一眼链接自身"都不行。这是刻意的：允许 <c>lstat</c> 越过 scope 就等于把
+    /// "scope 外有什么"变成可探测的信息。
     /// </para>
     /// </remarks>
-    private static JsonElement Stat(string path, bool followLinks)
+    private static JsonElement Stat(string path, bool isSymlink, bool followLinks)
     {
         FileSystemInfo info = Directory.Exists(path)
             ? new DirectoryInfo(path)
@@ -880,14 +979,24 @@ internal static class OrielBuiltInFsCommands
 
         if (!info.Exists)
         {
-            throw new FileNotFoundException($"路径不存在：{path}");
+            // 断链：lstat（不跟随）看得到链接自身，stat（跟随）看不到目标。
+            // 走到这里时 path 是**解析后的目标**（已归一、已过 scope），所以报错文案里
+            // 给的是目标路径——链接的原文在调用方那边，这里看不到也不该猜。
+            if (isSymlink && !followLinks)
+            {
+                return Parse(
+                    "{\"isFile\":false,\"isDirectory\":false,\"isSymlink\":true," +
+                    "\"size\":0,\"mtime\":0,\"atime\":0,\"birthtime\":0}");
+            }
+
+            throw new FileNotFoundException(
+                isSymlink
+                    ? $"路径不存在：{path}（符号链接的目标不存在）"
+                    : $"路径不存在：{path}");
         }
 
-        bool isSymlink = info.LinkTarget is not null;
         bool isDirectory = Directory.Exists(path);
         long size = info is FileInfo file ? file.Length : 0;
-
-        _ = followLinks;
 
         return Parse(
             "{\"isFile\":" + JsonBool(!isDirectory) +

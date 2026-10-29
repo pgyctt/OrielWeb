@@ -120,7 +120,10 @@ public sealed class OrielCapabilityOptions
 
         foreach ((string pattern, OrielPathScope scope) in PathScopes)
         {
-            if (OrielCapabilityRules.IsAllowed(commandName, [pattern], []))
+            // 直接调匹配器，不走 IsAllowed：后者要两个 IReadOnlyList 参数，
+            // 于是每次路径判定都得为它们各分配一个数组（fs 命令每条都走这里）。
+            // 语义相同——这一层只判"模式是否命中"，deny 在下面的两遍扫描里跨条目处理。
+            if (OrielCapabilityMatch.Matches(pattern, commandName))
             {
                 matched.Add(scope);
             }

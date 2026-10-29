@@ -93,6 +93,9 @@ export function readDir(path: string, options?: {
  * @remarks 时间是**毫秒时间戳**（Unix epoch，UTC），不是 `Date`。
  * 与 Tauri 的差别：那边给 `Date` 对象。用时间戳是因为它跨 JSON 无损，
  * 而 `Date` 要走 `new Date(x)` 转换——构造一杯都行，但时间戳更少一层意外。
+ *
+ * `isSymlink` 说的是**入参本身**是不是链接（在解析之前取的），不是目标的属性。
+ * 链接指向链接时它仍是 `true`，指向的东西是什么看 `isFile` / `isDirectory`。
  */
 export function stat(path: string, options?: {
     baseDir?: number;
@@ -110,13 +113,27 @@ export function stat(path: string, options?: {
  *
  * @param {string} path
  * @param {{ baseDir?: number }} [options]
- * @returns {Promise<object>}
- * @remarks 当前与 {@link stat} 返回同样的元数据（只是 `isSymlink` 如实报告）。
- * .NET 跟随符号链接，编出链接自身的长度/时间要额外做系统调用，本库目前不需要那个精度。
+ * @returns {Promise<{ isFile: boolean, isDirectory: boolean, isSymlink: boolean,
+ *   size: number, mtime: number, atime: number, birthtime: number }>}
+ * @remarks 与 {@link stat} 的**唯一差别在断链**：`stat` 跟随 → 目标不存在就报错；
+ * `lstat` 不跟随 → 链接自身存在就成功，返回 `isSymlink: true`、`isFile` / `isDirectory`
+ * 为 `false`、数值字段为 `0`（链接自身的长度与时间拿不到，不编假数据）。
+ * 有效链接两者返回同一份（目标的）元数据——这是 .NET 的能力边界，不是漏实现。
+ *
+ * **scope 按解析后的目标判**：指向 scope 外的链接在授权层就被拒，`lstat` 也一样——
+ * 否则"scope 外有什么"会变成可探测的信息。
  */
 export function lstat(path: string, options?: {
     baseDir?: number;
-}): Promise<object>;
+}): Promise<{
+    isFile: boolean;
+    isDirectory: boolean;
+    isSymlink: boolean;
+    size: number;
+    mtime: number;
+    atime: number;
+    birthtime: number;
+}>;
 /**
  * 创建目录。
  *

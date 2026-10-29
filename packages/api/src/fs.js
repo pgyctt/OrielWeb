@@ -19,8 +19,10 @@
 //     但通道是 JSON，所以一个字节要变成两三个字符。几十 MB 级别的文件不适用。
 //     Tauri 用 `invoke` 的二进制 body 传，本库的 IPC 是纯 JSON，没有那条路。
 //     `FileHandle.read` 的块大小因此有上限（8 MiB/次），见该方法的说明。
-//   * **`lstat` 与 `stat` 的差别只在"链接自身算不算"**：.NET 对符号链接会跟随，
-//     所以两者返回的元数据相同、只是 `isSymlink` 如实报告。
+//   * **`lstat` 与 `stat` 的差别只在断链上**：.NET 对符号链接一律跟随，拿不到链接自身的
+//     长度/时间（那要 `lstat(2)` 级别的系统调用，而 `struct stat` 的布局在三个平台互不相同）。
+//     所以有效链接两者返回同一份（目标的）元数据、`isSymlink` 都如实为 true；断链是唯一
+//     分得开的情形——`stat` 报错，`lstat` 成功并报 `isSymlink: true`、数值字段为 0。
 //   * **监视自 B20 起提供**（`watch` / `watchImmediate`）：底层是 .NET 的
 //     `FileSystemWatcher`，与 Tauri 的 `notify` 落到**同一组系统设施**上
 //     （ReadDirectoryChangesW / inotify / FSEvents），所以"能看到哪些变化"基本一致。
@@ -255,6 +257,9 @@ export function readDir(path, options) {
  * @remarks 时间是**毫秒时间戳**（Unix epoch，UTC），不是 `Date`。
  * 与 Tauri 的差别：那边给 `Date` 对象。用时间戳是因为它跨 JSON 无损，
  * 而 `Date` 要走 `new Date(x)` 转换——构造一杯都行，但时间戳更少一层意外。
+ *
+ * `isSymlink` 说的是**入参本身**是不是链接（在解析之前取的），不是目标的属性。
+ * 链接指向链接时它仍是 `true`，指向的东西是什么看 `isFile` / `isDirectory`。
  */
 export function stat(path, options) {
     return invokeWithOptions('stat', 'fs.stat', { path }, options);
@@ -265,9 +270,15 @@ export function stat(path, options) {
  *
  * @param {string} path
  * @param {{ baseDir?: number }} [options]
- * @returns {Promise<object>}
- * @remarks 当前与 {@link stat} 返回同样的元数据（只是 `isSymlink` 如实报告）。
- * .NET 跟随符号链接，编出链接自身的长度/时间要额外做系统调用，本库目前不需要那个精度。
+ * @returns {Promise<{ isFile: boolean, isDirectory: boolean, isSymlink: boolean,
+ *   size: number, mtime: number, atime: number, birthtime: number }>}
+ * @remarks 与 {@link stat} 的**唯一差别在断链**：`stat` 跟随 → 目标不存在就报错；
+ * `lstat` 不跟随 → 链接自身存在就成功，返回 `isSymlink: true`、`isFile` / `isDirectory`
+ * 为 `false`、数值字段为 `0`（链接自身的长度与时间拿不到，不编假数据）。
+ * 有效链接两者返回同一份（目标的）元数据——这是 .NET 的能力边界，不是漏实现。
+ *
+ * **scope 按解析后的目标判**：指向 scope 外的链接在授权层就被拒，`lstat` 也一样——
+ * 否则"scope 外有什么"会变成可探测的信息。
  */
 export function lstat(path, options) {
     return invokeWithOptions('lstat', 'fs.lstat', { path }, options);
