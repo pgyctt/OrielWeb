@@ -58,6 +58,13 @@ B0–B24 全部完成，从 `0.4.0` 起分批发版。分阶段清单与每批�
     是 `--selftest newwindow` 抓出来的。
   - 真机自检 `--selftest newwindow` 断言三件事：页面侧拿到 `null`、宿主诊断出现、窗口数不变。
     三条缺一不可——只看第一条无法区分"库弃绝"与"引擎顺手拦了"。
+  - **一条反直觉的实测结论，记下来免得再推断错**：本库**没有**打开 WebKit 的
+    `javaScriptCanOpenWindowsAutomatically`（macOS 的 `WKPreferences` / Linux 的
+    `WebKitSettings`，两者默认都是 false），而程序化的 `window.open` **仍然会**走到
+    `createWebViewWithConfiguration:` / `create` 信号——三平台的 CI 日志里都能看到库那条
+    诊断，`--selftest newwindow` 全 PASS（run 43017750271）。
+    曾按"默认 false ⇒ 请求被引擎直接拒绝 ⇒ 走不到我们的处理器"改过一版（打开那个开关），
+    实测证明是多余的，已撤销。真正会被引擎按默认处置的是**不接**这些入口的情况。
   - 顺带修掉 `verify-windows.ps1` 里一处 **PowerShell 优先级陷阱**（第三处同类）：
     `Test-Stage 'pack' -or Test-Stage 'selftest'` 实测只调用第一个、返回 `False` 就结束，
     于是 `-Stages selftest -Publish` **从不重新发布**，自检对着 `dist/demo` 里的旧二进制跑。
