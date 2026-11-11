@@ -178,6 +178,13 @@ B0–B24 全部完成，从 `0.4.0` 起分批发版。分阶段清单与每批�
   - 剩下的：无（这一组全部收口）。
 
 #### 工程化（CI / 打包 / 版本闸）
+- **已完成**（2026-11-11）：记一条验证顺序上的坑——`packages/api` 的 JSDoc **会进 `.d.ts`**，
+  所以改了 `src/*.js` 的注释就必须重新生成 `types/`。本地跑 `npm run check:types` **不够**：
+  它只验"声明文件之间自洽"，不验"与源码同步"；同步性由 CI 的
+  `Frontend API types are up to date`（`build:types` + `git diff --exit-code types/`）把关。
+  0.5.6 给 `core.js` 加了两行 `cancelled` 说明就撞上了——本地全绿、CI 三个 test job 一起红。
+  本地要复现那道闸，跑的是 `npm run build:types && git diff --exit-code types/`，
+  而不是 `check:types`。
 - **已完成**（2026-11-11）：README 的 Windows arm64 按证据规则**降级**为
   "⚠️ 仅 IL 交叉编译；未在 arm64 真机运行"。此前它与 x64 合并声明为"✅ 真机验证"，
   而 `compile-windows` / `smoke-windows` 都只跑 `win-x64`——那一格是空的。
