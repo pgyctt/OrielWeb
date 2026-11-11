@@ -211,11 +211,16 @@ internal static class WindowNewSelfTest
         // 那条链路醒来仍认为窗口活着，会拿一个已释放的 HWND 去建组合控制器——
         // 系统可能已经把那个值复用给别的窗口。
         //
-        // 自检能取证的部分：**建完立刻 Close，进程不崩、窗口记账归零**。
+        // 自检能取证的部分：**建完立刻销毁，进程不崩、窗口记账归零**。
         // 造不出的是"恰好卡在某个 await 中间"——那需要精确控制 WebView2 的回调时机，
         // 没有稳定的注入点。所以这里给的是"最短存活期"这个最接近的近似，并如实标注：
         // 它证明的是"销毁与装配并发不会崩"，不是"每个 await 都复查了"。
         // 后者由单测 ComOwnershipTests 按结构钉住（await 数与 WindowAlive 复查数必须匹配）。
+        //
+        // **用 Destroy 而不是 Close**（这一条在 Linux 上翻过车）：Close 走的是"关闭请求"
+        // 语义——Linux 上是 gtk_window_close → delete-event，而窗口此刻还没映射到屏幕、
+        // 页面也没就绪，GTK 那条路不保证走到 destroy（实测窗口留在记账里 5 秒以上）。
+        // Destroy 绕过关闭请求直接销毁，三平台语义一致，正是这段要的"最短存活期"。
         _main?.PostToUiThread(() =>
         {
             OrielApp? app = _main?.App;
@@ -229,8 +234,8 @@ internal static class WindowNewSelfTest
 
             Check(late is not null, "建窗返回 null（应当拿到窗口对象）");
 
-            // **立刻**关：不 await、不延迟，尽量贴近装配还没完成的那一刻。
-            late?.Close();
+            // **立刻**销毁：不 await、不延迟，尽量贴近装配还没完成的那一刻。
+            late?.Destroy();
 
             // 等它从记账里消失。**轮询而不是固定等一拍**：销毁的落地时机是平台相关的
             // ——Windows 的 DestroyWindow 是同步的（WM_DESTROY 当场跑完清理），
