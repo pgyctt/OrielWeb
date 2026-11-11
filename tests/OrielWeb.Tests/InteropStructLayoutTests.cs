@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Runtime.InteropServices;
 using OrielWeb.Platform.Windows.WebView2.Interop;
 using Xunit;
@@ -66,5 +67,44 @@ public sealed class InteropStructLayoutTests
 
         Assert.Equal(16, Marshal.SizeOf<Guid>());
         Assert.Equal(clsid + 16, grfStateBits);
+    }
+
+    /// <summary>
+    /// DirectComposition 视觉的 vtable 槽位顺序（2026-11-11 评审 L3）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// COM 的早期绑定按**序号**寻址，声明顺序错一个槽，调用就落到别的方法上——
+    /// 不报错，只做错事。这里钉住的是 <c>IDCompositionVisual</c> 前 4 个槽位：
+    /// 带动画对象的重载在**前**、接 <c>float</c> 的在后。直觉上容易写反，
+    /// 而写反之后 <c>SetOffsetX(10.0f)</c> 会把 <c>10.0f</c> 的位模式当指针传进去。
+    /// </para>
+    /// <para>
+    /// 用反射读**声明顺序**（<see cref="Type.GetMethods()"/> 不保证顺序，
+    /// 所以这里按 <c>MetadataToken</c> 排序——它反映源码里的先后）。
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void DCompositionVisual_SlotsMatchTheNativeVtableOrder()
+    {
+        var methods = typeof(IDCompositionVisual)
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .Where(m => m.Name.StartsWith("SetOffset", StringComparison.Ordinal))
+            .OrderBy(m => m.MetadataToken)
+            .ToArray();
+
+        Assert.Equal(4, methods.Length);
+
+        // 槽位 0/1：SetOffsetX —— 先动画对象（指针），后 float
+        Assert.Equal("SetOffsetX", methods[0].Name);
+        Assert.Equal(typeof(nint), methods[0].GetParameters()[0].ParameterType);
+        Assert.Equal("SetOffsetX", methods[1].Name);
+        Assert.Equal(typeof(float), methods[1].GetParameters()[0].ParameterType);
+
+        // 槽位 2/3：SetOffsetY —— 同样的先后
+        Assert.Equal("SetOffsetY", methods[2].Name);
+        Assert.Equal(typeof(nint), methods[2].GetParameters()[0].ParameterType);
+        Assert.Equal("SetOffsetY", methods[3].Name);
+        Assert.Equal(typeof(float), methods[3].GetParameters()[0].ParameterType);
     }
 }

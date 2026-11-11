@@ -336,6 +336,66 @@ test('listen：传输层没有 on() 时给出可排查的报错', () => {
     reset();
 });
 
+test('listen：并发订阅时，第一个订阅的转发失败不会抹掉第二个的计数（L5）', async () => {
+    reset();
+
+    // 计时器类事件才需要"打开转发"（HIGH_FREQ_KINDS）。让宿主一律拒绝它，
+    // 复现"打不开转发"的场景。
+    let rejectForwarding;
+    const forwardingCalls = [];
+    setTransportOverride({
+        invoke: (cmd, args) => {
+            forwardingCalls.push({ cmd, args });
+            if (cmd === 'window.setEventForwarding') {
+                return new Promise((_, reject) => {
+                    rejectForwarding = reject;
+                });
+            }
+            return Promise.resolve(null);
+        },
+        // 最小可用的 on：真实桥接会返回退订函数
+        on: () => () => {},
+    });
+
+    // 收集 console.error：这条路径**故意**用 console.error 报"打不开"，
+    // 不静音的话测试输出里会混进一段看起来像失败的日志。
+    const errors = [];
+    const originalError = console.error;
+    console.error = (...args) => errors.push(args.join(' '));
+
+    try {
+        // 两次订阅同一个 kind（resize）。第二次看到 count > 0，不会再发 IPC。
+        const un1 = listen('tauri://resize', () => {});
+        const un2 = listen('tauri://resize', () => {});
+
+        assert.equal(forwardingCalls.length, 1, '同一个 kind 只该发一次开转发');
+
+        // 现在让那次 IPC 失败——回执在微任务里到达，此刻 count 已经是 2。
+        rejectForwarding(new Error('能力未声明'));
+        await new Promise((r) => setTimeout(r, 0));
+
+        assert.ok(errors.some((e) => e.includes('无法打开')), '打不开转发必须 console.error');
+
+        // 关键断言：**两个订阅者都还在**。若失败回调无条件 delete 整条计数，
+        // un2 的计数会一起消失，之后 un2 退订时 disableForwarding 看到 count === 0
+        // 就直接 return，宿主那边的转发状态从此说不清。
+        //
+        // 用"退订后不抛错 + 没有多余 IPC"来间接验：两边的 unlisten 都必须是幂等且
+        // 各自只减一次的。这里只断言不抛、且不会再冒出第二次开转发。
+        assert.doesNotThrow(() => un1());
+        assert.doesNotThrow(() => un2());
+
+        // 只数**打开**（{ resize: true }）的调用。退订会发 { resize: false }（同一条命令），
+        // 把它算进来就会误判成"重新打开了转发"。
+        const openCalls = forwardingCalls.filter(
+            (c) => c.cmd === 'window.setEventForwarding' && c.args?.resize === true);
+        assert.equal(openCalls.length, 1, '退订不该重新打开转发');
+    } finally {
+        console.error = originalError;
+        reset();
+    }
+});
+
 test('listen：options.target 目前被忽略，但不报错', () => {
     reset();
     mockIPC(() => null);

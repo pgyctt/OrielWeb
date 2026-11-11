@@ -18,6 +18,18 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
 
     private readonly uint _uiThreadId;
     private readonly nint _messageHwnd;
+
+    /// <summary>
+    /// 本线程的 OLE 是否由本实例初始化过（决定 Dispose 里要不要 <c>OleUninitialize</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 构造时 <c>OleInitialize</c> 成功（含 <c>S_FALSE</c>）才置真。用字段而不是在 Dispose
+    /// 里无条件调 <c>OleUninitialize</c>：初始化失败时（如 <c>RPC_E_CHANGED_MODE</c>，
+    /// 线程已被别的套间模型占住）那次调用没有增加引用计数，无条件解除会把**别人的**
+    /// OLE 计数减掉——那会连带破坏宿主应用自己的拖放。
+    /// </remarks>
+    private bool _oleInitialized;
+
     private int _aliveWindows;
     private int _ran;
 
@@ -50,6 +62,12 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         {
             OrielDiagnostics.Report(
                 $"[OrielWeb] OleInitialize 失败：0x{oleResult:X8}——拖放退回 WM_DROPFILES（只有 drop）。");
+        }
+        else
+        {
+            // 成功（含 S_FALSE = 1，表示本线程已初始化过）就记下，Dispose 里配对 OleUninitialize。
+            // 按 Windows 文档，**每一次成功调用都要配对一次**，包括 S_FALSE。
+            _oleInitialized = true;
         }
 
         _uiThreadId = Win32.GetCurrentThreadId();
@@ -914,9 +932,25 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
     }
 
     /// <summary>
-    /// 后端自身只持有共享的 WebView2 环境；托盘归 <see cref="OrielApp"/> 所有并由它释放
-    /// （托盘会连带释放自己的消息窗口），调度窗口随消息循环结束销毁。
+    /// 释放后端持有的资源：共享 WebView2 环境、调度消息窗口，以及本线程的 OLE 初始化。
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>调度窗口必须显式销毁</b>（2026-11-11 评审 L9）：它是 <c>HWND_MESSAGE</c> 的隐藏窗口，
+    /// 不会随消息循环结束而消失——消息循环退出只是"没人再泵消息"，窗口句柄仍然在，
+    /// 该窗口类也仍然注册着。原注释写的"随消息循环结束销毁"是错的。
+    /// </para>
+    /// <para>
+    /// <b>OleInitialize 要配对 OleUninitialize</b>：每个成功的 <c>OleInitialize</c> 都必须在
+    /// 同一线程上配一次 <c>OleUninitialize</c>，否则该线程的 OLE 引用计数永远不归零。
+    /// 注意"重复初始化返回 S_FALSE(1)"也是成功——按 Windows 文档，**每一次成功调用**
+    /// （含 S_FALSE）都要配对一次，所以这里只在 <c>&gt;= 0</c> 时解除。
+    /// </para>
+    /// <para>
+    /// 顺序：先销毁窗口再解除 OLE。窗口销毁会走 <c>WM_DESTROY</c>，那之后不该再有
+    /// 需要 OLE 的动作；反过来则可能在一个已解除 OLE 的线程上处理窗口消息。
+    /// </para>
+    /// </remarks>
     public void Dispose()
     {
         // 共享环境比任何单个窗口活得久，所以窗口销毁时**不**释放它（见 Win32WindowHost 的清理），
@@ -933,6 +967,30 @@ internal sealed unsafe class WindowsPlatformBackend : IPlatformBackend
         if (ReferenceEquals(s_current, this))
         {
             s_current = null;
+        }
+
+        // 调度窗口：`_messageHwnd` 是 readonly（创建后不再变），所以这里只需销毁一次。
+        // DestroyWindow 必须在**创建它的那个线程**上调用——Dispose 由 OrielApp 在 UI 线程
+        // 调用，符合要求；从别的线程调会静默失败（返回 0），那比不销毁更难查。
+        if (_messageHwnd != 0)
+        {
+            if (!Win32.DestroyWindow(_messageHwnd))
+            {
+                OrielDiagnostics.Report(
+                    $"[OrielWeb] 销毁调度窗口失败（Win32 错误 {Marshal.GetLastWin32Error()}）：" +
+                    "可能不在创建它的线程上调用 Dispose。");
+            }
+        }
+
+        // OLE：与构造里的 OleInitialize 配对。构造函数在失败（< 0）时没有增加引用计数，
+        // 所以这里也只对成功过的那种情况解除。
+        //
+        // 解除后**复位标志**：Dispose 可能被调多次（OrielApp.Dispose 与终结路径都会走到），
+        // 不复位的话第二次会再减一次——把宿主应用自己的 OLE 计数减掉。
+        if (_oleInitialized)
+        {
+            _oleInitialized = false;
+            Win32.OleUninitialize();
         }
     }
 

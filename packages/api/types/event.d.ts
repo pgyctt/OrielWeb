@@ -125,8 +125,54 @@ export const TauriEvent: Readonly<{
     DRAG_DROP: "tauri://drag-drop";
     DRAG_LEAVE: "tauri://drag-leave";
 }>;
-export type Subscription = {
-    handler: (event: any) => void;
-    raw: (payload: unknown) => void;
-    unlisten: () => void;
+/**
+ * 一条已到达的事件（对标 Tauri 的 `Event<T>`）。
+ */
+export type Event<T> = {
+    /**
+     * 事件名——**订阅时用的那个名字**（若是 Tauri 名，不会变成宿主名）。
+     */
+    event: string;
+    /**
+     * 事件序号（自增；仅用于区分，不保证跨窗口唯一）。
+     */
+    id: number;
+    /**
+     * 载荷。
+     */
+    payload: T;
+};
+/**
+ * 事件回调（对标 Tauri 的 `EventCallback<T>`）。
+ */
+export type EventCallback<T> = (event: Event<T>) => void;
+/**
+ * 退订函数（对标 Tauri 的 `UnlistenFn`）。
+ */
+export type UnlistenFn = () => void;
+/**
+ * 事件名（对标 Tauri 的 `EventName`）：字符串，或内置事件常量的值。
+ */
+export type EventName = string;
+/**
+ * 事件定向目标（对标 Tauri 的 `EventTarget`）。
+ */
+export type EventTarget = {
+    /**
+     * 定向方式。
+     */
+    kind: "Any" | "AnyLabel" | "App" | "Window";
+    /**
+     * `kind` 为 `'Window'` / `'AnyLabel'` 时的窗口 label。
+     */
+    label?: string | undefined;
+};
+/**
+ * `listen` / `once` 的选项（对标 Tauri 的 `Options`）。
+ */
+export type Options = {
+    /**
+     * 只在该窗口里生效。本库目前忽略它。
+     */
+    target?: string | EventTarget | undefined;
 };

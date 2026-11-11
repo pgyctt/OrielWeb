@@ -239,6 +239,16 @@ internal sealed unsafe class Win32DropTarget : IDisposable
                 return unchecked((int)0x80004003); // E_POINTER
             }
 
+            // `riid` 也要判空（2026-11-11 评审 L7）：COM 的契约要求调用方传有效指针，
+            // 但"契约要求"不是"必然成立"——这里解引用一个空指针是访问违例，
+            // 而访问违例发生在 [UnmanagedCallersOnly] 帧里等于进程直接消失，
+            // 没有任何托管堆栈可看（比正常崩溃难查得多）。代价只是一次比较。
+            if (riid == null)
+            {
+                *ppvObject = 0;
+                return unchecked((int)0x80004003); // E_POINTER
+            }
+
             if (FromSelf(self) is not { } target)
             {
                 *ppvObject = 0;

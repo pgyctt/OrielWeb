@@ -110,7 +110,20 @@ function enableForwarding(kind) {
     invoke('window.setEventForwarding', { [kind]: true }).catch((error) => {
         // 打不开就把计数清零：否则后续的订阅者会以为"已经开着"而不再尝试，
         // 而这个 kind 永远不会到。清零之后下一次订阅会重新试一次。
-        forwardingRefCount.delete(kind);
+        //
+        // **只在"我们还是唯一的订阅者"时才整条删掉**（2026-11-11 评审 L5）：
+        // `listen` 是同步的，失败回执却要等一个微任务——这段时间里完全可能有第二个
+        // 订阅者加入（它看到 count > 0，于是不再发 IPC）。此时无条件 `delete` 会把
+        // 它的计数一并抹掉，表现是"退订时不算数、转发永远关不掉"，
+        // 或者反过来"它以为开着、其实从没开过"。
+        // 所以：只减自己那一份，减到 0 才删表。
+        const current = forwardingRefCount.get(kind) ?? 0;
+        if (current <= 1) {
+            forwardingRefCount.delete(kind);
+        } else {
+            forwardingRefCount.set(kind, current - 1);
+        }
+
         console.error(
             `@orielweb/api/event: 无法打开「${kind}」事件转发，相关事件不会到达页面。` +
             `原因：${error && error.message ? error.message : error}。` +
@@ -166,7 +179,63 @@ function disableForwarding(kind) {
 let nextEventId = 1;
 
 /**
- * @typedef {{ handler: (event: any) => void, raw: (payload: unknown) => void, unlisten: () => void }} Subscription
+ * 一条已到达的事件（对标 Tauri 的 `Event<T>`）。
+ *
+ * @remarks
+ * 迁移代码的类型标注通常写成 `Event<MyPayload>`：
+ * <code>listen&lt;MyPayload&gt;('x', (e: Event&lt;MyPayload&gt;) =&gt; ...)</code>。
+ * 本库这个形状与 Tauri 一致，所以那种写法可以原样保留。
+ *
+ * @template T
+ * @typedef {object} Event
+ * @property {string} event 事件名——**订阅时用的那个名字**（若是 Tauri 名，不会变成宿主名）。
+ * @property {number} id 事件序号（自增；仅用于区分，不保证跨窗口唯一）。
+ * @property {T} payload 载荷。
+ */
+
+/**
+ * 事件回调（对标 Tauri 的 `EventCallback<T>`）。
+ *
+ * @template T
+ * @typedef {(event: Event<T>) => void} EventCallback
+ */
+
+/**
+ * 退订函数（对标 Tauri 的 `UnlistenFn`）。
+ *
+ * @remarks
+ * Tauri 的 `listen()` 返回 `Promise<UnlistenFn>`，本库返回的是一个**同时是 thenable
+ * 的函数**（见 {@link asThenable}）。所以把 Tauri 代码里的
+ * `let unlisten: UnlistenFn | undefined` 原样搬过来仍然成立：`await listen(...)`
+ * 得到的就是 `UnlistenFn`。
+ *
+ * @typedef {() => void} UnlistenFn
+ */
+
+/**
+ * 事件名（对标 Tauri 的 `EventName`）：字符串，或内置事件常量的值。
+ *
+ * @typedef {string} EventName
+ */
+
+/**
+ * 事件定向目标（对标 Tauri 的 `EventTarget`）。
+ *
+ * @remarks
+ * Tauri 用 `{ kind: 'Any' | 'AnyLabel' | 'App' | 'Window', label? }` 描述"发给谁"。
+ * 本库的 `listen` 目前**忽略** `target`（事件本来就只发给本窗口，跨窗口定向要用
+ * {@link emitTo}），但类型保留它，好让迁移代码那处标注不用改。
+ *
+ * @typedef {object} EventTarget
+ * @property {'Any' | 'AnyLabel' | 'App' | 'Window'} kind 定向方式。
+ * @property {string} [label] `kind` 为 `'Window'` / `'AnyLabel'` 时的窗口 label。
+ */
+
+/**
+ * `listen` / `once` 的选项（对标 Tauri 的 `Options`）。
+ *
+ * @typedef {object} Options
+ * @property {EventTarget | string} [target] 只在该窗口里生效。本库目前忽略它。
  */
 
 /**
@@ -176,7 +245,11 @@ let nextEventId = 1;
  * 包内需要知道"某个处理器是不是 once"，而那个信息在底层通道里没有地方放。
  * 底层 Set 只存"收到事件就调它"的函数，once 的语义由这里包一层实现。
  *
- * @type {Map<string, Set<Subscription>>}
+ * 元素形状直接内联，**不抽成 `@typedef`**：TypeScript 对 `.js` 的声明发射会把
+ * 模块级的每个 `@typedef` 都变成 `export type`（`stripInternal` 也挡不住），
+ * 于是实现细节会混进公开类型面。内联之后 `event.d.ts` 里只剩真正该导出的类型。
+ *
+ * @type {Map<string, Set<{ handler: (event: any) => void, raw: (payload: unknown) => void, unlisten: () => void }>>}
  */
 const subscriptions = new Map();
 
@@ -326,7 +399,7 @@ function subscribe(eventName, handler, isOnce) {
         pendingOnceRelease = true;
     };
 
-    /** @type {Subscription} */
+    /** @type {{ handler: (event: any) => void, raw: (payload: unknown) => void, unlisten: () => void }} */
     const entry = {
         handler,
         raw: (payload) => {

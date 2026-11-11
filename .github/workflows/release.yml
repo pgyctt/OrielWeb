@@ -51,6 +51,10 @@ jobs:
             rid: osx-arm64
             exe: OrielDemo
     runs-on: ${{ matrix.os }}
+    # 与 ci.yml 的 compile-* 同档上限。默认超时是 6 小时：缺了这一行，一次 apt/网络挂起
+    # 会把发版拖到天亮——而 release 是串行不取消的，卡住的那次会挡住后面所有 tag。
+    # AOT 发布比 CI 的纯编译重（三平台各自要 2 分钟左右），留三倍余量足够。
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -60,9 +64,28 @@ jobs:
         if: runner.os == 'Linux'
         # WebKitGTK/GTK 的头文件与 .pc 是编译期要用的；zlib1g-dev 与 clang 是 Native AOT 的前置
         # （runner 通常已带，显式列出以免依赖镜像）
+        #
+        # 与 ci.yml 的 compile-linux **逐字对齐**（外层 timeout + 三次重试）：
+        # 这里此前是裸的 apt-get，一次镜像抖动就能让整个发版停在这儿——
+        # 而发版是串行不取消的（concurrency.cancel-in-progress: false），
+        # 卡住的那次会挡住后面所有 tag。Acquire 参数管不到"等 mirror 应答/DNS/锁"，
+        # 只有进程级硬超时能兜住（2026-10-23 那次挂了 25 分钟以上）。
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev zlib1g-dev clang
+          APT_OPTS="-o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=2"
+          APT_PACKAGES="libwebkit2gtk-4.1-dev libgtk-3-dev zlib1g-dev clang"
+          for attempt in 1 2 3; do
+            echo "::group::apt 第 ${attempt} 次"
+            if timeout 240 sudo apt-get update $APT_OPTS &&
+               timeout 360 sudo apt-get install -y $APT_OPTS $APT_PACKAGES; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "第 ${attempt} 次 apt 失败，10 秒后重试" >&2
+            sleep 10
+          done
+          echo "apt 连续三次失败，判定为 runner/镜像故障" >&2
+          exit 1
 
       - name: Publish demo (${{ matrix.rid }})
         # DebugType=none：不带 pdb/dbg/dSYM，三个平台的包都只留可执行文件
@@ -225,6 +248,9 @@ jobs:
     # 运行，拦不住那条路。非 tag ref 时本 job 显示为 skipped，属预期。
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: windows-latest
+    # 汇总 job 是串行发布链的最后一环：卡住的话 GitHub Release 与 nuget.org 都发不出去。
+    # 它自己要跑测试 + 打包 + 推 NuGet，0.5.x 的实测约 2 分钟，给 20 分钟上限。
+    timeout-minutes: 20
     # job 级 permissions 是**整体覆盖**顶层的声明，不是合并——所以三项都要重写，
     # 少写哪一项就等于把那一项降成 none：
     #   contents: write —— checkout 与挂 Release 资产；
@@ -310,7 +336,30 @@ jobs:
           if ($changelog -notmatch "(?m)^## $([regex]::Escape($version))\b") {
             throw "CHANGELOG.md 里没有 `## $version` 的条目：发布 = 改版本 + 补 CHANGELOG + 打 tag 三连，缺一不可"
           }
-          Write-Output "版本一致：$version（CHANGELOG 已有该版本条目）"
+
+          # @orielweb/api 的版本闸。
+          #
+          # 这个包**不随本 workflow 发布**（它走手工 `npm publish`），所以它的版本
+          # 此前完全没有被这条链路校验过——0.5.5 发版时就发现它与主包只是"碰巧一致"
+          # （靠人手同步三处：package.json + package-lock.json 的顶层与 packages[""]）。
+          # npm 上的版本一旦发出去撤不回，而"主包 0.5.6、JS 包停在 0.5.5"这种漂移
+          # 不会报错，只会让消费者装到不匹配的组合。这里把它纳入同一道闸。
+          $apiManifest = Get-Content packages/api/package.json -Raw | ConvertFrom-Json
+          if ($apiManifest.version -ne $version) {
+            throw "packages/api/package.json 的版本（$($apiManifest.version)）与主包（$version）不一致：" +
+                  "两处必须同步，否则 npm 上会出现不匹配的组合"
+          }
+
+          # package-lock 里有两处版本（顶层与 packages[""]），手改时容易漏掉一处。
+          $lock = Get-Content packages/api/package-lock.json -Raw | ConvertFrom-Json -AsHashtable
+          if ($lock.version -ne $version) {
+            throw "packages/api/package-lock.json 顶层版本（$($lock.version)）与主包（$version）不一致"
+          }
+          if ($lock.packages[''].version -ne $version) {
+            throw "packages/api/package-lock.json 的 packages[''].version（$($lock.packages[''].version)）与主包（$version）不一致"
+          }
+
+          Write-Output "版本一致：$version（Directory.Build.props / CHANGELOG / packages/api 三处）"
 
       - name: Download the demo zips
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4

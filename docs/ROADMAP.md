@@ -60,16 +60,17 @@ B0–B24 全部完成，从 `0.4.0` 起分批发版。分阶段清单与每批�
 - 影响：缓存行为目前完全由引擎的默认策略决定，库层没有契约。
 - 为什么没顺手做：为一个三平台不一致的显式头去动其中两个平台，收益低于把"不设缓存头是隐式行为"写进 API.md（已写）。
 
-#### `clipboard.writeImage({ path })` 没有路径 scope
-- 现状：这条命令的 `path` 分支直接 `File.ReadAllBytes(OrielPathResolver.Resolve(path))`，
-  只有命令授权、没有路径 scope（`fs.*` / `opener.*` / `asset.read` 三者都有）。
-- 影响：`Allow("clipboard.writeImage")` 之后页面能读机器上任意图片文件。
-  比 `tray.*` 的 `iconPath` 轻一档——那个是**零授权可调**（0.5.5 已按 M4 收口），
-  而这个需要显式授权，且"写一张自己的图"本来就是常见用法——但缺口的形状相同。
-- 为什么没顺手做：0.5.5 是安全修复批次，给一条已有 API 加路径 scope 会让"只声明命令、
-  不给 scope"的既有配置从可用变拒绝。H1 对 `opener.openPath` 做这次变化，是因为它等于
-  任意程序执行（风险等级不同）。要做应当连同 `clipboard.readImage` 的回读语义一起定，
-  随 0.6.0 的 API 批次走。
+#### `clipboard.writeImage({ path })` 的路径 scope：声明了才强制
+- 现状：**已收口一半**。只要应用为这条命令声明过路径 scope，路径就必须通过它
+  （`Allow("clipboard.writeImage", s => s.AllowPath("$APPDATA/**"))`）；
+  没声明过则维持既有行为（可读任意图片文件），并在宿主诊断里告警指路。
+- 为什么不做成无条件强制：H1 对 `opener.openPath` 那么做，是因为它等于任意程序执行。
+  这条需要显式授权、且"写一张自己的图"本就是常见用法——无条件强制会让
+  "只声明命令、不给 scope"的既有配置在**小版本升级**里被打断，那是破坏性变更，
+  该在 0.6.0 的 CHANGELOG 里显式宣布，不该混进修复批次。
+- 0.6.0 要做的：把"没声明 scope 就拒绝"打开（连同 `clipboard.readImage` 的回读语义），
+  并同步 API.md 与 CHANGELOG 的破坏性变更段。
+- 验收：`PlatformCommandTests` 的 `WriteImagePath_*` 三条 + `HasPathScopeFor_DistinguishesDeclaredFromUndeclared`。
 
 #### 生成器诊断（0.6.0）
 - 泛型命令方法应被拒绝（现在会生成出跑不通的代码）；缺省参数要么支持（取
@@ -77,24 +78,46 @@ B0–B24 全部完成，从 `0.4.0` 起分批发版。分阶段清单与每批�
   应改成编译期明确报错。
 - 验收：`GeneratorDiagnosticsTests` 三组新用例 + `AnalyzerReleases.Unshipped.md` 登记新 ID。
 
-#### Tauri 类型导出与缺失成员披露（0.6.0）
-- `types/event.d.ts` 缺 `UnlistenFn` / `Event` / `EventCallback` / `EventTarget` / `Options`
-  的导出（纯类型，成本低）；core/fs 的缺失成员要进 core.js 头部清单与 MIGRATION-FINDINGS。
-- `checkPermissions` / `requestPermissions`：实现（映射到能力系统查询）或明写差异，二选一。
+#### Tauri 类型导出与缺失成员披露
+- **已完成（0.6.0 批次的第一项）**：`event.d.ts` 补齐 `Event<T>` / `EventCallback<T>` /
+  `UnlistenFn` / `EventName` / `EventTarget` / `Options`，与 `@tauri-apps/api/event`
+  逐字符一致（`packages/api/tests/published-types.test.mjs` 钉住）。
+  顺带发现并修掉一处：`Subscription` 此前作为公开类型被导出了——TypeScript 对 `.js`
+  的声明发射会把模块级每个 `@typedef` 都变成 `export type`，`stripInternal` 挡不住；
+  改法是内联那个形状。
+- 剩下的：core/fs 的缺失成员已在 `src/core.js` 头部清单里如实标注（`Resource` /
+  `transformCallback` / `PluginListener` / `SERIALIZE_TO_IPC_FN`），无需再补。
+- `checkPermissions` / `requestPermissions`：**决定不实现**（本库的能力是构建期配置，
+  没有运行时查询面）。这条在 `tauri-alignment.test.mjs` 的 `GAPS` 里带原因登记，
+  不算未披露的缺口。
 
 #### 平台细节（L3/L4/L5/L7/L8/L9/L10）
 - macOS 来源缺失的退化要写进 API.md 威胁模型（与 Linux 同等披露），并评估"不透明来源直接拒绝"。
 - WebView2 loader DLL 复用前校验内容哈希（现在只比大小），或写入后设 ACL；至少披露 `%TEMP%` 路径风险。
-- `event.js` 订阅失败回调的竞态：改成"计数仍为 0 才 delete"，bridge 测试补并发订阅失败用例。
-- DComposition vtable 顺序、`GetAllowedOrigins` 回读、`GIdleAddFull` 失败丢队列、`*riid` 判空、
-  `OleUninitialize`、`_messageHwnd` 销毁、macOS pump 诊断文案。
+- **已完成**：`event.js` 订阅失败回调的竞态——`listen` 是同步的、失败回执要等微任务，
+  这段时间里第二个订阅者可能已经加入（它看到 count > 0，于是不再发 IPC）。
+  原先无条件 `delete` 会把它的计数一并抹掉；现在只减自己那一份，减到 0 才删表。
+  测试见 `packages/api/tests/event.test.mjs` 的 L5 用例。
+- DComposition vtable 顺序、`GetAllowedOrigins` 回读、`OleUninitialize`、`_messageHwnd` 销毁、
+  macOS pump 诊断文案。
+  - **已完成**：`OleInitialize` / `OleUninitialize` 配对（用字段门控，避免在初始化失败的线程上
+    误减别人的计数）、`_messageHwnd` 在 `Dispose` 里销毁（它是 `HWND_MESSAGE` 隐藏窗口，
+    **不会**随消息循环结束而消失——原注释是错的）、`QueryInterface` 的 `*riid` 判空
+    （解引用空指针在 `[UnmanagedCallersOnly]` 帧里等于进程直接消失）、
+    `g_idle_add_full` 失败时按引用回收**刚入队**的动作而不是摘队首。
+    测试见 `WindowsBackendLifetimeTests` 与 `LinuxMainThreadQueueTests`。
+  - 剩下的：DComposition vtable 顺序、`GetAllowedOrigins` 回读、macOS pump 诊断文案。
 
 #### 工程化（CI / 打包 / 版本闸）
 - README 的 arm64 行：降级为"IL 交叉编译"或补 `windows-11-arm` job（按证据规则二选一）；
   `verify-matrix.ps1` 增强为校验 job 的 RID 覆盖。
 - Linux Wayland 的证据列改指 `CROSS-PLATFORM-VERIFICATION.md` 的 VM 记录，不再只挂 CI job。
-- `release.yml` 的 demo/publish 补 `timeout-minutes` 与 apt 重试（对齐 ci.yml 既有写法）。
-- 版本闸加入 `packages/api/package.json` 比对；npm 补 `prepack` 脚本。
+- **已完成**：`release.yml` 的 demo/publish 补 `timeout-minutes`（30 / 20），
+  Linux 的 apt 步骤与 ci.yml 逐字对齐（外层 `timeout` + 三次重试）——
+  release 是串行不取消的，卡住的那次会挡住后面所有 tag。
+- **已完成**：版本闸加入 `packages/api` 的三处比对（`package.json` +
+  `package-lock.json` 的顶层与 `packages[""]`）。此前那个包的版本完全没被这条链路校验过，
+  0.5.5 发版时发现它与主包只是"碰巧一致"。
 - `verify-package.ps1` 补带空格/中文路径场景 + "NuGet 包消费 + AOT 发布"直测。
 - fs 句柄表跨窗口共享在 API.md 记为已知设计（S2）；生成器增量缓存优化（S5）列为性能项。
 

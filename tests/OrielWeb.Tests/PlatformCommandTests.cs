@@ -395,6 +395,91 @@ public sealed class PlatformCommandTests
         Assert.Contains("读不到", ex.Message, StringComparison.Ordinal);
     }
 
+    // ---- clipboard.writeImage 的路径 scope：**声明了才强制**（0.6.0 收口）----
+
+    [Fact]
+    public void WriteImagePath_InsideDeclaredScope_PassesScopeCheck()
+    {
+        // 声明了 scope 且路径在内：应当越过 scope 这道关，进入"读文件"。
+        // 文件不存在 → 报 invalid_argument 的"读不到"，**不是** path_not_allowed。
+        using OrielApp app = Oriel.CreateBuilder()
+            .UseCapabilities(c => c.Allow("clipboard.writeImage", s => s.AllowPath(ScopeRoot())))
+            .Build();
+
+        string inside = TempFile("clipboard-inside-" + Guid.NewGuid().ToString("N") + ".png");
+
+        OrielIpcException ex = Assert.Throws<OrielIpcException>(
+            () => InvokeWith(app, "clipboard.writeImage", new { image = new { path = inside } }));
+
+        Assert.Equal(OrielIpcErrorCodes.InvalidArgument, ex.Code);
+        Assert.Contains("读不到", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WriteImagePath_OutsideDeclaredScope_IsRejectedAsPathNotAllowed()
+    {
+        // 声明了 scope、路径在外：必须回 path_not_allowed。
+        // 这条是这次收口的核心——此前它只会回"读不到"，页面因此能读任意图片文件。
+        using OrielApp app = Oriel.CreateBuilder()
+            .UseCapabilities(c => c.Allow("clipboard.writeImage", s => s.AllowPath(ScopeRoot())))
+            .Build();
+
+        string outside = OperatingSystem.IsWindows()
+            ? @"C:\Windows\win.ini"
+            : "/etc/hostname";
+
+        OrielIpcException ex = Assert.Throws<OrielIpcException>(
+            () => InvokeWith(app, "clipboard.writeImage", new { image = new { path = outside } }));
+
+        Assert.Equal(OrielIpcErrorCodes.PathNotAllowed, ex.Code);
+        Assert.Contains("scope", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WriteImagePath_WithoutDeclaredScope_KeepsWorkingAndWarns()
+    {
+        // **没声明 scope 时维持既有行为**（这是与 H1 的刻意差别，理由见该命令的 remarks）：
+        // 只授权命令、不给 scope 的既有配置不该被一次小版本升级打断。
+        //
+        // 取证方式：scope 外的一个**不存在**的路径仍然走到"读不到"，
+        // 而不是被 scope 判死（若被判死会是 path_not_allowed）。
+        using OrielApp app = Oriel.CreateBuilder()
+            .UseCapabilities(c => c.Allow("clipboard.writeImage"))
+            .Build();
+
+        string outside = OperatingSystem.IsWindows()
+            ? @"C:\Windows\definitely-not-here-" + Guid.NewGuid().ToString("N") + ".png"
+            : "/etc/definitely-not-here-" + Guid.NewGuid().ToString("N") + ".png";
+
+        OrielIpcException ex = Assert.Throws<OrielIpcException>(
+            () => InvokeWith(app, "clipboard.writeImage", new { image = new { path = outside } }));
+
+        Assert.Equal(OrielIpcErrorCodes.InvalidArgument, ex.Code);
+        Assert.Contains("读不到", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HasPathScopeFor_DistinguishesDeclaredFromUndeclared()
+    {
+        // 这个区分是上面三条的基础：TryAuthorizePath 在"没声明"时也返回 false，
+        // 所以调用方无法用它判断"是没声明还是路径不在内"。
+        using OrielApp withScope = Oriel.CreateBuilder()
+            .UseCapabilities(c => c.Allow("clipboard.writeImage", s => s.AllowPath(ScopeRoot())))
+            .Build();
+        Assert.True(withScope.Guard.HasPathScopeFor("clipboard.writeImage"));
+
+        using OrielApp withoutScope = Oriel.CreateBuilder()
+            .UseCapabilities(c => c.Allow("clipboard.writeImage"))
+            .Build();
+        Assert.False(withoutScope.Guard.HasPathScopeFor("clipboard.writeImage"));
+
+        // 通配声明也算"有 scope"
+        using OrielApp wildcard = Oriel.CreateBuilder()
+            .UseCapabilities(c => c.Allow("clipboard.*", s => s.AllowPath(ScopeRoot())))
+            .Build();
+        Assert.True(wildcard.Guard.HasPathScopeFor("clipboard.writeImage"));
+    }
+
     [Fact]
     public void WriteHtmlRequiresHtml()
     {
@@ -449,4 +534,15 @@ public sealed class PlatformCommandTests
     }
 
     private static void Invoke(string command, object args) => Invoke<object?>(command, args);
+
+    /// <summary>用一个**指定的**应用调用命令（能力配置各用例不同时用）。</summary>
+    private static object? InvokeWith(OrielApp app, string command, object args)
+    {
+        Assert.True(OrielBuiltInPlatformCommands.TryGet(command, out var handler), $"未注册：{command}");
+
+        using var doc = JsonDocument.Parse(TestArgs.Serialize(args));
+
+        var window = new BuiltInWindowCommandTests.FakeWindow { App = app, Label = "main" };
+        return handler(window, command, doc.RootElement);
+    }
 }
