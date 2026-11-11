@@ -174,7 +174,15 @@ public sealed class ConvertFileSrcTests : IDisposable
 
         Assert.NotNull(seen);
         Assert.DoesNotContain("..", seen!, StringComparison.Ordinal);
-        Assert.Equal(Path.GetFullPath(escaping), seen);
+
+        // 断言的是"归一 + 链接解析之后"的路径，不是字面的 GetFullPath：
+        // 2026-11-11 评审 M3 起这条通道会先解析符号链接（判 scope 必须用真实目标，
+        // 否则 scope 目录里一个指向外部的链接就能把文件读走）。
+        //
+        // 而 Path.GetTempPath() 在 macOS 上是 /var/folders/…，**/var 本身是指向
+        // /private/var 的符号链接**——只比字面 GetFullPath 的话，这条断言在 macOS 上
+        // 必然失败，而失败原因与它要验的"归一顺序"毫无关系（第一版就是这么红的）。
+        Assert.Equal(OrielLinkResolver.Resolve(Path.GetFullPath(escaping)), seen);
     }
 
     [Fact]

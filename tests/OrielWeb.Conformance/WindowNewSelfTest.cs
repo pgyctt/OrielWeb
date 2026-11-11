@@ -232,22 +232,74 @@ internal static class WindowNewSelfTest
             // **立刻**关：不 await、不延迟，尽量贴近装配还没完成的那一刻。
             late?.Close();
 
-            // 再等一小会儿让消息泵把销毁与装配的残余都跑完，然后看记账是否干净。
-            _ = new Timer(
-                _ =>
+            // 等它从记账里消失。**轮询而不是固定等一拍**：销毁的落地时机是平台相关的
+            // ——Windows 的 DestroyWindow 是同步的（WM_DESTROY 当场跑完清理），
+            // 而 GTK 的销毁排在事件循环里，可能跨几帧。第一版写死 1200ms，Linux arm64
+            // 上就是这么红的（断言本身没错，错的是"多久算够"）。
+            //
+            // 上限 5 秒：真泄漏的话等多久都不会消失，那时候再红才是对的。
+            PollUntil(
+                () => _main?.App.GetWindow(LateLabel) is null,
+                TimeSpan.FromSeconds(5),
+                disappeared =>
                 {
-                    _main?.PostToUiThread(() =>
-                    {
-                        Check(
-                            _main?.App.GetWindow(LateLabel) is null,
-                            "建完立刻销毁后，该窗口仍留在应用记账里（销毁路径没跑完）");
-                        Finish();
-                    });
-                },
-                null,
-                TimeSpan.FromMilliseconds(1200),
-                Timeout.InfiniteTimeSpan);
+                    Check(disappeared, "建完立刻销毁后，该窗口仍留在应用记账里（销毁路径没跑完）");
+                    Finish();
+                });
         });
+    }
+
+    /// <summary>在 UI 线程上轮询一个条件，直到成立或超时，然后回调一次结果。</summary>
+    /// <remarks>
+    /// 用 <see cref="Timer"/> 周期投递而不是 <c>await Task.Delay</c> 循环：
+    /// 自检跑在宿主消息循环里，每次检查都必须回到 UI 线程
+    /// （<see cref="OrielApp.GetWindow"/> 与窗口记账都不是线程安全的）。
+    /// <paramref name="done"/> 保证只被调用一次——重复调用会把一条失败记成两条。
+    /// </remarks>
+    private static void PollUntil(Func<bool> condition, TimeSpan timeout, Action<bool> done)
+    {
+        DateTime deadline = DateTime.UtcNow + timeout;
+        bool completed = false;
+        Timer? timer = null;
+
+        timer = new Timer(
+            _ =>
+            {
+                _main?.PostToUiThread(() =>
+                {
+                    if (Volatile.Read(ref completed))
+                    {
+                        return;
+                    }
+
+                    bool ok;
+                    try
+                    {
+                        ok = condition();
+                    }
+                    catch (Exception ex)
+                    {
+                        Check(false, $"轮询窗口记账时抛异常：{ex.GetType().Name}: {ex.Message}");
+                        ok = true; // 不再重试，直接收尾
+                    }
+
+                    if (!ok && DateTime.UtcNow < deadline)
+                    {
+                        return; // 还没到，等下一次 Tick
+                    }
+
+                    if (Interlocked.Exchange(ref completed, true))
+                    {
+                        return;
+                    }
+
+                    timer!.Dispose();
+                    done(ok);
+                });
+            },
+            null,
+            TimeSpan.FromMilliseconds(200),
+            TimeSpan.FromMilliseconds(200));
     }
 
     private static void Check(bool condition, string description)

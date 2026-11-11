@@ -207,7 +207,8 @@ internal static class SchemeSelfTest
         if (problems.Count == 0)
         {
             Console.WriteLine("SCHEME-SELFTEST: PASS");
-        }        else
+        }
+        else
         {
             Failed = true;
             Console.WriteLine($"SCHEME-SELFTEST: FAIL（{problems.Count} 项）");
