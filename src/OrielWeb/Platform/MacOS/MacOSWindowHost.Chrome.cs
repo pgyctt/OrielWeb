@@ -15,14 +15,15 @@ internal sealed partial class MacOSWindowHost
     /// <c>orderOut:</c> 藏的是整个 NSWindow，WKWebView 是它的 contentView 子视图、随之一并消失，
     /// 不存在 Windows 组合宿主那种"渲染面是独立顶层窗口"的残余（见 <c>Win32WindowHost.Hide</c> 的不变量）。
     /// </remarks>
-    public bool IsVisible => ObjCRuntime.SendBoolRet(_nsWindow, ObjCRuntime.Sel("isVisible"));
+    public bool IsVisible => ObjCRuntime.SendIntRet(_nsWindow, ObjCRuntime.Sel("isVisible")) != 0;
 
     /// <summary>是否最小化（见 <see cref="IWindowBackend.IsMinimized"/>）。</summary>
     /// <remarks>
     /// Cocoa 的 <c>isMiniaturized</c> 就是"收进 Dock 了"。
     /// 注意它与 <c>isVisible</c> **不互斥**：最小化的窗口仍然 visible。
     /// </remarks>
-    public bool IsMinimized => _nsWindow != 0 && ObjCRuntime.SendBoolRet(_nsWindow, ObjCRuntime.Sel("isMiniaturized"));
+    public bool IsMinimized => _nsWindow != 0
+        && ObjCRuntime.SendIntRet(_nsWindow, ObjCRuntime.Sel("isMiniaturized")) != 0;
 
     /// <summary>是否全屏（取库记住的状态，见 <see cref="IWindowBackend.IsFullscreen"/>）。</summary>
     public bool IsFullscreen => _isFullscreen;
@@ -64,7 +65,7 @@ internal sealed partial class MacOSWindowHost
     /// <c>ignoresMouseEvents</c> 近似。如实写出来，而不是假装与另两个平台一致。
     /// </remarks>
     public bool IsEnabled => _nsWindow != 0
-        && !ObjCRuntime.SendBoolRet(_nsWindow, ObjCRuntime.Sel("ignoresMouseEvents"));
+        && ObjCRuntime.SendIntRet(_nsWindow, ObjCRuntime.Sel("ignoresMouseEvents")) == 0;
 
     /// <summary>启用/禁用输入（见 <see cref="IWindowBackend.SetEnabled"/>）。</summary>
     public void SetEnabled(bool enabled)

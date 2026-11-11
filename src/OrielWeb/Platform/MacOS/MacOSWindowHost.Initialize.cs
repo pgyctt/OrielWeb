@@ -155,7 +155,7 @@ internal sealed partial class MacOSWindowHost
         // 「开发」菜单里能看到这个 webview），不自动打开面板。isInspectable 是 macOS 13.3+
         // 的公开 API，更早的系统没有这个方法，故先 respondsToSelector: 探测再调用——
         // 向不认识的 selector 发消息会直接 crash。
-        if (ObjCRuntime.SendBoolRetObj(_webview, ObjCRuntime.Sel("respondsToSelector:"), ObjCRuntime.Sel("setInspectable:")))
+        if (ObjCRuntime.SendIntRetObj(_webview, ObjCRuntime.Sel("respondsToSelector:"), ObjCRuntime.Sel("setInspectable:")) != 0)
         {
             ObjCRuntime.SendVoidBool(_webview, ObjCRuntime.Sel("setInspectable:"), _options.Debug);
         }

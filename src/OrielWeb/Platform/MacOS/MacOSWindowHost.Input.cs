@@ -96,8 +96,8 @@ internal sealed partial class MacOSWindowHost
         nint app = ObjCRuntime.SendId(
             ObjCRuntime.GetClassOrThrow("NSApplication"), ObjCRuntime.Sel("sharedApplication"));
 
-        return ObjCRuntime.SendBoolRetObjObjObj(
-            app, ObjCRuntime.Sel("sendAction:to:from:"), ObjCRuntime.Sel(selectorName), 0, 0);
+        return ObjCRuntime.SendIntRetObjObjObj(
+            app, ObjCRuntime.Sel("sendAction:to:from:"), ObjCRuntime.Sel(selectorName), 0, 0) != 0;
     }
 
     /// <inheritdoc />

@@ -22,13 +22,24 @@ namespace OrielWeb.Platform.MacOS;
 /// </list>
 /// </para>
 /// <para>
-/// <b>数据生命周期</b>：<c>CGDataProviderCreateWithData</c> 拿到裸指针后**既不复制、也不接管**内存，
-/// 所以托管数组必须在 CGImage 存活期间保持 pin。这里用 <c>GCHandle</c> 钉住，
-/// 并在 <see cref="ReleaseCGImage"/> 里解开——否则 GC 一移动数组，图像内容就变成垃圾。
+/// <b>像素数据的所有权</b>：<c>CGDataProviderCreateWithData</c> 拿到裸指针后**既不复制、也不接管**
+/// 内存，只在 provider 释放时回调我们给的 release 函数。所以托管数组用 <c>GCHandle</c> 钉住，
+/// 解钉动作就挂在那个回调上（<see cref="ReleasePixelData"/>）——pin 的存活期等于 provider 的存活期，
+/// 而 provider 由 CGImage/NSImage 的引用计数保活。整条链是：托管数组 → provider → CGImage → NSImage。
 /// </para>
 /// <para>
-/// <b>NSImage 会拷贝内容</b>（<c>initWithCGImage:</c> 内部完成解码/缓存），因此 CGImage
-/// 在构造完 NSImage 之后就可以释放。
+/// <b>2026-11-11 评审 H4 的整改</b>：旧实现把 pin 记进 <c>Dictionary&lt;CGImage, GCHandle&gt;</c>，
+/// 并由 <see cref="CreateNSImage"/> 的 finally 在构造完 NSImage 后立刻解除——那等于假设
+/// "<c>initWithCGImage:</c> 会当场把像素复制进位图"。这个假设没有依据：NSImage 可以延迟解码，
+/// 届时 provider 仍持有那个指针，而 pin 已经没了，数组一旦被 GC 移动/回收，图标内容就是垃圾
+/// （严重时是访问违例）。现在 pin 归 provider，调用方不再解钉。
+/// </para>
+/// <para>
+/// <b>验证状态（如实记录）</b>：本仓库在 Windows 上开发，**没有 macOS 真机**，只能在编译期与
+/// 结构层核对"release 回调接上了、签名对得上"。"NSImage 是否即时拷贝、延迟解码是否真会发生"
+/// 必须在真机上复核（建图标 → <c>GC.Collect</c> + 压实 → 显示并截图比对；重复创建/销毁看
+/// provider 回调计数）。因此本次改动按<b>防御性修复</b>对待：即使 NSImage 确实即时拷贝，
+/// "provider 释放即解钉"也无害，代价只是 pin 比旧实现多活到 NSImage 释放。
 /// </para>
 /// </remarks>
 internal static unsafe class MacOSImageFactory
@@ -63,7 +74,9 @@ internal static unsafe class MacOSImageFactory
         }
         finally
         {
-            ReleaseCGImage(cgImage);
+            // 只放掉本函数自己那一个 CGImage 引用，**不解钉**：像素的 pin 归 provider，
+            // 由 CGImage（以及 NSImage 持有的那份引用）的引用计数决定何时解（见 ReleasePixelData）。
+            ObjCRuntime.CGImageRelease(cgImage);
         }
     }
 
@@ -90,7 +103,7 @@ internal static unsafe class MacOSImageFactory
             pixels[i + 3] = a;                   // A
         }
 
-        // 钉住托管数组：CGDataProvider 不复制数据
+        // 钉住托管数组：CGDataProvider 不复制数据；解钉交给 provider 的 release 回调。
         GCHandle handle = GCHandle.Alloc(pixels, GCHandleType.Pinned);
         nint data = handle.AddrOfPinnedObject();
 
@@ -111,14 +124,23 @@ internal static unsafe class MacOSImageFactory
         nint provider = 0;
         try
         {
-            provider = ObjCRuntime.CGDataProviderCreateWithData(0, data, (nuint)byteCount, 0);
+            // context 传 GCHandle 的整数形式：provider 释放时 CoreGraphics 会回调
+            // ReleasePixelData，在那里把 pin 解开（data 与它指向同一块内存，成对传递）。
+            provider = ObjCRuntime.CGDataProviderCreateWithData(
+                GCHandle.ToIntPtr(handle),
+                data,
+                (nuint)byteCount,
+                &ReleasePixelData);
             if (provider == 0)
             {
-                OrielDiagnostics.Report("[OrielWeb] 创建图标失败：CGDataProviderCreateWithData 返回 0。");
+                // provider 没建成 = 回调没注册，pin 还归本函数
                 handle.Free();
+                OrielDiagnostics.Report("[OrielWeb] 创建图标失败：CGDataProviderCreateWithData 返回 0。");
                 return 0;
             }
 
+            // 从这行起 pin 的所有权归 provider：下面任何失败路径都**不再**自己 Free，
+            // 交给 finally 里的 CGDataProviderRelease 触发回调去解（自己再 Free 就是重复释放）。
             nint cgImage = ObjCRuntime.CGImageCreate(
                 (nuint)width, (nuint)height,
                 8, 32, (nuint)(width * 4),
@@ -128,11 +150,9 @@ internal static unsafe class MacOSImageFactory
             {
                 OrielDiagnostics.Report(
                     $"[OrielWeb] 创建图标失败：CGImageCreate 返回 0（{width}x{height}）。");
-                handle.Free();
                 return 0;
             }
 
-            RegisterPin(cgImage, handle);
             return cgImage;
         }
         finally
@@ -147,39 +167,68 @@ internal static unsafe class MacOSImageFactory
     }
 
     /// <summary>
-    /// CGImage 句柄 → 被钉住的像素数组句柄。CGImage 释放时解除 pin。
+    /// <c>CGDataProvider</c> 的 release 回调：把 context 里的 <see cref="GCHandle"/> 解钉。
     /// </summary>
     /// <remarks>
-    /// 之所以要这张表：<c>CGDataProviderCreateWithData</c> 不复制、也不接管内存，
-    /// 而 CGImage 上没有可挂 userdata 的槽。不解除 pin 的后果是像素数组永不回收——
-    /// 托盘"按状态换图"是高频操作，长时间运行会持续涨内存。
+    /// <para>
+    /// 签名必须精确对应 <c>CGDataProviderReleaseDataCallback</c>：
+    /// <c>void (*)(void *info, const void *data, size_t size)</c>。它是 CoreGraphics 直接调用的
+    /// 函数指针，所以只能是 <c>[UnmanagedCallersOnly]</c>——包成托管委托/闭包会把 GC 与
+    /// 线程封送一起拖进来（Native AOT 下也不允许）。
+    /// </para>
+    /// <para>
+    /// 回调可能在**任意线程**上被调（释放 NSImage 的那个线程），所以这里只做一件事；
+    /// <c>GCHandle</c> 的解钉本身是线程安全的。
+    /// </para>
+    /// <para>
+    /// <b>这里不调 <c>ObjCRuntime</c>、也不碰 <c>CGImageRelease</c></b>：pin 是 provider 的附属资源，
+    /// provider 释放时自有 CoreGraphics 去放 CGImage 一侧；在回调里再走 ObjC/CG 会引入
+    /// "释放期间重入 CoreGraphics"的可疑路径，而本函数对正确性只需要解 pin。
+    /// </para>
     /// </remarks>
-    private static readonly Dictionary<nint, GCHandle> s_pins = [];
-
-    private static void RegisterPin(nint cgImage, GCHandle handle)
+    [UnmanagedCallersOnly]
+    private static void ReleasePixelData(nint info, nint data, nuint size)
     {
-        lock (s_pins)
-        {
-            s_pins[cgImage] = handle;
-        }
+        // data/size 是 CoreGraphics 回传的原始参数，本库不需要（pin 已经从 info 拿到），
+        // 但签名一个都不能少——少一个就是原生侧的栈错乱。
+        _ = data;
+        _ = size;
+        ReleasePinnedPixels(info);
     }
 
-    /// <summary>释放 CGImage 并解除对应的 pin。</summary>
-    internal static void ReleaseCGImage(nint cgImage)
+    /// <summary>
+    /// 解钉（release 回调的实际实现）。返回是否真的解掉了一个 pin。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 拆成独立方法是为了让"所有权契约"能在非 macOS 环境单测：给 <c>GCHandle.ToIntPtr</c> 的
+    /// 值解钉、给 0 什么都不做。真机上"provider 何时回调"这一环仍需真机验证。
+    /// </para>
+    /// <para>
+    /// <b>只应被调用一次</b>（原生回调本来就只来一次）。重复解钉不承诺幂等：
+    /// <c>GCHandle</c> 的槽位可能已被别人复用，重复 Free 会误伤无关对象，所以这里不做"已释放"登记。
+    /// </para>
+    /// <para>
+    /// <b>绝不抛</b>：调用它的是一条从原生帧进来的回调，异常逃出去在 .NET 上是 fail-fast
+    /// （进程直接消失，崩溃栈里还看不到"图标"字样）。
+    /// </para>
+    /// </remarks>
+    internal static bool ReleasePinnedPixels(nint info)
     {
-        if (cgImage == 0)
+        if (info == 0)
         {
-            return;
+            return false;
         }
 
-        lock (s_pins)
+        try
         {
-            if (s_pins.Remove(cgImage, out GCHandle handle))
-            {
-                handle.Free();
-            }
+            GCHandle.FromIntPtr(info).Free();
+            return true;
         }
-
-        ObjCRuntime.CGImageRelease(cgImage);
+        catch (Exception ex)
+        {
+            OrielDiagnostics.Report($"[OrielWeb] 图标像素的 pin 释放失败：{ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
     }
 }

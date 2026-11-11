@@ -165,10 +165,10 @@ internal sealed partial class MacOSWindowHost
         ObjCRuntime.SendVoidObj(_nsWindow, ObjCRuntime.Sel("setBackgroundColor:"), color);
 
         if (_webview != 0
-            && ObjCRuntime.SendBoolRetObj(
+            && ObjCRuntime.SendIntRetObj(
                 _webview,
                 ObjCRuntime.Sel("respondsToSelector:"),
-                ObjCRuntime.Sel("setUnderPageBackgroundColor:")))
+                ObjCRuntime.Sel("setUnderPageBackgroundColor:")) != 0)
         {
             ObjCRuntime.SendVoidObj(_webview, ObjCRuntime.Sel("setUnderPageBackgroundColor:"), color);
         }

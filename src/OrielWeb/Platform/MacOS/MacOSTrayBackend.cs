@@ -284,8 +284,9 @@ internal sealed class MacOSTrayBackend : ITrayBackend, ITrayEventProbe
     }
 
     /// <summary>状态项创建成功且未被隐藏（macOS 的状态项一旦创建就会出现在菜单栏）。</summary>
+    /// <remarks><c>isVisible</c> 返回 BOOL：按 int 取回后判非零（见 <c>ObjCRuntime.SendIntRet</c>）。</remarks>
     public bool IsVisible
-        => _statusItem != 0 && ObjCRuntime.SendBoolRet(_statusItem, ObjCRuntime.Sel("isVisible"));
+        => _statusItem != 0 && ObjCRuntime.SendIntRet(_statusItem, ObjCRuntime.Sel("isVisible")) != 0;
 
     /// <inheritdoc/>
     void ITrayEventProbe.RaiseSynthetic(TraySyntheticEvent kind, string? itemId)

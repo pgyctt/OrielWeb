@@ -187,7 +187,8 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
     /// 它与 <c>isMainWindow</c> 不同：后者是"主窗口"，一个应用可以有多个主窗口，
     /// 但同时只有一个 key window。
     /// </remarks>
-    public bool IsFocused => _nsWindow != 0 && ObjCRuntime.SendBoolRet(_nsWindow, ObjCRuntime.Sel("isKeyWindow"));
+    public bool IsFocused => _nsWindow != 0
+        && ObjCRuntime.SendIntRet(_nsWindow, ObjCRuntime.Sel("isKeyWindow")) != 0;
 
     // ---- 光标（B21）----
 
@@ -276,7 +277,7 @@ internal sealed partial class MacOSWindowHost : IWindowBackend
 
     public void Restore()
     {
-        if (ObjCRuntime.SendBoolRet(_nsWindow, ObjCRuntime.Sel("isZoomed")))
+        if (ObjCRuntime.SendIntRet(_nsWindow, ObjCRuntime.Sel("isZoomed")) != 0)
         {
             Maximize(); // zoom: 为切换语义，zoomed 状态下再次调用即还原
         }

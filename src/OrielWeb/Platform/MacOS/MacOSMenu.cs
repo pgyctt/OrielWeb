@@ -132,7 +132,7 @@ internal sealed unsafe class MacOSMenu : IDisposable
         MacOSSession.RequireScreen("菜单无法弹出");
 
         double y = logical.Y;
-        if (!ObjCRuntime.SendBoolRet(view, ObjCRuntime.Sel("isFlipped")))
+        if (ObjCRuntime.SendIntRet(view, ObjCRuntime.Sel("isFlipped")) == 0)
         {
             // 非 flipped：视图高度 - y（视图高度取 bounds 的 height）
             y = ReadViewHeight(view) - logical.Y;

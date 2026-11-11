@@ -302,7 +302,8 @@ internal sealed unsafe partial class MacOSMonitorBackend : IMonitorBackend
     private static string? ReadName(nint screen)
     {
         nint selector = ObjCRuntime.Sel("localizedName");
-        if (!ObjCRuntime.SendBoolRetObj(screen, ObjCRuntime.Sel("respondsToSelector:"), selector))
+        // BOOL 返回值按 int 取回（见 ObjCRuntime.SendIntRet 的口径说明），判非零即"响应"
+        if (ObjCRuntime.SendIntRetObj(screen, ObjCRuntime.Sel("respondsToSelector:"), selector) == 0)
         {
             return null;
         }

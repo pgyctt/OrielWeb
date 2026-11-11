@@ -8,7 +8,7 @@ namespace OrielWeb.Platform.MacOS;
 /// <remarks>本文件是 <see cref="MacOSWindowHost"/> 的 partial 分片，按关注点从原单文件搬来；成员原样搬运，未改一行逻辑。</remarks>
 internal sealed partial class MacOSWindowHost
 {
-    public bool IsMaximized => ObjCRuntime.SendBoolRet(_nsWindow, ObjCRuntime.Sel("isZoomed"));
+    public bool IsMaximized => ObjCRuntime.SendIntRet(_nsWindow, ObjCRuntime.Sel("isZoomed")) != 0;
 
     /// <summary>设置缩放倍率（见 <see cref="IWindowBackend.SetZoom"/>）。</summary>
     /// <remarks>

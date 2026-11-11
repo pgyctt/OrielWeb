@@ -358,8 +358,8 @@ internal static unsafe class MacOSObjCClasses
     {
         nint frameInfo = ObjCRuntime.SendId(message, ObjCRuntime.Sel("frameInfo"));
         if (frameInfo == 0
-            || !ObjCRuntime.SendBoolRetObj(
-                frameInfo, ObjCRuntime.Sel("respondsToSelector:"), ObjCRuntime.Sel("securityOrigin")))
+            || ObjCRuntime.SendIntRetObj(
+                frameInfo, ObjCRuntime.Sel("respondsToSelector:"), ObjCRuntime.Sel("securityOrigin")) == 0)
         {
             return null;
         }

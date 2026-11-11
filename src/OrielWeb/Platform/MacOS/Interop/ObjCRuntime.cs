@@ -370,18 +370,50 @@ internal static unsafe partial class ObjCRuntime
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial void SendVoidSelObjBool(nint self, nint sel, nint selectorArg, nint objectArg, [MarshalAs(UnmanagedType.Bool)] bool waitUntilDone);
 
+    /// <summary>
+    /// <c>objc_msgSend</c> 的 <c>- (BOOL)sel</c> 形态（如 <c>-[NSWindow isKeyWindow]</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>本文件所有 BOOL 返回值都走这一口径：按 <see cref="int"/> 取回，调用点一律
+    /// <c>!= 0</c> 判真。</b>
+    /// 理由：<c>BOOL</c> 在 macOS 上是 <c>signed char</c>（1 字节），返回值只保证低字节有效；
+    /// 而 <c>[MarshalAs(UnmanagedType.Bool)] bool</c> 描述的是 Win32 的 4 字节 BOOL——
+    /// 把它写在 ObjC 消息的返回位上，等于在声明里断言"这个调用返回 4 字节"，
+    /// 契约本身就是错的，且封送层照样按 4 字节整型读回，给不了任何"用 bool 更安全"的保证。
+    /// </para>
+    /// <para>
+    /// 判真只写 <c>!= 0</c>，不写 <c>== 1</c>：ObjC 的 <c>YES</c> 语义是"非零即真"，
+    /// <c>isEqual:</c> 这类实现返回 2 或 -1 同样是真。
+    /// </para>
+    /// <para>
+    /// <b>残留风险（已如实记录，未在本次整改范围内）</b>：读 4 字节终究比 <c>BOOL</c> 的
+    /// 1 字节宽，被调方若在返回寄存器高位留下残留，<c>NO</c> 仍有被判成真的理论可能。
+    /// 彻底按 1 字节口径读需要把返回类型改成 <c>sbyte</c>（全部调用点随之改），
+    /// 属另一次评估；现状与本文件的既有 BOOL 形态（<see cref="SendIntObjObj"/>）同口径。
+    /// </para>
+    /// </remarks>
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool SendBoolRet(nint self, nint sel);
+    internal static partial int SendIntRet(nint self, nint sel);
 
+    /// <summary>
+    /// 一个对象参数、返回 <c>BOOL</c> 的调用（如 <c>-[NSObject respondsToSelector:]</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 返回值口径见 <see cref="SendIntRet"/>（按 int 取回、判非零）。
+    /// 它与 <see cref="SendIntObj"/> 是**同一个 ABI 形态**（BOOL 返回 + 一个 id 参数），
+    /// 保留两个名字只为让调用点读出语义差异：这里是"问是/否"（respondsToSelector: 之类），
+    /// 那里是"传对象做事"（writeObjects: 之类）。合并成一个名字会让两类调用在阅读时混在一起。
+    /// </remarks>
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool SendBoolRetObj(nint self, nint sel, nint arg);
+    internal static partial int SendIntRetObj(nint self, nint sel, nint arg);
 
-    /// <summary>三个对象参数、返回 BOOL（如 <c>NSApplication sendAction:to:from:</c>）。</summary>
+    /// <summary>
+    /// 三个对象参数、返回 <c>BOOL</c> 的调用（如 <c>NSApplication sendAction:to:from:</c>）。
+    /// </summary>
+    /// <remarks>返回值口径见 <see cref="SendIntRet"/>（按 int 取回、判非零）。</remarks>
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool SendBoolRetObjObjObj(nint self, nint sel, nint a, nint b, nint c);
+    internal static partial int SendIntRetObjObjObj(nint self, nint sel, nint a, nint b, nint c);
 
     // ---- 框架加载 ----
 
@@ -447,11 +479,21 @@ internal static unsafe partial class ObjCRuntime
 
     /// <summary>把一块内存包成 <c>CGDataProvider</c>（<c>CGImageCreate</c> 的数据源）。</summary>
     /// <remarks>
+    /// <para>
     /// 用 <c>CGDataProviderCreateWithData</c> 而不是 <c>…WithCFData</c>：后者要在托管侧造
     /// <c>CFData</c>，多一层引用管理。这里把托管数组 pin 住交给它，release 回调里再解开。
+    /// </para>
+    /// <para>
+    /// <b><c>releaseData</c> 不是可选的锦上添花，必须给</b>：CoreGraphics 只在 provider
+    /// 释放时回调它，托管侧的解钉动作就挂在这上面。传 <c>null</c> 等于宣称"这块内存永不归还"，
+    /// 而 provider 的存活期由 CGImage/NSImage 的引用计数决定——可能远晚于本次调用返回。
+    /// 回调签名必须是 <c>CGDataProviderReleaseDataCallback</c>：
+    /// <c>void (*)(void *info, const void *data, size_t size)</c>；写错一个参数就是原生侧的栈错乱。
+    /// </para>
     /// </remarks>
     [LibraryImport(CoreGraphicsLib, EntryPoint = "CGDataProviderCreateWithData")]
-    internal static partial nint CGDataProviderCreateWithData(nint info, nint data, nuint size, nint releaseData);
+    internal static partial nint CGDataProviderCreateWithData(
+        nint info, nint data, nuint size, delegate* unmanaged<nint, nint, nuint, void> releaseData);
 
     /// <summary>由像素数据造 <c>CGImage</c>。返回的对象归调用方，用完 <c>CGImageRelease</c>。</summary>
     [LibraryImport(CoreGraphicsLib, EntryPoint = "CGImageCreate")]
@@ -545,7 +587,7 @@ internal static unsafe partial class ObjCRuntime
     /// </remarks>
     internal static bool ClassRespondsToSelector(nint cls, string selectorName)
         => cls != 0
-           && SendBoolRetObj(cls, Sel("respondsToSelector:"), Sel(selectorName));
+           && SendIntRetObj(cls, Sel("respondsToSelector:"), Sel(selectorName)) != 0;
 
     /// <summary>
     /// 造一个 <c>NSUUID</c>（autoreleased）。标识符与页面之间走的是"UUID 的 16 字节"，
@@ -598,9 +640,9 @@ internal static unsafe partial class ObjCRuntime
     /// </summary>
     /// <remarks>
     /// <c>NSPasteboard</c> 的 <c>setString:forType:</c> 就是这一形。
-    /// 返回值是 <c>BOOL</c>（在 arm64 上是 32 位、在 x86_64 上返回寄存器里也是 32 位），
-    /// 所以这里用 <see cref="int"/> 接并判非零，而不是 <c>bool</c>——
-    /// 用 <c>bool</c> 接一个只保证低 32 位有效的返回值在某些 ABI 上会读到高位垃圾。
+    /// 返回值是 <c>BOOL</c>，口径与 <see cref="SendIntRet"/> 相同：用 <see cref="int"/> 接、
+    /// 判非零，而不是用 <c>bool</c> 接——<c>BOOL</c> 只保证低字节有效，
+    /// <c>[MarshalAs(UnmanagedType.Bool)]</c> 却声称它是 4 字节。
     /// </remarks>
     [LibraryImport(ObjCLib, EntryPoint = "objc_msgSend")]
     internal static partial int SendIntObjObj(nint self, nint sel, nint a, nint b);

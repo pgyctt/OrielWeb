@@ -236,8 +236,8 @@ internal sealed partial class MacOSWindowHost
     // ---- 导航操作（WKWebView 内建历史；无历史时调用是空操作）----
     // _webview 在窗口销毁后被置 0，判空是必需的。
 
-    public bool CanGoBack => _webview != 0 && ObjCRuntime.SendBoolRet(_webview, ObjCRuntime.Sel("canGoBack"));
-    public bool CanGoForward => _webview != 0 && ObjCRuntime.SendBoolRet(_webview, ObjCRuntime.Sel("canGoForward"));
+    public bool CanGoBack => _webview != 0 && ObjCRuntime.SendIntRet(_webview, ObjCRuntime.Sel("canGoBack")) != 0;
+    public bool CanGoForward => _webview != 0 && ObjCRuntime.SendIntRet(_webview, ObjCRuntime.Sel("canGoForward")) != 0;
 
     public void GoBack()
     {
@@ -316,10 +316,10 @@ internal sealed partial class MacOSWindowHost
         ObjCRuntime.SendVoidObj(_nsWindow, ObjCRuntime.Sel("setBackgroundColor:"), color);
 
         if (_webview != 0
-            && ObjCRuntime.SendBoolRetObj(
+            && ObjCRuntime.SendIntRetObj(
                 _webview,
                 ObjCRuntime.Sel("respondsToSelector:"),
-                ObjCRuntime.Sel("setUnderPageBackgroundColor:")))
+                ObjCRuntime.Sel("setUnderPageBackgroundColor:")) != 0)
         {
             ObjCRuntime.SendVoidObj(_webview, ObjCRuntime.Sel("setUnderPageBackgroundColor:"), color);
         }
