@@ -73,11 +73,21 @@ internal static class OrielBuiltInFsCommands
         {
             // ---- 读 ----
             case "fs.readTextFile":
-                handler = static (window, command, args) => File.ReadAllText(AuthorizePath(window, command, args, out _), Utf8NoBom);
+                handler = static (window, command, args) =>
+                {
+                    string target = AuthorizePath(window, command, args, out _);
+                    EnsureReadableSize(target, command);
+                    return File.ReadAllText(target, Utf8NoBom);
+                };
                 return true;
 
             case "fs.readFile":
-                handler = static (window, command, args) => File.ReadAllBytes(AuthorizePath(window, command, args, out _));
+                handler = static (window, command, args) =>
+                {
+                    string target = AuthorizePath(window, command, args, out _);
+                    EnsureReadableSize(target, command);
+                    return File.ReadAllBytes(target);
+                };
                 return true;
 
             case "fs.exists":
@@ -434,6 +444,48 @@ internal static class OrielBuiltInFsCommands
     private const int MaxReadChunk = 8 * 1024 * 1024;
 
     /// <summary>
+    /// 整读命令的体积闸（<c>fs.readFile</c> / <c>fs.readTextFile</c>）。
+    /// </summary>
+    /// <param name="target">已过 scope 的绝对路径。</param>
+    /// <param name="command">命令名（进错误文案）。</param>
+    /// <remarks>
+    /// <para>
+    /// 与 <c>fs.read</c> 共用 <see cref="MaxReadChunk"/>：那条命令有 8 MiB 的单次上限，
+    /// 而这两条更重——它们把整个文件读进内存**再序列化成 JSON**（二进制还是数字数组，
+    /// 页面上再被解析一遍）。没有闸的话，页面一句 invoke 就能让宿主分配任意大的缓冲区
+    /// （2026-11-11 评审 L1）。
+    /// </para>
+    /// <para>
+    /// 超限报 <c>invalid_argument</c> 并指向分块读，**不静默截断**：截断会让调用方以为
+    /// "读到了完整内容"，而那种错误在上层几乎无法察觉。
+    /// </para>
+    /// </remarks>
+    private static void EnsureReadableSize(string target, string command)
+    {
+        long length;
+        try
+        {
+            length = new FileInfo(target).Length;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 取不到大小（不存在、被占用、无权限）：交给随后的读取去报那条更具体的错，
+            // 这里不抢先报一个"大小算不出来"——那会把真正的原因盖掉。
+            return;
+        }
+
+        if (length > MaxReadChunk)
+        {
+            throw new OrielIpcException(
+                $"{command}: 文件大小 {length} 字节超过单次整读上限 {MaxReadChunk} 字节。" +
+                "请改用 fs.open + fs.read 分块读取（fs.read 的 length 上限同为该值）。")
+            {
+                Code = OrielIpcErrorCodes.InvalidArgument,
+            };
+        }
+    }
+
+    /// <summary>
     /// 按 <c>FileStream</c> 打开一个文件；校验选项组合并映射到 <see cref="FileMode"/>/<see cref="FileAccess"/>。
     /// </summary>
     /// <remarks>
@@ -615,7 +667,7 @@ internal static class OrielBuiltInFsCommands
         string argName = "path")
     {
         string raw = OrielJson.GetRequiredArg<string>(args, argName, null);
-        string full = AuthorizeRawPath(window, command, raw, argName, out isSymlink);
+        string full = OrielPathGate.Authorize(window, command, args, raw, argName, out isSymlink);
 
         // data 与 path 一起取出来：写命令两者都要，分两次取会让"取 path 时顺手验了 scope"
         // 这个顺序保证被拆散
@@ -624,119 +676,6 @@ internal static class OrielBuiltInFsCommands
             : default;
 
         return full;
-    }
-
-    /// <summary>
-    /// 归一 + 过 scope 的**共用部分**（路径来自参数，或来自 <c>paths</c> 数组的某一项）。
-    /// </summary>
-    /// <param name="window">来源窗口（拿应用标识符与门禁）。</param>
-    /// <param name="command">命令名（用于匹配 scope 与报错）。</param>
-    /// <param name="raw">待校验的原始路径（可能相对、可能含 <c>..</c>）。</param>
-    /// <param name="argName">报错时用的参数名（数组场景下是 <c>paths[i]</c>）。</param>
-    /// <remarks>
-    /// 把这段单独抽出来是因为 <c>fs.watch</c> 收的是**数组**：每一项都要走完全相同的
-    /// "归一 → 命令授权 → 路径 scope"，抄一份的话总有一天两处的顺序会不一样——
-    /// 而顺序错了就是 scope 绕过（见
-    /// <see cref="AuthorizePath(IOrielWindowControl, string, JsonElement, out JsonElement, string)"/> 的说明）。
-    /// </remarks>
-    private static string AuthorizeRawPath(
-        IOrielWindowControl window,
-        string command,
-        string raw,
-        string argName)
-        => AuthorizeRawPath(window, command, raw, argName, out _);
-
-    /// <inheritdoc cref="AuthorizeRawPath(IOrielWindowControl, string, string, string)"/>
-    /// <remarks>
-    /// 比上面那个多出 <paramref name="isSymlink"/>，见 <see cref="IsSymlink"/>：
-    /// 它是"入参本身是不是链接"的唯一来源，必须在解析链接之前取。
-    /// </remarks>
-    private static string AuthorizeRawPath(
-        IOrielWindowControl window,
-        string command,
-        string raw,
-        string argName,
-        out bool isSymlink)
-    {
-        if (raw.Length == 0)
-        {
-            throw new OrielIpcException($"命令参数 '{argName}' 不能为空。")
-            {
-                Code = OrielIpcErrorCodes.InvalidArgument,
-            };
-        }
-
-        string full;
-        try
-        {
-            full = Path.GetFullPath(raw);
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            throw new OrielIpcException($"路径不合法：{ex.Message}", ex)
-            {
-                Code = OrielIpcErrorCodes.InvalidArgument,
-            };
-        }
-
-        // 相对路径按进程当前目录解析（写进错误文案，免得"相对谁"变成一个猜测）
-        //
-        // **命令授权在这里再查一遍**：分发器已经查过了，所以这不影响正常运行；
-        // 但它让"没声明这个命令"与"声明了命令但路径不对"在**任何入口**下都能分开报。
-        // 少了这一遍的话，直接调处理函数（测试、将来可能的其它调用方）会把
-        // "命令没授权"报成 path_not_allowed，而那个错因描述会把人引向错的方向。
-        if (!window.App.Guard.TryAuthorize(command, out string? commandReason))
-        {
-            throw new OrielIpcException(commandReason ?? $"命令 '{command}' 未被授权。")
-            {
-                Code = OrielIpcErrorCodes.NotAllowed,
-            };
-        }
-
-        // 归一之后、判 scope 之前，把符号链接解析到最终目标。
-        // **顺序不能反**：先判 scope 再解析，等于用"链接所在位置"的合法性去担保"链接指向的目标"——
-        // allowed 目录里放一个指向 ~/.ssh/id_rsa 的链接就能读走它，而 scope 要防的正是这一层。
-        // 注意模式那一侧也要解析（在 OrielPathScope 里做），否则 macOS 的 /var → /private/var
-        // 会让两边永远对不上。
-        //
-        // **isSymlink 必须在这一行之前取**：解析之后手上只剩目标，"入参是链接"这件事
-        // 就永久丢失了——fs.stat / fs.lstat 的 isSymlink 字段曾经因此恒为 false。
-        isSymlink = IsSymlink(full);
-        full = OrielLinkResolver.Resolve(full);
-
-        if (!window.App.Guard.TryAuthorizePath(command, full, window.App.Info.Identifier, out string? reason))
-        {
-            throw new OrielIpcException(reason ?? $"路径不在 '{command}' 的 scope 内。")
-            {
-                Code = OrielIpcErrorCodes.PathNotAllowed,
-            };
-        }
-
-        return full;
-    }
-
-    /// <summary>入参路径本身是不是符号链接（**不跟随**：断链也答 true）。</summary>
-    /// <param name="full">已归一、尚未解析链接的绝对路径。</param>
-    /// <remarks>
-    /// <para>
-    /// 判据是 <see cref="FileSystemInfo.LinkTarget"/> 而不是
-    /// <see cref="FileAttributes.ReparsePoint"/>：后者对 junction、OneDrive 占位符同样为真，
-    /// 会把"不是链接"的东西报成链接。
-    /// </para>
-    /// <para>
-    /// <b>目录判定仍然要 <see cref="Directory.Exists(string)"/> 先试一次</b>：链接自身的
-    /// <c>LinkTarget</c> 在 <see cref="FileInfo"/> 与 <see cref="DirectoryInfo"/> 上都能读到，
-    /// 但选错类型会连带影响后续对该实例的其它读取；按"指向目录"与"其余"分两支，与
-    /// <see cref="OrielLinkResolver.Resolve"/> 的取法保持一致。
-    /// </para>
-    /// </remarks>
-    private static bool IsSymlink(string full)
-    {
-        FileSystemInfo info = Directory.Exists(full)
-            ? new DirectoryInfo(full)
-            : new FileInfo(full);
-
-        return info.LinkTarget is not null;
     }
 
     /// <summary>
@@ -777,7 +716,7 @@ internal static class OrielBuiltInFsCommands
                 };
             }
 
-            paths.Add(AuthorizeRawPath(window, command, item.GetString()!, $"paths[{index}]"));
+            paths.Add(OrielPathGate.Authorize(window, command, args, item.GetString()!, $"paths[{index}]"));
             index++;
         }
 

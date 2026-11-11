@@ -144,29 +144,52 @@ internal sealed class OrielIpcGuard
     /// 判定一个命令名能否被页面调用。
     /// </summary>
     /// <param name="commandName">命令名。</param>
+    /// <param name="args">命令参数：放行集要读其中的 <c>label</c> 才能知道"目标是不是发起者自己"。</param>
+    /// <param name="sender">发起这次调用的窗口（没有来源窗口时传 null）。</param>
     /// <param name="denialReason">被拒绝时的**可排查**理由（放行时为 null）。</param>
-    internal bool TryAuthorize(string commandName, out string? denialReason)
+    /// <remarks>
+    /// <para>
+    /// <b>放行集的边界 = 发起窗口。</b> 放行名单里的理由全是"只操作自己那个窗口"，
+    /// 而 <c>window.*</c> / <c>menu.*</c> 支持按 <c>label</c> 寻址任意已注册窗口——
+    /// 只看命令名就放行，等于让零配置的 Release 应用就能销毁、关闭、改标题到别的窗口上，
+    /// 或者给他窗装一个含 <c>Quit</c> role 的菜单（那绕过了 <c>app.exit</c> 的显式授权）。
+    /// 所以 <c>label</c> 指向别人的命令**不走放行分支**，落入正常能力判定（deny 优先照旧）。
+    /// </para>
+    /// <para>
+    /// <b>缺省 <c>label</c> 与"自己的 <c>label</c>"行为不变</b>：自绘标题栏的按钮不带 label，
+    /// 那是零配置可用的前提（拒掉会造出"关不掉的窗口"，见
+    /// <see cref="OrielCapabilityRules.AlwaysAllowedWindowCommands"/> 的红线记录）。
+    /// </para>
+    /// </remarks>
+    internal bool TryAuthorize(
+        string commandName, JsonElement args, IOrielWindowControl? sender, out string? denialReason)
     {
-        // 内建窗口命令（win.*）始终放行：它们只操作自己那个窗口，不是"能力"。
-        // 拒掉它们会让无边框窗口连关闭按钮都失效（自绘标题栏，没有系统标题栏可替代）。
+        // 目标不是发起者自己时，下面这些"只影响自己窗口"的放行理由全部不成立。
+        bool targetsAnotherWindow = TargetsAnotherWindow(args, sender);
+
+        // 内建窗口命令（win.* / tray.*）始终放行：它们只操作自己那个窗口与本应用的托盘，
+        // 不是"能力"。拒掉它们会让无边框窗口连关闭按钮都失效（自绘标题栏，没有系统标题栏可替代）。
+        // 这一族**不接受 label 寻址**（操作对象由来源窗口或托盘 id 决定），故不受上面的判定影响。
         if (OrielCapabilityRules.IsBuiltInCommand(commandName))
         {
             denialReason = null;
             return true;
         }
 
-        // window.* 族里的标题栏必需命令同样放行（逐条理由见 IsAlwaysAllowedWindowCommand）。
+        // window.* 族里的标题栏必需命令同样放行，但**只在目标是发起者自己时**
+        // （逐条理由见 IsAlwaysAllowedWindowCommand）。
         // 这一族**不整族放行**：它比 win.* 大得多，里面有真正的能力。
-        if (OrielCapabilityRules.IsAlwaysAllowedWindowCommand(commandName))
+        if (!targetsAnotherWindow && OrielCapabilityRules.IsAlwaysAllowedWindowCommand(commandName))
         {
             denialReason = null;
             return true;
         }
 
-        // menu.* 里只放行"只影响调用方自己窗口"的那几条（逐条理由见 IsAlwaysAllowedMenuCommand）。
+        // menu.* 里只放行"只影响调用方自己窗口"的那几条，同样限自身 label
+        // （逐条理由见 IsAlwaysAllowedMenuCommand）。
         // 不整族放行的理由：setAsAppMenu 跨窗口（套用到所有没显式设过菜单栏的窗口），
         // 那是另一个能力面，要应用显式点头。
-        if (OrielCapabilityRules.IsAlwaysAllowedMenuCommand(commandName))
+        if (!targetsAnotherWindow && OrielCapabilityRules.IsAlwaysAllowedMenuCommand(commandName))
         {
             denialReason = null;
             return true;
@@ -214,8 +237,36 @@ internal sealed class OrielIpcGuard
         bool denied = OrielCapabilityMatch.AnyMatches(_options.DeniedCommands, commandName);
         denialReason = denied
             ? $"命令 '{commandName}' 落进了 Deny 名单（deny 优先于 allow）。"
-            : $"命令 '{commandName}' 不在 Allow 名单里（deny-by-default：没声明就是没有这个能力）。";
+            : targetsAnotherWindow
+                ? $"命令 '{commandName}' 的目标是另一个窗口（label 与发起者不一致）：" +
+                  "「始终放行」只覆盖发起者自己的窗口，跨窗口操作需要显式 " +
+                  $"Allow(\"{commandName}\") 授权。"
+                : $"命令 '{commandName}' 不在 Allow 名单里（deny-by-default：没声明就是没有这个能力）。";
         return false;
+    }
+
+    /// <summary>
+    /// 命令参数里的 <c>label</c> 是不是指向**发起者以外**的窗口。
+    /// </summary>
+    /// <param name="args">命令参数。</param>
+    /// <param name="sender">发起调用的窗口；身份未知（后端未就位）时为 null。</param>
+    /// <remarks>
+    /// 三种情况都算"不是自己"：给了别人的 label；给了 label 但发起者身份未知
+    /// （无从证明那是自己）；发起者身份未知却给了 label。
+    /// 缺省 label 才是"自己"——那是自绘标题栏的写法，也是本判定唯一放行的形态。
+    /// 复用 <see cref="OrielCommandTarget.OptionalText"/> 读参数，保证"label 缺省 = 发起者"
+    /// 这条规则在授权层与执行层是同一套（两处各写一份的话，收紧的那一边迟早会漂移）。
+    /// </remarks>
+    private static bool TargetsAnotherWindow(JsonElement args, IOrielWindowControl? sender)
+    {
+        string? label = OrielCommandTarget.OptionalText(args, "label");
+        if (label is null)
+        {
+            return false;
+        }
+
+        string? ownLabel = sender?.Label;
+        return ownLabel is null || !string.Equals(label, ownLabel, StringComparison.Ordinal);
     }
 
     /// <summary>

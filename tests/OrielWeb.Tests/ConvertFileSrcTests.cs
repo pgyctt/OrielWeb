@@ -273,4 +273,102 @@ public sealed class ConvertFileSrcTests : IDisposable
         Assert.False(options.IsPathAllowed(
             OrielAssetFileServer.ScopeCommand, Path.GetFullPath(notNormalized), "app", out _));
     }
+
+    // ---- 符号链接（M3）----
+
+    [Fact]
+    public void SymlinkEscapeIsResolvedBeforeTheScopeCheck()
+    {
+        // scope 目录里一个指向外部的链接不能读走外面的文件。判 scope 必须用**链接解析后的
+        // 真实目标**——先判 scope 再解析，等于用"链接所在位置"的合法性去担保"链接指向的目标"，
+        // 而 scope 要防的正是这一层。
+        string outside = Path.Combine(Path.GetTempPath(), "oriel-src-out-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outside);
+
+        try
+        {
+            string secret = Path.Combine(outside, "secret.txt");
+            File.WriteAllText(secret, "TOP-SECRET");
+
+            string link = Path.Combine(_root, "link.txt");
+            CreateFileLink(link, secret);
+
+            OrielCapabilityOptions options = new();
+            options.Allow(OrielAssetFileServer.ScopeCommand, s => s.AllowPath(_root.Replace('\\', '/') + "/**"));
+
+            string? seen = null;
+            OrielAssetFileServer.Result result = OrielAssetFileServer.Serve(
+                link,
+                p => { seen = p; return options.IsPathAllowed(OrielAssetFileServer.ScopeCommand, p, "app", out _); });
+
+            Assert.Equal(403, result.Status);
+
+            // 授权器看到的是**解析后的目标**（scope 之外的路径），而不是链接自身的字面路径
+            Assert.Equal(Path.GetFullPath(secret), seen);
+        }
+        finally
+        {
+            DeleteQuietly(outside);
+        }
+    }
+
+    [Fact]
+    public void DanglingSymlinkIsDeniedInsteadOfServed()
+    {
+        string link = Path.Combine(_root, "dangling.txt");
+        CreateFileLink(link, Path.Combine(_root, "never-created.txt"));
+
+        OrielAssetFileServer.Result result = OrielAssetFileServer.Serve(link, _ => true);
+
+        // 解析不动就拒绝（"无法确定真实目标"不能放行）；对页面是 403，与"不存在"同一个出口
+        Assert.Equal(403, result.Status);
+    }
+
+    [Fact]
+    public void LinkInsideScopeStillServes()
+    {
+        // 修的是绕过，不是把符号链接一律禁掉：指向 scope 内的链接照常可读
+        string target = WriteFile(_root, "real.txt", "inside");
+
+        string link = Path.Combine(_root, "alias.txt");
+        CreateFileLink(link, target);
+
+        OrielCapabilityOptions options = new();
+        options.Allow(OrielAssetFileServer.ScopeCommand, s => s.AllowPath(_root.Replace('\\', '/') + "/**"));
+
+        OrielAssetFileServer.Result result = OrielAssetFileServer.Serve(
+            link, p => options.IsPathAllowed(OrielAssetFileServer.ScopeCommand, p, "app", out _));
+
+        Assert.Equal(200, result.Status);
+    }
+
+    private static void CreateFileLink(string linkPath, string targetPath)
+    {
+        try
+        {
+            File.CreateSymbolicLink(linkPath, targetPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Assert.Fail(
+                "无法创建符号链接：" + ex.Message +
+                "。Windows 需要 SeCreateSymbolicLinkPrivilege（以管理员运行，或开启开发者模式）。" +
+                "这条用例不能用\"跳过\"代替——链接绕过是 scope 的真实攻击面。");
+        }
+    }
+
+    private static void DeleteQuietly(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 清理失败不影响断言；临时目录留给系统回收
+        }
+    }
 }

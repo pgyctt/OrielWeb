@@ -335,6 +335,19 @@ internal static class ApiSelfTest
                 }
                 check('opener.revealItemInDir 对空字符串在页面侧就抛错', revealThrew, 'ok');
 
+                // 路径 scope（H1）：命令授权之外还要限定"能做在哪个路径上"。
+                // 用一条**确定在 scope 外**的路径——拒绝发生在"交给系统默认程序"之前，
+                // 所以这一条不会真的拉起任何程序（自检不该弹窗口）。
+                // Windows 上 '/etc/passwd' 会被归一到当前盘根目录下，同样在 scope 外。
+                let openPathCode = 'unset';
+                try {
+                    await opener.openPath('/etc/passwd');
+                } catch (e) {
+                    openPathCode = e && e.code;
+                }
+                check('opener.openPath 拒绝 scope 外的路径（path_not_allowed）',
+                    openPathCode === 'path_not_allowed', openPathCode);
+
                 check('notification.isPermissionGranted 返回布尔',
                     typeof (await notification.isPermissionGranted()) === 'boolean', 'ok');
 

@@ -189,11 +189,25 @@ internal static class SchemeSelfTest
                 : $"::warning title=oriel:// 事实探针（{Platform()}）::{summary}");
         }
 
+        // ---- 文件通道的符号链接边界（2026-11-11 评审 M3）----
+        //
+        // 这一条是**宿主侧**断言（不经页面）：oriel://file.oriel/ 的 scope 判定必须在逐段
+        // 解析符号链接之后进行，否则 scope 目录里一个指向外部的链接就能把文件读走。
+        // 为什么不走页面 fetch：跨来源读正文会被 CORS 挡下，于是"被 scope 拒"与"CORS 拒"
+        // 在页面侧区分不了——那种断言等于没断言。
+        try
+        {
+            problems.AddRange(ProbeAssetLinkScope());
+        }
+        catch (Exception ex)
+        {
+            problems.Add($"asset 链接边界探针本身失败：{ex.GetType().Name}: {ex.Message}");
+        }
+
         if (problems.Count == 0)
         {
             Console.WriteLine("SCHEME-SELFTEST: PASS");
-        }
-        else
+        }        else
         {
             Failed = true;
             Console.WriteLine($"SCHEME-SELFTEST: FAIL（{problems.Count} 项）");
@@ -212,6 +226,95 @@ internal static class SchemeSelfTest
             : OperatingSystem.IsMacOS() ? "macos"
             : OperatingSystem.IsLinux() ? "linux"
             : "unknown";
+
+    /// <summary>
+    /// 宿主侧断言：asset 通道（<c>convertFileSrc</c>）在判 scope 之前解析符号链接。
+    /// </summary>
+    /// <returns>问题列表（空表示通过）。</returns>
+    /// <remarks>
+    /// <para>
+    /// 直接调 <see cref="OrielAssetFileServer.Serve"/>，不经页面：跨来源 fetch 的正文读取
+    /// 会被 CORS 挡下，"被 scope 拒"与"CORS 拒"在页面侧区分不了，那种断言等于没断言。
+    /// </para>
+    /// <para>
+    /// 判定的是**授权器看到了什么路径**：解析正确时它拿到的是链接的目标（scope 之外），
+    /// 而不是链接自身的字面路径。所以授权器一律返回 false——这里验的是顺序，不是放行。
+    /// </para>
+    /// <para>
+    /// 链接创建失败（Windows 需要开发者模式/管理员）时**打 NOTE 而不是静默通过**：
+    /// "跳过"会把这条真实攻击面伪装成已验证。
+    /// </para>
+    /// </remarks>
+    private static List<string> ProbeAssetLinkScope()
+    {
+        var problems = new List<string>();
+        string root = ConformanceCommands.FsRootPath;
+        string outside = Path.Combine(
+            Path.GetTempPath(), "oriel-scheme-outside-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outside);
+
+        try
+        {
+            string secret = Path.Combine(outside, "secret.txt");
+            File.WriteAllText(secret, "TOP-SECRET");
+
+            string link = Path.Combine(root, "asset-link.txt");
+            if (File.Exists(link))
+            {
+                File.Delete(link);
+            }
+
+            try
+            {
+                File.CreateSymbolicLink(link, secret);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Console.WriteLine(
+                    "[scheme-selftest] NOTE: 无法创建符号链接，asset 通道的链接边界**未验证**" +
+                    $"（{ex.Message}；Windows 需要开发者模式或管理员）。");
+                return problems;
+            }
+
+            string? seen = null;
+            OrielAssetFileServer.Result result = OrielAssetFileServer.Serve(
+                link,
+                path =>
+                {
+                    seen = path;
+                    return false; // 只观察顺序，不做放行
+                });
+
+            string expected = OrielLinkResolver.Resolve(secret);
+            Console.WriteLine(
+                $"[scheme-selftest] ASSET-LINK-SCOPE: status={result.Status} " +
+                $"resolved={seen is not null && string.Equals(seen, expected, StringComparison.Ordinal)}");
+
+            if (result.Status != 403)
+            {
+                problems.Add($"asset 通道对 scope 外的链接没有回 403（实际 {result.Status}）");
+            }
+
+            if (seen is null || !string.Equals(seen, expected, StringComparison.Ordinal))
+            {
+                problems.Add(
+                    "asset 通道把**链接自身**的路径交给了 scope 判定，而不是解析后的目标（M3 回归）");
+            }
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(outside, recursive: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // 清理失败不影响结论
+            }
+        }
+
+        return problems;
+    }
 
     private static async Task<string> EvaluateAsync(string script)
     {

@@ -205,7 +205,26 @@ internal sealed class ConformanceRun
             "window.outerPosition",
             // api 自检还要做一次"读出来写回去"的不动点断言，所以也要 resize。
             // （window.setResizable 刻意仍不声明——它做拒绝路径的对照。）
-            "window.resize");
+            "window.resize",
+            // 跨窗口的只读状态查询：这一组都在标题栏白名单里，但窗口自检**刻意跨窗口**读它们
+            // （用它验 setTitle / setEnabled / setMaximizable… 真的作用到目标窗口而不是发起者），
+            // 而 0.5.5 起"始终放行"只覆盖**发起者自己的窗口**（2026-11-11 评审 H2）。
+            // 所以它们需要一个显式授权——这同时是"他窗 label + 显式 Allow 可放行"的取证；
+            // 未授权方向由第 4 段（window.setResizable）与第 10 段（window.minimize）钉住。
+            //
+            // 逐个列出而不是 Allow("window.*")：整族放行会把"未声明就该被拒"的另一半证据抹掉。
+            "window.title",
+            "window.isFocused",
+            "window.isMinimized",
+            "window.isFullscreen",
+            "window.isAlwaysOnTop",
+            "window.isDecorated",
+            "window.isResizable",
+            "window.isMaximizable",
+            "window.isMinimizable",
+            "window.isClosable",
+            "window.isEnabled",
+            "window.theme");
 
         // app 级能力：window 自检的第 13 段要验 Dock 显隐与删除数据存储。
         // 这两条是能力（改应用呈现 / 删数据），不是元信息；而同批的三条只读命令
@@ -235,7 +254,14 @@ internal sealed class ConformanceRun
         // 自检只调只读那几条与参数校验（不真的弹浏览器、不真的写自启项），
         // 但命令授权是在**进处理函数之前**判的——不声明的话连参数校验都到不了，
         // 自检会拿到 not_allowed 而不是 invalid_argument。
-        c.Allow("opener.openUrl", "opener.openPath", "opener.revealItemInDir");
+        //
+        // **opener 的两条带路径命令还要声明 scope**（2026-11-11 评审 H1）：命令授权只说
+        // "能调这个动作"，不说"能做在哪个路径上"。只声明命令会让它们按"空 scope = 什么都不允许"
+        // 处理，自检于是拿不到"参数错误"那条断言。scope 就用自检数据目录——
+        // 那正是自检里 opener 会碰的文件所在。
+        c.Allow("opener.openUrl");
+        c.Allow("opener.openPath", scope => scope.AllowPath(fsRoot + "/**"));
+        c.Allow("opener.revealItemInDir", scope => scope.AllowPath(fsRoot + "/**"));
         c.Allow("notification.*");
         c.Allow("autostart.isEnabled");
 

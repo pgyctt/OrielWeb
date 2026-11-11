@@ -317,9 +317,9 @@ public sealed class AppBundleAndDataStoreTests
 
         var guard = new OrielIpcGuard(options, isDebugBuild: false, "app.oriel");
 
-        Assert.True(guard.TryAuthorize("app.setDockVisibility", out string? reason), reason);
-        Assert.True(guard.TryAuthorize("app.removeDataStore", out reason), reason);
-        Assert.True(guard.TryAuthorize("window.setShadow", out reason), reason);
+        Assert.True(guard.TryAuthorize("app.setDockVisibility", default, null, out string? reason), reason);
+        Assert.True(guard.TryAuthorize("app.removeDataStore", default, null, out reason), reason);
+        Assert.True(guard.TryAuthorize("window.setShadow", default, null, out reason), reason);
     }
 
     private static OrielCommandDispatcher CreateDispatcher(bool allowState)

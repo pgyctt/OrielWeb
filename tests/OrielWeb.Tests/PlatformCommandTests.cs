@@ -147,8 +147,11 @@ public sealed class PlatformCommandTests
     [Fact]
     public void RevealAcceptsStringOrArray()
     {
-        Invoke("opener.revealItemInDir", new { paths = new[] { "/tmp/a.txt" } });
-        Invoke("opener.revealItemInDir", new { paths = new[] { "/tmp/a.txt", "/tmp/b.txt" } });
+        string a = TempFile("a.txt");
+        string b = TempFile("b.txt");
+
+        Invoke("opener.revealItemInDir", new { paths = new[] { a } });
+        Invoke("opener.revealItemInDir", new { paths = new[] { a, b } });
     }
 
     [Fact]
@@ -164,7 +167,7 @@ public sealed class PlatformCommandTests
     public void RevealRejectsNonStringElement()
     {
         OrielIpcException ex = Assert.Throws<OrielIpcException>(
-            () => Invoke("opener.revealItemInDir", new { paths = new object[] { "/tmp/a.txt", 42 } }));
+            () => Invoke("opener.revealItemInDir", new { paths = new object[] { TempFile("a.txt"), 42 } }));
 
         Assert.Equal(OrielIpcErrorCodes.InvalidArgument, ex.Code);
     }
@@ -420,7 +423,16 @@ public sealed class PlatformCommandTests
 
     // ---- 夹具 ----
 
-    private static OrielApp CreateApp() => Oriel.CreateBuilder().Build();
+    private static OrielApp CreateApp()
+        => Oriel.CreateBuilder()
+            .UseCapabilities(c => c.Allow("opener.*", s => s.AllowPath(ScopeRoot())))
+            .Build();
+
+    /// <summary>scope 覆盖的根：测试临时目录（opener 的路径要落在它之内）。</summary>
+    private static string ScopeRoot() => Path.GetTempPath().Replace('\\', '/') + "/**";
+
+    /// <summary>临时目录内的一个路径（**不必真实存在**：scope 判定先于存在性检查）。</summary>
+    private static string TempFile(string name) => Path.Combine(Path.GetTempPath(), name);
 
     private static T Invoke<T>(string command, object args)
     {
@@ -430,6 +442,8 @@ public sealed class PlatformCommandTests
 
         // 应用**没有后端**：App.OpenExternal 之类会返回 false 而不产生副作用——
         // 单测里不该真的把浏览器拉起来。
+        // 能力配置只声明了 opener 的 scope：H1 之后 openPath / revealItemInDir 的路径要过它，
+        // 别的命令族走不到这里（PathNotAllowed 的用例在 OpenerScopeTests）。
         var window = new BuiltInWindowCommandTests.FakeWindow { App = CreateApp(), Label = "main" };
         return (T)handler(window, command, doc.RootElement)!;
     }

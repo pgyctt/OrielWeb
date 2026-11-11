@@ -73,12 +73,20 @@ internal static class OrielBuiltInPlatformCommands
                     RejectOpenWith(args);
 
                     string path = OrielJson.GetRequiredArg<string>(args, "path", null);
-                    return window.App.OpenWithDefaultApp(path);
+
+                    // **路径 scope 是这条命令的另一半**（2026-11-11 评审 H1）：只有命令授权时，
+                    // 页面可以拉起机器上任意已存在的 .exe/.bat/.hta——"用默认程序打开"对可执行文件
+                    // 就是执行它。配合 fs 往 scope 内写一个 .bat 再 openPath，构成完整的 RCE 链。
+                    // 闸门同时做逐段链接解析（scope 目录里的链接不能指向外面）与归一，
+                    // 与 fs.* 是同一套语义（见 OrielPathGate）。
+                    string authorized = OrielPathGate.Authorize(window, command, args, path, "path");
+
+                    return window.App.OpenWithDefaultApp(authorized);
                 };
                 return true;
 
             case "opener.revealItemInDir":
-                handler = static (window, command, args) => RevealInDir(window, args);
+                handler = static (window, command, args) => RevealInDir(window, command, args);
                 return true;
 
             // ---- notification（对标 plugin-notification 的桌面子集）----
@@ -284,11 +292,19 @@ internal static class OrielBuiltInPlatformCommands
 
     /// <summary>在文件管理器里定位若干文件（对标 <c>revealItemInDir</c>）。</summary>
     /// <remarks>
+    /// <para>
     /// Tauri 收 <c>paths</c>（数组）。本库宿主的 <c>RevealInFileManager</c> 一次一个，
     /// 所以循环调用——**全部成功才算成功**：若其中一个失败就返回 false，
     /// 否则调用方会以为"三个都定位到了"。
+    /// </para>
+    /// <para>
+    /// <b>每个路径都要过 <see cref="OrielPathGate"/></b>：与 <c>openPath</c> 同一条理由——
+    /// "在文件管理器里显示"同样把路径交给了外部程序（Windows 上是 <c>explorer /select,</c>），
+    /// 不受 scope 约束的话，它就是一个"任意路径是否存在"的探测器加一个拉起入口（H1）。
+    /// 逐项校验、拒绝即抛：**不做"跳过越界项继续处理剩下的"**，那会让调用方以为全部成功。
+    /// </para>
     /// </remarks>
-    private static bool RevealInDir(IOrielWindowControl window, JsonElement args)
+    private static bool RevealInDir(IOrielWindowControl window, string command, JsonElement args)
     {
         if (args.ValueKind != JsonValueKind.Object || !args.TryGetProperty("paths", out JsonElement paths))
         {
@@ -319,11 +335,14 @@ internal static class OrielBuiltInPlatformCommands
                 };
             }
 
+            string authorized = OrielPathGate.Authorize(
+                window, command, args, item.GetString()!, $"paths[{count}]");
+
             count++;
 
             // 用 `&=` 而不是提前返回：把每一条都试一遍，最后看是否全成功。
             // 提前返回会让"第一个失败后面就没试"变成一个不可预期的行为。
-            allOk &= window.App.RevealInFileManager(item.GetString()!);
+            allOk &= window.App.RevealInFileManager(authorized);
         }
 
         if (count == 0)

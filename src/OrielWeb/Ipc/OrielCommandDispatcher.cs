@@ -147,16 +147,20 @@ internal sealed class OrielCommandDispatcher
             return;
         }
 
+        // args 要**先**取出来：门禁三需要读其中的 `label` 才能判"目标是不是发起者自己"
+        // （放行集只覆盖自己那个窗口，见 OrielIpcGuard.TryAuthorize）。
+        // 它只读一个属性、不做参数校验，提前解析不会让"未授权的消息被解析"变成风险面——
+        // 命令名与来源、令牌两道门都还在它前面。
+        JsonElement args = message.TryGetProperty("args", out var argsElement) ? argsElement : default;
+
         // 门禁三（命令授权）：来源与令牌都对，不代表这个命令就该被调用。
-        if (!_guard.TryAuthorize(name, out string? denialReason))
+        if (!_guard.TryAuthorize(name, args, window, out string? denialReason))
         {
             string reason = denialReason ?? "命令未被授权。";
             _guard.Report(OrielIpcRejectionLayer.Command, reason, documentUrl, name);
             ReplyError(sink, id, ErrorReply.Text(reason, OrielIpcErrorCodes.NotAllowed));
             return;
         }
-
-        JsonElement args = message.TryGetProperty("args", out var argsElement) ? argsElement : default;
 
         // 内建命令族：按 OrielBuiltInCommandFamilies.All 的顺序尝试，命中即处理并返回。
         // **先于**应用路由：win. / tray. 是库保留前缀，应用同名命令在注册期就被拦下
@@ -289,10 +293,40 @@ internal sealed class OrielCommandDispatcher
         return new ErrorReply($"命令 '{name}' 执行失败。", OrielIpcErrorCodes.Internal, null);
     }
 
-    /// <summary>内建命令的异常：原样带出（理由见 <see cref="DescribeForPage"/> 的 remarks）。</summary>
+    /// <summary>
+    /// 内建命令的异常：原样带出（理由见 <see cref="DescribeForPage"/> 的 remarks），
+    /// **只有会带宿主路径的那几类 BCL 异常被净化**。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// "内建异常原样透传"是刻意的取舍：排障信息（"应用尚未运行""托盘不存在"）是页面**唯一**
+    /// 能看到的线索，净化成一句通用文案只会让调用方无从下手。所以这里不是"非 OrielIpcException
+    /// 一律净化"——那会把库自己抛的 <see cref="InvalidOperationException"/> 也一起抹掉。
+    /// </para>
+    /// <para>
+    /// 真正要挡的是 <see cref="IOException"/> / <see cref="UnauthorizedAccessException"/> 这类
+    /// **Message 由运行时拼装、里面带宿主绝对路径**的异常（<c>Could not find file 'C:\Users\…'</c>）：
+    /// 透传到页面等于把"探测某个路径是否存在"的通道开到错误消息里（2026-11-11 评审 L2；
+    /// M4 收口的是同一个问题的 tray 分支）。
+    /// </para>
+    /// <para>
+    /// 净化后的文案保留**异常类型名**：既不泄露路径，又足以让调用方分辨"文件被占用"
+    /// 与"没有权限"。完整异常照旧进 <see cref="OrielDiagnostics"/>（宿主侧排障不受影响）。
+    /// </para>
+    /// </remarks>
     private static ErrorReply DescribeBuiltInFailure(string name, Exception ex)
     {
         OrielDiagnostics.Report($"[OrielWeb] 内建命令 '{name}' 执行失败：{ex}");
+
+        if (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            return new ErrorReply(
+                $"命令 '{name}' 执行失败（{ex.GetType().Name}）：宿主的文件系统调用返回了错误，" +
+                "具体原因见宿主诊断输出。",
+                OrielIpcErrorCodes.Internal,
+                null);
+        }
+
         return ErrorReply.FromException(ex, ex.Message);
     }
 

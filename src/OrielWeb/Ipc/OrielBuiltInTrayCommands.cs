@@ -39,11 +39,14 @@ internal static class OrielBuiltInTrayCommands
                     };
 
                     // 图标：页面给的是路径（PNG/ICO，相对路径按 exe 目录解析）。
-                    // 解码失败**不抛**——页面写错一个路径不该让命令失败，回落平台默认并报诊断即可。
+                    // **路径先收口在应用目录内**（见 AuthorizeIconPath）：越界或不存在直接回
+                    // invalid_argument，不再把解析后的绝对路径经 FileNotFoundException 透传给页面。
+                    // 目录内**解码失败仍然不抛**——那才是"页面写错一个格式"的正常降级路径，
+                    // 回落平台默认并报诊断即可（OrielTrayOptions.ResolveIcon 的既有取舍）。
                     string? iconPath = Text(args, "iconPath");
                     if (iconPath is not null)
                     {
-                        options.IconPath = iconPath;
+                        options.IconPath = AuthorizeIconPath("tray.new", iconPath);
                     }
 
                     OrielTray tray = window.App.CreateTray(o => CopyInto(options, o));
@@ -181,7 +184,8 @@ internal static class OrielBuiltInTrayCommands
                     OrielTray tray = Find(window, args, "tray.setIcon");
                     if (hasPath)
                     {
-                        tray.SetIcon(iconPath);
+                        // null 表示"清除图标"；真给路径时同样收口在应用目录内（见 AuthorizeIconPath）
+                        tray.SetIcon(iconPath is null ? null : AuthorizeIconPath("tray.setIcon", iconPath));
                     }
                     else
                     {
@@ -300,6 +304,46 @@ internal static class OrielBuiltInTrayCommands
         string id = Required(args, "id", commandName);
         return window.App.GetTray(id)
             ?? throw new OrielIpcException($"托盘「{id}」不存在（{commandName}）。");
+    }
+
+    /// <summary>
+    /// 校验页面给的托盘图标路径：必须在可执行文件目录内，且文件存在。
+    /// </summary>
+    /// <param name="command">命令名（进错误文案，让调用方知道是哪条命令的参数不对）。</param>
+    /// <param name="raw">页面给的原始路径。</param>
+    /// <returns>解析后的绝对路径（可安全交给 <see cref="OrielTray.SetIcon(string?)"/>）。</returns>
+    /// <exception cref="OrielIpcException">
+    /// 路径为空、不合法、越出应用目录、链接解析不动或文件不存在时抛
+    /// <c>invalid_argument</c>。**文案里不含宿主绝对路径**——见
+    /// <see cref="OrielPathResolver.TryResolveAppResource"/> 的说明。
+    /// </exception>
+    /// <remarks>
+    /// <b>为什么不存在也要报错、而不是像解码失败那样静默回落</b>：两者对调用方的含义不同。
+    /// "这个 PNG 解不开"是内容问题，回落平台默认图标是合理的降级；而"这个路径根本不在
+    /// 应用目录里"是调用方写错了（或在对文件系统做探测），静默回落会让 M4 那条探测通道继续存在
+    /// （页面照样能从"图标有没有变"反推文件是否存在），只是换了个信号。
+    /// </remarks>
+    private static string AuthorizeIconPath(string command, string raw)
+    {
+        if (!OrielPathResolver.TryResolveAppResource(raw, out string? full, out string? error))
+        {
+            throw new OrielIpcException($"{command} 的 iconPath 不可用：{error}")
+            {
+                Code = OrielIpcErrorCodes.InvalidArgument,
+            };
+        }
+
+        if (!File.Exists(full))
+        {
+            throw new OrielIpcException(
+                $"{command} 的 iconPath 在应用目录内找不到该文件：请确认文件名" +
+                "（相对路径按可执行文件所在目录解析）。")
+            {
+                Code = OrielIpcErrorCodes.InvalidArgument,
+            };
+        }
+
+        return full;
     }
 
     /// <summary>

@@ -340,17 +340,17 @@ public sealed class CapabilityTests
         // Release + 未配置能力：win.* 仍须放行，否则无边框窗口连关闭按钮都失效
         OrielIpcGuard guard = TestGuards.Unconfigured(isDebugBuild: false);
 
-        Assert.True(guard.TryAuthorize("win.close", out string? reason));
+        Assert.True(guard.TryAuthorize("win.close", default, null, out string? reason));
         Assert.Null(reason);
-        Assert.True(guard.TryAuthorize("win.dragTo", out _));
+        Assert.True(guard.TryAuthorize("win.dragTo", default, null, out _));
     }
 
     [Fact]
     public void UnconfiguredIsOpenInDebugAndClosedInRelease()
     {
-        Assert.True(TestGuards.Unconfigured(isDebugBuild: true).TryAuthorize("todo.add", out _));
+        Assert.True(TestGuards.Unconfigured(isDebugBuild: true).TryAuthorize("todo.add", default, null, out _));
 
-        Assert.False(TestGuards.Unconfigured(isDebugBuild: false).TryAuthorize("todo.add", out string? reason));
+        Assert.False(TestGuards.Unconfigured(isDebugBuild: false).TryAuthorize("todo.add", default, null, out string? reason));
         Assert.Contains("Release", reason);
         Assert.Contains("todo.add", reason);
     }
@@ -364,8 +364,8 @@ public sealed class CapabilityTests
             var guard = new OrielIpcGuard(options, isDebugBuild, "app.oriel");
 
             Assert.True(guard.IsConfigured);
-            Assert.True(guard.TryAuthorize("todo.add", out _));
-            Assert.False(guard.TryAuthorize("sys.info", out string? reason));
+            Assert.True(guard.TryAuthorize("todo.add", default, null, out _));
+            Assert.False(guard.TryAuthorize("sys.info", default, null, out string? reason));
             Assert.Contains("sys.info", reason);
         }
     }
@@ -378,11 +378,93 @@ public sealed class CapabilityTests
         var guard = new OrielIpcGuard(
             new OrielCapabilityOptions().Allow("todo.*").Deny("todo.remove"), false, "app.oriel");
 
-        Assert.False(guard.TryAuthorize("todo.remove", out string? denied));
+        Assert.False(guard.TryAuthorize("todo.remove", default, null, out string? denied));
         Assert.Contains("Deny", denied);
 
-        Assert.False(guard.TryAuthorize("sys.info", out string? notListed));
+        Assert.False(guard.TryAuthorize("sys.info", default, null, out string? notListed));
         Assert.Contains("Allow", notListed);
+    }
+
+    // ---- 「始终放行」的边界 = 发起窗口（H2）----
+
+    [Fact]
+    public void AlwaysAllowedWindowCommand_TargetsTheSenderOnly()
+    {
+        // 放行名单的理由全是"只操作自己那个窗口"，而 window.* 支持按 label 寻址**任意**已注册窗口。
+        // 只看命令名就放行的话，零配置的 Release 应用就能销毁、关闭、改标题到别的窗口上。
+        OrielIpcGuard guard = TestGuards.Unconfigured(isDebugBuild: false);
+        var sender = new BuiltInWindowCommandTests.FakeWindow { Label = "main" };
+
+        // 缺省 label = 发起者自己：自绘标题栏的写法，必须照旧放行（否则窗口关不掉）
+        Assert.True(guard.TryAuthorize("window.destroy", Args(new { }), sender, out string? noLabel), noLabel);
+
+        // 显式写自己的 label：同样是"自己"，行为不变
+        Assert.True(guard.TryAuthorize("window.destroy", Args(new { label = "main" }), sender, out noLabel), noLabel);
+
+        // 别人的 label：落入正常能力判定，零配置下拒绝
+        Assert.False(guard.TryAuthorize("window.destroy", Args(new { label = "other" }), sender, out string? reason));
+        Assert.Contains("Release", reason, StringComparison.Ordinal);
+
+        // 配了能力（但没授权这条命令）时，理由要说清"目标是别的窗口"，
+        // 而不是笼统的"不在 Allow 名单里"——后者会让人以为是自己的授权写漏了。
+        var configured = new OrielIpcGuard(new OrielCapabilityOptions().Allow("todo.*"), false, "app.oriel");
+        Assert.False(configured.TryAuthorize("window.destroy", Args(new { label = "other" }), sender, out string? cross));
+        Assert.Contains("另一个窗口", cross, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AlwaysAllowedMenuCommand_TargetsTheSenderOnly()
+    {
+        // menu.setAsWindowMenu 的放行理由同样是"只影响自己窗口"；给他窗装一个含 Quit role 的菜单
+        // 可以绕过 app.exit 的显式授权，所以按同一条规则收口。
+        OrielIpcGuard guard = TestGuards.Unconfigured(isDebugBuild: false);
+        var sender = new BuiltInWindowCommandTests.FakeWindow { Label = "main" };
+
+        Assert.True(guard.TryAuthorize("menu.setAsWindowMenu", Args(new { }), sender, out _));
+        Assert.False(guard.TryAuthorize("menu.setAsWindowMenu", Args(new { label = "other" }), sender, out _));
+    }
+
+    [Fact]
+    public void DenyAllKeepsTheReservedSetForTheOwnWindow()
+    {
+        // 保留集的语义不因 deny 改变：Deny("*") 之后**自己的**窗口照样能用标题栏命令。
+        // 若被 deny 掉，无边框窗口会变成关不掉的窗口（OrielCapabilityRules 记录的红线）。
+        var guard = new OrielIpcGuard(new OrielCapabilityOptions().Deny("*"), isDebugBuild: false, "app.oriel");
+        var sender = new BuiltInWindowCommandTests.FakeWindow { Label = "main" };
+
+        Assert.True(guard.TryAuthorize("window.destroy", Args(new { label = "main" }), sender, out _));
+        Assert.True(guard.TryAuthorize("window.destroy", Args(new { }), sender, out _));
+    }
+
+    [Fact]
+    public void ForeignWindowTargetIsAllowedWhenExplicitlyGranted()
+    {
+        var guard = new OrielIpcGuard(
+            new OrielCapabilityOptions().Allow("window.destroy"), isDebugBuild: false, "app.oriel");
+        var sender = new BuiltInWindowCommandTests.FakeWindow { Label = "main" };
+
+        Assert.True(
+            guard.TryAuthorize("window.destroy", Args(new { label = "other" }), sender, out string? reason),
+            reason);
+    }
+
+    [Fact]
+    public void BuiltInCommandsAreUnaffectedByTheWindowBoundary()
+    {
+        // win.* / tray.* 不接受 label 寻址（操作对象由来源窗口或托盘 id 决定），
+        // 所以参数里混进一个 label 不改变它们的放行结论——这是保留前缀的既有语义。
+        OrielIpcGuard guard = TestGuards.Unconfigured(isDebugBuild: false);
+        var sender = new BuiltInWindowCommandTests.FakeWindow { Label = "main" };
+
+        Assert.True(guard.TryAuthorize("win.close", Args(new { label = "other" }), sender, out _));
+        Assert.True(guard.TryAuthorize("tray.new", Args(new { label = "other" }), sender, out _));
+    }
+
+    /// <summary>把匿名对象转成命令参数（与分发器交给门禁的形态一致）。</summary>
+    private static JsonElement Args(object value)
+    {
+        using var doc = JsonDocument.Parse(TestArgs.Serialize(value));
+        return doc.RootElement.Clone();
     }
 
     // ---- 配置对象本身 ----

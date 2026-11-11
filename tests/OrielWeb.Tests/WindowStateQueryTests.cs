@@ -81,7 +81,7 @@ public sealed class WindowStateQueryTests
         // 没配能力时（_options 为 null）也要放行——与 win.* 那族同样的待遇
         var guard = new OrielIpcGuard(null, isDebugBuild: false, "app.oriel");
 
-        Assert.True(guard.TryAuthorize(name, out string? reason), $"{name} 应当无条件放行（{reason}）");
+        Assert.True(guard.TryAuthorize(name, default, null, out string? reason), $"{name} 应当无条件放行（{reason}）");
     }
 
     [Fact]

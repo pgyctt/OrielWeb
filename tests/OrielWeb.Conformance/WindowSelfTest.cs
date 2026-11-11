@@ -214,11 +214,13 @@ internal static class WindowSelfTest
             // ---- 4. 能力门禁：未声明的必须被拒 ----
             // 白名单命令（只读查询）在第 2 步已经验过放行。这里验反面：
             // demo 刻意**没有**声明 window.setResizable。
+            //
+            // **刻意不带 label（= 目标就是发起者自己）**：这条要验的是"未声明 → 权限拒绝"。
+            // 跨窗口寻址有它自己的拒绝原因（H2：放行集只覆盖发起者自己的窗口），
+            // 带 label 会把这条断言验证的东西悄悄换掉——0.5.5 整改时第一次跑就是这么红的。
             JsonElement? denied = await TryAskMainAsync(
                 "window.setResizable",
-                SelfTestJson.Object(
-                    ("label", SelfTestJson.String(ProbeLabel)),
-                    ("value", SelfTestJson.Bool(false))));
+                SelfTestJson.Object(("value", SelfTestJson.Bool(false))));
 
             Check(denied is null, "window.setResizable 没被声明，应当被拒（若成功了说明门禁没生效）");
 
@@ -703,6 +705,21 @@ internal static class WindowSelfTest
                 "重新允许之后宿主侧两个读取都应当回到 true");
 
             // ---- 10. 定向销毁：关掉的是目标窗口而不是发起者 ----
+            //
+            // **两段**（2026-11-11 评审 H2）：放行集的边界 = 发起窗口，所以"跨窗口必须在
+            // 显式授权之后"要先被钉住，再验"授权之后作用到的是目标窗口而不是发起者"。
+            //
+            // 未授权那一段用 window.minimize——它在"始终放行"的名单里，但自检**没有**显式
+            // Allow 它，而跨窗口本该不走放行（H2）。用 minimize 而不是 close/destroy：
+            // 万一哪天这条断言失灵，探针窗口只是被最小化（可恢复），自检不会因此把窗口真关掉
+            // ——那会让失败原因变得难以判断。
+            JsonElement? unauthorizedCrossWindow = await TryAskMainAsync(
+                "window.minimize",
+                SelfTestJson.Object(("label", SelfTestJson.String(ProbeLabel))));
+            Check(unauthorizedCrossWindow is null,
+                "跨窗口的「始终放行」命令应当被拒（放行集只覆盖发起者自己的窗口）");
+
+            // 已授权那一段：window.destroy 在自检名单里，跨窗口调用应当真的作用到目标窗口
             await AskWithLabelAsync("window.destroy", ProbeLabel);
             await WaitForAsync(() => !app.Windows.Contains(probe), 5000);
 

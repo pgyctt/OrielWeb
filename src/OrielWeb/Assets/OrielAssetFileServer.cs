@@ -1,3 +1,5 @@
+using OrielWeb.Ipc;
+
 namespace OrielWeb;
 
 /// <summary>
@@ -49,9 +51,17 @@ public static class OrielAssetFileServer
     /// <returns>应答；任何情况下都不抛（调用方跑在引擎的回调里，抛出等于让引擎等一个永不到来的应答）。</returns>
     /// <remarks>
     /// <para>
-    /// <b>顺序：先归一，再判 scope，最后才碰磁盘。</b> 反过来的话
+    /// <b>顺序：先归一，再解析链接，再判 scope，最后才碰磁盘。</b> 反过来的话
     /// <c>$APPDATA/../../etc/passwd</c> 会先被判成"在 $APPDATA 之内"（字面量确实在内），
     /// 然后归一后指到别处。同样的顺序要求在 <c>fs.*</c> 那边也有一条（见 OrielBuiltInFsCommands）。
+    /// </para>
+    /// <para>
+    /// <b>链接解析与 fs 通道共用同一套语义</b>（2026-11-11 评审 M3）：此前这里只有
+    /// <see cref="Path.GetFullPath(string)"/> 加 glob 匹配，于是 scope 目录里一个指向
+    /// <c>~/.ssh/id_rsa</c> 的符号链接就能把它经 <c>oriel://file.oriel/</c> 读走——
+    /// 而 API.md 的"防链接"承诺只在 <c>fs.*</c> 那一侧兑现。
+    /// 现在两条通道都走 <see cref="OrielLinkResolver.Resolve"/>：**判 scope 用的是链接的真实目标**，
+    /// 所以"允许目录内放链接指向外部"照旧被拒。
     /// </para>
     /// <para>
     /// <b>拒绝一律给 403，理由只进日志、不进响应。</b> 把理由写进响应体看起来对排障友好，
@@ -70,6 +80,18 @@ public static class OrielAssetFileServer
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
             return Deny($"路径不合法：{ex.Message}");
+        }
+
+        // 解析链接到最终目标，再拿**目标的路径**去判 scope。
+        // 解析不动（链接成环、跨卷、权限不足）时保守拒绝——"无法确定真实目标"不能放行。
+        // **不能抛给调用方**：这里跑在引擎的回调里，抛出等于让引擎等一个永不到来的应答。
+        try
+        {
+            full = OrielLinkResolver.Resolve(full);
+        }
+        catch (OrielIpcException ex)
+        {
+            return Deny($"路径上的符号链接无法解析（链接成环、跨卷或权限不足）：{ex.Message}");
         }
 
         if (!authorize(full))

@@ -55,6 +55,68 @@ public sealed class BuiltInTrayCommandTests
         Assert.Contains("来源窗口", reply.RootElement.GetProperty("error").GetString()!, StringComparison.Ordinal);
     }
 
+    // ---- iconPath 的边界（M4）----
+
+    [Fact]
+    public async Task TrayNew_IconPathOutsideAppDirectory_IsRejectedWithoutLeakingThePath()
+    {
+        // tray.* 是保留前缀（零授权可调），而 iconPath 原先页面任给：于是"不触及文件系统"的
+        // 放行理由不成立——页面能读任意图片，还能靠"图标有没有变"反推某个文件是否存在。
+        using var app = Oriel.CreateBuilder().Build();
+        string outside = Path.Combine(
+            Path.GetTempPath(), "oriel-tray-out-" + Guid.NewGuid().ToString("N"), "x.png");
+
+        using JsonDocument reply = await DispatchAsync(
+            "tray.new", new { id = "t", iconPath = outside }, WindowWith(app));
+
+        Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal(
+            OrielIpcErrorCodes.InvalidArgument, reply.RootElement.GetProperty("code").GetString());
+
+        // **回执里不能出现宿主路径**：否则"探测文件是否存在"换到错误文案里照样成立。
+        // 内建异常是原样透传的，所以这一条必须在这里钉住。
+        string error = reply.RootElement.GetProperty("error").GetString()!;
+        Assert.DoesNotContain(outside, error, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar), error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TrayNew_IconPathInsideAppDirectoryButMissing_IsRejected()
+    {
+        using var app = Oriel.CreateBuilder().Build();
+        string missing = "oriel-not-here-" + Guid.NewGuid().ToString("N") + ".png";
+
+        using JsonDocument reply = await DispatchAsync(
+            "tray.new", new { id = "t", iconPath = missing }, WindowWith(app));
+
+        Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal(
+            OrielIpcErrorCodes.InvalidArgument, reply.RootElement.GetProperty("code").GetString());
+        Assert.Contains("找不到该文件", reply.RootElement.GetProperty("error").GetString()!, StringComparison.Ordinal);
+
+        // 不存在也要拒绝，而不是像"解码失败"那样静默回落：回落只是把探测信号从
+        // "命令失败"换成了"图标没变"，通道还在。见 AuthorizeIconPath 的说明。
+        Assert.DoesNotContain(missing, reply.RootElement.GetProperty("error").GetString()!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TrayNew_IconPathInsideAppDirectory_PassesPathValidationAndFailsOnTheBackend()
+    {
+        // 收口不等于把功能关掉：应用目录内的常规写法照旧走到创建托盘那一步，
+        // 随后因为"应用尚未运行"失败（这是测试环境的事实，不是路径校验的问题）。
+        using var app = Oriel.CreateBuilder().Build();
+        // 用库自己的程序集文件名（它必然在可执行文件目录里），
+        // 而不是 Assembly.Location——后者在单文件发布下是空串（IL3000）。
+        string existing = typeof(OrielApp).Assembly.GetName().Name + ".dll";
+
+        using JsonDocument reply = await DispatchAsync(
+            "tray.new", new { id = "t", iconPath = existing }, WindowWith(app));
+
+        Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Contains("尚未运行", reply.RootElement.GetProperty("error").GetString()!, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task TrayGetById_MissingTray_ReturnsNull_NotError()
     {
@@ -153,7 +215,7 @@ public sealed class BuiltInTrayCommandTests
         // 未配置能力 + Release 构建（fail-closed）：tray.* 仍应放行，否则页面永远建不了托盘
         var guard = TestGuards.Unconfigured(isDebugBuild: false);
 
-        Assert.True(guard.TryAuthorize("tray.new", out string? reason));
+        Assert.True(guard.TryAuthorize("tray.new", default, null, out string? reason));
         Assert.Null(reason);
     }
 
