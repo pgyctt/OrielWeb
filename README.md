@@ -10,7 +10,7 @@ dotnet add package OrielWeb
 |---|---|---|---|
 | Windows x64 | WebView2 (Evergreen) | ✅ 真机验证（IPC 往返、单测、AOT 发布） | `ci:compile-windows`、`ci:smoke-windows` |
 | Windows arm64 | WebView2 (Evergreen) | ⚠️ 仅 IL 交叉编译；未在 arm64 真机运行（`compile-windows` 只发布 `win-x64`） | 无 |
-| Linux x64 | WebKitGTK 4.1 | ✅ 真机验证（WSL2 + WSLg；X11 与 Wayland 双后端） | `ci:compile-linux`、`ci:smoke-linux` |
+| Linux x64 | WebKitGTK 4.1 | ✅ 真机验证（WSL2 + WSLg；X11 与 Wayland 双后端） | `ci:compile-linux`、`ci:smoke-linux`（这两条跑在 **Xvfb，只覆盖 X11**）；Wayland 侧见 [CROSS-PLATFORM-VERIFICATION.md](docs/CROSS-PLATFORM-VERIFICATION.md) 的 Ubuntu 22.04 Wayland 记录（19/19 PASS） |
 | macOS arm64 | WKWebView | ✅ 真机验证（GitHub 托管 runner） | `ci:smoke-macos` |
 | Linux arm64 | WebKitGTK 4.1 | ✅ CI 自检（原生 arm64 runner + Xvfb，2026-10-23 首绿）；未在真机桌面运行 | `ci:compile-linux`、`ci:smoke-linux-arm64` |
 | macOS x64 | WKWebView | ✅ 真机验证（`macos-15-intel` 托管 runner，2026-10-23 首绿）；此前只做过 IL 编译 | `ci:compile-macos`、`ci:smoke-macos-x64` |
