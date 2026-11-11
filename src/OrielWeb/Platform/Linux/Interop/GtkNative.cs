@@ -1095,6 +1095,21 @@ internal static unsafe partial class GtkNative
     [LibraryImport(WebKit, EntryPoint = "webkit_network_error_quark")]
     internal static partial uint WebkitNetworkErrorQuark();
 
+    /// <summary>
+    /// 导航动作对应的请求（<c>WebKitNavigationAction</c> → <c>WebKitURIRequest</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 只给 <c>create</c> 信号的诊断用：把"被弃绝的新窗口请求指向哪里"记下来，
+    /// 否则页面点了 <c>target="_blank"</c> 却毫无反应时，宿主日志里什么都没有。
+    /// 返回的对象归 action 所有，不要释放。
+    /// </remarks>
+    [LibraryImport(WebKit, EntryPoint = "webkit_navigation_action_get_request")]
+    internal static partial nint WebkitNavigationActionGetRequest(nint navigationAction);
+
+    /// <summary>请求的 URI（返回 gchar*，归 request 所有，不要释放）。</summary>
+    [LibraryImport(WebKit, EntryPoint = "webkit_uri_request_get_uri")]
+    internal static partial nint WebkitUriRequestGetUri(nint request);
+
     /// <summary>从一段内存建输入流；<paramref name="destroyNotify"/> 非空时，流销毁时会用它释放那段内存。</summary>
     [LibraryImport(Gio, EntryPoint = "g_memory_input_stream_new_from_data")]
     internal static partial nint GMemoryInputStreamNewFromData(nint data, nint length, nint destroyNotify);

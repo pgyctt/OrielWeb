@@ -168,6 +168,11 @@ internal partial class Win32WindowHost
             // 内建右键菜单：订阅它才有机会过滤（不订阅 = 平台原样弹）
             _webViewEvents.ContextMenuRequested += OnContextMenuRequested;
 
+            // 新窗口请求一律弃绝（window.open / target="_blank"）。三平台一致的固定策略，
+            // 不是可开关的能力——不订阅时各引擎默认处置不同，而那正是最难查的一类差异。
+            // 需要打开外链请用 app.OpenExternal（见 API.md 的导航一节）。
+            _webViewEvents.RejectNewWindows();
+
             await _webView.AddScriptToExecuteOnDocumentCreatedAsync(
                 OrielBridgeJs.Build(
                     _options.ConsoleForwarding,

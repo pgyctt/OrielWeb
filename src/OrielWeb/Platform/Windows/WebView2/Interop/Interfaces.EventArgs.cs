@@ -122,3 +122,33 @@ internal partial interface ICoreWebView2ContextMenuItemCollection
     [PreserveSig] int RemoveValueAtIndex(uint index);
     [PreserveSig] int InsertValueAtIndex(uint index, nint value);
 }
+
+/// <summary>
+/// 新窗口请求的事件参数。
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>方法顺序必须与 <c>WebView2.h</c> 一致</b>（COM 早期绑定按序号寻址，错一个槽不报错、
+/// 只调错方法）。IID 与顺序都取自 WebView2 SDK 1.0.4314.35 的头文件，
+/// 那里 <c>ICoreWebView2NewWindowRequestedEventArgs</c> 是：
+/// <c>get_Uri</c> → <c>put_NewWindow</c> → <c>get_NewWindow</c> → <c>put_Handled</c>
+/// → <c>get_Handled</c> → <c>get_IsUserInitiated</c> → <c>GetDeferral</c> → <c>get_WindowFeatures</c>。
+/// </para>
+/// <para>
+/// 本库只用到 <c>put_Handled</c>（弃绝请求），其余声明是为了**槽位对齐**与将来需要时
+/// （例如把被弃绝的 URI 写进诊断）不必再回头查一遍头文件。全声明不影响任何调用。
+/// </para>
+/// </remarks>
+[GeneratedComInterface(StringMarshalling = StringMarshalling.Utf16)]
+[Guid("34acb11c-fc37-4418-9132-f9c21d1eafb9")]
+internal partial interface ICoreWebView2NewWindowRequestedEventArgs
+{
+    [PreserveSig] int get_Uri(out nint uri);
+    [PreserveSig] int put_NewWindow(nint newWindow);
+    [PreserveSig] int get_NewWindow(out nint newWindow);
+    [PreserveSig] int put_Handled(int handled);
+    [PreserveSig] int get_Handled(out int handled);
+    [PreserveSig] int get_IsUserInitiated(out int isUserInitiated);
+    [PreserveSig] int GetDeferral(out nint deferral);
+    [PreserveSig] int get_WindowFeatures(out nint value);
+}

@@ -107,3 +107,11 @@ internal sealed partial class WebResourceRequestedHandler(Func<nint, nint, int> 
     public int Invoke(nint sender, nint args)
         => ComCallbackGuard.Run(() => callback(sender, args), "WebResourceRequested");
 }
+
+[GeneratedComClass]
+internal sealed partial class NewWindowRequestedHandler(Func<nint, nint, int> callback)
+    : ICoreWebView2NewWindowRequestedEventHandler
+{
+    public int Invoke(nint sender, nint args)
+        => ComCallbackGuard.Run(() => callback(sender, args), "NewWindowRequested");
+}

@@ -157,8 +157,13 @@ if (Test-Stage 'smoke') {
 # 重建成 OrielDemo.dll + deps/runtimeconfig——那个目录里的 IL 构建 `OrielDemo.exe`
 # 在 publish 之后就不存在了，冒烟阶段便找不到产物。CI 上就是这么红过一次：
 # 合并脚本时把 publish 提到冒烟之前，冒烟报"未找到 demo 可执行文件"。
-if ((Test-Stage 'pack' -or Test-Stage 'selftest') -and
-    (-not (Test-Path (Join-Path $RepoRoot 'dist/demo/OrielDemo.exe')) -or $Publish)) {
+# **括号不能省**：`Test-Stage 'pack' -or Test-Stage 'selftest'` 在 PowerShell 里**不会**
+# 求值成两次调用再取或——实测只调用了第一个（返回 False 就结束），于是 `-Stages selftest -Publish`
+# 从不重新发布，跑的还是 dist/demo 里的旧产物。那种"改了代码、自检却对着旧二进制跑"的假绿
+# 比直接报错危险得多：2026-11-11 加 newwindow 自检时正是这么被坑过一次。
+# 每个命令调用都要单独括起来。
+if (((Test-Stage 'pack') -or (Test-Stage 'selftest')) -and
+    ((-not (Test-Path (Join-Path $RepoRoot 'dist/demo/OrielDemo.exe'))) -or $Publish)) {
     Section '发布 AOT（win-x64，供打包与自检用）'
     Push-Location $RepoRoot
     try {
@@ -286,8 +291,8 @@ if (Test-Stage 'selftest') {
     }
 
     Section '自检：机器断言（结论行判定）'
-    $commonPattern = '^(NAV|IPC|THEME|CAPABILITY|MULTIWINDOW|SCHEME|THREADING|TRAY|TRAY-JS|GEOMETRY|WINDOWSTATE|WINDOWEVENTS|EVENT|CLOSE|WINDOW|WINDOWNEW|MONITORS|MENUBAR|MENU|API|CHANNEL)-SELFTEST: '
-    foreach ($mode in @('nav', 'ipc', 'theme', 'capability', 'multiwindow', 'scheme', 'threading', 'tray', 'tray-js', 'geometry', 'geometry-frameless', 'windowstate', 'windowevents', 'event', 'close', 'window', 'windownew', 'monitors', 'menu', 'menubar', 'api', 'channel')) {
+    $commonPattern = '^(NAV|IPC|THEME|CAPABILITY|MULTIWINDOW|SCHEME|THREADING|TRAY|TRAY-JS|GEOMETRY|WINDOWSTATE|WINDOWEVENTS|EVENT|CLOSE|WINDOW|WINDOWNEW|NEWWINDOW|MONITORS|MENUBAR|MENU|API|CHANNEL)-SELFTEST: '
+    foreach ($mode in @('nav', 'ipc', 'theme', 'capability', 'multiwindow', 'scheme', 'threading', 'tray', 'tray-js', 'geometry', 'geometry-frameless', 'windowstate', 'windowevents', 'event', 'close', 'window', 'windownew', 'newwindow', 'monitors', 'menu', 'menubar', 'api', 'channel')) {
         $result = Invoke-SelftestMode -Mode $mode -Pattern $commonPattern
         $Summary += "[$mode] $(if ($result.Verdict) { $result.Verdict } else { "无结论行（退出码 $($result.ExitCode)）" })"
 

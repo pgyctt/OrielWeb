@@ -146,6 +146,14 @@ internal static unsafe class LinuxSignalHandlers
         GtkNative.GSignalConnectData(webview, "context-menu",
             (delegate* unmanaged<nint, nint, nint, nint, nint, int>)&OnContextMenuTrampoline, 0, 0, 0);
 
+        // 新窗口请求（window.open / target="_blank"）：签名
+        // (WebKitWebView*, WebKitNavigationAction*, gpointer) → GtkWidget*。
+        // **返回 NULL 就是弃绝**——这是本库三平台统一的固定策略（见 API.md 的导航一节），
+        // 与 Windows 的 put_Handled(1)、macOS 的返回 nil 同义。
+        // 不接这个信号时 WebKit 走自己的默认处置，而那在三个引擎上并不一致。
+        GtkNative.GSignalConnectData(webview, "create",
+            (delegate* unmanaged<nint, nint, nint, nint>)&OnCreateTrampoline, 0, 0, 0);
+
         // 无边框窗口的边缘 resize：签名 (GtkWidget*, GdkEvent*, gpointer) → gboolean。
         // 两个信号都连在 webview 上——它铺满客户区，边缘命中自然也在它身上判。
         // **是否真的接管由宿主决定**（LinuxWindowHost 里的 _handleResizeEdges）：非无边框窗口、
@@ -490,6 +498,54 @@ internal static unsafe class LinuxSignalHandlers
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// WebKitGTK 的 <c>create</c>（页面请求开新窗口：<c>window.open</c> / <c>target="_blank"</c>）。
+    /// </summary>
+    /// <param name="webview">发起请求的 WebKitWebView。</param>
+    /// <param name="navigationAction">导航动作，用于取目标 URI 记诊断。</param>
+    /// <param name="data">未使用（连接时传 0）。</param>
+    /// <returns>恒为 <c>0</c>（<c>NULL</c>）。</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>返回 NULL 就是弃绝</b>：WebKitGTK 的契约是"返回一个 <c>GtkWidget*</c> 就用它承载，
+    /// 返回 <c>NULL</c> 则请求被忽略"。这是本库三平台统一的固定策略（见 API.md 的导航一节），
+    /// 与 Windows 的 <c>put_Handled(1)</c>、macOS 的返回 <c>nil</c> 同义。
+    /// </para>
+    /// <para>
+    /// <b>为什么显式接，而不是"不接"</b>：不接 <c>create</c> 时 WebKit 走自己的默认处置，
+    /// 而那在三个引擎上并不一致（有的什么都不做，有的会开一个空白窗口）。
+    /// 只有显式返回 <c>NULL</c> 才能保证"点了 target=_blank 什么都不会发生"是确定的。
+    /// </para>
+    /// </remarks>
+    [UnmanagedCallersOnly]
+    internal static nint OnCreateTrampoline(nint webview, nint navigationAction, nint data)
+    {
+        try
+        {
+            string uri = "<未知目标>";
+            nint request = GtkNative.WebkitNavigationActionGetRequest(navigationAction);
+            if (request != 0)
+            {
+                nint uriPtr = GtkNative.WebkitUriRequestGetUri(request);
+                if (uriPtr != 0)
+                {
+                    uri = Marshal.PtrToStringUTF8(uriPtr) ?? uri;
+                }
+            }
+
+            OrielDiagnostics.Report(
+                "[OrielWeb] 已忽略页面发起的新窗口请求（window.open / target=\"_blank\"）：" +
+                $"{uri}。需要打开外链请用 app.OpenExternal。");
+        }
+        catch (Exception ex)
+        {
+            // 异常不得穿越 GLib 边界
+            OrielDiagnostics.Report($"[OrielWeb] create 信号处理失败：{ex}");
+        }
+
+        return 0;   // NULL：请求被弃绝
     }
 
     /// <summary>

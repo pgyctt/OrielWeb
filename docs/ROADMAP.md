@@ -46,9 +46,22 @@ B0–B24 全部完成，从 `0.4.0` 起分批发版。分阶段清单与每批�
 - 为什么没顺手做：自动递归删除目录的风险大于收益——那条路径拼错一次的代价是删掉用户别处的数据，而这份残留无害。真要清理应当做成显式的（例如给应用一个 API，在 `Run()` 之前自己调），待定。
 
 #### 页面里的 `window.open` / `target="_blank"`
-- 现状：库不处理"新窗口请求"（WebView2 的 `NewWindowRequested`、WebKit 的 `createWebViewWithConfiguration:` / `new-window` 都没接），页面发起时由引擎按各自默认行为处置。
-- 影响：前端若用 `target="_blank"` 打开内嵌资源页，行为**三平台不一致且未定义**；外链应当走 `app.OpenExternal`（受 API.md §7 的 scheme 白名单约束）。
-- 最小做法：把新窗口请求路由到系统浏览器，或忽略并上报一个事件——二选一都要先定策略，所以先记在这里。
+- **已完成**（2026-11-11）：策略定为**一律忽略**（用户 2026-11-11 决定），三平台显式弃绝，
+  页面侧 `window.open` 返回 `null`，并在 API.md §3 新增「页面发起的新窗口请求：一律忽略」一节。
+  实现方式各随平台：Windows `put_Handled(1)` 且不给 `NewWindow`、macOS 让
+  `webView:createWebViewWithConfiguration:…` 返回 `nil`、Linux 让 `create` 信号返回 `NULL`。
+  - 为什么必须显式接，而不是"不理会"：不接时各引擎走自己的默认处置，而三者并不一致
+    （有的什么都不做，有的会开一个空白窗口）。那种差异表现为"点击链接没反应"，
+    而页面代码看起来完全正确——最难查的一类。
+  - 每次弃绝都记一条诊断（带被丢弃的目标 URL）。**这条日志是"库弃绝"与"引擎弹窗拦截"
+    的唯一区分依据**：两者对页面都表现为 `null`。Windows 侧第一版漏了它，
+    是 `--selftest newwindow` 抓出来的。
+  - 真机自检 `--selftest newwindow` 断言三件事：页面侧拿到 `null`、宿主诊断出现、窗口数不变。
+    三条缺一不可——只看第一条无法区分"库弃绝"与"引擎顺手拦了"。
+  - 顺带修掉 `verify-windows.ps1` 里一处 **PowerShell 优先级陷阱**（第三处同类）：
+    `Test-Stage 'pack' -or Test-Stage 'selftest'` 实测只调用第一个、返回 `False` 就结束，
+    于是 `-Stages selftest -Publish` **从不重新发布**，自检对着 `dist/demo` 里的旧二进制跑。
+    那种"改了代码、自检却验的是旧产物"的假绿比直接报错危险得多（本轮正是被它坑了一次）。
 
 #### 取消令牌（`invoke` / `EvaluateJs`）
 - 现状：整条 IPC 与 JS 求值通路都没有 `CancellationToken`，命令函数也拿不到取消信号；页面侧只有 30 秒超时。

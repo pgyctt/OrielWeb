@@ -76,6 +76,9 @@ internal sealed unsafe class CoreWebView2Events : IDisposable
     private EventHandler<ICoreWebView2ContextMenuRequestedEventArgs>? _contextMenuRequestedEvent;
 
     private NavigationStartingHandler? _navigationStarting;
+
+    /// <summary>新窗口请求的处理器：固定策略（弃绝），由 <see cref="RejectNewWindows"/> 订阅。</summary>
+    private NewWindowRequestedHandler? _newWindowRequested;
     private NavigationCompletedHandler? _navigationCompleted;
     private DocumentTitleChangedHandler? _documentTitleChanged;
     private WebMessageReceivedHandler? _webMessageReceived;
@@ -178,6 +181,93 @@ internal sealed unsafe class CoreWebView2Events : IDisposable
         finally
         {
             ComInterfaceMarshaller<ICoreWebView2NavigationStartingEventHandler>.Free((void*)pointer);
+        }
+    }
+
+    /// <summary>
+    /// 弃绝页面发起的所有新窗口请求（<c>window.open</c> / <c>target="_blank"</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>这是固定策略，不是可订阅的事件</b>：库明确定义为"忽略"，三平台一致（见 API.md
+    /// 的导航一节）。所以它在这里订阅一次、不由上层开关控制，也不暴露 <c>event</c>。
+    /// </para>
+    /// <para>
+    /// <b>为什么必须显式处理，而不是"不理会"</b>：不订阅时 <c>NewWindowRequested</c> 无人接，
+    /// 引擎按自己的默认处置——而三个引擎的默认各不相同。Development 时表现为
+    /// "点击 target=_blank 链接没反应"，而代码看起来完全正确；那种静默的不一致最难查。
+    /// 显式把 <c>Handled</c> 置真并<em>不</em>给 <c>NewWindow</c>，请求就被弃绝。
+    /// </para>
+    /// <para>
+    /// <b>不会静默丢掉导航意图</b>：需要打开外链时应当走 <c>app.OpenExternal</c>
+    /// （受 API.md §7 的 scheme 白名单约束）——新窗口请求不是那条路。
+    /// </para>
+    /// </remarks>
+    internal void RejectNewWindows()
+    {
+        _newWindowRequested = new NewWindowRequestedHandler((_, args) =>
+        {
+            using var parsed = ComObject.FromPointer<ICoreWebView2NewWindowRequestedEventArgs>(args);
+            if (parsed is not null)
+            {
+                // 只置 Handled、不给 NewWindow：这就是"弃绝"。反过来若给了 NewWindow，
+                // 请求会被导向那个 WebView（本库的窗口都是自己创建的，没有可复用的）。
+                parsed.Object.put_Handled(1);
+
+                // 记一条诊断，带上被丢弃的目标 URL。
+                // **这条日志是"库弃绝"与"引擎弹窗拦截"的唯一区分依据**——两者对页面都表现为
+                // window.open 返回 null，没有它就没法判断究竟是哪一层拦的（真机自检
+                // --selftest newwindow 断言的正是这一点）。
+                OrielDiagnostics.Report(
+                    "[OrielWeb] 已忽略页面发起的新窗口请求（window.open / target=\"_blank\"）：" +
+                    $"{ReadNewWindowUri(parsed.Object)}。" +
+                    "需要打开外链请用 app.OpenExternal。");
+            }
+
+            return HResult.S_OK;
+        });
+
+        nint pointer = (nint)ComInterfaceMarshaller<ICoreWebView2NewWindowRequestedEventHandler>
+            .ConvertToUnmanaged(_newWindowRequested);
+        try
+        {
+            _webView.add_NewWindowRequested(pointer, out EventRegistrationToken token).ThrowOnError();
+            _unsubscribe.Add(() => _webView.remove_NewWindowRequested(token));
+        }
+        finally
+        {
+            ComInterfaceMarshaller<ICoreWebView2NewWindowRequestedEventHandler>.Free((void*)pointer);
+        }
+    }
+
+    /// <summary>从事件参数里取被弃绝的目标 URL（取不到时给占位符，不抛）。</summary>
+    /// <remarks>
+    /// <c>get_Uri</c> 返回的是 <c>LPWSTR*</c>，**由调用方负责 <c>CoTaskMemFree</c>**
+    /// （见 WebView2.h 的 API 约定）。漏了这一步就是每次弃绝泄漏一个字符串——
+    /// 低频事件，但没理由留着。
+    /// </remarks>
+    private static string ReadNewWindowUri(ICoreWebView2NewWindowRequestedEventArgs args)
+    {
+        nint uri = 0;
+        try
+        {
+            if (args.get_Uri(out uri) < 0 || uri == 0)
+            {
+                return "<未知目标>";
+            }
+
+            return Marshal.PtrToStringUni(uri) ?? "<未知目标>";
+        }
+        catch (Exception ex)
+        {
+            return $"<取 URL 失败：{ex.GetType().Name}>";
+        }
+        finally
+        {
+            if (uri != 0)
+            {
+                Marshal.FreeCoTaskMem(uri);
+            }
         }
     }
 

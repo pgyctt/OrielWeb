@@ -79,6 +79,10 @@ internal static unsafe class MacOSObjCClasses
     private static void AddMethod(nint cls, string selector, delegate* unmanaged<nint, nint, nint, nint, nint, nint> imp, string encoding)
         => ObjCRuntime.class_addMethod(cls, ObjCRuntime.Sel(selector), imp, encoding);
 
+    /// <summary>self + sel + 4 个对象参数、返回对象指针（如 <c>createWebViewWithConfiguration:…</c>）。</summary>
+    private static void AddMethod(nint cls, string selector, delegate* unmanaged<nint, nint, nint, nint, nint, nint, nint> imp, string encoding)
+        => ObjCRuntime.class_addMethod(cls, ObjCRuntime.Sel(selector), imp, encoding);
+
     // ---- App 委托 ----
 
     private static nint BuildAppDelegate()
@@ -586,8 +590,85 @@ internal static unsafe class MacOSObjCClasses
         var cls = ObjCRuntime.objc_allocateClassPair(ObjCRuntime.GetClass("NSObject"), "OrielUIDelegate", 0);
         // (WKWebView *, NSMenu *, NSEvent *) → void：三个对象参数，所以是 v@:@@@
         AddMethod(cls, "webView:willOpenMenu:withEvent:", &WillOpenMenu, "v@:@@@");
+        // (WKWebView *, WKWebViewConfiguration *, WKNavigationAction *, WKWindowFeatures *) → WKWebView *
+        // 返回 nil = 弃绝新窗口请求（本库的固定策略，见 CreateWebViewForNavigation 的 remarks）
+        AddMethod(
+            cls,
+            "webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:",
+            &CreateWebViewForNavigation,
+            "@@:@@@@");
         ObjCRuntime.objc_registerClassPair(cls);
         return cls;
+    }
+
+    /// <summary>
+    /// 页面请求开新窗口（<c>window.open</c> / <c>target="_blank"</c>）：返回 <c>nil</c> 弃绝。
+    /// </summary>
+    /// <param name="self">UIDelegate 实例。</param>
+    /// <param name="sel">selector。</param>
+    /// <param name="webview">发起请求的 WKWebView。</param>
+    /// <param name="configuration">新窗口的配置（本库不使用）。</param>
+    /// <param name="navigationAction">导航动作，用于取目标 URL 记诊断。</param>
+    /// <param name="windowFeatures">窗口特性（本库不使用）。</param>
+    /// <returns>恒为 <c>0</c>（<c>nil</c>）。</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>返回 nil 就是"弃绝"</b>：WKWebView 的契约是"返回一个 WKWebView 就用它承载，
+    /// 返回 nil 则该请求被忽略"。这是本库在三个平台上统一的固定策略（见 API.md 的导航一节），
+    /// 与 Windows 的 <c>put_Handled(1)</c>、Linux 的 <c>create</c> 返回 <c>NULL</c> 同义。
+    /// </para>
+    /// <para>
+    /// <b>为什么实现它，而不是"不实现这个 selector"</b>：不实现时 WebKit 走自己的默认处置，
+    /// 而那在三个引擎上并不一致（有的什么都不做，有的会弹一个空白窗口）。
+    /// 显式返回 nil 才能保证"点了 target=_blank 什么都不会发生"这个行为是确定的。
+    /// </para>
+    /// <para>
+    /// 诊断记一条 URL：页面点了链接却毫无反应时，这是唯一的线索。低频事件（只在真的
+    /// 发起新窗口请求时触发），不需要去重。
+    /// </para>
+    /// </remarks>
+    [UnmanagedCallersOnly]
+    private static nint CreateWebViewForNavigation(
+        nint self, nint sel, nint webview, nint configuration, nint navigationAction, nint windowFeatures)
+    {
+        try
+        {
+            OrielDiagnostics.Report(
+                "[OrielWeb] 已忽略页面发起的新窗口请求（window.open / target=\"_blank\"）：" +
+                $"{ReadNavigationActionUri(navigationAction)}。" +
+                "需要打开外链请用 app.OpenExternal。");
+        }
+        catch (Exception ex)
+        {
+            // 异常不得穿越 ObjC 边界（穿越会直接终止进程）
+            OrielDiagnostics.Report($"[OrielWeb] createWebViewWithConfiguration 处理失败：{ex}");
+        }
+
+        return 0;   // nil：请求被弃绝
+    }
+
+    /// <summary>从 <c>WKNavigationAction</c> 取出目标 URL（取不到时给占位符，不抛）。</summary>
+    private static string ReadNavigationActionUri(nint navigationAction)
+    {
+        if (navigationAction == 0)
+        {
+            return "<未知目标>";
+        }
+
+        nint request = ObjCRuntime.SendId(navigationAction, ObjCRuntime.Sel("request"));
+        if (request == 0)
+        {
+            return "<未知目标>";
+        }
+
+        nint url = ObjCRuntime.SendId(request, ObjCRuntime.Sel("URL"));
+        if (url == 0)
+        {
+            return "<未知目标>";
+        }
+
+        return ObjCRuntime.ToManagedString(ObjCRuntime.SendId(url, ObjCRuntime.Sel("absoluteString")))
+               ?? "<未知目标>";
     }
 
     /// <remarks>

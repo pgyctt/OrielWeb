@@ -630,6 +630,34 @@ window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
 > **失败导航必须报出原因**：三个引擎"接受的失败目标"各不相同（同源缺失页 / 环回端口 / 保留 TLD 各有差异），
 > 且都会静默改写不接受的形态，所以自检里逐个试候选目标，任一真的上报失败即算通过。
 
+### 页面发起的新窗口请求：一律忽略
+
+页面里的 `window.open(...)` 与 `target="_blank"` 链接**不会**打开任何窗口。库在三个平台上
+统一弃绝这类请求，页面侧拿到的返回值是 `null`。
+
+| 平台 | 实现方式 | 弃绝的表达 |
+|---|---|---|
+| Windows | `ICoreWebView2::add_NewWindowRequested` | `put_Handled(1)` 且**不**提供 `NewWindow` |
+| macOS | `WKUIDelegate` 的 `webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:` | 返回 `nil` |
+| Linux | `WebKitWebView::create` 信号 | 返回 `NULL` |
+
+**为什么要显式实现，而不是"不理会"**：不接这些入口时，各引擎走自己的默认处置，而三者**并不一致**
+（有的什么都不做，有的会开一个空白窗口）。那种差异的表现是"点击链接没反应"，而页面代码看起来
+完全正确——是最难查的一类问题。显式弃绝才能让"点了什么都不发生"变成确定的契约。
+
+**需要打开外链怎么办**：用 `app.OpenExternal`（受 §7 的 scheme 白名单约束），不要指望
+`target="_blank"`。新窗口请求不是那条路，也不会被转成导航——请求被丢弃，当前页面不动。
+
+**排查提示**：每次弃绝都会在宿主诊断里留一条记录，带上被丢弃的目标 URL：
+
+```
+[OrielWeb] 已忽略页面发起的新窗口请求（window.open / target="_blank"）：https://example.com/。需要打开外链请用 app.OpenExternal。
+```
+
+这条日志同时也是"是我们的处理器弃绝的、而不是引擎弹窗拦截器顺手拦了"的区分依据——两者
+对页面都表现为 `null`。真机自检 `--selftest newwindow` 断言的正是这三点（返回 `null`、
+诊断出现、窗口数不变）。
+
 > **首帧闸门（推荐用法）**：`Loaded` 的语义是"首次导航完成"，**早于前端框架的首屏渲染**——
 > 直接靠它显示窗口会退回"白屏 / 半成品一闪"的观感。库不替应用包一层，因为"什么时候算渲染好了"
 > 只有应用自己知道。推荐做法（demo 也是这么做的）：`WithHidden()` 建窗 → 页面首屏就绪后

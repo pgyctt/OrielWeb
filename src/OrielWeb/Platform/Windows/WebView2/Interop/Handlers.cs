@@ -110,3 +110,19 @@ internal partial interface ICoreWebView2ClearBrowsingDataCompletedHandler
 {
     [PreserveSig] int Invoke(int errorCode);
 }
+
+/// <summary>
+/// 页面请求开新窗口（<c>window.open</c> / <c>target="_blank"</c>）。
+/// </summary>
+/// <remarks>
+/// IID 取自 WebView2 SDK 1.0.4314.35 的 <c>WebView2.h</c>
+/// （<c>MIDL_INTERFACE("d4c185fe-c81c-4989-97af-2d3fa7ab5651")</c>）。
+/// 本库的固定策略是**弃绝**（见 <c>CoreWebView2Events.RejectNewWindows</c>），
+/// 所以这个 handler 只做一件事：把 args 的 <c>Handled</c> 置真。
+/// </remarks>
+[GeneratedComInterface(StringMarshalling = StringMarshalling.Utf16)]
+[Guid("d4c185fe-c81c-4989-97af-2d3fa7ab5651")]
+internal partial interface ICoreWebView2NewWindowRequestedEventHandler
+{
+    [PreserveSig] int Invoke(nint sender, nint args);
+}
