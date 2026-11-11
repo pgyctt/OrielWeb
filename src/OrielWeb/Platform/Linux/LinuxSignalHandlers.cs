@@ -53,12 +53,7 @@ internal static unsafe class LinuxSignalHandlers
             // 最早排进来、可能已经有一个 idle source 在等它的那个动作。后果是那一个
             // 永远丢失（PumpIdleTrampoline 醒来时队列已经空/错位），而刚入队的这一个
             // 反倒留在队列里等一个永远不会到来的调度。
-            //
-            // ConcurrentQueue 没有"删掉指定元素"，所以这里换一种口径：把队列整体取空，
-            // 逐条塞回去、跳过与本次 action 相同的那一条。这个函数本来就在 UI 线程上
-            // 被调用（GTK 的回调都在主线程），不存在并发入队的窗口；即便有，
-            // 取空再塞回也只是让顺序保持，不会丢别的动作。
-            if (!TryRemoveOne(action))
+            if (!MainThreadDispatchQueue.TryRemoveOne(MainThreadQueue, action))
             {
                 OrielDiagnostics.Report(
                     "[OrielWeb] PostToMainThread 失败：GTK idle source 创建失败，且未能从队列中回收本次动作" +
@@ -71,41 +66,6 @@ internal static unsafe class LinuxSignalHandlers
         }
 
         return true;
-    }
-
-    /// <summary>
-    /// 从主线程队列里移除**一个**与 <paramref name="action"/> 相同的委托。
-    /// </summary>
-    /// <param name="action">要移除的那个动作。</param>
-    /// <returns>移除成功返回 <c>true</c>。</returns>
-    /// <remarks>
-    /// 按引用相等比较（<see cref="object.ReferenceEquals"/>）而不是 <c>==</c>：
-    /// 两个内容相同的 lambda 是不同的委托实例，用值相等会误删另一个。
-    /// 队列元素是 <see cref="Action"/>，委托的 <c>==</c> 是值语义（按调用列表逐项比较），
-    /// 那正是"误删"的来源。
-    /// </remarks>
-    private static bool TryRemoveOne(Action action)
-    {
-        int remaining = MainThreadQueue.Count;
-        bool removed = false;
-
-        for (int i = 0; i < remaining; i++)
-        {
-            if (!MainThreadQueue.TryDequeue(out Action? item))
-            {
-                break;
-            }
-
-            if (!removed && ReferenceEquals(item, action))
-            {
-                removed = true;
-                continue; // 丢掉这一个，其余原样塞回
-            }
-
-            MainThreadQueue.Enqueue(item);
-        }
-
-        return removed;
     }
 
     // ---- 信号连接 ----

@@ -159,6 +159,77 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
             "请换一个名字（只有该内建名被保留，event 前缀本身可用）。",
             Category, DiagnosticSeverity.Error, isEnabledByDefault: true);
 
+        /// <summary>命令方法本身是泛型：生成的路由类不是泛型的，无法调用它。</summary>
+        /// <remarks>
+        /// <para>
+        /// 与 <see cref="GenericHostType"/> 分开：那个拦的是"宿主类型带未绑定类型参数"，
+        /// 这个拦的是"方法自己带"。两者的修法不同（换承载类 vs 去掉方法上的类型参数）。
+        /// </para>
+        /// <para>
+        /// 此前这条会生成引用 <c>T</c> 的代码，而路由类没有类型参数，报错定位在
+        /// <c>.g.cs</c>（生成的临时文件）——用户看不到自己那行，只看到"某个生成文件里的
+        /// CS0246"。**必须由生成器拦下**：生成文件里的错误无法靠"读代码"修。
+        /// </para>
+        /// <para>
+        /// 没有"合法例外"：命令的参数类型是**页面传来的 JSON 决定的**，而泛型方法的类型参数
+        /// 在运行期没有来源（IPC 参数里不带类型实参）。要为多种类型服务，写多个非泛型命令
+        /// 或收一个 <c>JsonElement</c> 自己分派。
+        /// </para>
+        /// </remarks>
+        public static readonly DiagnosticDescriptor GenericCommandMethod = new(
+            "ORIELWEB108", "命令方法不能是泛型",
+            "{0} 是泛型方法（类型参数：{1}）：生成的路由类不是泛型的，无法调用它。" +
+            "IPC 参数里没有类型实参，泛型命令在运行期无法绑定——请改成非泛型方法，" +
+            "或收一个 JsonElement 自行分派。",
+            Category, DiagnosticSeverity.Error, isEnabledByDefault: true);
+
+        /// <summary>CancellationToken 参数：整条 IPC 通路没有取消语义。</summary>
+        /// <remarks>
+        /// <para>
+        /// <b>此前报的是别的错</b>：<c>CancellationToken</c> 既不是 <c>JsonElement</c>
+        /// 也不是 <c>OrielChannel</c>，于是走泛型读取路径，要求调用方提供
+        /// <c>JsonSerializerContext</c>——于是报"缺少 JSON 上下文"。那个提示把人引向
+        /// "去补一个序列化上下文"，而真正的问题是**这个参数类型根本不支持**。
+        /// 误导性诊断比没有诊断更费时间。
+        /// </para>
+        /// <para>
+        /// <b>为什么是拒绝而不是实现</b>：给命令注入取消信号要求整条通路贯通
+        /// （<c>invoke</c> 的 <c>CancellationToken</c>、三平台取消语义、取消后的回执约定），
+        /// 那是 API 设计而不是单点小改（见 ROADMAP 的"取消令牌"条）。在贯通之前，
+        /// 收下这个参数只会让人以为"取消有效"——**静默的假承诺**比明确的拒绝糟得多。
+        /// </para>
+        /// </remarks>
+        public static readonly DiagnosticDescriptor CancellationTokenParameter = new(
+            "ORIELWEB109", "命令参数不支持 CancellationToken",
+            "{0} 的参数 {1} 是 CancellationToken：本库的 IPC 通路（invoke / EvaluateJs）目前" +
+            "没有贯通取消语义，页面侧也无法取消一次已发出的调用。" +
+            "收下它只会让人以为取消有效——请去掉该参数；长任务请在宿主侧自行限时。",
+            Category, DiagnosticSeverity.Error, isEnabledByDefault: true);
+
+        /// <summary>参数带 C# 默认值：本库的可选参数表达是"可空类型"。</summary>
+        /// <remarks>
+        /// <para>
+        /// <b>为什么拒绝而不是支持</b>（ROADMAP 里这条留了"支持或拒绝"两个选项）：
+        /// 支持它需要让生成的读取代码区分"参数缺失"与"传了等于默认值的值"——
+        /// 对值类型要引入 <c>int?</c> 中间态、再在缺失时填 <c>ExplicitDefaultValue</c>
+        /// 的源码字面量（string / 枚举 / 结构体各有各的写法）。这等于在同一件事上
+        /// 并存**两种"可选"表达**（<c>int? a</c> 与 <c>int a = 5</c>），语义边界
+        /// 需要额外解释，而收益只是省一次签名改动。
+        /// </para>
+        /// <para>
+        /// <b>关键是不能静默</b>：若只是忽略默认值，页面不传该参数时得到的是
+        /// <c>default(T)</c>（<c>0</c> / <c>false</c> / <c>null</c>），而宿主代码里写着
+        /// <c>= 5</c>——两边对不上，且没有任何提示。这正是本库最不想要的
+        /// "看起来能用、实际行为不同"。
+        /// </para>
+        /// </remarks>
+        public static readonly DiagnosticDescriptor DefaultParameterValue = new(
+            "ORIELWEB110", "命令参数不支持 C# 默认值",
+            "{0} 的参数 {1} 带默认值：本库用**可空类型**表达可选参数（页面不传时为 null）。" +
+            "C# 默认值不会被采用——页面不传时收到的是 default({2})，" +
+            "与这里的默认值不一致且不会有提示。请改成可空类型（如 int?）并在宿主侧处理缺失。",
+            Category, DiagnosticSeverity.Error, isEnabledByDefault: true);
+
     }
 
     private static GeneratorOutput Transform(GeneratorAttributeSyntaxContext context, CancellationToken token)
@@ -247,12 +318,52 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
                 method.ToDisplayString(), accessibility.ToString());
         }
 
+        // 方法自己是泛型：路由类没有类型参数，生成的代码引用 T 会在 .g.cs 里报 CS0246。
+        // 与宿主类型泛型（上面那条）分开报——两者的修法不同。
+        if (method.IsGenericMethod)
+        {
+            string typeParameters = string.Join(
+                ", ",
+                method.TypeParameters.Select(t => t.Name));
+
+            return Fail(location, Diagnostics.GenericCommandMethod,
+                method.ToDisplayString(), typeParameters);
+        }
+
         foreach (var parameter in method.Parameters)
         {
             if (parameter.RefKind is RefKind.Ref or RefKind.Out)
             {
                 return Fail(location, Diagnostics.RefOrOutParameter,
                     method.ToDisplayString(), parameter.Name, parameter.RefKind.ToString().ToLowerInvariant());
+            }
+
+            // CancellationToken：此前落到泛型读取路径，报的是"缺少 JSON 上下文"——
+            // 那条提示把人引向补序列化上下文，而真正的问题是类型不支持。
+            //
+            // 按**完全限定名**判，不用符号比较：生成器跑在消费方的编译里，
+            // CancellationToken 来自 System.Runtime，这里没有可靠的符号可拿。
+            string parameterType = parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            if (parameterType == "global::System.Threading.CancellationToken")
+            {
+                return Fail(location, Diagnostics.CancellationTokenParameter,
+                    method.ToDisplayString(), parameter.Name);
+            }
+
+            // C# 默认值：本库用可空类型表达可选参数。静默忽略默认值会让"页面不传"
+            // 与"宿主代码里写的默认值"对不上，所以这里明确拒绝。
+            //
+            // **例外：`int? a = null` / `string? a = null`**。它的语义与 `int? a` 完全一致
+            // （缺失时都是 null），报错只会逼人删掉一个无害的写法。判据是
+            // "默认值就是 null，且类型本身可空"——两者同时成立时忽略默认值不产生语义差异。
+            // 反过来 `int a = 0` 不放行：它不是可空类型，本库要求必传，
+            // 而 C# 允许不传——那正是需要报出来的差异。
+            if (parameter.HasExplicitDefaultValue && !IsHarmlessNullDefault(parameter))
+            {
+                return Fail(location, Diagnostics.DefaultParameterValue,
+                    method.ToDisplayString(),
+                    parameter.Name,
+                    parameter.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat));
             }
         }
 
@@ -311,6 +422,27 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
     /// <summary>构造一条失败结果：不再产出模型，诊断指回用户方法的位置。</summary>
     private static GeneratorOutput Fail(Location location, DiagnosticDescriptor descriptor, params object?[] args)
         => new(null, ImmutableArray.Create(Diagnostic.Create(descriptor, location, args)), location);
+
+    /// <summary>
+    /// 参数的 C# 默认值是不是"无害的 null"（<c>int? a = null</c> / <c>string? a = null</c>）。
+    /// </summary>
+    /// <param name="parameter">待判参数。</param>
+    /// <returns>无害返回 <c>true</c>（不报 ORIELWEB110）。</returns>
+    /// <remarks>
+    /// <para>
+    /// 判据是两条同时成立：**默认值就是 null**，且**类型本身带可空注解**。
+    /// 此时页面不传该参数得到的就是 null，与声明的默认值一致——忽略它不产生语义差异，
+    /// 报错只会逼人删掉一个无害的写法。
+    /// </para>
+    /// <para>
+    /// 为什么读 <see cref="NullableAnnotation"/> 而不只是判断 null：
+    /// NRT 未开启时 <c>string a = null</c> 的注解是 <c>None</c>——那种写法里
+    /// "null 是不是合法值"在类型上没有表达，本库按必传处理（拒绝）更安全。
+    /// </para>
+    /// </remarks>
+    private static bool IsHarmlessNullDefault(IParameterSymbol parameter)
+        => parameter.ExplicitDefaultValue is null
+           && parameter.Type.NullableAnnotation == NullableAnnotation.Annotated;
 
     /// <summary>
     /// 判断参数能否走"直出强类型读取"。仅覆盖语义无歧义的基元类型；

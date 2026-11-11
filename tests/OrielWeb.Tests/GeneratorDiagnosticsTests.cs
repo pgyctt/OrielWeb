@@ -281,4 +281,152 @@ public sealed class GeneratorDiagnosticsTests
         Assert.Contains("finally", all);
         Assert.Contains("?.Close();", all);
     }
+
+    // ---- ORIELWEB108：泛型命令方法 ----
+
+    [Fact]
+    public void GenericCommandMethod_IsReportedAndNoRouterIsGenerated()
+    {
+        // 此前这条会生成引用 T 的代码，而路由类没有类型参数 → 报错定位在 .g.cs
+        // （用户看不到自己那行）。而且泛型在运行期也没有类型实参来源：
+        // IPC 参数是 JSON，不带类型参数。所以必须由生成器拦下。
+        var (all, sources) = Compile("""
+            public static class Commands
+            {
+                [OrielWeb.Ipc.OrielCommand("t.generic")]
+                public static string Echo<T>(T value) => value?.ToString() ?? "";
+            }
+            """);
+
+        var error = Assert.Single(all.Where(d => d.Id.StartsWith("ORIELWEB", StringComparison.Ordinal)));
+        Assert.Equal("ORIELWEB108", error.Id);
+        Assert.Equal(DiagnosticSeverity.Error, error.Severity);
+
+        // 文案要说清"为什么"与"怎么改"，不能只说"不支持"。
+        Assert.Contains("泛型", error.GetMessage(), StringComparison.Ordinal);
+        Assert.Contains("JsonElement", error.GetMessage(), StringComparison.Ordinal);
+
+        // 诊断必须指回用户方法（Probe.cs），不是生成文件。
+        Assert.EndsWith("Probe.cs", error.Location.GetLineSpan().Path, StringComparison.Ordinal);
+
+        // 模型为 null → 不生成路由。这条与 106/107 不同：那两条是"注册成功但不可达"，
+        // 仍要生成以避免次生错误；这条生成出来的代码**根本编译不过**，所以不生成。
+        Assert.DoesNotContain("t.generic", string.Join('\n', sources.Select(s => s.SourceText.ToString())));
+    }
+
+    [Fact]
+    public void GenericHostTypeAndGenericMethod_ReportDifferentDiagnostics()
+    {
+        // 两者的修法不同（换承载类 vs 去掉方法上的类型参数），所以是两条诊断。
+        var hostDiagnostics = OrielDiagnostics("""
+            public static class GenericHost<T>
+            {
+                [OrielWeb.Ipc.OrielCommand("t.host")]
+                public static string Ok() => "ok";
+            }
+            """);
+
+        var host = Assert.Single(hostDiagnostics.Where(d => d.Id.StartsWith("ORIELWEB", StringComparison.Ordinal)));
+        Assert.Equal("ORIELWEB104", host.Id);
+    }
+
+    // ---- ORIELWEB109：CancellationToken ----
+
+    [Fact]
+    public void CancellationTokenParameter_IsReportedAsUnsupportedNotAsMissingJsonContext()
+    {
+        // 此前它落到泛型读取路径，报的是"缺少 JSON 上下文"——那条提示把人引向
+        // "去补一个序列化上下文"，而真正的问题是**这个参数类型根本不支持**。
+        // 误导性诊断比没有诊断更费时间。
+        var error = Assert.Single(OrielDiagnostics("""
+            using System.Threading;
+
+            public static class Commands
+            {
+                [OrielWeb.Ipc.OrielCommand("t.slow")]
+                public static string Slow(CancellationToken token) => "done";
+            }
+            """));
+
+        Assert.Equal("ORIELWEB109", error.Id);
+        Assert.Equal(DiagnosticSeverity.Error, error.Severity);
+
+        string message = error.GetMessage();
+
+        // 关键：文案里**不能**再出现"JSON 上下文"这个误导。
+        Assert.DoesNotContain("JSON 上下文", message, StringComparison.Ordinal);
+
+        // 要说清"为什么现在不支持"与"怎么办"。
+        Assert.Contains("取消", message, StringComparison.Ordinal);
+        Assert.Contains("限时", message, StringComparison.Ordinal);
+    }
+
+    // ---- ORIELWEB110：C# 默认值 ----
+
+    [Theory]
+    [InlineData("int value = 5")]
+    [InlineData("int value = 0")]
+    [InlineData("string value = \"x\"")]
+    [InlineData("bool value = true")]
+    public void DefaultParameterValue_IsReported(string parameter)
+    {
+        // 本库用可空类型表达可选参数。静默忽略默认值会让"页面不传"与
+        // "宿主代码里写的默认值"对不上——正是本库最不想要的"看起来能用、实际行为不同"。
+        var error = Assert.Single(OrielDiagnostics($$"""
+            public static class Commands
+            {
+                [OrielWeb.Ipc.OrielCommand("t.opt")]
+                public static string Ok({{parameter}}) => "ok";
+            }
+            """));
+
+        Assert.Equal("ORIELWEB110", error.Id);
+        Assert.Contains("可空类型", error.GetMessage(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("int? value = null")]
+    [InlineData("string? value = null")]
+    public void HarmlessNullDefault_IsAllowed(string parameter)
+    {
+        // `int? a = null` 的语义与 `int? a` 完全一致（缺失时都是 null），
+        // 报错只会逼人删掉一个无害的写法。所以这一格必须放行。
+        var (diagnostics, sources) = Compile($$"""
+            #nullable enable
+
+            public static class Commands
+            {
+                [OrielWeb.Ipc.OrielCommand("t.opt")]
+                public static string Ok({{parameter}}) => "ok";
+            }
+            """);
+
+        var oriel = diagnostics.Where(d => d.Id.StartsWith("ORIELWEB", StringComparison.Ordinal)).ToArray();
+        Assert.Empty(oriel);
+
+        // 反向确认这条不是"因为什么都没生成才没有诊断"：路由必须真的产出了，
+        // 且参数按可选（可空）路径读取。
+        Assert.Contains(
+            sources,
+            s => s.HintName == "OrielWeb.Generated.g.cs" && s.SyntaxTree.ToString().Contains("t.opt"));
+    }
+
+    [Fact]
+    public void NullDefaultWithoutNullableAnnotation_IsStillReported()
+    {
+        // NRT 未开启时 `string value = null` 的注解是 None——那种写法里"null 是不是合法值"
+        // 在类型上没有表达，本库按必传处理（拒绝）更安全。这条钉住那个边界，
+        // 免得后来的人把判据简化成"默认值是 null 就放行"。
+        var error = Assert.Single(OrielDiagnostics("""
+            #nullable disable
+
+            public static class Commands
+            {
+                [OrielWeb.Ipc.OrielCommand("t.opt")]
+                public static string Ok(string value = null) => "ok";
+            }
+            """));
+
+        Assert.Equal("ORIELWEB110", error.Id);
+    }
 }

@@ -325,10 +325,47 @@ internal sealed partial class CoreWebView2CustomSchemeRegistration : ICoreWebVie
         return HResult.S_OK;
     }
 
-    public int GetAllowedOrigins(out int count, out nint allowedOrigins)
+    /// <summary>
+    /// 原生侧读回本 scheme 的 CORS 放行来源。
+    /// </summary>
+    /// <param name="count">来源条数。</param>
+    /// <param name="allowedOrigins"><c>LPWSTR*</c>：字符串指针数组，由本方法分配。</param>
+    /// <returns><c>S_OK</c>。</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>所有权与 <see cref="CoreWebView2EnvironmentOptions.GetCustomSchemeRegistrations"/> 同一约定</b>：数组本身与每个字符串
+    /// 都用 <c>CoTaskMemAlloc</c> 分配，调用方（WebView2）负责 <c>CoTaskMemFree</c> 数组并逐个释放
+    /// 字符串。<see cref="Marshal.StringToCoTaskMemUni"/> 的分配器正是 <c>CoTaskMemAlloc</c>，
+    /// 所以这一对是配套的。
+    /// </para>
+    /// <para>
+    /// <b>此前这个方法是个 stub</b>（永远回 <c>count = 0</c>，不看 <c>_allowedOrigins</c>）：那时
+    /// origins 刻意留空（见 <c>Win32AssetScheme</c>），所以"回读 0"碰巧是对的，看不出问题。
+    /// 但 <see cref="SetAllowedOrigins(string[])"/> 已经把值存下来了——任何将来用它的代码都会撞上
+    /// "设了不生效、且没有任何报错"。接口既然声明了，就按契约实现。
+    /// </para>
+    /// <para>
+    /// 空列表回 <c>count = 0</c> / 指针 <c>0</c>：这是"没有放行任何跨源来源"的正确表达，
+    /// 也让原生侧不必去释放一个空数组。
+    /// </para>
+    /// </remarks>
+    public unsafe int GetAllowedOrigins(out int count, out nint allowedOrigins)
     {
-        count = 0;
+        count = _allowedOrigins.Length;
         allowedOrigins = 0;
+
+        if (count == 0)
+        {
+            return HResult.S_OK;
+        }
+
+        nint* array = (nint*)Marshal.AllocCoTaskMem(sizeof(nint) * count);
+        for (int i = 0; i < count; i++)
+        {
+            array[i] = Marshal.StringToCoTaskMemUni(_allowedOrigins[i]);
+        }
+
+        allowedOrigins = (nint)array;
         return HResult.S_OK;
     }
 

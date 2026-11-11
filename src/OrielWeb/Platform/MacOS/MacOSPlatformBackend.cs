@@ -609,12 +609,28 @@ internal sealed unsafe class MacOSPlatformBackend : IPlatformBackend
     public bool PostToMainThread(Action action)
     {
         MainThreadQueue.Enqueue(action);
+
         // pump 帮助实例常驻，selector 在主线程排空队列。
         // objc_msgSend 到 nil（pump helper 没建出来）是静默 no-op——队列里的动作永远不会被排空，
         // 所以这里显式判空并留痕，而不是让"投了但没生效"悄悄发生。
+        //
+        // 文案要说清"这是什么 / 为什么会这样 / 影响 / 怎么办"（2026-11-11 评审 L8 的文案项）：
+        // 原文只说"pump helper 不可用"，读的人既不知道那是什么，也不知道该去查什么。
         if (_pumpHelper == 0)
         {
-            OrielDiagnostics.Report("[OrielWeb] PostToMainThread 失败：pump helper 不可用，回调已被丢弃。");
+            // 与 Linux 同一语义：回收**刚入队的那一个**（按引用相等），而不是留在队列里。
+            // 留着虽不致命（pump 不工作，队列本来就不会被排空），但会让"队列长度"这个
+            // 诊断信号失真，也让"投递进去没有"含糊——而 return false 已经表明投失败了。
+            MainThreadDispatchQueue.TryRemoveOne(MainThreadQueue, action);
+
+            OrielDiagnostics.Report(
+                "[OrielWeb] PostToMainThread 失败：用于排空主线程队列的 ObjC 帮助对象（pump helper）" +
+                "没有创建出来，本次回调不会被调度。\n" +
+                "  影响：命令里 await 之后的续体不会回到主线程——后续若触碰 UI/平台对象，行为未定义" +
+                "（多为静默错位，严重时崩在 ObjC 调用上）。\n" +
+                "  常见原因：ObjC 类注册失败或 alloc/init 返回 nil（MacOSObjCClasses.CreatePumpHelper），" +
+                "通常意味着后端不是在主线程构造的，或 ObjC 运行时尚未就绪。\n" +
+                "  排查：确认 OrielApp.Run() 在主线程调用，且启动早期没有别的代码抢先占用 ObjC 运行时。");
             return false;
         }
 

@@ -72,11 +72,25 @@ B0–B24 全部完成，从 `0.4.0` 起分批发版。分阶段清单与每批�
   并同步 API.md 与 CHANGELOG 的破坏性变更段。
 - 验收：`PlatformCommandTests` 的 `WriteImagePath_*` 三条 + `HasPathScopeFor_DistinguishesDeclaredFromUndeclared`。
 
-#### 生成器诊断（0.6.0）
-- 泛型命令方法应被拒绝（现在会生成出跑不通的代码）；缺省参数要么支持（取
-  `ExplicitDefaultValue`）要么明确拒绝；`CancellationToken` 参数现在误导为"需要 JSON 上下文"，
-  应改成编译期明确报错。
-- 验收：`GeneratorDiagnosticsTests` 三组新用例 + `AnalyzerReleases.Unshipped.md` 登记新 ID。
+#### 生成器诊断
+- **已完成**：
+  - `ORIELWEB108` 泛型命令方法。此前会生成引用 `T` 的代码，而路由类没有类型参数 →
+    报错定位在 `.g.cs`，用户看不到自己那行。而且泛型在运行期也没有类型实参来源
+    （IPC 参数是 JSON）——必须由生成器拦下，且**不生成路由**（与 106/107 不同：
+    那两条是"注册成功但不可达"，仍要生成以避免次生错误；这条生成出来的代码根本编译不过）。
+  - `ORIELWEB109` `CancellationToken` 参数。此前落到泛型读取路径，报的是"缺少 JSON 上下文"——
+    那条提示把人引向"去补一个序列化上下文"，而真正的问题是类型不支持。
+    误导性诊断比没有诊断更费时间。选拒绝而不是实现：贯通取消语义是 API 设计
+    （见下方"取消令牌"条），在贯通之前收下参数只会让人以为取消有效。
+  - `ORIELWEB110` C# 默认值。**选拒绝而不是支持**：支持需要让生成的读取代码区分
+    "参数缺失"与"传了等于默认值的值"，对值类型要引入 `int?` 中间态再填源码字面量，
+    等于在同一件事上并存两种"可选"表达（`int? a` 与 `int a = 5`），收益只是省一次签名改动。
+    关键是不能静默——只忽略默认值的话，页面不传时得到 `default(T)`，而宿主代码里写着 `= 5`。
+    **例外**：`int? a = null` / `string? a = null` 放行（语义与 `int? a` 一致，
+    报错只会逼人删掉无害写法）；NRT 未开启的 `string a = null` 仍报（类型上没表达 null 合法）。
+- 验收：`GeneratorDiagnosticsTests` 新增 5 组用例（108 一条 + 109 一条 + 110 两条 +
+  可空默认值放行两条 + NRT 边界一条）；`AnalyzerReleases.Unshipped.md` 已登记
+  108/109/110（未登记会被 RS2000 挡在构建期——这正是它的作用）。
 
 #### Tauri 类型导出与缺失成员披露
 - **已完成（0.6.0 批次的第一项）**：`event.d.ts` 补齐 `Event<T>` / `EventCallback<T>` /
@@ -106,11 +120,37 @@ B0–B24 全部完成，从 `0.4.0` 起分批发版。分阶段清单与每批�
     （解引用空指针在 `[UnmanagedCallersOnly]` 帧里等于进程直接消失）、
     `g_idle_add_full` 失败时按引用回收**刚入队**的动作而不是摘队首。
     测试见 `WindowsBackendLifetimeTests` 与 `LinuxMainThreadQueueTests`。
-  - 剩下的：DComposition vtable 顺序、`GetAllowedOrigins` 回读、macOS pump 诊断文案。
+  - **已完成**（2026-11-11）：`IDCompositionVisual` 的 vtable 槽位顺序——原声明与
+    `dcomp.h` 完全不符（写成了不存在的 `SetOffset(float,float)`），真实顺序是
+    `SetOffsetX(动画对象) → SetOffsetX(float) → SetOffsetY(动画对象) → SetOffsetY(float) → …`。
+    COM 早期绑定按序号寻址，错一个槽不报错、只做错事。测试按 `MetadataToken` 钉住前 4 槽。
+  - **已完成**（2026-11-11）：`CoreWebView2CustomSchemeRegistration.GetAllowedOrigins` 的回读——
+    它此前是个 stub（永远回 `count = 0`、不看 `_allowedOrigins`），而 `SetAllowedOrigins`
+    已经把值存下来了。之所以一直没暴露：origins 目前刻意留空（`Win32AssetScheme` 里页面本身
+    就在该 scheme 下，同源请求不需要 CORS 条目），于是"回读 0"碰巧是对的。
+    这类"实现了但没生效"的属性最麻烦的是**没有任何报错**——将来谁用它，症状是
+    "设了跨源放行却依然被 CORS 拦"，排查方向会被引到别处。
+    按契约实现（`CoTaskMemAlloc` 数组 + 每个字符串，所有权转移给调用方），
+    测试照着调用方的义务真的释放一遍。
+  - **已完成**（2026-11-11）：macOS pump 诊断文案——原文只说"pump helper 不可用"，
+    读的人既不知道那是什么、也不知道该去查什么。现在写清了"这是什么 / 影响 / 常见原因 /
+    怎么排查"。顺带对齐语义：失败时回收刚入队的动作（与 Linux 一致；macOS 此前**根本不回收**）。
+    回收逻辑抽成 `Platform/MainThreadDispatchQueue.cs` 共享（两边各写一份就会有一边漏边界）。
+  - 剩下的：无（这一组全部收口）。
 
 #### 工程化（CI / 打包 / 版本闸）
-- README 的 arm64 行：降级为"IL 交叉编译"或补 `windows-11-arm` job（按证据规则二选一）；
-  `verify-matrix.ps1` 增强为校验 job 的 RID 覆盖。
+- **已完成**（2026-11-11）：README 的 Windows arm64 按证据规则**降级**为
+  "⚠️ 仅 IL 交叉编译；未在 arm64 真机运行"。此前它与 x64 合并声明为"✅ 真机验证"，
+  而 `compile-windows` / `smoke-windows` 都只跑 `win-x64`——那一格是空的。
+  这是 `verify-matrix.ps1` 增强后**首次运行就抓到的**。
+  若要升级为真机验证：补一个跑在 `windows-11-arm` 上的 job 并写进那一行的证据列。
+- **已完成**（2026-11-11）：`verify-matrix.ps1` 增强了三件事——
+  ① `smoke-*` 的名字平台/架构必须与 `runs-on` 一致（`compile-*` 是交叉编译，不受此约束：
+  `compile-macos` 刻意跑在 windows-latest 上）；
+  ② README 行声明的架构必须被该行引用的 job 真正覆盖（**引用存在 ≠ 覆盖对**）；
+  ③ 声称"真机验证"却没有 `ci:` 引用的行直接失败。
+  顺带修掉三处 `("A{0}" + "B" -f $x)` 的 PowerShell 优先级陷阱——那样写的 `-f`
+  只作用于第二个字符串，错误消息里会留下字面的 `{0}`，等于丢掉排查线索。
 - Linux Wayland 的证据列改指 `CROSS-PLATFORM-VERIFICATION.md` 的 VM 记录，不再只挂 CI job。
 - **已完成**：`release.yml` 的 demo/publish 补 `timeout-minutes`（30 / 20），
   Linux 的 apt 步骤与 ci.yml 逐字对齐（外层 `timeout` + 三次重试）——
