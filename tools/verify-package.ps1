@@ -31,15 +31,26 @@
 .PARAMETER NoPack
     跳过 dotnet pack，直接用 dist/nuget 里现成的包（迭代调试用）。
 
+.PARAMETER Aot
+    额外跑一遍「NuGet 包消费 + 原生 AOT 发布」直测（场景 E）。
+
+    默认关闭：它要跑一次完整的 AOT 发布（拉 NativeAOT 运行时包 + 链接），
+    比前四个场景加起来还慢；而它验证的风险（裁剪后嵌入资源还在不在）
+    是**平台无关**的 IL/裁剪行为，在一个平台上直测就够。
+    CI 里只在 Windows 的 test job 上开它（那台的 MSVC 工具链是自带的）。
+
 .PARAMETER KeepTemp
     保留临时目录，便于查看中间产物。
 
 .EXAMPLE
     pwsh tools/verify-package.ps1
+.EXAMPLE
+    pwsh tools/verify-package.ps1 -Aot
 #>
 [CmdletBinding()]
 param(
     [switch] $NoPack,
+    [switch] $Aot,
     [switch] $KeepTemp
 )
 
@@ -338,6 +349,112 @@ try {
 
     Test-Assert (-not ($c.Resources | Where-Object { $_ -like 'OrielMinimal.wwwroot*' })) `
         '关掉之后一条 wwwroot 资源都不嵌入'
+
+    # ── 场景 D：路径含空格与中文 ────────────────────────────────────
+    #
+    # 目标是"消费方的工程放在哪里有影响吗"。资源名由 targets 里的 LogicalName 决定
+    # （固定前缀 OrielMinimal.wwwroot），与工程目录**无关**——所以这一格的期望就是
+    # "与场景 A 逐字符一致"。真出事的地方在于路径里的空格与非 ASCII 字符穿过了
+    # MSBuild 的 glob / %(RecursiveDir) / 临时文件路径，而那种错的表现往往是
+    # "少嵌了某个文件"或"资源名里混进了目录片段"，都不是显式报错。
+    #
+    # 为什么放在仓库内的 obj/ 下而不是 %TEMP%：见 $temp 的说明（要靠仓库根的
+    # Directory.Build.props 提供 $(Version)）。中文与空格加在这一层即可。
+    Write-Host ''
+    Write-Host '--- 7. 场景 D：工程路径含空格与中文 ---' -ForegroundColor Cyan
+    $oddDir = Join-Path $temp '带 空格 的目录'
+    New-SampleCopy -TargetDir $oddDir
+
+    Write-Host "  工程路径：$oddDir" -ForegroundColor DarkGray
+
+    $d = Invoke-SampleBuild -ProjectDir $oddDir -Label '场景 D'
+    Show-Resources -Names $d.Resources
+
+    # 最强的一条：与场景 A 的资源名集合**逐字符一致**（顺序无关）。
+    $onlyInA = @(Compare-Object $a.Resources $d.Resources |
+        Where-Object { $_.SideIndicator -eq '<=' } | ForEach-Object { $_.InputObject })
+    $onlyInD = @(Compare-Object $a.Resources $d.Resources |
+        Where-Object { $_.SideIndicator -eq '=>' } | ForEach-Object { $_.InputObject })
+
+    Test-Assert (($onlyInA.Count -eq 0) -and ($onlyInD.Count -eq 0)) `
+        '路径含空格与中文时，资源名与场景 A 逐字符一致'
+    if ($onlyInA.Count -gt 0 -or $onlyInD.Count -gt 0) {
+        Write-Host "         场景 A 独有：$($onlyInA -join '、')" -ForegroundColor DarkGray
+        Write-Host "         场景 D 独有：$($onlyInD -join '、')" -ForegroundColor DarkGray
+    }
+
+    Test-Assert ($d.Resources -contains 'OrielMinimal.wwwroot/app.min.js') `
+        '含点文件名在非 ASCII 路径下仍拿到显式分隔符资源名'
+    Test-Assert (-not ($d.RawResources | Where-Object { $_ -like '*\*' })) `
+        '非 ASCII 路径下资源名依然不含反斜杠'
+
+    # ── 场景 E：NuGet 包消费 + 原生 AOT 发布（可选）──────────────────
+    if ($Aot) {
+        Write-Host ''
+        Write-Host '--- 8. 场景 E：NuGet 包消费 + 原生 AOT 发布 ---' -ForegroundColor Cyan
+
+        # AOT 产物是**原生可执行文件**，不能再用 `dotnet <dll>` 起（场景 A 那条路）。
+        # 所以这里要真的跑一次 publish，并对原生产物断言。
+        $aotRid = if ($IsWindows) { 'win-x64' }
+        elseif ($IsMacOS) {
+            if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'osx-arm64' } else { 'osx-x64' }
+        }
+        else { 'linux-x64' }
+
+        $aotDir = Join-Path $temp 'aot'
+        $aotLog = (& dotnet publish $sample -c Release -r $aotRid -o $aotDir 2>&1 | Out-String)
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host $aotLog
+            throw "场景 E：AOT 发布失败（退出码 $LASTEXITCODE，RID $aotRid）。"
+        }
+
+        $aotExe = Join-Path $aotDir $(if ($IsWindows) { 'OrielMinimal.exe' } else { 'OrielMinimal' })
+        Test-Assert (Test-Path $aotExe) "AOT 产物存在（$aotRid）"
+
+        if (Test-Path $aotExe) {
+            # **这一格的核心**：裁剪后的原生产物里，嵌入资源必须与托管构建逐字符一致。
+            # 少了哪一个，消费方的页面就在运行期 404（而不是构建期报错）——
+            # 那正是这份 targets 存在的意义所在。
+            #
+            # **为什么经文件中转，而不是 `@(& $aotExe --list-resources)`**：
+            # 样例是 `OutputType=WinExe`，其 PE Subsystem 是 2（GUI）而不是 3（Console）。
+            # 那种进程没有自己的控制台，`Console.WriteLine` 的 stdout 在"变量捕获"这条
+            # 路径上会丢——2026-11-11 实测：同一个 exe 直接跑能看到 4 行，`@(& …)` 得到 0 条，
+            # 而 `| Set-Content` / `| Out-String` / `cmd /c` 都能拿到。托管构建那条
+            # （`dotnet <dll>`）不受影响，因为 `dotnet` 自己是 Console 子系统的 apphost。
+            # 结论：对 WinExe 的 AOT 产物不要依赖 stdout 捕获，落到文件再读回来最稳。
+            $listFile = Join-Path $aotDir 'resources.txt'
+            & $aotExe --list-resources | Set-Content -Path $listFile -Encoding utf8
+
+            if ($LASTEXITCODE -ne 0) {
+                throw "场景 E：AOT 产物运行失败（退出码 $LASTEXITCODE）。"
+            }
+
+            $aotResources = @(ConvertTo-NormalizedNames `
+                    -Names @(Get-Content $listFile -Encoding utf8 | Where-Object { $_ -match '\S' }))
+            Show-Resources -Names $aotResources
+
+            # 防"两边都空"的假通过：托管构建那边必须有资源，否则这条断言毫无意义。
+            Test-Assert ($a.Resources.Count -gt 0) '托管构建确实有嵌入资源（下面两条比较才有意义）'
+            Test-Assert ($aotResources.Count -gt 0) `
+                'AOT 产物能被问出嵌入资源（不是"两边都空"式的假通过）'
+
+            $missingInAot = @($a.Resources | Where-Object { $_ -notin $aotResources })
+            $extraInAot = @($aotResources | Where-Object { $_ -notin $a.Resources })
+
+            Test-Assert ($missingInAot.Count -eq 0) `
+                'AOT 产物里的嵌入资源一个都不少（裁剪没有把 wwwroot 带走）'
+            Test-Assert ($extraInAot.Count -eq 0) `
+                'AOT 产物里也没有多出资源（targets 不会在 publish 路径上重复嵌入）'
+
+            if ($missingInAot.Count -gt 0) {
+                Write-Host "         AOT 缺失：$($missingInAot -join '、')" -ForegroundColor DarkGray
+            }
+            if ($extraInAot.Count -gt 0) {
+                Write-Host "         AOT 多出：$($extraInAot -join '、')" -ForegroundColor DarkGray
+            }
+        }
+    }
 }
 finally {
     if (-not $KeepTemp) {

@@ -134,11 +134,25 @@ jobs:
       - name: Package build logic (in-package MSBuild targets)
         # 包内 buildTransitive/OrielWeb.targets 的消费链路：打包 → 零配置消费工程 → 断言
         # wwwroot 资源名（含 app.min.js 这类含点文件名）→ 自带 LogicalName 的自声明不重复嵌入
-        # → 旧写法（不带 LogicalName）必须在构建期被 ORIELWEB001 拦下 → 可显式关掉。
+        # → 旧写法（不带 LogicalName）必须在构建期被 ORIELWEB001 拦下 → 可显式关掉
+        # → 工程路径含空格与中文时资源名不变。
         # 不接进来的话，改动 targets 只能等发布后在某个消费方那里以"页面 404 白屏"的形式暴露——
         # 那正是这份 targets 要消灭的静默失败。脚本自带断言与退出码。
         shell: pwsh
         run: pwsh tools/verify-package.ps1
+
+      - name: Package consumption under Native AOT (Windows only)
+        # 上一步只 `dotnet build`：**AOT 发布那条路没被验证**，而裁剪会不会把嵌入资源
+        # 带走正是它要回答的问题（少了谁，消费方的页面在运行期 404，而不是构建期报错）。
+        #
+        # 为什么只在 Windows：MSVC 工具链是 runner 自带的；Linux 的 test job 没装
+        # clang/zlib1g-dev（那是 compile-linux 才装的），在这里补装等于给每一步都加时间。
+        # 而它验证的风险是**平台无关**的 IL/裁剪行为，一个平台直测就够。
+        #
+        # `-NoPack` 复用上一步刚打出来的包，省一次 pack。
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh tools/verify-package.ps1 -NoPack -Aot
 
       - name: Platform matrix points at real jobs
         # README 的平台矩阵用 `ci:<job>` 标注每行状态的证据。引用一个不存在的 job 就红——

@@ -151,17 +151,39 @@ B0–B24 全部完成，从 `0.4.0` 起分批发版。分阶段清单与每批�
   ③ 声称"真机验证"却没有 `ci:` 引用的行直接失败。
   顺带修掉三处 `("A{0}" + "B" -f $x)` 的 PowerShell 优先级陷阱——那样写的 `-f`
   只作用于第二个字符串，错误消息里会留下字面的 `{0}`，等于丢掉排查线索。
-- Linux Wayland 的证据列改指 `CROSS-PLATFORM-VERIFICATION.md` 的 VM 记录，不再只挂 CI job。
+- **已完成**（2026-11-11）：`verify-package.ps1` 补了两个场景——
+  ① **场景 D 工程路径含空格与中文**：资源名由 targets 的 LogicalName 决定（固定前缀），
+  与工程目录无关，所以期望是"与场景 A 逐字符一致"；真出事的地方是路径里的空格与非 ASCII
+  穿过 MSBuild 的 glob / `%(RecursiveDir)`，而那种错的表现是"少嵌了某个文件"，不是显式报错。
+  ② **场景 E NuGet 包消费 + 原生 AOT 发布**（`-Aot`，默认关）：上一步只 `dotnet build`，
+  **AOT 发布那条路此前没被验证**，而裁剪会不会把嵌入资源带走正是它要回答的问题。
+  断言 AOT 产物问出来的资源名与托管构建**逐字符一致**（首次跑通即证明：4 条资源一条不少）。
+  CI 里只在 Windows 的 test job 开它：MSVC 是 runner 自带的，而 Linux 的 test job
+  没装 clang/zlib1g-dev（那是 compile-linux 才装的）；这个风险是平台无关的 IL/裁剪行为，
+  一个平台直测就够。
+  - **踩到一个坑并记录**：样例是 `OutputType=WinExe`（PE Subsystem=2，GUI 而非 Console），
+    它的 AOT 产物在"变量捕获"路径上 stdout 会丢——同一个 exe 直接在控制台跑能看到 4 行，
+    而 `@(& exe --list-resources)` 得到 0 条；`| Set-Content` / `| Out-String` / `cmd /c`
+    都能拿到。**第一版断言因此假红**，看起来像"裁剪把 wwwroot 带走了"。
+    现在场景 E 经文件中转再读回，并加了两条"两边都非空"的守卫，防止"两边都空"式的假通过。
+    这个坑写进了 `samples/OrielMinimal/Program.cs` 的无头通道注释（那是手工验证入口），
+    免得下一个人重踩。
+- **已完成**（2026-11-11）：Linux Wayland 的证据列改指 `CROSS-PLATFORM-VERIFICATION.md`
+  的 VM 记录（Ubuntu 22.04 Wayland，19/19 PASS），并如实标注 CI 那两条跑在 Xvfb、
+  **只覆盖 X11**——此前那一行写着"X11 与 Wayland 双后端"却只挂 CI job，
+  与 Windows arm64 那一格同类的"引用存在但覆盖不对"。
 - **已完成**：`release.yml` 的 demo/publish 补 `timeout-minutes`（30 / 20），
   Linux 的 apt 步骤与 ci.yml 逐字对齐（外层 `timeout` + 三次重试）——
   release 是串行不取消的，卡住的那次会挡住后面所有 tag。
 - **已完成**：版本闸加入 `packages/api` 的三处比对（`package.json` +
   `package-lock.json` 的顶层与 `packages[""]`）。此前那个包的版本完全没被这条链路校验过，
   0.5.5 发版时发现它与主包只是"碰巧一致"。
-- `verify-package.ps1` 补带空格/中文路径场景 + "NuGet 包消费 + AOT 发布"直测。
 - **已完成**（2026-11-11）：fs 句柄表跨窗口共享在 API.md 记为已知设计（S2）——
   在 §4 威胁模型表后新增"刻意不隔离的东西"一节，写清了"为什么这样 / 影响与边界 /
   真要隔离怎么做"。生成器增量缓存优化（S5）列为性能项。
+
+> 这一节至此**全部收口**：剩下的是上面"平台细节"里 macOS pump 之外没有别的，
+> 以及 `clipboard.writeImage` 的无条件强制（属 0.6.0 的破坏性变更批次，见上）。
 
 ## 待真机验证清单
 

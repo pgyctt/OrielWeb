@@ -15,6 +15,15 @@ using OrielWeb;
 //        嵌套目录（assets/img/logo.svg）必须保留 '/'。
 //      建窗要图形会话，CI 上没有，所以自检通道必须能无头跑。
 //
+//      **注意本工程是 WinExe（PE Subsystem = 2，GUI 而不是 Console）**：
+//      托管构建（`dotnet OrielMinimal.dll --list-resources`）的 stdout 一切正常，
+//      但**原生 AOT 产物**的 stdout 在"被变量捕获"这条路径上会丢——2026-11-11 实测：
+//      同一个 exe 直接在控制台里跑能看到全部资源名，而 `@(& OrielMinimal.exe --list-resources)`
+//      得到 0 条；`| Set-Content` / `| Out-String` / `cmd /c` 则都能拿到。
+//      这是 GUI 子系统进程没有自己控制台导致的，与本库无关。
+//      所以 verify-package.ps1 的场景 E（AOT 直测）刻意经文件中转再读回。
+//      手工验证 AOT 产物时请照做，否则会误以为"资源没嵌进去"。
+//
 // 这个工程刻意**不进 OrielWeb.slnx**：它引用的是 NuGet 包而不是项目，
 // 需要先 dotnet pack 出本地包才能还原。驱动它的是 tools/verify-package.ps1。
 
