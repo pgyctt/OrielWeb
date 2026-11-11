@@ -657,6 +657,8 @@ window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
 | 默认拒绝 | 两条都不命中即拒绝 |
 | `win.` 前缀始终放行 | 那是无边框窗口的标题栏按钮与拖动，只操作自己那个窗口，不是"能力"；它们由库内建，自定义同名命令会被遮蔽。**应用自己的命令请避开这个前缀**。`tray.` 前缀同理 |
 | **`window.` 族只放行一组** | 它比 `win.*` 大得多（有 `window.setIcon`、`window.setSkipTaskbar` 这类真正的能力），所以**不整族放行**；只放行下面 **31 条**，其余一律要显式 `Allow`。逐条理由见 `OrielCapabilityRules.AlwaysAllowedWindowCommands`，那里每个分组都写了"为什么它进得来"<br>① 标题栏按钮：`minimize` / `toggleMaximize` / `toggleFullscreen` / `toggleOnTop` / `close` / `destroy`<br>② 拖动：`drag` / `dragStart` / `dragTo` / `dragEnd`<br>③ 与 `win.*` 同源的两个入口：`pickFile` / `contextMenu`<br>④ 只读状态查询：`isVisible` / `isMaximized` / `isMinimized` / `isFocused` / `isFullscreen` / `isAlwaysOnTop` / `isDecorated` / `isResizable` / `isMaximizable` / `isMinimizable` / `isClosable` / `isEnabled` / `theme` / `title`<br>⑤ 显示器查询：`currentMonitor` / `primaryMonitor` / `availableMonitors` / `monitorFromPoint` / `cursorPosition`（屏幕布局与光标位置是页面本来就能感知的环境信息，不读任何窗口内容） |
+| **放行集的边界 = 发起窗口** | 上面那些"始终放行"的理由全是"只影响调用方自己那个窗口"，而 `window.*` / `menu.*` 支持 `label` 参数寻址**任意已注册窗口**。所以当 `label` 与发起者不一致时，命令**不走放行分支**，落入正常能力判定（该 `Allow` 就 `Allow`，该拒就拒）。缺省 `label`（自绘标题栏的写法）与写自己 label 的行为不变。2026-11-11 评审 H2：此前放行分支在一切判定之前返回，于是零配置的 Release 应用就能销毁/关闭/改标题到别个窗口上，或给他窗装一个含 `Quit` role 的菜单（那绕过了 `app.exit` 的显式授权） |
+| **`Deny` 与保留集的关系** | `Deny("*")` **收不紧**上面那些保留命令——放行分支先于 allow/deny 判定返回。这是刻意的出口：拒掉它们会让无边框窗口变成"关不掉的窗口"。要真正禁掉这些入口，只能不用自绘标题栏（或不用 `window.*` 族）；保留集只覆盖发起者自己的窗口，跨窗口方向已经按上一行收口 |
 | **`event.emit` 不放行** | 库内建但**不**始终放行的命令之一。它让一个窗口的页面能驱动**另一个窗口**的行为（跨窗口指令通道），而自绘标题栏完全不依赖它——没有开后门的理由。要用必须显式 `Allow("event.emit")` 或 `Allow("event.*")`。注意它只保留了这一个**名字**，`event.` 前缀本身不保留 |
 | **`app.exit` / `app.show` / `app.hide` 不放行** | 同族里的只读元信息（`app.getName` 等）整组放行，但这三条会改变应用状态：退出、隐藏全部窗口。它们不是"页面本该有的信息"，而是**应用得点头的能力**——页面能退出应用这件事，不该因为名字在 `app.` 族里就默认成立。要用必须显式 `Allow("app.exit")` 等（Debug 构建不受影响，全放行） |
 | 只管 `invoke` | 单向的 `postMessage` 没有命令名，由来源与令牌两层覆盖 |
@@ -773,6 +775,9 @@ throw new OrielIpcException("不存在 id=42 的待办事项。")
 | 入站消息规模 | 单条上限 **1 MiB**（字符数）。超限的入站消息**不解析即丢弃**，经 `IpcRejected` 的 `Size` 层上报——页面侧收不到回执（`id` 就在那份被丢弃的 JSON 里）。出站方向不设闸：回执 JSON 由宿主自己构造，规模由宿主负责 |
 | 取消 | **没有取消令牌**：`invoke` / `EvaluateJs` 发出去就只能等它回来（页面侧 30 秒超时是唯一出路）。命令函数也拿不到取消信号（生成器不注入 `CancellationToken`）——需要可中断的长活要么自己维护取消标志，要么拆成多次调用 |
 | 可信页面 DoS | **不在防线内**：可信页面可以把主线程堵住（自己写死循环、或让命令返回一个巨大的对象）。这不是门禁能解决的问题，只能靠页面自身与命令实现的纪律 |
+| 整读命令的体积 | `fs.readFile` / `fs.readTextFile` 与 `fs.read` 共用 **8 MiB** 上限，超限回 `invalid_argument` 并指向 `fs.open` + `fs.read` 分块读。**不静默截断**：截断会让调用方以为读到了完整内容（2026-11-11 评审 L1） |
+| 错误消息里的宿主路径 | 内建命令的异常**原样透传**（"应用尚未运行""托盘不存在"是页面唯一能看到的线索），但 `IOException` / `UnauthorizedAccessException` / `SecurityException` 这三类被净化成"类型名 + 见宿主诊断输出"——它们的 Message 由运行时拼装、带宿主绝对路径，透传等于把"探测某个路径是否存在"的通道开到错误消息里（L2） |
+| 符号链接 | 所有路径判定（`fs.*` / `opener.*` / `asset.read` / `tray` 图标）都在**逐段解析符号链接之后**做，判的是真实目标。scope 目录里一个指向外部的链接不会成为越界通道；断链一律按"不存在"处理 |
 
 #### 逐消息来源校验的逐平台强度
 
@@ -963,6 +968,13 @@ builder.SingleInstance("com.example.myapp", win => { /* 首实例被唤醒 */ })
 **差别（如实标注，不假装一致）**：图标在页面侧给**路径**而不是 `JsImage` 的多态形态（解码在宿主侧的
 `OrielImageCodec` 完成，页面不必传字节）；没有 `setTempDirPath`（那是 Tauri 的 AppIndicator 落盘路径
 带来的约束，本库走 `GtkStatusIcon` 直吃 pixbuf，不需要它）。
+
+> **`iconPath` 的边界：只能在可执行文件目录内**（2026-11-11 评审 M4）。相对路径按可执行文件目录
+> 解析，绝对路径（以及符号链接解析之后的结果）也必须落在同一个目录里；越界或文件不存在一律回
+> `invalid_argument`，并且回执文案**不含宿主的绝对路径**——回显等于把"探测某个路径是否存在"
+> 的通道开到错误消息里（`tray.*` 是保留前缀，零授权可调，"不触及文件系统"的放行理由必须成立）。
+> 收口不影响正常用法：应用图标本来就在程序目录里。目录内**解码失败**仍是静默回落平台默认图标
+> （那是内容问题，不是路径问题）。
 
 > **`tray.` 是库保留前缀**，与 `win.` 一样始终放行、不受能力配置约束（它只操作本应用自己的托盘，
 > 不是"能力"）。应用自己的命令请避开这两个前缀。
@@ -1445,6 +1457,27 @@ import { isEnabled, enable } from '@orielweb/api/autostart';
 | `opener.revealItemInDir` | 会打开文件管理器 |
 | `notification.*` | 能弹系统通知（可被用来伪装成别的应用） |
 | `autostart.*` | 改的是系统状态（往注册表/LaunchAgent/XDG autostart 里写东西） |
+
+**`openPath` / `revealItemInDir` 还要声明路径 scope**（第 4 节的 scope 那套，与 `fs.*` 同一个形状）：
+
+```csharp
+.UseCapabilities(c => c
+    .Allow("opener.openUrl")
+    .Allow("opener.openPath",        s => s.AllowPath("$APPDATA/downloads/**"))
+    .Allow("opener.revealItemInDir", s => s.AllowPath("$APPDATA/exports/**")))
+```
+
+- **只声明命令、不给 scope 等于"什么都不允许"**（不是"不限制"）：越界路径回 `path_not_allowed`，
+  未配置能力时 Release 回 `not_allowed`。
+- 判 scope 用的是**逐段解析符号链接之后的真实路径**，所以 scope 目录里放一个指向外部的链接
+  不构成绕过（与 `fs.*` 共用 `OrielPathGate` 一套实现）。
+- 相对路径按进程当前目录解析；scope 模式里的路径变量（`$APPDATA` / `$HOME` …）与 `fs.*` 同一张表。
+- 2026-11-11 评审 H1：此前 `openPath` 只判"绝对路径 + 存在"，于是 `Allow("opener.openPath")`
+  一次就等于"拉起机器上任意已存在的 `.exe/.bat/.hta`"——对可执行文件来说"用默认程序打开"
+  就是执行它。配合 `fs.*` 往 scope 内写一个 `.bat` 再 `openPath`，是一条完整的 RCE 链。
+
+Tauri 的 `plugin-opener` 同样有 scope 配置（`opener:allow-open-path` 自带 `allow`/`deny`
+路径数组），形状与这里一致——迁移时那份配置可以照搬。
 
 与 Tauri 的差别：
 

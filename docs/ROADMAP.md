@@ -6,6 +6,11 @@
 > （`CODE-REVIEW-PLAN-2026-10-23`、`TAURI2-ALIGNMENT-AUDIT-2026-10-18`、
 > `TAURI2-ALIGNMENT-EXECUTION-PLAN-2026-10-18`、`TAURI2-ALIGNMENT-DECISIONS-2026-10-20`）
 > 已移除：它们记录的是"怎么排的"，而结论已经沉淀到 API.md 的对应小节。
+>
+> 2026-11-11 那轮同理：`CODE-REVIEW-2026-11-11` 与 `OPTIMIZATION-PLAN` 的 P0/P1 项
+> （T1–T11）已随 `0.5.5` 落地，安全语义的结论沉淀进 API.md 第 4/6 节的威胁模型表，
+> 互操作层的真机待验项并入下面「待真机验证清单」，未完成的部分（`clipboard.writeImage`
+> 的路径 scope、P2 的 T12–T15）并入「已知缺口」。两份文件随之移除。
 
 ## API 与 Tauri 2 对齐（已完成）
 
@@ -54,6 +59,44 @@ B0–B24 全部完成，从 `0.4.0` 起分批发版。分阶段清单与每批�
 - 现状：三平台响应只有 `Content-Type`，没有 `Cache-Control` / `ETag` / `Last-Modified`。Windows（`CreateWebResourceResponse` 的 headers 串）与 macOS（`headerFields` 字典）都能加，**Linux 加不了**——`webkit_uri_scheme_request_finish` 的签名里没有响应头参数，要换 WebKitGTK 2.40+ 的 `finish_with_response`。
 - 影响：缓存行为目前完全由引擎的默认策略决定，库层没有契约。
 - 为什么没顺手做：为一个三平台不一致的显式头去动其中两个平台，收益低于把"不设缓存头是隐式行为"写进 API.md（已写）。
+
+#### `clipboard.writeImage({ path })` 没有路径 scope
+- 现状：这条命令的 `path` 分支直接 `File.ReadAllBytes(OrielPathResolver.Resolve(path))`，
+  只有命令授权、没有路径 scope（`fs.*` / `opener.*` / `asset.read` 三者都有）。
+- 影响：`Allow("clipboard.writeImage")` 之后页面能读机器上任意图片文件。
+  比 `tray.*` 的 `iconPath` 轻一档——那个是**零授权可调**（0.5.5 已按 M4 收口），
+  而这个需要显式授权，且"写一张自己的图"本来就是常见用法——但缺口的形状相同。
+- 为什么没顺手做：0.5.5 是安全修复批次，给一条已有 API 加路径 scope 会让"只声明命令、
+  不给 scope"的既有配置从可用变拒绝。H1 对 `opener.openPath` 做这次变化，是因为它等于
+  任意程序执行（风险等级不同）。要做应当连同 `clipboard.readImage` 的回读语义一起定，
+  随 0.6.0 的 API 批次走。
+
+#### 生成器诊断（0.6.0）
+- 泛型命令方法应被拒绝（现在会生成出跑不通的代码）；缺省参数要么支持（取
+  `ExplicitDefaultValue`）要么明确拒绝；`CancellationToken` 参数现在误导为"需要 JSON 上下文"，
+  应改成编译期明确报错。
+- 验收：`GeneratorDiagnosticsTests` 三组新用例 + `AnalyzerReleases.Unshipped.md` 登记新 ID。
+
+#### Tauri 类型导出与缺失成员披露（0.6.0）
+- `types/event.d.ts` 缺 `UnlistenFn` / `Event` / `EventCallback` / `EventTarget` / `Options`
+  的导出（纯类型，成本低）；core/fs 的缺失成员要进 core.js 头部清单与 MIGRATION-FINDINGS。
+- `checkPermissions` / `requestPermissions`：实现（映射到能力系统查询）或明写差异，二选一。
+
+#### 平台细节（L3/L4/L5/L7/L8/L9/L10）
+- macOS 来源缺失的退化要写进 API.md 威胁模型（与 Linux 同等披露），并评估"不透明来源直接拒绝"。
+- WebView2 loader DLL 复用前校验内容哈希（现在只比大小），或写入后设 ACL；至少披露 `%TEMP%` 路径风险。
+- `event.js` 订阅失败回调的竞态：改成"计数仍为 0 才 delete"，bridge 测试补并发订阅失败用例。
+- DComposition vtable 顺序、`GetAllowedOrigins` 回读、`GIdleAddFull` 失败丢队列、`*riid` 判空、
+  `OleUninitialize`、`_messageHwnd` 销毁、macOS pump 诊断文案。
+
+#### 工程化（CI / 打包 / 版本闸）
+- README 的 arm64 行：降级为"IL 交叉编译"或补 `windows-11-arm` job（按证据规则二选一）；
+  `verify-matrix.ps1` 增强为校验 job 的 RID 覆盖。
+- Linux Wayland 的证据列改指 `CROSS-PLATFORM-VERIFICATION.md` 的 VM 记录，不再只挂 CI job。
+- `release.yml` 的 demo/publish 补 `timeout-minutes` 与 apt 重试（对齐 ci.yml 既有写法）。
+- 版本闸加入 `packages/api/package.json` 比对；npm 补 `prepack` 脚本。
+- `verify-package.ps1` 补带空格/中文路径场景 + "NuGet 包消费 + AOT 发布"直测。
+- fs 句柄表跨窗口共享在 API.md 记为已知设计（S2）；生成器增量缓存优化（S5）列为性能项。
 
 ## 待真机验证清单
 

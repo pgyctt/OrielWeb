@@ -7,6 +7,131 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
+## 0.5.5 - 2026-11-11
+
+**本版是安全修复批次**（2026-11-11 代码评审的 P0 越界项 + P1 互操作稳定性项）。
+有两处**授权行为变化**，升级前请读「行为变化」两段——它们不是回归，是修复；
+细节见 `docs/API.md` 第 4 节与 `docs/MIGRATION-FINDINGS.md` 第 9 节。
+
+### 安全修复（越界）
+
+- **`opener.openPath` / `opener.revealItemInDir` 现在要求路径 scope（H1）。**
+  此前这两条只判「绝对路径 + 存在」，而 Windows 侧落到
+  `Process.Start(UseShellExecute = true)`——对一个 `.exe` 来说"用默认程序打开"就是执行它。
+  于是 `Allow("opener.openPath")` 一次就等于"拉起机器上任意已存在的 `.exe/.bat/.hta`"；
+  配合 `fs.*` 往 scope 内写一个 `.bat` 再 `openPath`，是一条完整的 RCE 链。
+  现在两条命令都过 **`OrielPathGate`**（归一 → 命令授权 → 逐段符号链接解析 → 路径 scope），
+  与 `fs.*` 共用一套实现：
+
+  ```csharp
+  .Allow("opener.openPath",        s => s.AllowPath("$APPDATA/downloads/**"))
+  .Allow("opener.revealItemInDir", s => s.AllowPath("$APPDATA/exports/**"))
+  ```
+
+  **行为变化**：只声明命令、不给 scope 时，这两条回 `path_not_allowed`
+  （空 scope 表示"什么都不允许"，与 `fs.*` 同一口径）；未配置能力时 Release 回 `not_allowed`。
+  Tauri 的 `plugin-opener` 本来就有同样的 scope 配置，那份配置可以直接照搬。
+
+- **「始终放行」的命令集只覆盖发起窗口（H2）。**
+  `window.*` 族里的标题栏必需命令与 `menu.*` 的 `menu.popup` / `menu.close` /
+  `menu.setAsWindowMenu` 之所以放行，理由全是"只操作自己那个窗口"——但它们都支持
+  `label` 参数寻址**任意已注册窗口**，而放行分支在一切能力判定之前返回。
+  于是 Release 零配置就能销毁/关闭/改标题到别的窗口上，或者给他窗装一个含 `Quit` role 的菜单
+  （那绕过了 `app.exit` 的显式授权）。
+  现在 `label` 与发起者不一致时**不走放行分支**，落入正常能力判定；缺省 `label`（自绘标题栏
+  的写法）与写自己 `label` 的行为完全不变，跨窗口操作要显式 `Allow`。
+  `win.*` / `tray.*` 不接受 `label` 寻址，语义未变。`Deny("*")` 与保留集的既有关系也一并
+  写进了 `docs/API.md`（`Deny` **收不紧**保留集——那是刻意留的出口）。
+
+- **`convertFileSrc` 通道（`asset.read`）在判 scope 前解析符号链接（M3）。**
+  此前这里只有 `Path.GetFullPath` 加 glob 匹配，于是 scope 目录里一个指向
+  `~/.ssh/id_rsa` 的符号链接就能经 `oriel://file.oriel/` 把文件读走——而 API.md 的"防链接"
+  承诺只在 `fs.*` 那一侧兑现。现在两条通道共用同一套逐段解析语义：**判 scope 用的是链接的
+  真实目标**，指向 scope 内的链接照常可读，断链一律 403（与"不存在"同一个出口）。
+
+- **`tray.new` / `tray.setIcon` 的 `iconPath` 限定在可执行文件目录内（M4）。**
+  `tray.*` 是库保留前缀（零授权可调），而 `iconPath` 原先是页面任给：页面能读任意 PNG/ICO，
+  还能靠 `FileNotFoundException` 区分"这个文件存不存在"——"不触及文件系统"的放行理由不成立。
+  现在相对路径按可执行文件目录解析、绝对路径与链接解析后的结果都必须落在该目录内，
+  越界或文件不存在一律回 `invalid_argument`，且**回执文案不含宿主绝对路径**
+  （回显等于把探测通道开到错误消息里）。目录内**解码失败**仍是静默回落平台默认图标。
+
+### 修复（互操作稳定性）
+
+- **WebView2 的 COM 回调不再把异常漏给引擎（H3）。**
+  `HandlerImplementations.cs` 的文件头注释一直写着"所有 Invoke 都把异常吞掉并返回 HRESULT"，
+  而每个 `Invoke` 实际都是 `=> callback(...)` 直传——注释与实现相反。异常穿过 COM 边界
+  等于进程 fail-fast，而 WebView2 的回调跑在它自己的消息泵里，没有调用方可以接住：
+  应用代码一个空引用就能带走整个宿主。现在所有回调统一走 `ComCallbackGuard`
+  （照 `Win32DropTarget`——评审认定的手写 COM 范本）：异常报诊断并返回 `E_FAIL`。
+  事件订阅者的异常同样被挡住，且**不改变返回值**（照旧 `S_OK`）——一个页面 handler 出错
+  不该让引擎把这次导航/消息处理判成失败，也不该影响后续事件。
+
+- **`STATSTG.clsid` 的布局修正（M1）。**
+  原生 `STATSTG` 的 `clsid` 是 16 字节的 `GUID`，此前写成 `uint`（4 字节）：托管结构 72B vs
+  原生 80B，`clsid` 之后的所有字段错位，`IStream.Stat` 的封送会按错误偏移写入。
+  这是确定性 ABI 错误，不因为"当前调用点少"就不是缺陷。布局由新增的
+  `InteropStructLayoutTests` 逐字段钉住（含 `pwcsName` 之后那个 4 字节隐式填充）。
+
+- **`fs.readFile` / `fs.readTextFile` 补上体积闸（L1）。**
+  `fs.read` 一直有 8 MiB 的单次上限，而这两条更重（读满整个文件**再序列化成 JSON**）却没有闸：
+  页面一句 invoke 就能让宿主分配任意大的缓冲区。现在共用同一个 `MaxReadChunk` 常量，
+  超限回 `invalid_argument` 并指向 `fs.open` + `fs.read` 分块读，**不静默截断**
+  （截断会让调用方以为"读到了完整内容"）。
+
+- **macOS 的 ObjC BOOL 返回值改用 `int` 接（M6）。**
+  `objc_msgSend` 的 BOOL 形态此前声明为 `[return: MarshalAs(UnmanagedType.Bool)] bool`，
+  而 macOS 的 `BOOL` 是 `signed char`（1 字节）、`UnmanagedType.Bool` 描述的是 Win32 的
+  4 字节 BOOL——写在 ObjC 消息的返回位上就是**声明本身的错误**；同文件 `SendIntObjObj`
+  的注释其实早已写明"用 bool 接会读到高位垃圾"，两处自相矛盾。
+  现在三条 BOOL 返回形态统一为 `int` + 调用点判非零（只写 `!= 0`，不写 `== 1`：
+  ObjC 的 `YES` 是非零语义），12 处调用点随之调整。
+  **残留风险如实记录**：读 4 字节终究比 `BOOL` 的 1 字节宽，被调方若在返回寄存器高位留下
+  残留，`NO` 仍有被判成真的理论可能；彻底按 1 字节口径读要把返回类型改成 `sbyte`
+  （全部调用点随之改），属另一次评估。声明形状由 `MacOSInteropContractTests` 钉住
+  （含"任何返回 bool 且 EntryPoint 是 objc_msgSend 的方法即复发"的全类型扫描）。
+
+- **macOS 图标的像素 pin 改由 provider 的释放回调解除（H4）。**
+  旧实现把 pin 记在 `Dictionary<CGImage, GCHandle>` 里、在 `CreateNSImage` 的 `finally`
+  （构造完 NSImage 之后）立刻解除——等于假设 `initWithCGImage:` 会当场把像素复制进位图。
+  但 NSImage 可以延迟解码：届时 provider 仍持有那个指针，pin 却已经没了，数组一旦被 GC
+  移动或回收，图标内容就是垃圾（严重时是访问违例）。
+  现在 `CGDataProviderCreateWithData` 带上 release 函数指针
+  （`[UnmanagedCallersOnly]` + `GCHandle.ToIntPtr` 作 context），pin 的存活期等于 provider
+  的存活期；`CreateNSImage` 不再解钉。所有权转移点写清了两个方向：provider **创建失败**时
+  自己解 pin（回调没注册），**创建成功后**任何失败路径都不再自己解（否则与
+  `CGDataProviderRelease` 触发的回调构成重复释放）。
+  **行为变化**：pin 比旧实现活得更久（到 NSImage 释放为止）——Dock 图标那条路径的 NSImage
+  由 NSApp 持有，所以那份像素缓冲会存活到下一次换图标。量级是"每张图标一份缓冲"，
+  不是无界增长。
+  **本机没有 macOS 真机**，按**防御性修复**对待并如实记录：即使 NSImage 确实即时拷贝，
+  本改动也无害（pin 只是多活一段）。真机复核步骤记在
+  `docs/CROSS-PLATFORM-VERIFICATION.md` 第 6 节。
+
+- **WebView2 的 COM 引用不再漏（M2 / M9）。**
+  三处属性取值原本写的是 `ComObject.FromPointer<T>(p)?.Object`：造一个包装器、只取
+  `Object`、包装器随即变垃圾。而包装器在构造时**自己 AddRef 了一份**（理由见
+  `ComObject<T>` 的构造注释：`ConvertToManaged` 命中缓存时不再 AddRef），没人 Dispose
+  就是净 +1——每取一次属性泄漏一个引用。现在这三处改用新增的 `ComObject.ToManaged<T>`：
+  直接转换、不 AddRef、也就不需要释放。包装器本身加了终结器兜底（并在 `Dispose` 里
+  `GC.SuppressFinalize`），DirectComposition 的三个包装器也在窗口销毁路径上真正
+  `Dispose` 了（此前只置 `null`，每次建/关窗口泄漏三个引用）。
+
+  同一批还修了窗口销毁的竞态：`_hwnd` 在 `OnWindowDestroyedCore` 末尾**清零**，
+  装配链上每个 `await` 之后复查窗口是否还活着。WebView2 的装配是一串异步步骤
+  （环境 → 控制器 → 脚本注入），用户在装配完成前关窗口是常态；不清零时那条链路醒来
+  仍认为窗口活着，最坏的一条是拿一个**已释放的 HWND** 去
+  `CreateCoreWebView2CompositionControllerAsync`——那个值可能已被系统复用给别的窗口。
+  复查命中时直接 `return` 而不是抛：窗口没了不是"装配失败"，不该弹"初始化 WebView2 失败"。
+
+- **会带宿主路径的 BCL 异常不再透传到页面（L2 余项）。**
+  内建命令的异常原样透传是刻意的取舍（"应用尚未运行""托盘不存在"是页面唯一能看到的线索），
+  所以净化范围**只限** `IOException` / `UnauthorizedAccessException` / `SecurityException`
+  这三类——它们的 Message 由运行时拼装、里面带宿主绝对路径
+  （`Could not find file 'C:\Users\…'`），透传等于把"探测某个路径是否存在"的通道开到错误消息里。
+  净化后的文案保留**异常类型名**（调用方仍能分辨"文件不存在"与"没有权限"），
+  完整异常照旧进 `OrielDiagnostics`。库自己抛的异常文案一字未动。
+
 ## 0.5.4 - 2026-10-29
 
 ### 修复

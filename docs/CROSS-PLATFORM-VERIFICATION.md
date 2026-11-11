@@ -336,3 +336,25 @@ Dock、菜单栏位置），**颜色与细节看自截 PNG**。材质的模糊�
 - **没有验 AOT**：VM 里跑的是自包含非 AOT（宿主交叉发布的限制）。AOT 由 CI 覆盖。
 - macOS VM 是 Intel + macOS 15；更老的系统（11/12）没有取证，而本库有若干
   "macOS 13.3+ 才有"的分支（`WKWebView.setInspectable:` 等），那些分支只做了存在性探测。
+- **macOS 图标像素的 pin 生命周期只有编译期与结构层证据（2026-11-11 评审 H4，0.5.5 整改）**：
+  旧实现把 pin 记在 `Dictionary<CGImage, GCHandle>` 里、在 `CreateNSImage` 的 `finally`
+  构造完 NSImage 后立刻解除，等于假设 `initWithCGImage:` 会当场把像素复制进位图——
+  而 NSImage 可以延迟解码，届时 provider 仍持有那个指针、pin 却已经没了。
+  0.5.5 把 pin 的所有权改成"provider 的 release 回调里解钉"（`CGDataProviderCreateWithData`
+  的 `releaseData` 函数指针 + `GCHandle.ToIntPtr` 作 context），`CreateNSImage` 不再解钉。
+  **本仓库在 Windows 上开发，没有 macOS 真机**，所以"NSImage 是否即时拷贝、延迟解码是否
+  真会发生"仍未取证。真机复核步骤：建图标 → `GC.Collect` + 压实 → 显示并截图比对；
+  重复创建/销毁图标观察 provider 回调计数与句柄数。若证实 NSImage 确实即时拷贝，
+  本次改动仍无害（pin 只是多活到 NSImage 释放），按**防御性修复**保留并在此更新结论。
+- **ObjC BOOL 返回值的口径只有"声明形状"证据（2026-11-11 评审 M6，0.5.5 整改）**：
+  0.5.5 把 `objc_msgSend` 的三条 BOOL 返回形态从 `[MarshalAs(UnmanagedType.Bool)] bool`
+  改成 `int` + 调用点判非零。`MacOSInteropContractTests` 在 Windows 上钉住的是**声明形状**
+  （返回类型必须是 `int`、EntryPoint 必须是 `objc_msgSend`、返回位不得再有 `MarshalAs`），
+  而"被调方是否真在返回寄存器高位留垃圾"只能真机取证。若要彻底按 1 字节口径读（返回
+  `sbyte`），需要一次独立的真机评估——当前按"不再用 bool 接"这一保守做法收口，
+  残留风险已写在 `ObjCRuntime.SendIntRet` 的 remarks 里。
+- **T10 带来的一处行为变化需要真机观察量级**：pin 现在活到 provider 释放为止，而 Dock 图标
+  路径的 NSImage 归 NSApp 持有（`SetIconFromBytes` / `SetIconFromRgba` 传给
+  `setApplicationIconImage:` 后没有 `objc_release`），那份像素缓冲会存活到下一次换图标。
+  预期量级是"每张图标一份缓冲"而不是无界增长，但**这一点没有真机证据**——复核时请连续换
+  几十次 Dock 图标，看进程内存是否稳定。

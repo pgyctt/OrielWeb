@@ -298,3 +298,29 @@ node tools/check-tauri-leaks.mjs ../my-tauri-app
 工具的自测在 `tools/check-tauri-leaks.test.mjs`（10 条）：行列号、模块名映射、
 已知/未知命令名、`node_modules` 跳过但 `tests` 不跳（测试桩是泄漏的常见藏身处）。
 
+## 9. 迁移注意点：`opener` 的路径 scope 与 `tray` 的图标边界（2026-11-11）
+
+Tauri 的 `plugin-opener` 对 `openPath` 有 scope 配置，本库在 0.5.4 及更早只有命令授权。
+0.5.5 起这两条命令也要求路径 scope，形状与 `fs.*` 完全一致：
+
+```csharp
+.UseCapabilities(c => c
+    .Allow("opener.openUrl")
+    .Allow("opener.openPath",        s => s.AllowPath("$APPDATA/downloads/**"))
+    .Allow("opener.revealItemInDir", s => s.AllowPath("$APPDATA/exports/**")))
+```
+
+迁移时要注意的三件事：
+
+1. **只声明命令、不给 scope 等于"什么都不允许"**——升级后原先可用的 `openPath` 会开始回
+   `path_not_allowed`。这是安全修复而不是回归：修的是"授权一次即等于拉起机器上任意已存在的
+   `.exe/.bat/.hta`"（对可执行文件来说"用默认程序打开"就是执行它）。
+2. **scope 判的是逐段解析符号链接之后的真实路径**：scope 目录里放一个指向外部的链接照旧被拒，
+   与 `fs.*` 共用同一套实现。
+3. **Tauri 那份 opener scope 可以直接照搬**：路径变量（`$APPDATA` / `$HOME` …）与 `fs.*`
+   共用同一张表，写法同样是 `$VAR/**` 通配。
+
+另外一处收口：`tray.new` / `tray.setIcon` 的 `iconPath` 现在**限定在可执行文件目录内**
+（越界或文件不存在回 `invalid_argument`，且回执文案不含宿主绝对路径）。应用图标本来就在
+程序目录里，正常用法不受影响；相对路径的解析基准仍是可执行文件目录。
+
