@@ -45,7 +45,8 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
         string? DirectDisplay,
         ImmutableArray<string> DirectKinds,
         string? DirectRead,
-        bool IsChannel = false);
+        bool IsChannel = false,
+        bool IsCancellationToken = false);
 
     private sealed record CommandModel(
         string CommandName,
@@ -183,29 +184,6 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
             "或收一个 JsonElement 自行分派。",
             Category, DiagnosticSeverity.Error, isEnabledByDefault: true);
 
-        /// <summary>CancellationToken 参数：整条 IPC 通路没有取消语义。</summary>
-        /// <remarks>
-        /// <para>
-        /// <b>此前报的是别的错</b>：<c>CancellationToken</c> 既不是 <c>JsonElement</c>
-        /// 也不是 <c>OrielChannel</c>，于是走泛型读取路径，要求调用方提供
-        /// <c>JsonSerializerContext</c>——于是报"缺少 JSON 上下文"。那个提示把人引向
-        /// "去补一个序列化上下文"，而真正的问题是**这个参数类型根本不支持**。
-        /// 误导性诊断比没有诊断更费时间。
-        /// </para>
-        /// <para>
-        /// <b>为什么是拒绝而不是实现</b>：给命令注入取消信号要求整条通路贯通
-        /// （<c>invoke</c> 的 <c>CancellationToken</c>、三平台取消语义、取消后的回执约定），
-        /// 那是 API 设计而不是单点小改（见 ROADMAP 的"取消令牌"条）。在贯通之前，
-        /// 收下这个参数只会让人以为"取消有效"——**静默的假承诺**比明确的拒绝糟得多。
-        /// </para>
-        /// </remarks>
-        public static readonly DiagnosticDescriptor CancellationTokenParameter = new(
-            "ORIELWEB109", "命令参数不支持 CancellationToken",
-            "{0} 的参数 {1} 是 CancellationToken：本库的 IPC 通路（invoke / EvaluateJs）目前" +
-            "没有贯通取消语义，页面侧也无法取消一次已发出的调用。" +
-            "收下它只会让人以为取消有效——请去掉该参数；长任务请在宿主侧自行限时。",
-            Category, DiagnosticSeverity.Error, isEnabledByDefault: true);
-
         /// <summary>参数带 C# 默认值：本库的可选参数表达是"可空类型"。</summary>
         /// <remarks>
         /// <para>
@@ -338,27 +316,27 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
                     method.ToDisplayString(), parameter.Name, parameter.RefKind.ToString().ToLowerInvariant());
             }
 
-            // CancellationToken：此前落到泛型读取路径，报的是"缺少 JSON 上下文"——
-            // 那条提示把人引向补序列化上下文，而真正的问题是类型不支持。
-            //
-            // 按**完全限定名**判，不用符号比较：生成器跑在消费方的编译里，
+            // CancellationToken：**不参与 JSON 绑定**，由宿主在调用时注入（见 IOrielCommandRouter
+            // 的 InvokeAsync 重载）。0.5.6 起支持——此前是 ORIELWEB109 直接拒绝，理由是
+            // "整条 IPC 通路没有取消语义，收下就是假承诺"。现在通路贯通了，拒绝的理由消失。
+            // 识别按**完全限定名**判，不用符号比较：生成器跑在消费方的编译里，
             // CancellationToken 来自 System.Runtime，这里没有可靠的符号可拿。
-            string parameterType = parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-            if (parameterType == "global::System.Threading.CancellationToken")
-            {
-                return Fail(location, Diagnostics.CancellationTokenParameter,
-                    method.ToDisplayString(), parameter.Name);
-            }
+            // 这里不 return/continue——后面构造 CommandParameter 时要靠它打标。
 
             // C# 默认值：本库用可空类型表达可选参数。静默忽略默认值会让"页面不传"
             // 与"宿主代码里写的默认值"对不上，所以这里明确拒绝。
             //
-            // **例外：`int? a = null` / `string? a = null`**。它的语义与 `int? a` 完全一致
+            // **例外一：`int? a = null` / `string? a = null`**。它的语义与 `int? a` 完全一致
             // （缺失时都是 null），报错只会逼人删掉一个无害的写法。判据是
             // "默认值就是 null，且类型本身可空"——两者同时成立时忽略默认值不产生语义差异。
             // 反过来 `int a = 0` 不放行：它不是可空类型，本库要求必传，
             // 而 C# 允许不传——那正是需要报出来的差异。
-            if (parameter.HasExplicitDefaultValue && !IsHarmlessNullDefault(parameter))
+            //
+            // **例外二：`CancellationToken ct = default`**。它不是 JSON 参数，token 由宿主
+            // 注入（见下面的 IsCancellationToken），"页面不传"本来就是它的正常形态。
+            // 不豁免的话，`= default` 这个 .NET 标准写法会被误报成"命令参数不支持默认值"。
+            if (parameter.HasExplicitDefaultValue && !IsHarmlessNullDefault(parameter)
+                && !IsCancellationTokenParameter(parameter))
             {
                 return Fail(location, Diagnostics.DefaultParameterValue,
                     method.ToDisplayString(),
@@ -376,10 +354,13 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
                 var display = p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
                 bool isJsonElementArgs = display == "global::System.Text.Json.JsonElement";
                 bool isChannel = display == "global::OrielWeb.Ipc.OrielChannel";
+                bool isCancellationToken = display == "global::System.Threading.CancellationToken";
                 // 可空性必须读符号注解：FullyQualifiedFormat 对引用类型的 '?' 不显示
                 bool isOptional = p.Type.NullableAnnotation == NullableAnnotation.Annotated;
                 var (directDisplay, directKinds, directRead) = ResolveDirectRead(p.Type, isJsonElementArgs);
-                return new CommandParameter(p.Name, display, isOptional, isJsonElementArgs, directDisplay, directKinds, directRead, isChannel);
+                return new CommandParameter(
+                    p.Name, display, isOptional, isJsonElementArgs, directDisplay, directKinds, directRead,
+                    isChannel, isCancellationToken);
             })
             .ToImmutableArray();
 
@@ -443,6 +424,17 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
     private static bool IsHarmlessNullDefault(IParameterSymbol parameter)
         => parameter.ExplicitDefaultValue is null
            && parameter.Type.NullableAnnotation == NullableAnnotation.Annotated;
+
+    /// <summary>
+    /// 参数是不是 <see cref="System.Threading.CancellationToken"/>（由宿主注入，不参与 JSON 绑定）。
+    /// </summary>
+    /// <remarks>
+    /// 按**完全限定名字符串**判，与参数分类处保持同一判据：生成器跑在消费方的编译里，
+    /// <c>CancellationToken</c> 来自 <c>System.Runtime</c>，这里没有可靠的符号可拿。
+    /// </remarks>
+    private static bool IsCancellationTokenParameter(IParameterSymbol parameter)
+        => parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+           == "global::System.Threading.CancellationToken";
 
     /// <summary>
     /// 判断参数能否走"直出强类型读取"。仅覆盖语义无歧义的基元类型；
@@ -658,7 +650,12 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
         source.AppendLine("        }");
         source.AppendLine();
 
-        source.AppendLine("        public async global::System.Threading.Tasks.ValueTask<object?> InvokeAsync(int index, object? target, global::System.Text.Json.JsonElement args, global::System.Text.Json.Serialization.JsonSerializerContext? jsonContext, global::OrielWeb.Ipc.OrielEventSink? sink)");
+        // 无令牌重载：转调下面那个带令牌的实现（手写路由的默认实现也走这条路）。
+        // 两个都实现才能同时满足"接口旧方法是抽象的"与"生成代码支持取消"。
+        source.AppendLine("        public global::System.Threading.Tasks.ValueTask<object?> InvokeAsync(int index, object? target, global::System.Text.Json.JsonElement args, global::System.Text.Json.Serialization.JsonSerializerContext? jsonContext, global::OrielWeb.Ipc.OrielEventSink? sink)");
+        source.AppendLine("            => InvokeAsync(index, target, args, jsonContext, sink, global::System.Threading.CancellationToken.None);");
+        source.AppendLine();
+        source.AppendLine("        public async global::System.Threading.Tasks.ValueTask<object?> InvokeAsync(int index, object? target, global::System.Text.Json.JsonElement args, global::System.Text.Json.Serialization.JsonSerializerContext? jsonContext, global::OrielWeb.Ipc.OrielEventSink? sink, global::System.Threading.CancellationToken cancellationToken)");
         source.AppendLine("        {");
         source.AppendLine("            switch (index)");
         source.AppendLine("            {");
@@ -691,6 +688,13 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
 
             foreach (var parameter in command.Parameters)
             {
+                if (parameter.IsCancellationToken)
+                {
+                    // 不生成读取代码：token 由 InvokeAsync 的形参直接提供。
+                    // 声明一个 __arg_ct 再赋给它只会多一行噪音。
+                    continue;
+                }
+
                 if (parameter.IsChannel)
                 {
                     string bind = parameter.IsOptional ? "BindOptional" : "Bind";
@@ -716,7 +720,10 @@ public sealed class OrielCommandGenerator : IIncrementalGenerator
                 }
             }
 
-            string arguments = string.Join(", ", command.Parameters.Select(p => $"__arg_{p.Name}"));
+            // CancellationToken 参数直接接宿主注入的那个形参（名为 cancellationToken），
+            // 其余参数用各自读出来的 __arg_xxx。
+            string arguments = string.Join(", ", command.Parameters.Select(p =>
+                p.IsCancellationToken ? "cancellationToken" : $"__arg_{p.Name}"));
             string receiver = command.IsStatic
                 ? $"{command.TypeDisplay}.{command.MethodName}({arguments})"
                 : $"(({command.TypeDisplay})target!).{command.MethodName}({arguments})";

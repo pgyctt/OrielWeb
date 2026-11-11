@@ -27,7 +27,7 @@ internal sealed class ConformanceRun
 {
     /// <summary><c>--selftest</c> 认得的名字。加一个自检要同时改这里与 <see cref="Attach"/>。</summary>
     internal static readonly string[] Names =
-        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowstate", "windowevents", "event", "close", "window", "windownew", "newwindow", "monitors", "menu", "menubar", "api", "channel", "visuals"];
+        ["nav", "ipc", "theme", "single-instance", "shell", "capability", "multiwindow", "scheme", "exit", "exit-timeout", "threading", "tray", "tray-js", "geometry", "geometry-frameless", "windowstate", "windowevents", "event", "close", "window", "windownew", "newwindow", "cancel", "monitors", "menu", "menubar", "api", "channel", "visuals"];
 
     /// <summary>主窗口。单实例自检的看门狗要在超时时关掉它。</summary>
     internal static WebviewWindow? Window;
@@ -72,6 +72,7 @@ internal sealed class ConformanceRun
     private bool WindowTest => Is("window");
     private bool WindowNew => Is("windownew");
     private bool NewWindow => Is("newwindow");
+    private bool Cancel => Is("cancel");
     private bool Monitors => Is("monitors");
     private bool Menu => Is("menu");
     private bool MenuBar => Is("menubar");
@@ -451,6 +452,12 @@ internal sealed class ConformanceRun
             win.Loaded += () => NewWindowSelfTest.Begin(win.App, win);
         }
 
+        if (Cancel)
+        {
+            CancelSelfTest.Attach(win);
+            win.Loaded += () => CancelSelfTest.Begin(win.App, win);
+        }
+
         if (Monitors)
         {
             // Loaded 而不是 onCreated：窗口要已 realize，GDK/AppKit 才答得出"它在哪块屏"。
@@ -611,6 +618,7 @@ internal sealed class ConformanceRun
         ["window"] = () => WindowSelfTest.Failed,
         ["windownew"] = () => WindowNewSelfTest.Failed,
         ["newwindow"] = () => NewWindowSelfTest.Failed,
+        ["cancel"] = () => CancelSelfTest.Failed,
         ["monitors"] = () => MonitorSelfTest.Failed,
         ["menu"] = () => MenuSelfTest.Failed,
         ["menubar"] = () => MenuBarSelfTest.Failed,

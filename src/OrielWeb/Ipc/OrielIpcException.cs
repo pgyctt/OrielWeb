@@ -81,6 +81,22 @@ public static class OrielIpcErrorCodes
     /// </remarks>
     public const string Timeout = "timeout";
 
+    /// <summary>
+    /// 命令被取消（页面放弃等待，或窗口在命令跑完前关掉）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 由宿主主动发出，不是命令自己抛的——所以它带码，与"应用命令自己失败"（不带码）区分得开。
+    /// 页面侧那个 Promise 此时通常已因超时 settle 了，这条回执多半没人收；
+    /// 它存在的意义是让日志与诊断能看出"这次调用被取消了"，而不是"跑完了但结果丢了"。
+    /// </para>
+    /// <para>
+    /// 与 <see cref="Timeout"/> 的区别：<c>timeout</c> 由页面侧判定（宿主毫不知情），
+    /// <c>cancelled</c> 由宿主判定（命令真的停下来了）。两者都出现时，<c>timeout</c> 在前。
+    /// </para>
+    /// </remarks>
+    public const string Cancelled = "cancelled";
+
     /// <summary>库内部的意外失败（**不是**应用命令自己抛的异常）。</summary>
     /// <remarks>
     /// 应用命令抛的异常不带码——那是应用的错误分类，库不该替它编。

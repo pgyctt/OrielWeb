@@ -60,6 +60,14 @@ internal sealed class MacOSWebMessageHandler : IIpcReplySink
                         CompleteEval(root);
                     }
                     break;
+                case "cancel":
+                    // 页面放弃了某次调用（它自己的超时到了）：把取消信号送进命令。
+                    // 只过来源 + 令牌那一层——它不执行命令，只影响**本窗口自己**的在飞调用。
+                    if (Accept(root, messageOrigin))
+                    {
+                        IpcCancelMessage.TryCancel(_host.App.Dispatcher, _host.Window, root);
+                    }
+                    break;
                 case "console":
                     // 只有窗口选项打开了 console 转发，注入的桥接脚本才会发这类消息
                     if (Accept(root, messageOrigin))

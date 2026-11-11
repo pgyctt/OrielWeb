@@ -28,6 +28,8 @@ import { getTransport, hasTransportOverride } from './internal.js';
  *   `missing_argument` / `path_not_allowed`）；`data` 是可选的附加数据。两个字段
  *   **只在宿主给了时才存在**，所以写 `if (e.code === 'not_allowed')` 就够了，不必先判 `in`。
  *   `timeout`（超时）由桥接层产生，同样带 `code`——重试可能有用，值得和"参数错了"分开。
+ *   `cancelled`（0.5.6 起）表示宿主把这次调用取消掉了（窗口关闭时可能见到；
+ *   页面自己超时的那一刻通常已经 settle 了，所以它更多出现在日志里而不是这里）。
  */
 export async function invoke(cmd, args, options) {
     if (typeof cmd !== 'string' || cmd === '') {

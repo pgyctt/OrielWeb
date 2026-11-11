@@ -1,5 +1,6 @@
   OrielWeb.Ipc.IOrielCommandRouter :: CommandNames : System.Collections.Generic.IReadOnlyList`1[System.String] (get=True, set=False)
   OrielWeb.Ipc.IOrielCommandRouter :: InvokeAsync(System.Int32, System.Object, System.Text.Json.JsonElement, System.Text.Json.Serialization.JsonSerializerContext, OrielWeb.Ipc.OrielEventSink) -> System.Threading.Tasks.ValueTask`1[System.Object]
+  OrielWeb.Ipc.IOrielCommandRouter :: InvokeAsync(System.Int32, System.Object, System.Text.Json.JsonElement, System.Text.Json.Serialization.JsonSerializerContext, OrielWeb.Ipc.OrielEventSink, System.Threading.CancellationToken) -> System.Threading.Tasks.ValueTask`1[System.Object]
   OrielWeb.Ipc.IOrielCommandRouter :: RequiresTarget : System.Boolean (get=True, set=False)
   OrielWeb.Ipc.IOrielCommandRouter :: Route(System.String) -> System.Int32
   OrielWeb.Ipc.IOrielCommandRouter :: TargetType : System.Type (get=True, set=False)
@@ -24,6 +25,7 @@
   OrielWeb.Ipc.OrielEventSink :: BeginInvoke(System.String, System.String, System.AsyncCallback, System.Object) -> System.IAsyncResult
   OrielWeb.Ipc.OrielEventSink :: EndInvoke(System.IAsyncResult) -> System.Void
   OrielWeb.Ipc.OrielEventSink :: Invoke(System.String, System.String) -> System.Void
+  OrielWeb.Ipc.OrielIpcErrorCodes :: Cancelled : System.String
   OrielWeb.Ipc.OrielIpcErrorCodes :: Internal : System.String
   OrielWeb.Ipc.OrielIpcErrorCodes :: InvalidArgument : System.String
   OrielWeb.Ipc.OrielIpcErrorCodes :: InvalidMessage : System.String
@@ -568,6 +570,7 @@
   OrielWeb.WebviewWindow :: EmitEvent(System.String, T, System.Text.Json.Serialization.Metadata.JsonTypeInfo`1[T]) -> System.Void
   OrielWeb.WebviewWindow :: EndDrag() -> System.Void
   OrielWeb.WebviewWindow :: EvaluateJs(System.String) -> System.Threading.Tasks.Task`1[System.String]
+  OrielWeb.WebviewWindow :: EvaluateJs(System.String, System.Threading.CancellationToken) -> System.Threading.Tasks.Task`1[System.String]
   OrielWeb.WebviewWindow :: EventForwarding : OrielWeb.OrielWindowEventKind (get=True, set=True)
   OrielWeb.WebviewWindow :: Focus() -> System.Void
   OrielWeb.WebviewWindow :: GoBack() -> System.Void

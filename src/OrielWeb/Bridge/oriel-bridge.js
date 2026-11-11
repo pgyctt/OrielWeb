@@ -154,6 +154,13 @@
                 const timer = timeoutMs > 0
                     ? setTimeout(() => {
                         if (pending.delete(id)) {
+                            // **先告诉宿主"这次调用我不要了"**，再 reject。
+                            // 宿主侧据此取消命令（命令方法的 CancellationToken 被触发）——
+                            // 不这么做的话，页面已经放弃、宿主还在跑，结果只能丢弃；
+                            // 而如果命令有副作用（写文件、发请求），页面重试就会做两遍。
+                            // 顺序也有讲究：post 在 reject 之前，即使调用方的 catch 抛异常，
+                            // 取消也已经发出去了。
+                            post({ __oriel: 'cancel', id: id });
                             // `code` 必须挂上：页面要能机器判别"超时"与"命令自己失败"——
                             // 前者重试可能有用，后者重试一万次也一样。靠文案匹配不行，
                             // 文案会改、会被翻译。码值与 OrielIpcErrorCodes.Timeout 一致

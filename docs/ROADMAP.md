@@ -71,9 +71,28 @@ B0–B24 全部完成，从 `0.4.0` 起分批发版。分阶段清单与每批�
     那种"改了代码、自检却验的是旧产物"的假绿比直接报错危险得多（本轮正是被它坑了一次）。
 
 #### 取消令牌（`invoke` / `EvaluateJs`）
-- 现状：整条 IPC 与 JS 求值通路都没有 `CancellationToken`，命令函数也拿不到取消信号；页面侧只有 30 秒超时。
-- 影响：宿主发出去就收不回来——窗口关了、用户改主意了、超时后想重试，原来那次都得跑完（结果被丢弃）。
-- 为什么没顺手做：要给公开 API 加参数（`EvaluateJs(..., CancellationToken)`、生成器给命令注入令牌）、三平台贯通取消语义，还要一并定"取消之后回执给什么"；属 API 设计，不是单点小改。
+- **已完成**（2026-11-11，0.5.6）：策略与实现都按"页面驱动"落地——
+  - **触发源**：页面超时（`oriel.timeout` / per-call `{ timeout }`）与窗口销毁。
+    导航离开**不**取消（命令的副作用可能仍有意义，如"保存后跳转"）；应用退出不取消（进程要走了）。
+  - **宿主侧不定超时**：页面超时是可配的，宿主不知道对端配了多久。唯一能对齐的时机是页面
+    放弃的**那一刻**——桥接脚本在超时 reject 的同时发 `{ __oriel:'cancel', id }`。
+  - **键是（窗口, id 原文）**：页面侧 id 每窗口各自自增，不带窗口会让 A 窗口的取消砍到 B 的
+    命令上；用原文而非解析成整数，避免 `1.5` / `1e30` 这类值撞车或抛异常。
+  - **命令方法加 `CancellationToken` 参数**（不参与 JSON 绑定，由宿主注入）。为此撤掉
+    0.5.5 刚加的 `ORIELWEB109`（当时理由是"通路没贯通，收下就是假承诺"），
+    并让 `ORIELWEB110` 豁免 `CancellationToken ct = default`。
+  - **不破坏手写路由**：`IOrielCommandRouter` 新增带令牌的重载，给默认实现转调旧方法；
+    手写路由因此自动获得"不支持取消"的降级，而不是编译失败。
+  - **取消后的回执**：仍发一条 `code: "cancelled"`。页面此时多半已 settle，这条的价值是让日志
+    能区分"被取消"与"跑完了但结果丢了"；取消**不**计入 `IpcFailed`（那不是应用的错）。
+  - **`EvaluateJs(script, ct)` 只停止等待**，不停止脚本——三个引擎都没有取消已发出求值的能力。
+    文档写清了这点，并给原 Task 挂了观察者，避免放弃后它的异常留到 GC 才冒出来。
+  - **踩到一个真 bug**：`default(JsonElement).GetRawText()` 会抛 `InvalidOperationException`，
+    一条缺 `id` 的消息就能炸掉整条分发路径。`DispatcherTests.MissingId_FallsBackToZero` 抓到了，
+    已改为 `IdKeyOf`（缺失时用不会撞的 `"missing"`）。
+  - 真机自检 `--selftest cancel` 四断言：长命令真的开始执行、页面收到 `code:'timeout'`、
+    **宿主侧 token 真的被触发**、并发短命令不受影响。第三条是核心——只看页面超时，
+    取消有没有生效完全看不出来。三平台全 PASS（Windows 26 模式；macOS/Linux 走 CI）。
 
 #### 显式缓存头（`oriel://`）
 - 现状：三平台响应只有 `Content-Type`，没有 `Cache-Control` / `ETag` / `Last-Modified`。Windows（`CreateWebResourceResponse` 的 headers 串）与 macOS（`headerFields` 字典）都能加，**Linux 加不了**——`webkit_uri_scheme_request_finish` 的签名里没有响应头参数，要换 WebKitGTK 2.40+ 的 `finish_with_response`。

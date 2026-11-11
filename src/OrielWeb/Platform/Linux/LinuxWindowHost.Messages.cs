@@ -62,6 +62,11 @@ internal sealed partial class LinuxWindowHost
         // 而不是让调用方的 await 永不返回。
         _messageHandler.FailPendingEvals("ExecuteScript 中止：窗口已销毁，页面回环不会再返回结果。");
 
+        // 在飞命令：窗口没了，结果确定没人要，取消它们是纯止损（命令可能还在写文件、
+        // 发请求）。**只在销毁时取消，不在导航离开时取消**——导航后命令的副作用
+        // 可能仍然有意义（"保存后跳转"那种），而销毁意味着这个窗口已经不关心了。
+        App.Dispatcher.CancelAllFor(Window);
+
         Closed?.Invoke();
         _backend.OnWindowDestroyed();
     }

@@ -626,7 +626,54 @@ window.MessageReceived += e => Console.WriteLine($"{e.Name}: {e.Json}");
 | `OrielJson`（静态） | 命令里读 `JsonElement args` 的助手：`RequireArgElement` / `TryGetArgElement` / `RequireArgKind` / `GetRequiredArg<T>(args, name, jsonContext)` / `GetOptionalArg<T>(…)` / `WriteResult(writer, value, jsonContext)`。缺参数时报的是**带参数名与期望类型**的消息，而不是把 `null` 当默认值用 |
 | `OrielIpcException` | 命令里 `throw` 它，页面侧那个 Promise reject 收到的就是它的 `Message`（抛别的异常则给通用失败文本） |
 | `OrielCommandRegistry.AddRouter(IOrielCommandRouter)` | 手写路由的注册点。`IOrielCommandRouter`（`CommandNames` / `TargetType` / `RequiresTarget` / `Route(name)` / `InvokeAsync(...)`）由 `OrielWeb.Generators` 为每个 `[OrielCommand]` 类型生成——不用源生成器时才需要自己实现 |
->
+
+### 命令的取消令牌（0.5.6 起）
+
+命令方法可以加一个 `CancellationToken` 参数。它**不参与 JSON 绑定**——不是页面传的，
+而是宿主在调用时注入：
+
+```csharp
+[OrielCommand("report.build")]
+public static async Task<Report> Build(string id, CancellationToken cancellationToken)
+{
+    // 把 token 传给下游：HTTP、文件、Task.Delay……都认它
+    using var http = new HttpClient();
+    var data = await http.GetStringAsync($"https://api/{id}", cancellationToken);
+    return Parse(data);
+}
+```
+
+**什么时候会被触发**：
+
+| 触发源 | 触发 | 说明 |
+|---|---|---|
+| 页面超时 | ✅ | 页面侧 `oriel.timeout`（默认 30s）或 per-call `{ timeout }` 到了，桥接脚本随即通知宿主 |
+| 窗口销毁 | ✅ | 窗口没了，结果确定没人要；取消是止损 |
+| 页面导航离开 | ❌ | 命令的副作用可能仍然有意义（"保存后跳转"那种），只丢弃结果 |
+| 应用退出 | ❌ | 进程要走了，取消没有收益 |
+
+**为什么由页面驱动、宿主不定超时**：页面侧的超时是可配的，宿主不知道对端配了多久。
+宿主自己定 30 秒而页面定 5 秒 → 25 秒空跑；反过来则会把还在用的命令砍掉。
+唯一能对齐的时机是页面放弃的**那一刻**。
+
+**取消是协作式的**：命令里不检查 token、也不把它传给下游 API，命令就照常跑完——
+库不会强行打断线程（那会破坏不变量、还可能吞掉写在半路的数据）。
+所以"我取消了但它还在跑"通常意味着 token 没传下去。
+
+**取消之后的回执**：宿主仍会回一条 `code: "cancelled"` 的错误回执。页面此时通常已因超时
+settle，这条多半没人收；它存在的意义是让日志能区分"被取消"与"跑完了但结果丢了"。
+取消**不计**入 `IpcFailed`（那不是应用的错），只计入 `IpcInvoked`。
+
+> **手写路由的降级**：`IOrielCommandRouter` 的带令牌重载有默认实现（转调无令牌那个），
+> 所以 0.5.5 及之前的手写路由不会被这次扩展打断——代价是它不支持取消（令牌被忽略）。
+> 源生成器产出的路由会覆盖它，把令牌接到命令参数上。
+
+> **`CancellationToken ct = default` 是允许的**：它不是 JSON 参数，"页面不传"本来就是它的
+> 正常形态。（`ORIELWEB110` 对 `CancellationToken` 单独放行。）
+
+> **`EvaluateJs` 的 `CancellationToken` 是另一回事**：`EvaluateJs(script, ct)` 只**停止等待**，
+> 不会停止脚本。三个引擎都没有"取消已发出的求值"这个能力，脚本一旦交出去就会在页面里跑完。
+
 > **失败导航必须报出原因**：三个引擎"接受的失败目标"各不相同（同源缺失页 / 环回端口 / 保留 TLD 各有差异），
 > 且都会静默改写不接受的形态，所以自检里逐个试候选目标，任一真的上报失败即算通过。
 

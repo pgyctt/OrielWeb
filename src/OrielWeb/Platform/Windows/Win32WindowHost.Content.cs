@@ -300,6 +300,15 @@ internal partial class Win32WindowHost
                     // 而不是让那个 Promise 干等到 30 秒超时。
                     _ = DispatchInvokeAsync(root.Clone(), originUrl);
                     break;
+                case "cancel":
+                    // 页面放弃了某次调用（它自己的超时到了）：把取消信号送进命令。
+                    // 同样只过来源 + 令牌那一层——它不执行任何命令，只影响**本窗口自己**的
+                    // 在飞调用（分发器按窗口 + id 原文匹配，见 OrielCommandDispatcher._inFlight）。
+                    if (Accept(root, originUrl))
+                    {
+                        OrielWeb.Ipc.IpcCancelMessage.TryCancel(App.Dispatcher, _window, root);
+                    }
+                    break;
                 case "console":
                     // 只有开启 console 转发时页面才会发这类消息（hook 由桥接脚本注入决定）
                     if (Accept(root, originUrl))

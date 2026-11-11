@@ -756,6 +756,38 @@ for (const bridge of bridges) {
         assert.equal(await promise, 'done');
     });
 
+    test(`${label} 超时时会发 cancel 通知宿主（命令的 CancellationToken 靠它触发）`, async () => {
+        // 这是 0.5.6 取消链路的第一环：页面超时的那一刻必须告诉宿主"这次调用我不要了"。
+        // 不发的话，页面已经放弃、宿主还在跑——结果只能丢弃；命令若有副作用
+        // （写文件、发请求），页面重试就会做两遍。而这条消息发不发，页面侧完全看不出来
+        // （Promise 该 reject 还是 reject），所以只能在这一层钉住。
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+
+        const promise = env.window.oriel.invoke('never', {}, { timeout: 10 });
+        await assert.rejects(promise, /10ms/);
+
+        const invoke = env.posted.find((m) => m.__oriel === 'invoke');
+        assert.ok(invoke, '应当先发出 invoke');
+        const cancel = env.posted.find((m) => m.__oriel === 'cancel');
+
+        assert.ok(cancel, '超时后必须发一条 { __oriel: "cancel" }');
+        assert.equal(cancel.id, invoke.id, 'cancel 的 id 必须与那次 invoke 一致');
+    });
+
+    test(`${label} 正常回执时不发 cancel（别把成功也取消掉）`, async () => {
+        // 反向守卫：cancel 只能由超时触发。回执到达就 settle 并清掉计时器，
+        // 若这里也发 cancel，宿主会把一条已经完成的命令标记成取消。
+        const env = loadBridge(buildScript(bridge), bridge.channel);
+
+        const promise = env.window.oriel.invoke('fast', {});
+        deliverResult(env, 1, true, 'ok');
+        assert.equal(await promise, 'ok');
+
+        // 等到远超任何超时的时间，确认没有迟到的 cancel
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        assert.equal(env.posted.filter((m) => m.__oriel === 'cancel').length, 0);
+    });
+
     test(`${label} per-call timeout：未给 timeout 时仍用全局值`, async () => {
         const env = loadBridge(buildScript(bridge), bridge.channel);
         env.window.oriel.timeout = 10;

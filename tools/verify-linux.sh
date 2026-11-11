@@ -312,7 +312,7 @@ run_mode() {
 }
 
 section "自检：机器断言（结论行判定）"
-for mode in nav ipc capability multiwindow scheme threading tray tray-js geometry geometry-frameless windowstate windowevents event close window windownew newwindow monitors menu menubar api channel; do
+for mode in nav ipc capability multiwindow scheme threading tray tray-js geometry geometry-frameless windowstate windowevents event close window windownew newwindow cancel monitors menu menubar api channel; do
     case "$mode" in
         threading) pattern='^THREADING-SELFTEST: ' ;;
         tray)      pattern='^TRAY-SELFTEST: ' ;;
@@ -327,6 +327,7 @@ for mode in nav ipc capability multiwindow scheme threading tray tray-js geometr
         windownew) pattern='^WINDOWNEW-SELFTEST: ' ;;
         # 新窗口请求的弃绝（window.open / target="_blank"）：与 windownew（应用自己建窗）不是一回事
         newwindow) pattern='^NEWWINDOW-SELFTEST: ' ;;
+        cancel)    pattern='^CANCEL-SELFTEST: ' ;;
         monitors)  pattern='^MONITORS-SELFTEST: ' ;;
         menu)      pattern='^MENU-SELFTEST: ' ;;
         menubar)   pattern='^MENUBAR-SELFTEST: ' ;;

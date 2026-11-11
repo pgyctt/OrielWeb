@@ -330,15 +330,18 @@ public sealed class GeneratorDiagnosticsTests
         Assert.Equal("ORIELWEB104", host.Id);
     }
 
-    // ---- ORIELWEB109：CancellationToken ----
+    // ---- CancellationToken：0.5.6 起**支持**（此前是 ORIELWEB109 拒绝）----
 
     [Fact]
-    public void CancellationTokenParameter_IsReportedAsUnsupportedNotAsMissingJsonContext()
+    public void CancellationTokenParameter_IsAcceptedNotReported()
     {
-        // 此前它落到泛型读取路径，报的是"缺少 JSON 上下文"——那条提示把人引向
-        // "去补一个序列化上下文"，而真正的问题是**这个参数类型根本不支持**。
-        // 误导性诊断比没有诊断更费时间。
-        var error = Assert.Single(OrielDiagnostics("""
+        // 0.5.5 及之前这里是 ORIELWEB109（Error），理由是"整条 IPC 通路没有取消语义，
+        // 收下它只会让人以为取消有效"。0.5.6 把通路贯通了（页面超时/窗口关闭 → 宿主取消 →
+        // 命令的 CancellationToken），拒绝的理由消失，规则随之移除。
+        //
+        // 这条测试现在守的是**反向**的契约：它必须能编译，且**不能**再报任何诊断。
+        // 如果哪天有人把 109 加回来，这里会立刻红——而那种回退会让"取消"重新变成空承诺。
+        var diagnostics = OrielDiagnostics("""
             using System.Threading;
 
             public static class Commands
@@ -346,19 +349,28 @@ public sealed class GeneratorDiagnosticsTests
                 [OrielWeb.Ipc.OrielCommand("t.slow")]
                 public static string Slow(CancellationToken token) => "done";
             }
-            """));
+            """);
 
-        Assert.Equal("ORIELWEB109", error.Id);
-        Assert.Equal(DiagnosticSeverity.Error, error.Severity);
+        Assert.Empty(diagnostics);
+    }
 
-        string message = error.GetMessage();
+    [Fact]
+    public void CancellationTokenParameter_WithDefaultValue_IsNotReportedByDefaultValueRule()
+    {
+        // `CancellationToken ct = default` 是 .NET 的标准写法。它不是 JSON 参数，
+        // "页面不传"本来就是它的正常形态——所以 ORIELWEB110（缺省参数）必须放行它。
+        // 不豁免的话，最自然的写法会被一条无关的诊断挡住。
+        var diagnostics = OrielDiagnostics("""
+            using System.Threading;
 
-        // 关键：文案里**不能**再出现"JSON 上下文"这个误导。
-        Assert.DoesNotContain("JSON 上下文", message, StringComparison.Ordinal);
+            public static class Commands
+            {
+                [OrielWeb.Ipc.OrielCommand("t.slow")]
+                public static string Slow(CancellationToken token = default) => "done";
+            }
+            """);
 
-        // 要说清"为什么现在不支持"与"怎么办"。
-        Assert.Contains("取消", message, StringComparison.Ordinal);
-        Assert.Contains("限时", message, StringComparison.Ordinal);
+        Assert.Empty(diagnostics);
     }
 
     // ---- ORIELWEB110：C# 默认值 ----

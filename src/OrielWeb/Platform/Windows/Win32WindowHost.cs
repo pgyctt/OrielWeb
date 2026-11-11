@@ -324,6 +324,11 @@ internal partial class Win32WindowHost : IWindowBackend
         // （DestroyWindow → WM_DESTROY），但那时后端计数还没自增、应用也没见过这个窗口。
         if (_handedOff)
         {
+            // 在飞命令：窗口没了，结果确定没人要，取消它们是纯止损（命令可能还在写文件、
+            // 发请求）。**只在销毁时取消，不在导航离开时取消**——导航后命令的副作用
+            // 可能仍然有意义（"保存后跳转"那种），而销毁意味着这个窗口已经不关心了。
+            // 放在 Closed 之前：应用在 Closed 里可能马上做收尾，先止损更合理。
+            App.Dispatcher.CancelAllFor(_window);
             Closed?.Invoke();
             _backend.OnWindowDestroyed();
         }

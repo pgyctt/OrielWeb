@@ -924,6 +924,48 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// <summary>在页面当前文档上下文中执行 JS。返回 WebView2 风格的 JSON 编码结果字符串。</summary>
     public Task<string> EvaluateJs(string script) => Backend.ExecuteScriptAsync(script);
 
+    /// <summary>
+    /// 执行 JS，并允许放弃等待（0.5.6 起）。
+    /// </summary>
+    /// <param name="script">要执行的 JS。</param>
+    /// <param name="cancellationToken">放弃等待的令牌。</param>
+    /// <returns>结果字符串；令牌触发后以 <see cref="OperationCanceledException"/> 结束。</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>它只停止等待，不会停止脚本</b>。三个引擎都没有"取消已发出的求值"这个能力
+    /// （WebView2 的 <c>ExecuteScriptAsync</c>、WKWebView 的 <c>evaluateJavaScript:</c>、
+    /// WebKitGTK 的回环都没有取消入口），脚本一旦交出去就会在页面里跑完。
+    /// 与 <c>[OrielCommand]</c> 的 <see cref="System.Threading.CancellationToken"/> 参数
+    /// 不同——那条路能真取消，因为跑的是我们自己的 <see cref="Task"/>。
+    /// </para>
+    /// <para>
+    /// <b>那它有什么用</b>：调用方不再被一个可能永不返回的求值钉住（页面导航离开、
+    /// 窗口销毁时求值本来就拿不到结果）。用法与普通的"放弃等待"一致：
+    /// <c>await win.EvaluateJs(js, ct)</c>，超时后 catch <see cref="OperationCanceledException"/>。
+    /// </para>
+    /// <para>
+    /// <b>放弃后脚本的异常不会变成未观察异常</b>：内部给原 Task 挂了一个观察者。
+    /// 否则页面侧的脚本错误会在 GC 时才冒出来，表现为"某次求值之后莫名多一条诊断"。
+    /// </para>
+    /// </remarks>
+    public Task<string> EvaluateJs(string script, CancellationToken cancellationToken)
+    {
+        Task<string> pending = Backend.ExecuteScriptAsync(script);
+        if (!cancellationToken.CanBeCanceled)
+        {
+            return pending;
+        }
+
+        // 提前放弃时原 Task 仍会完成或失败；挂观察者，避免它的异常留到 GC 才被报出来。
+        _ = pending.ContinueWith(
+            static t => _ = t.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+        return pending.WaitAsync(cancellationToken);
+    }
+
     // ---- 对话框（pywebview 基本面）----
 
     /// <summary>消息框（模态，阻塞到用户关闭）。</summary>

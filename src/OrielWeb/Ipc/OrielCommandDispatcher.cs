@@ -46,6 +46,27 @@ internal sealed class OrielCommandDispatcher
     private readonly JsonSerializerContext? _jsonContext;
     private readonly OrielIpcGuard _guard;
 
+    /// <summary>
+    /// 在飞命令的取消源，键是"发起调用的窗口 + 页面那个 id 的原文"。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>为什么要带窗口</b>：页面侧的 id 是每个窗口各自自增（<c>seq</c> 从 1 开始），
+    /// 两个窗口同时发出 <c>id=1</c> 完全正常。不带窗口的话，A 窗口取消会把 B 窗口的命令一并砍掉。
+    /// </para>
+    /// <para>
+    /// <b>为什么 id 用原文而不是解析成整数</b>：页面可以发 <c>1.5</c> / <c>1e30</c> 这类值
+    /// （见 <c>HandleInvokeAsync</c> 里关于 id 原样保留的说明），解析成整数会在格式上撞车。
+    /// 用原文既不会撞，又与回执里写回的值逐字一致。
+    /// </para>
+    /// <para>
+    /// <b>生命周期</b>：登记在命令开始执行前，移除在 finally 里。取消时只 <c>Cancel()</c>
+    /// 不 <c>Dispose()</c>——命令可能还要读 <c>IsCancellationRequested</c>，
+    /// 真正的释放留给 finally。
+    /// </para>
+    /// </remarks>
+    private readonly ConcurrentDictionary<(IOrielWindowControl? Window, string Id), CancellationTokenSource> _inFlight = [];
+
     public OrielCommandDispatcher(
         Dictionary<Type, Func<object>> factories, JsonSerializerContext? jsonContext, OrielIpcGuard guard)
     {
@@ -207,16 +228,36 @@ internal sealed class OrielCommandDispatcher
 
         // 命令观测：耗时取"进入命令到出结果/抛异常"这一段，不含门禁校验与回执投递。
         long startedAt = Stopwatch.GetTimestamp();
+        // 取消源的键用 id 原文（见 _inFlight 的 remarks）。
+        // 缺失 id 时 ReadId 给的是 default(JsonElement)，它的 GetRawText() 会抛
+        // InvalidOperationException（ValueKind 是 Undefined）——所以要走 IdKeyOf。
+        string idKey = IdKeyOf(id);
+        var cts = new CancellationTokenSource();
+        _inFlight[(window, idKey)] = cts;
         try
         {
             object? target = route.Router.RequiresTarget ? ResolveTarget(route.Router.TargetType!) : null;
             // 通道的推送能力：绑定到发起这次调用的那个窗口。没有来源窗口时传 null，
             // 让接受 OrielChannel 参数的命令以 no_source_window 失败（而不是推给"当前窗口"）。
             OrielEventSink? pushSink = window is null ? null : window.EmitEvent;
-            var result = await route.Router.InvokeAsync(route.Index, target, args, _jsonContext, pushSink).ConfigureAwait(false);
+            var result = await route.Router
+                .InvokeAsync(route.Index, target, args, _jsonContext, pushSink, cts.Token)
+                .ConfigureAwait(false);
             TimeSpan elapsed = Stopwatch.GetElapsedTime(startedAt);
             ReplyOk(sink, id, result);
             Invoked?.Invoke(new OrielCommandInvokedEventArgs(name, elapsed, true, documentUrl));
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            // 命令因取消而停下。**单独一个 catch**：不这样写会落进下面的通用分支，
+            // 变成"库内部失败"（code: internal）——而取消是正常结局，不是缺陷。
+            TimeSpan elapsed = Stopwatch.GetElapsedTime(startedAt);
+            ReplyError(sink, id, ErrorReply.Text(
+                $"命令 '{name}' 已取消：发起方放弃了这次调用（页面超时或窗口已关闭）。",
+                OrielIpcErrorCodes.Cancelled));
+            // 取消**不计**进 Failed：那不是应用的错，报成失败会让 IpcFailed 的订阅者
+            // 去查一个并不存在的 bug。Invoked 照记（它统计的是"完成了一次调用"）。
+            Invoked?.Invoke(new OrielCommandInvokedEventArgs(name, elapsed, false, documentUrl));
         }
         catch (Exception ex)
         {
@@ -226,6 +267,83 @@ internal sealed class OrielCommandDispatcher
             Failed?.Invoke(new OrielCommandFailedEventArgs(name, ex, elapsed, documentUrl));
             Invoked?.Invoke(new OrielCommandInvokedEventArgs(name, elapsed, false, documentUrl));
         }
+        finally
+        {
+            if (_inFlight.TryRemove((window, idKey), out var registered))
+            {
+                registered.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// 取消一次在飞命令（页面侧放弃这次调用时由后端调用）。
+    /// </summary>
+    /// <param name="window">发起该调用的窗口；与登记时必须是同一个引用。</param>
+    /// <param name="idKey">页面那个 id 的**原文**（<see cref="JsonElement.GetRawText"/>）。</param>
+    /// <returns>真的取消到了返回 <c>true</c>；命令已结束或从未存在返回 <c>false</c>。</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>只 <c>Cancel()</c> 不 <c>Dispose()</c>、也不从表里移除</b>：命令可能还在跑，
+    /// 它要能继续读 <see cref="CancellationToken.IsCancellationRequested"/>；
+    /// 移除与释放统一由命令自己的 finally 做。否则取消瞬间之后的任何一次 token 访问
+    /// 都会踩到已释放对象。
+    /// </para>
+    /// <para>
+    /// <b>取消是协作式的</b>：命令里不检查 token、也不把 token 传给下游 API 的话，
+    /// 它会照常跑完——本方法返回 <c>true</c> 只代表"取消信号送到了"。
+    /// </para>
+    /// </remarks>
+    internal bool CancelInvoke(IOrielWindowControl? window, string idKey)
+    {
+        if (!_inFlight.TryGetValue((window, idKey), out var cts))
+        {
+            return false;
+        }
+
+        try
+        {
+            cts.Cancel();
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+            // 命令恰好在这一刻结束并释放了取消源：等价于"没取消到"，不是错误。
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 取消某个窗口上所有在飞命令（窗口关闭 / 导航离开时调用）。
+    /// </summary>
+    /// <param name="window">要清理的窗口。</param>
+    /// <returns>取消到的命令数。</returns>
+    /// <remarks>
+    /// 窗口关闭后它的回执已经没有接收方，但命令本身可能还在写文件、发请求——
+    /// 取消它们纯粹是止损。导航离开同理：页面已经换了，旧页面的调用结果无人需要。
+    /// </remarks>
+    internal int CancelAllFor(IOrielWindowControl? window)
+    {
+        int cancelled = 0;
+        foreach (var pair in _inFlight)
+        {
+            if (!ReferenceEquals(pair.Key.Window, window))
+            {
+                continue;
+            }
+
+            try
+            {
+                pair.Value.Cancel();
+                cancelled++;
+            }
+            catch (ObjectDisposedException)
+            {
+                // 同 CancelInvoke：已结束的命令，跳过。
+            }
+        }
+
+        return cancelled;
     }
 
     /// <summary>
@@ -332,6 +450,26 @@ internal sealed class OrielCommandDispatcher
 
     private static JsonElement ReadId(JsonElement message)
         => message.TryGetProperty("id", out JsonElement idElement) ? idElement : default;
+
+    /// <summary>
+    /// 把页面那个 id 变成一个可以安全比较的键。
+    /// </summary>
+    /// <param name="id">页面发来的 id（可能缺失，即 <c>default</c>）。</param>
+    /// <returns>可做字典键的字符串。</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>不能直接 <c>id.GetRawText()</c></b>：id 缺失时它是 <c>default(JsonElement)</c>，
+    /// 而 <c>ValueKind</c> 为 <c>Undefined</c> 的 <c>GetRawText()</c> 抛
+    /// <c>InvalidOperationException</c>——一条缺 id 的消息就能让整条分发路径炸掉。
+    /// （2026-11-11 加取消时踩到过：<c>DispatcherTests.MissingId_FallsBackToZero</c> 抓出来的。）
+    /// </para>
+    /// <para>
+    /// 缺失时返回 <c>"missing"</c>：页面真发一个字符串 <c>"missing"</c> 时，
+    /// <c>GetRawText()</c> 给的是带引号的 <c>"\"missing\""</c>，两者不会撞。
+    /// </para>
+    /// </remarks>
+    private static string IdKeyOf(JsonElement id)
+        => id.ValueKind == JsonValueKind.Undefined ? "missing" : id.GetRawText();
 
     private object ResolveTarget(Type targetType)
     {

@@ -7,6 +7,67 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
+## 0.5.6 - 2026-11-11
+
+**本版是能力补齐批次**：新增命令取消令牌、页面新窗口请求的显式弃绝。
+公开 API 只有**新增**（无删除、无签名变更），手写路由不会被这次扩展打断。
+
+### 新增
+
+- **命令可以接收 `CancellationToken`。**
+
+  ```csharp
+  [OrielCommand("report.build")]
+  public static async Task<Report> Build(string id, CancellationToken cancellationToken)
+  {
+      var data = await http.GetStringAsync($"https://api/{id}", cancellationToken);
+      return Parse(data);
+  }
+  ```
+
+  令牌由宿主注入，**不参与 JSON 绑定**（不是页面传的参数），触发时机：
+
+  | 触发源 | 触发 | 说明 |
+  |---|---|---|
+  | 页面超时 | ✅ | `oriel.timeout`（默认 30s）或 per-call `{ timeout }` 到了 |
+  | 窗口销毁 | ✅ | 窗口没了，结果确定没人要 |
+  | 页面导航离开 | ❌ | 命令的副作用可能仍有意义（"保存后跳转"），只丢弃结果 |
+  | 应用退出 | ❌ | 进程要走了，取消没有收益 |
+
+  **取消是协作式的**：命令里不检查 token、也不把它传给下游 API，命令就照常跑完。
+  库不会强行打断线程——那会破坏不变量，还可能吞掉写在半路的数据。
+
+  为什么由页面驱动、宿主不定超时：页面侧的超时是可配的，宿主不知道对端配了多久。
+  宿主定 30 秒而页面定 5 秒 → 25 秒空跑；反过来则会把还在用的命令砍掉。
+
+- **`EvaluateJs(script, CancellationToken)`**：只**停止等待**，不停止脚本。
+  三个引擎都没有"取消已发出的求值"的能力，脚本一旦交出去就会在页面里跑完。
+
+- **页面发起的新窗口请求一律忽略**：`window.open` / `target="_blank"` 不再有任何效果，
+  页面侧拿到 `null`。三平台统一（Windows `put_Handled(1)`、macOS 返回 `nil`、
+  Linux `create` 信号返回 `NULL`）。需要打开外链请用 `app.OpenExternal`。
+  每次弃绝会留一条带目标 URL 的诊断。
+
+- `OrielIpcErrorCodes.Cancelled`（`"cancelled"`）：命令被取消时的回执码。
+  它**不**计入 `IpcFailed`——取消不是应用的错。
+
+### 移除
+
+- **`ORIELWEB109`（命令参数不支持 `CancellationToken`）**。0.5.5 引入它是因为
+  "通路没有取消语义，收下这个参数只会让人以为取消有效"。现在通路贯通了，拒绝的理由消失。
+  升级后此前被这条诊断挡住的方法可以直接编译。
+
+  同时 `ORIELWEB110`（缺省参数）豁免 `CancellationToken ct = default`——
+  它是 .NET 的标准写法，且 token 不是 JSON 参数，"页面不传"本来就是正常形态。
+
+### 兼容性
+
+- `IOrielCommandRouter` 新增带令牌的 `InvokeAsync` 重载，**给了默认实现**（转调无令牌那个）。
+  0.5.5 及之前的手写路由不需要改，代价是它不支持取消（令牌被忽略）。
+  源生成器产出的路由会覆盖它，把令牌接到命令参数上。
+
+- 未配置能力时，行为与 0.5.5 完全一致。
+
 ## 0.5.5 - 2026-11-11
 
 **本版是安全修复批次**（2026-11-11 代码评审的 P0 越界项 + P1 互操作稳定性项）。
