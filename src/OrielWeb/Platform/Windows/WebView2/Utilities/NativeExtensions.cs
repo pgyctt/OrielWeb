@@ -194,7 +194,10 @@ internal static unsafe class NativeExtensions
             get
             {
                 args.get_Request(out nint value).ThrowOnError();
-                return ComObject.FromPointer<ICoreWebView2WebResourceRequest>(value)?.Object;
+                // 只要托管对象，不造包装器：包装器构造时会自己 AddRef 一份，
+                // 而这里没人 Dispose 它（M2）。get_Request 交出的引用归调用方，
+                // 正好由返回的 RCW 接管。
+                return ComObject.ToManaged<ICoreWebView2WebResourceRequest>(value);
             }
         }
 
@@ -277,7 +280,8 @@ internal static unsafe class NativeExtensions
             get
             {
                 args.get_MenuItems(out nint value).ThrowOnError();
-                return ComObject.FromPointer<ICoreWebView2ContextMenuItemCollection>(value)?.Object;
+                // 同 Request：只取托管对象，不造需要 Dispose 的包装器（M2）。
+                return ComObject.ToManaged<ICoreWebView2ContextMenuItemCollection>(value);
             }
         }
 
@@ -337,7 +341,8 @@ internal static unsafe class NativeExtensions
         public ICoreWebView2ContextMenuItem? GetValueAtIndex(uint index)
         {
             collection.GetValueAtIndex(index, out nint value).ThrowOnError();
-            return ComObject.FromPointer<ICoreWebView2ContextMenuItem>(value)?.Object;
+            // 同 Request：只取托管对象，不造需要 Dispose 的包装器（M2）。
+            return ComObject.ToManaged<ICoreWebView2ContextMenuItem>(value);
         }
 
         public void RemoveValueAtIndex(uint index) => collection.RemoveValueAtIndex(index).ThrowOnError();

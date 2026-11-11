@@ -301,11 +301,15 @@ internal partial class Win32WindowHost : IWindowBackend
         // 本窗口销毁后，同进程里其它窗口还要用它。
         Interlocked.Exchange(ref _environment, null);
 
-        // DirectComposition 的对象本是窗口的合成树，HWND 销毁后即失去作用，
-        // 随进程/窗口生命周期自然回收（本项目一个进程通常只活一个窗口）。
-        _dcompVisual = null;
-        _dcompTarget = null;
-        _dcompDevice = null;
+        // DirectComposition 的对象本是窗口的合成树，HWND 销毁后即失去作用——
+        // 但"失去作用"不等于"可以不管"：每个都是本类自己 AddRef 过的 COM 引用，
+        // 不 Dispose 就是每次建/关窗口泄漏三个引用（2026-11-11 评审 M2）。
+        //
+        // 顺序：先视觉、再目标、最后设备（依赖方向反过来放）。三者都是 IComObject 包装器，
+        // Dispose 只 Release 本类持有的那一份，不会影响 WebView2 内部对它们的引用。
+        Interlocked.Exchange(ref _dcompVisual, null)?.Dispose();
+        Interlocked.Exchange(ref _dcompTarget, null)?.Dispose();
+        Interlocked.Exchange(ref _dcompDevice, null)?.Dispose();
 
         // 任务栏覆盖图标是本对象持有的 HICON（B22）：窗口没了就没人再认它，必须自己销毁。
         // 任务栏那边拷贝过一份，销毁这里不影响它已经画出来的东西；而窗口都销毁了，
@@ -329,6 +333,19 @@ internal partial class Win32WindowHost : IWindowBackend
         // 再被它自己的 catch 吞掉——那条 catch 是兜底，不该被当成常规路径（评审 P3）。
         _ = Win32.SetWindowLongPtrW(_hwnd, Win32Constants.GWLP_USERDATA, 0);
         FreeSelfHandle();
+
+        // **最后**才清零句柄（2026-11-11 评审 M9）。
+        //
+        // 上面每一步都还要用 _hwnd（SetWindowLongPtrW 就是），所以清零必须排在他们之后；
+        // 而清零本身是必需的：装配是异步的（InitializeWebView2Async 里一串 await），
+        // 用户在 WebView2 装配完成前关掉窗口是常态。不清零时那条链路醒来仍看到
+        // "窗口还活着"，于是继续往一个已销毁的 hwnd 上挂控制器/设置可见性——
+        // 轻则白耗一次装配，重则 CreateCoreWebView2CompositionController 拿着野句柄去
+        // 建原生窗口（那是个已释放的 HWND 值，可能已经被系统复用给别的窗口）。
+        //
+        // 所有后端入口都靠 WindowAlive（_hwnd != 0）判断"迟到的调用直接放弃"，
+        // 清零正是那条判据的数据来源。
+        _hwnd = 0;
     }
 
     /// <summary>

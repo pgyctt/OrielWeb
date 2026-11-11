@@ -69,8 +69,31 @@ internal partial class Win32WindowHost
             _environment = await _backend.GetEnvironmentAsync(browserFolder).ConfigureAwait(true)
                 ?? throw new InvalidOperationException("创建 WebView2 环境失败（返回 null）。");
 
+            // 装配链上**每个 await 之后都要复查窗口还在不在**（2026-11-11 评审 M9）。
+            //
+            // 这些 await 会真的让出 UI 线程（环境创建、控制器创建、脚本注入都是异步的），
+            // 用户完全可能在这期间关掉窗口——那是常态，不是异常路径。若不复查，醒来后会继续
+            // 往一个已销毁的 hwnd 上挂东西：最坏的一条是
+            // CreateCoreWebView2CompositionControllerAsync(_hwnd)，它拿的是一个已释放的 HWND 值，
+            // 而系统可能已经把它复用给别的窗口——那就等于把 WebView 挂到别人的窗口上。
+            //
+            // 直接 return 而不是抛：窗口没了不是"装配失败"，不需要走 OnWebViewFailed
+            // （那会给用户弹一个"初始化 WebView2 失败"的提示，而实际上是他自己关的窗口）。
+            if (!WindowAlive)
+            {
+                return;
+            }
+
             _compositionController = await _environment.CreateCoreWebView2CompositionControllerAsync(_hwnd).ConfigureAwait(true)
                 ?? throw new InvalidOperationException("创建 WebView2 组合控制器失败（返回 null）。");
+
+            if (!WindowAlive)
+            {
+                // 控制器已经建出来但窗口没了：它归本对象所有，交给销毁路径收
+                // （OnWindowDestroyedCore 里 Interlocked.Exchange 那几句）。
+                // 这里只是不再往窗口上挂，避免动到已失效的 hwnd。
+                return;
+            }
 
             // 把 WebView 作为视觉挂进我们建立的 DirectComposition 树。此后它不再是子窗口，
             // 因此窗口能收到 WM_NCHITTEST —— 这是边缘调整大小得以走系统原生路径的关键。
@@ -153,6 +176,12 @@ internal partial class Win32WindowHost
                     App.Guard.TrustedPrefixes,
                     ReadSystemSnapshot(), _options.DragRegionSelector, _options.Label))
                 .ConfigureAwait(true);
+
+            // 脚本注入同样可能跨过窗口销毁（这一步是纯 IPC，等的是浏览器进程）
+            if (!WindowAlive)
+            {
+                return;
+            }
 
             // 可见性按**意图态**恢复，而不是无条件置真：WithHidden() 起手时宿主已在 PostCreate 里
             // SW_HIDE，若这里硬置 true，那个顶层的 WebView2 渲染窗口（Chrome_WidgetWin_1）就会在

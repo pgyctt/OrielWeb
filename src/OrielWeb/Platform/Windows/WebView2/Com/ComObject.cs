@@ -24,6 +24,26 @@ internal static class ComObject
         => pointer == 0
             ? throw new InvalidOperationException($"WebView2 返回了空的 {typeof(T).Name} 指针。")
             : new ComObject<T>(pointer);
+
+    /// <summary>
+    /// 只要托管对象、**不要**包装器时用这条：直接转换，不 AddRef、不需要 Dispose。
+    /// </summary>
+    /// <param name="pointer">接口指针（所有权仍归调用方/被调方，本方法不接管）。</param>
+    /// <remarks>
+    /// <para>
+    /// 2026-11-11 评审 M2 的四处调用点原本写的是 <c>ComObject.FromPointer&lt;T&gt;(p)?.Object</c>：
+    /// 造一个包装器、立刻只取 <c>Object</c>、包装器随即变垃圾。而包装器在构造时**自己 AddRef 了一份**
+    /// （理由见 <see cref="ComObject{T}"/> 的构造注释），没人 Dispose 就是净 +1——
+    /// 每取一次属性泄漏一个引用。加终结器只是兜底，正确的修法是**根本不造那个包装器**。
+    /// </para>
+    /// <para>
+    /// 与 <see cref="FromPointer{T}"/> 的分工：需要"确定性释放、且这个引用要活一段"时用包装器
+    /// （<c>using</c>）；只是"现在就要那个托管对象"时用本方法。本方法不做 AddRef，
+    /// 所以**不产生**需要释放的引用，也就不该被 <c>using</c>。
+    /// </para>
+    /// </remarks>
+    public static unsafe T? ToManaged<T>(nint pointer) where T : class
+        => pointer == 0 ? null : ComInterfaceMarshaller<T>.ConvertToManaged((void*)pointer);
 }
 
 /// <inheritdoc />
@@ -83,5 +103,25 @@ internal sealed class ComObject<T> : IComObject<T> where T : class
         {
             _ = Marshal.Release(pointer);
         }
+
+        // 有终结器就必须抑制它：否则这份引用会被 Release 两次（第二次在终结队列上）。
+        GC.SuppressFinalize(this);
     }
+
+    /// <summary>
+    /// 兜底：调用方忘了 <see cref="Dispose"/> 时，别让那份原生引用活到进程结束。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 2026-11-11 评审 M2：构造函数自己 AddRef 了一份（见上面的说明），而托管包装器
+    /// （RCW）的终结器**不管这一份**——不 Dispose 就是净 +1，长会话里"每次资源请求/菜单操作
+    /// 泄漏一个引用"就是这么来的。
+    /// </para>
+    /// <para>
+    /// 代价要说清：有终结器的对象会被提升到终结队列（多活一轮 GC）。这些包装器都是
+    /// "取出来就用完"的短生命周期对象，代价可接受；真正该做的仍是调用方
+    /// <see cref="Dispose"/>（确定性释放）。
+    /// </para>
+    /// </remarks>
+    ~ComObject() => Dispose();
 }

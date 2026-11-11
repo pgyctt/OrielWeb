@@ -4,6 +4,17 @@ using System.Runtime.InteropServices.Marshalling;
 namespace OrielWeb.Platform.Windows.WebView2.Interop;
 
 /// <summary>COM <c>STATSTG</c>。IStream.Stat 的输出结构。</summary>
+/// <remarks>
+/// <para>
+/// 布局照 Win32 的 <c>STATSTG</c>（64 位下 80 字节）：<c>pwcsName</c> 之后有一个 4 字节的
+/// 隐式填充（下一个字段 <c>cbSize</c> 是 8 字节对齐），<c>clsid</c> 是 **16 字节的 GUID**。
+/// </para>
+/// <para>
+/// <b>2026-11-11 评审 M1</b>：<c>clsid</c> 此前写成 <c>uint</c>，托管结构 72B vs 原生 80B，
+/// clsid 之后的所有字段错位——封送会按错误的偏移写入。这是确定性 ABI 错误，
+/// 不因为"当前调用点少"就不是缺陷。布局由 <c>InteropStructLayoutTests</c> 逐字段钉住。
+/// </para>
+/// </remarks>
 [StructLayout(LayoutKind.Sequential)]
 internal struct STATSTG
 {
@@ -15,7 +26,7 @@ internal struct STATSTG
     public long atime;
     public uint grfMode;
     public uint grfLocksSupported;
-    public uint clsid;
+    public Guid clsid;
     public uint grfStateBits;
     public uint reserved;
 }

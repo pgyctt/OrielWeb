@@ -18,7 +18,9 @@ namespace OrielConformance;
 ///   <item>返回的 label 与请求的一致（页面的寻址单位就是它）；</item>
 ///   <item>新窗口的 label 能在 <see cref="OrielApp.GetWindow"/> 查到（真的进了应用记账）；</item>
 ///   <item>用同一个 label 再建一次必须**失败**——label 是寻址单位，重复会让
-///     <c>emitTo</c> / 能力配置指向不确定的窗口。</item>
+///     <c>emitTo</c> / 能力配置指向不确定的窗口；</item>
+///   <item>建完**立刻**销毁不崩、且该窗口从应用记账里消失（2026-11-11 评审 M9 的取证，
+///     见 <c>HandleDuplicate</c> 末尾的说明——它证明的是"销毁与装配并发不会崩"）。</item>
 /// </list>
 /// </para>
 /// <para>
@@ -29,6 +31,9 @@ internal static class WindowNewSelfTest
 {
     private const string Echo = "windownew-echo";
     private const string SpawnedLabel = "spawned";
+
+    /// <summary>第五段"建完立刻销毁"用的 label。</summary>
+    private const string LateLabel = "spawned-late";
 
     private static readonly List<string> Failures = [];
     private static readonly object Gate = new();
@@ -200,7 +205,49 @@ internal static class WindowNewSelfTest
                 $"重复 label 的报错没提到 label，页面无法归因：{message}");
         }
 
-        _main?.PostToUiThread(Finish);
+        // ---- 第五段：建完立刻销毁（2026-11-11 评审 M9 的取证）----
+        //
+        // WebView2 的装配是一串 await（环境 → 控制器 → 脚本注入）。若销毁路径不清 _hwnd，
+        // 那条链路醒来仍认为窗口活着，会拿一个已释放的 HWND 去建组合控制器——
+        // 系统可能已经把那个值复用给别的窗口。
+        //
+        // 自检能取证的部分：**建完立刻 Close，进程不崩、窗口记账归零**。
+        // 造不出的是"恰好卡在某个 await 中间"——那需要精确控制 WebView2 的回调时机，
+        // 没有稳定的注入点。所以这里给的是"最短存活期"这个最接近的近似，并如实标注：
+        // 它证明的是"销毁与装配并发不会崩"，不是"每个 await 都复查了"。
+        // 后者由单测 ComOwnershipTests 按结构钉住（await 数与 WindowAlive 复查数必须匹配）。
+        _main?.PostToUiThread(() =>
+        {
+            OrielApp? app = _main?.App;
+            if (app is null)
+            {
+                return;
+            }
+
+            WebviewWindow? late = app.CreateWindow(
+                w => w.WithLabel(LateLabel).WithTitle("朝生暮死").WithSize(240, 180).WithUrl("about:blank"));
+
+            Check(late is not null, "建窗返回 null（应当拿到窗口对象）");
+
+            // **立刻**关：不 await、不延迟，尽量贴近装配还没完成的那一刻。
+            late?.Close();
+
+            // 再等一小会儿让消息泵把销毁与装配的残余都跑完，然后看记账是否干净。
+            _ = new Timer(
+                _ =>
+                {
+                    _main?.PostToUiThread(() =>
+                    {
+                        Check(
+                            _main?.App.GetWindow(LateLabel) is null,
+                            "建完立刻销毁后，该窗口仍留在应用记账里（销毁路径没跑完）");
+                        Finish();
+                    });
+                },
+                null,
+                TimeSpan.FromMilliseconds(1200),
+                Timeout.InfiniteTimeSpan);
+        });
     }
 
     private static void Check(bool condition, string description)

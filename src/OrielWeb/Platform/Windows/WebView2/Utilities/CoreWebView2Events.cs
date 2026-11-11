@@ -162,7 +162,7 @@ internal sealed unsafe class CoreWebView2Events : IDisposable
             using var parsed = ComObject.FromPointer<ICoreWebView2NavigationStartingEventArgs>(args);
             if (parsed is not null)
             {
-                _navigationStartingEvent?.Invoke(this, parsed.Object);
+                ComCallbackGuard.Raise(() => _navigationStartingEvent?.Invoke(this, parsed.Object), "NavigationStarting");
             }
 
             return HResult.S_OK;
@@ -188,7 +188,7 @@ internal sealed unsafe class CoreWebView2Events : IDisposable
             using var parsed = ComObject.FromPointer<ICoreWebView2NavigationCompletedEventArgs>(args);
             if (parsed is not null)
             {
-                _navigationCompletedEvent?.Invoke(this, parsed.Object);
+                ComCallbackGuard.Raise(() => _navigationCompletedEvent?.Invoke(this, parsed.Object), "NavigationCompleted");
             }
 
             return HResult.S_OK;
@@ -211,7 +211,7 @@ internal sealed unsafe class CoreWebView2Events : IDisposable
     {
         _documentTitleChanged = new DocumentTitleChangedHandler((_, _) =>
         {
-            _documentTitleChangedEvent?.Invoke(this, EventArgs.Empty);
+            ComCallbackGuard.Raise(() => _documentTitleChangedEvent?.Invoke(this, EventArgs.Empty), "DocumentTitleChanged");
             return HResult.S_OK;
         });
 
@@ -235,7 +235,7 @@ internal sealed unsafe class CoreWebView2Events : IDisposable
             using var parsed = ComObject.FromPointer<ICoreWebView2WebMessageReceivedEventArgs>(args);
             if (parsed is not null)
             {
-                _webMessageReceivedEvent?.Invoke(this, parsed.Object);
+                ComCallbackGuard.Raise(() => _webMessageReceivedEvent?.Invoke(this, parsed.Object), "WebMessageReceived");
             }
 
             return HResult.S_OK;
@@ -266,7 +266,7 @@ internal sealed unsafe class CoreWebView2Events : IDisposable
             using var parsed = ComObject.FromPointer<ICoreWebView2ContextMenuRequestedEventArgs>(args);
             if (parsed is not null)
             {
-                _contextMenuRequestedEvent?.Invoke(this, parsed.Object);
+                ComCallbackGuard.Raise(() => _contextMenuRequestedEvent?.Invoke(this, parsed.Object), "ContextMenuRequested");
             }
 
             return HResult.S_OK;
@@ -348,7 +348,7 @@ internal sealed unsafe class CoreWebView2CompositionControllerEvents : IDisposab
     {
         _cursorChanged = new CursorChangedHandler((_, _) =>
         {
-            _cursorChangedEvent?.Invoke(this, null);
+            ComCallbackGuard.Raise(() => _cursorChangedEvent?.Invoke(this, null), "CursorChanged");
             return HResult.S_OK;
         });
 
