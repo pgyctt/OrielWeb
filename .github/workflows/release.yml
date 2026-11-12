@@ -525,6 +525,12 @@ jobs:
           node --version
           Write-Output "OIDC request url 存在: $([bool]$env:ACTIONS_ID_TOKEN_REQUEST_URL)"
           Write-Output "OIDC request token 存在: $([bool]$env:ACTIONS_ID_TOKEN_REQUEST_TOKEN)"
+          Write-Output "GITHUB_ACTIONS: $env:GITHUB_ACTIONS"
+          # **--loglevel verbose 是必须的**：npm 的 OIDC 交换实现（lib/utils/oidc.js）
+          # 在任何一步失败时都**静默返回 undefined**，只写 log.verbose——而调用方
+          # 随后退回 token 路径、报 ENEEDAUTH。不开 verbose 就只能看到那句
+          # 指向完全错误方向的 "请用 npm adduser 登录"。
+          # 打开后能看到它到底卡在：入口判定 / 取 id_token / token exchange 哪一步。
           # **stage publish 而不是 publish**：npm 的 Trusted Publisher 配置默认只允许
           # 「staged publish」，「直接 publish」需要在 npmjs.com 上单独勾选。
           # 我们选择留在默认（更严）的那一侧：CI 只把包**暂存**，由人在 npm 上审批后
@@ -533,7 +539,7 @@ jobs:
           # 审批：npm 网站 → 包的 Staged Packages 标签页点 Approve（需 2FA），或本机跑
           #   npm stage list @orielweb/api
           #   npm stage approve <stage-id>
-          npm stage publish --provenance --access public
+          npm stage publish --provenance --access public --loglevel verbose
 
       - name: Remind how to approve the staged package
         if: success()
