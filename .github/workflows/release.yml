@@ -514,7 +514,14 @@ jobs:
         # 打印实际用的 npm/node 版本：Trusted Publishing 的 OIDC 交换是 npm CLI 的能力，
         # 低于 11.5.1 时会**静默退回 token 路径**（然后 404），日志里留下版本号
         # 比事后猜"是不是版本不够"划算得多。
+        #
+        # 同时打印 OIDC 环境的存在性（**不打印 token 本身**）：npm 只有在
+        # ACTIONS_ID_TOKEN_REQUEST_URL / _TOKEN 都存在时才会去做 OIDC 交换，
+        # 这两个变量缺失时它会安静地退回 token 路径并报 ENEEDAUTH——
+        # 而报错文案（"请用 npm adduser 登录"）完全指向错误的方向。
         run: |
           npm --version
           node --version
+          Write-Output "OIDC request url 存在: $([bool]$env:ACTIONS_ID_TOKEN_REQUEST_URL)"
+          Write-Output "OIDC request token 存在: $([bool]$env:ACTIONS_ID_TOKEN_REQUEST_TOKEN)"
           npm publish --provenance --access public
