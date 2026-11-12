@@ -431,15 +431,45 @@ jobs:
       # `--provenance` 是 Trusted Publishing 的额外收益：npm 会给包附上可验证的
       # 构建来源（SLSA provenance），消费者能在 npmjs.com 上看到它由哪个 commit、
       # 哪个 workflow 产出。公开包免费，值得开。
+      # **不要写 registry-url**。这是这次踩到的坑，值得写清楚：
+      #
+      # `actions/setup-node` 只要收到 `registry-url`，就会生成一份 .npmrc 并注入
+      # `NODE_AUTH_TOKEN: XXXXX-XXXXX-XXXXX-XXXXX`（占位符）与 `always-auth`。
+      # 而 npm 的认证顺序是**先看 token、再看 OIDC**——一旦存在 NODE_AUTH_TOKEN，
+      # 它就永远不会去做 OIDC 交换，于是以一个"有 token 但无效"的身份发 PUT。
+      #
+      # registry 对这种请求回的是 **404**（不是 401/403）：它不区分"包不存在"与
+      # "你没权限看"，以避免被人枚举私有包名。所以错误信息看起来像"包不存在"，
+      # 而真实原因是"认证方式走错了路"。
+      #
+      # 更迷惑的是日志里 **provenance 签名会成功**（sigstore 透明日志都写进去了）：
+      # 它和 Trusted Publishing 都用同一个 id-token，但用途不同——签名成功
+      # 完全不代表发布认证通过。第一次排查时正是被这两点带偏的。
+      #
+      # 修法：不传 registry-url（避免注入 token），改用显式 npmrc 指向官方 registry。
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22.x'
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Upgrade npm (Trusted Publishing needs 11.5.1+)
         # 不写 shell：Windows runner 默认 pwsh，单条命令两种 shell 都一样，
         # 而写错 shell 反而引入风险（见下面"两步而不是一条 run"的说明）。
         run: npm install -g npm@^11.5.1
+
+      # 显式写一份**不含任何 token** 的 npmrc：registry 指向官方源，认证交给 OIDC。
+      # 用 NPM_CONFIG_USERCONFIG 指向它，覆盖 setup-node 可能留下的那份。
+      - name: Point npm at the public registry without a token
+        shell: pwsh
+        run: |
+          $npmrc = Join-Path $env:RUNNER_TEMP 'npmrc-oidc'
+          "registry=https://registry.npmjs.org/" | Set-Content -Path $npmrc -Encoding utf8
+          # 确认真的没有凭据混进来：有 token 的话下面整条链路会退化成"未认证 PUT → 404"。
+          if (Select-String -Path $npmrc -Pattern '_authToken|always-auth' -Quiet) {
+            throw "生成的 npmrc 里出现了凭据字段：Trusted Publishing 要求完全不带 token"
+          }
+          "NPM_CONFIG_USERCONFIG=$npmrc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Output "npmrc: $npmrc"
+          Get-Content $npmrc
 
       # **两步而不是一条 run 里两行**：Windows runner 的默认 shell 是 pwsh，
       # 多行 run 不会因前一条原生命令失败而中断（bash 有 -e，pwsh 没有）。
@@ -481,6 +511,10 @@ jobs:
 
       - name: Publish @orielweb/api to npm
         working-directory: packages/api
-        # 不传 NODE_AUTH_TOKEN：Trusted Publishing 的前提就是"没有 token"。
-        # 传了反而会让 npm 走 token 认证那条路，绕过 OIDC。
-        run: npm publish --provenance --access public
+        # 打印实际用的 npm/node 版本：Trusted Publishing 的 OIDC 交换是 npm CLI 的能力，
+        # 低于 11.5.1 时会**静默退回 token 路径**（然后 404），日志里留下版本号
+        # 比事后猜"是不是版本不够"划算得多。
+        run: |
+          npm --version
+          node --version
+          npm publish --provenance --access public
