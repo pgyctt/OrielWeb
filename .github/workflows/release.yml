@@ -423,9 +423,10 @@ jobs:
       #   （Environment 留空——本工作流没用 environment）
       # 没配那一条时这里会 403 且提示 "requires authentication"，看起来像 token 失效。
       #
-      # **npm 版本必须显式升到 11.5.1+**：Trusted Publishing 是 npm CLI 的能力，
+      # **npm 版本必须显式升到 11.15.0+**：Trusted Publishing 的 OIDC 交换从 npm 11.5.1
+      # 起才有，而 `npm stage publish`（本工作流用的那个）要到 11.15.0。
       # 而 actions/setup-node 装 Node 22.x 时自带的是 npm 10.x——不升级的话
-      # `npm publish` 会退回找 .npmrc 里的 token，在没有 token 的 runner 上直接 ENEEDAUTH。
+      # 命令会退回找 .npmrc 里的 token，在没有 token 的 runner 上直接 ENEEDAUTH。
       # 这个失败模式很容易被误读成"OIDC 没生效"。
       #
       # `--provenance` 是 Trusted Publishing 的额外收益：npm 会给包附上可验证的
@@ -451,10 +452,10 @@ jobs:
         with:
           node-version: '22.x'
 
-      - name: Upgrade npm (Trusted Publishing needs 11.5.1+)
+      - name: Upgrade npm (staged publishing needs 11.15.0+)
         # 不写 shell：Windows runner 默认 pwsh，单条命令两种 shell 都一样，
         # 而写错 shell 反而引入风险（见下面"两步而不是一条 run"的说明）。
-        run: npm install -g npm@^11.5.1
+        run: npm install -g npm@^11.15.0
 
       # 显式写一份**不含任何 token** 的 npmrc：registry 指向官方源，认证交给 OIDC。
       # 用 NPM_CONFIG_USERCONFIG 指向它，覆盖 setup-node 可能留下的那份。
@@ -509,10 +510,10 @@ jobs:
             throw "packages/api/types 与源码不同步：本地跑 npm run build:types 并提交"
           }
 
-      - name: Publish @orielweb/api to npm
+      - name: Publish @orielweb/api to npm (staged)
         working-directory: packages/api
         # 打印实际用的 npm/node 版本：Trusted Publishing 的 OIDC 交换是 npm CLI 的能力，
-        # 低于 11.5.1 时会**静默退回 token 路径**（然后 404），日志里留下版本号
+        # 低于门槛时会**静默退回 token 路径**（然后 404/ENEEDAUTH），日志里留下版本号
         # 比事后猜"是不是版本不够"划算得多。
         #
         # 同时打印 OIDC 环境的存在性（**不打印 token 本身**）：npm 只有在
@@ -524,4 +525,30 @@ jobs:
           node --version
           Write-Output "OIDC request url 存在: $([bool]$env:ACTIONS_ID_TOKEN_REQUEST_URL)"
           Write-Output "OIDC request token 存在: $([bool]$env:ACTIONS_ID_TOKEN_REQUEST_TOKEN)"
-          npm publish --provenance --access public
+          # **stage publish 而不是 publish**：npm 的 Trusted Publisher 配置默认只允许
+          # 「staged publish」，「直接 publish」需要在 npmjs.com 上单独勾选。
+          # 我们选择留在默认（更严）的那一侧：CI 只把包**暂存**，由人在 npm 上审批后
+          # 才真正发布。多一道人工闸，但一个被攻破的 workflow 无法直接把版本推上 registry。
+          #
+          # 审批：npm 网站 → 包的 Staged Packages 标签页点 Approve（需 2FA），或本机跑
+          #   npm stage list @orielweb/api
+          #   npm stage approve <stage-id>
+          npm stage publish --provenance --access public
+
+      - name: Remind how to approve the staged package
+        if: success()
+        shell: pwsh
+        # 这一步只是把"接下来要做什么"写进日志。stage publish 成功时 CI 会显示绿色，
+        # 但**包还没上线**——不写清楚的话，"发布成功"与"用户装得到"会被混为一谈，
+        # 而这正是 stage publish 最容易被误解的地方。
+        run: |
+          Write-Output ""
+          Write-Output "================================================================"
+          Write-Output " @orielweb/api 已**暂存**，尚未公开。需要人工审批："
+          Write-Output ""
+          Write-Output "   npm stage list @orielweb/api"
+          Write-Output "   npm stage approve <stage-id>      # 需要 2FA"
+          Write-Output ""
+          Write-Output " 或在 https://www.npmjs.com/package/@orielweb/api 的"
+          Write-Output " Staged Packages 标签页点 Approve。"
+          Write-Output "================================================================"
