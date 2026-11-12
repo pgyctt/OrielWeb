@@ -95,9 +95,20 @@ B0–B24 全部完成，从 `0.4.0` 起分批发版。分阶段清单与每批�
     取消有没有生效完全看不出来。三平台全 PASS（Windows 26 模式；macOS/Linux 走 CI）。
 
 #### 显式缓存头（`oriel://`）
-- 现状：三平台响应只有 `Content-Type`，没有 `Cache-Control` / `ETag` / `Last-Modified`。Windows（`CreateWebResourceResponse` 的 headers 串）与 macOS（`headerFields` 字典）都能加，**Linux 加不了**——`webkit_uri_scheme_request_finish` 的签名里没有响应头参数，要换 WebKitGTK 2.40+ 的 `finish_with_response`。
-- 影响：缓存行为目前完全由引擎的默认策略决定，库层没有契约。
-- 为什么没顺手做：为一个三平台不一致的显式头去动其中两个平台，收益低于把"不设缓存头是隐式行为"写进 API.md（已写）。
+- **结论：不做**（2026-11-12 查证后）。此前记的是"三平台响应只有 `Content-Type`，缓存行为
+  由引擎默认策略决定"。把资源来源翻了一遍，风险方向其实反了：
+  - **库层没有任何缓存**：`EmbeddedAssetStore.Open` 每次请求都走
+    `Assembly.GetManifestResourceStream(...)`（`EmbeddedAssetStore.cs:155`），
+    既没有磁盘缓存也没有内存缓存——所以"升级后看到旧页面"在库这一层不可能发生。
+  - **引擎侧**：响应没有 `Cache-Control` / `ETag` / `Last-Modified`，而 HTTP 的启发式缓存
+    需要这类依据才有条件请求可用。没有依据时，最坏情况是**每次导航重新请求**（性能略差），
+    而不是读到旧内容。资源在进程生命周期内本就不会变，同一进程内的重复请求也无害。
+  - **成本**：Linux 加不了响应头（`webkit_uri_scheme_request_finish` 的签名里没有 headers，
+    要换 WebKitGTK 2.40+ 的 `finish_with_response`），为一个三平台不一致的头去动其中两个平台，
+    收益低于把结论写下来。
+  - **留的尾巴**：如果将来实测到某个引擎确实对自定义 scheme 做了缓存（表现为"改资源重建后
+    页面还是旧的"），再补显式头——那时也才知道要写什么值（`no-store` 还是带 `ETag` 的
+    条件请求），现在写等于猜。
 
 #### `clipboard.writeImage({ path })` 的路径 scope：**无条件强制**（0.6.0 已完成）
 - **已完成**（2026-11-12，0.6.0）：已改为**无条件强制**——没声明 scope 的 `{ path }`
