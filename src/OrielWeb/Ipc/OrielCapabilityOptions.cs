@@ -162,29 +162,6 @@ public sealed class OrielCapabilityOptions
         return false;
     }
 
-    /// <summary>
-    /// 有没有为这条命令声明过路径 scope（**不看放行与否**）。
-    /// </summary>
-    /// <param name="commandName">命令名。</param>
-    /// <remarks>
-    /// 与 <see cref="IsPathAllowed"/> 的区别只在"没声明"这一格：
-    /// 那个方法在没声明时返回 <c>false</c>（空 scope = 不允许任何路径），
-    /// 而有些调用方需要区分"声明了但路径不在内"与"压根没声明"。
-    /// 逐条理由见 <c>OrielIpcGuard.HasPathScopeFor</c>。
-    /// </remarks>
-    internal bool HasPathScopeFor(string commandName)
-    {
-        foreach ((string pattern, OrielPathScope _) in PathScopes)
-        {
-            if (OrielCapabilityMatch.Matches(pattern, commandName))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     /// <summary>拒绝页面调用这些命令（<b>优先于授权</b>）。可多次调用。</summary>
     public OrielCapabilityOptions Deny(params string[] patterns)
     {

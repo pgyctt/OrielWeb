@@ -388,14 +388,23 @@ public sealed class PlatformCommandTests
     [Fact]
     public void WriteImageRejectsMissingPath()
     {
+        // 要配 scope 才能测到"读不到"：0.6.0 起没声明 scope 的 `{ path }` 先被门禁挡住
+        // （path_not_allowed），根本走不到读文件那一步。这里刻意把路径放在 **scope 内但不存在**，
+        // 于是门禁通过、读取失败——两条契约各归各位，不会因为收紧而被合并成一条。
+        using OrielApp app = Oriel.CreateBuilder()
+            .UseCapabilities(c => c.Allow("clipboard.writeImage", s => s.AllowPath(ScopeRoot())))
+            .Build();
+
+        string missing = Path.Combine(ScopeRoot(), "不存在/这张图.png");
+
         OrielIpcException ex = Assert.Throws<OrielIpcException>(
-            () => Invoke("clipboard.writeImage", new { image = new { path = "不存在/这张图.png" } }));
+            () => InvokeWith(app, "clipboard.writeImage", new { image = new { path = missing } }));
 
         Assert.Equal(OrielIpcErrorCodes.InvalidArgument, ex.Code);
         Assert.Contains("读不到", ex.Message, StringComparison.Ordinal);
     }
 
-    // ---- clipboard.writeImage 的路径 scope：**声明了才强制**（0.6.0 收口）----
+    // ---- clipboard.writeImage 的路径 scope：**无条件强制**（0.6.0 起）----
 
     [Fact]
     public void WriteImagePath_InsideDeclaredScope_PassesScopeCheck()
@@ -436,13 +445,14 @@ public sealed class PlatformCommandTests
     }
 
     [Fact]
-    public void WriteImagePath_WithoutDeclaredScope_KeepsWorkingAndWarns()
+    public void WriteImagePath_WithoutDeclaredScope_IsRejectedAsPathNotAllowed()
     {
-        // **没声明 scope 时维持既有行为**（这是与 H1 的刻意差别，理由见该命令的 remarks）：
-        // 只授权命令、不给 scope 的既有配置不该被一次小版本升级打断。
+        // **0.6.0 的破坏性变更点**：没声明 scope 的 `{ path }` 现在一律拒绝。
+        // 0.5.5–0.5.6 之间它是"维持旧行为 + 告警"的过渡态（那时这条测试断言的是
+        // "走到读不到，而不是 path_not_allowed"）。收紧的理由与 H1 同源：
+        // `Allow("clipboard.writeImage")` 之后页面能读机器上任意图片文件。
         //
-        // 取证方式：scope 外的一个**不存在**的路径仍然走到"读不到"，
-        // 而不是被 scope 判死（若被判死会是 path_not_allowed）。
+        // 空 scope = 什么都不允许，与 fs.* / opener.* 同一口径——不再有"没配就放过"这条缝。
         using OrielApp app = Oriel.CreateBuilder()
             .UseCapabilities(c => c.Allow("clipboard.writeImage"))
             .Build();
@@ -454,30 +464,35 @@ public sealed class PlatformCommandTests
         OrielIpcException ex = Assert.Throws<OrielIpcException>(
             () => InvokeWith(app, "clipboard.writeImage", new { image = new { path = outside } }));
 
-        Assert.Equal(OrielIpcErrorCodes.InvalidArgument, ex.Code);
-        Assert.Contains("读不到", ex.Message, StringComparison.Ordinal);
+        // 关键：是**拒**（path_not_allowed），不是"去读然后读不到"（invalid_argument）。
+        // 后者意味着门禁被绕过了，只是文件恰好不存在——那种通过方式毫无安全感。
+        Assert.Equal(OrielIpcErrorCodes.PathNotAllowed, ex.Code);
+        Assert.Contains("scope", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void HasPathScopeFor_DistinguishesDeclaredFromUndeclared()
+    public void WriteImageBytes_IsNotAffectedByPathScope()
     {
-        // 这个区分是上面三条的基础：TryAuthorizePath 在"没声明"时也返回 false，
-        // 所以调用方无法用它判断"是没声明还是路径不在内"。
-        using OrielApp withScope = Oriel.CreateBuilder()
-            .UseCapabilities(c => c.Allow("clipboard.writeImage", s => s.AllowPath(ScopeRoot())))
-            .Build();
-        Assert.True(withScope.Guard.HasPathScopeFor("clipboard.writeImage"));
-
-        using OrielApp withoutScope = Oriel.CreateBuilder()
+        // `{ bytes }` 不读文件，所以不受任何路径约束。这条守的是"别把收紧扩散到不该管的地方"：
+        // 无条件强制只针对 `{ path }`，把 base64 用法也一起挡掉会让 0.6.0 变成无谓的破坏。
+        using OrielApp app = Oriel.CreateBuilder()
             .UseCapabilities(c => c.Allow("clipboard.writeImage"))
             .Build();
-        Assert.False(withoutScope.Guard.HasPathScopeFor("clipboard.writeImage"));
 
-        // 通配声明也算"有 scope"
-        using OrielApp wildcard = Oriel.CreateBuilder()
-            .UseCapabilities(c => c.Allow("clipboard.*", s => s.AllowPath(ScopeRoot())))
-            .Build();
-        Assert.True(wildcard.Guard.HasPathScopeFor("clipboard.writeImage"));
+        // 一个最小的 PNG 头（不需要真是有效图片：这条测试关心的是**路径门禁不介入**）。
+        string bytes = Convert.ToBase64String([
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+        ]);
+
+        // 不抛 path_not_allowed 就说明门禁没参与；至于图片本身解析失败，
+        // 那是另一条错误路径（invalid_argument），这里允许它出现。
+        OrielIpcException? ex = Record.Exception(
+            () => InvokeWith(app, "clipboard.writeImage", new { image = new { bytes } })) as OrielIpcException;
+
+        if (ex is not null)
+        {
+            Assert.NotEqual(OrielIpcErrorCodes.PathNotAllowed, ex.Code);
+        }
     }
 
     [Fact]

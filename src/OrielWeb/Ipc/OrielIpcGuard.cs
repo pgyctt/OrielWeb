@@ -102,28 +102,6 @@ internal sealed class OrielIpcGuard
         return _options.IsPathAllowed(commandName, absolutePath, appIdentifier, out reason);
     }
 
-    /// <summary>
-    /// 应用有没有为某条命令声明过路径 scope（**不管放行与否**）。
-    /// </summary>
-    /// <param name="commandName">命令名。</param>
-    /// <remarks>
-    /// <para>
-    /// 存在的理由是一个语义区分：<see cref="TryAuthorizePath"/> 在"没有声明"时也返回
-    /// <c>false</c>（空 scope = 不允许任何路径），所以调用方无法用它区分
-    /// "声明了但这条路径不在内"与"压根没声明"。
-    /// </para>
-    /// <para>
-    /// 而有些命令需要后者的答案：<c>clipboard.writeImage</c> 的路径 scope 是
-    /// **声明了才强制**的（理由见该命令的 remarks）——它要在"没声明"时维持既有行为
-    /// 并告警，而不是把既有配置直接判死。
-    /// </para>
-    /// <para>
-    /// 没配能力（<c>_options</c> 为 null）时返回 <c>false</c>：那时没有 scope 可言。
-    /// </para>
-    /// </remarks>
-    internal bool HasPathScopeFor(string commandName)
-        => _options?.HasPathScopeFor(commandName) ?? false;
-
     /// <summary>追加一个可信来源（URL 前缀）。<c>UseCapabilities(AllowOrigin)</c> 放行的开发期来源由此进来。</summary>
     internal void AddTrustedPrefix(string prefix)
     {

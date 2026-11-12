@@ -1494,6 +1494,20 @@ await writeSecret('correct horse battery staple');
 c.Allow("clipboard.*");   // 或逐条 Allow("clipboard.readText") 等
 ```
 
+**`clipboard.writeImage({ path })` 还要路径 scope（0.6.0 起，无条件强制）**：
+
+```csharp
+// { bytes }（base64 的 PNG/ICO）不读文件，只要命令授权就够了
+c.Allow("clipboard.writeImage");
+
+// { path } 要读宿主上的文件，必须给 scope——否则 path_not_allowed
+c.Allow("clipboard.writeImage", s => s.AllowPath("$APPDATA/icons/**"));
+```
+
+理由：只给命令授权时，页面能读机器上**任意**图片文件。这与 0.5.5 修的 H1
+（`opener.openPath` 等于任意程序执行）是同一形状，只是风险低一档。
+`clipboard.readImage` 读的是剪贴板、不涉及文件路径，不受此约束。
+
 | 要点 | 说明 |
 |---|---|
 | **`null` ≠ `''`** | `null` 是"剪贴板里没有文本"（可能是图片、文件列表），`''` 是"文本是空的"。两者都要能表达 |

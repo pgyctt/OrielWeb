@@ -511,53 +511,45 @@ internal static class OrielBuiltInPlatformCommands
     /// <summary>读一个图像文件（相对路径按可执行文件目录解析，与图标同一约定）。</summary>
     /// <remarks>
     /// <para>
-    /// <b>路径 scope 是"声明了才强制"的</b>（2026-11-11 评审的遗留项，0.6.0 收口）。
-    /// 这条命令此前只有命令授权、没有路径 scope：<c>Allow("clipboard.writeImage")</c>
-    /// 之后页面能读机器上任意图片文件——缺口的形状与 H1（<c>opener.openPath</c>）相同，
-    /// 只是风险低一档（需要显式授权，而且"写一张自己的图"本来就是常见用法）。
+    /// <b>路径 scope 是无条件强制的</b>（0.6.0 起）。这条命令此前只有命令授权、没有路径 scope：
+    /// <c>Allow("clipboard.writeImage")</c> 之后页面能读机器上任意图片文件——缺口的形状与
+    /// H1（<c>opener.openPath</c>）相同，只是风险低一档（需要显式授权，而且"写一张自己的图"
+    /// 本来就是常见用法）。
     /// </para>
     /// <para>
-    /// <b>为什么不像 H1 那样无条件强制</b>：H1 那次变化把"只声明命令、不给 scope"的配置
-    /// 从可用变成拒绝，那是因为 <c>openPath</c> 等于任意程序执行（风险等级不同）。
-    /// 这里改成"**只要应用给这条命令声明过路径 scope，就必须通过**；没声明过则维持既有行为
-    /// 并在 Debug 构建下告警"。这样：
-    /// <list type="bullet">
-    ///   <item>已经按 H1 的新写法配了 scope 的应用，这条也顺带收紧了；</item>
-    ///   <item>没配的应用不会被一次小版本升级打断（那是破坏性变更，该在 0.6.0 的
-    ///     CHANGELOG 里显式宣布，而不是混进一个修复批次）；</item>
-    ///   <item>两条路都不静默：配了 scope 就一定生效，没配就有告警指路。</item>
-    /// </list>
+    /// <b>0.5.5 到 0.6.0 之间它是"声明了才强制"</b>：给这条命令声明过路径 scope 就必须通过，
+    /// 没声明过则维持旧行为加一条告警。那个中间态是一次刻意的过渡——H1 之所以能直接无条件收紧，
+    /// 是因为 <c>openPath</c> 等于任意程序执行；而这里"只声明命令、不给 scope"的配置在小版本里
+    /// 被打断属于破坏性变更，该在 CHANGELOG 的破坏性变更段里显式宣布，而不是混进一个修复批次。
+    /// 0.6.0 就是那个宣布点：现在没声明 scope 的 <c>{ path }</c> 一律 <c>path_not_allowed</c>。
+    /// </para>
+    /// <para>
+    /// <b>只影响 <c>{ path }</c></b>：<c>{ bytes }</c>（base64 的 PNG/ICO）不读文件，不受任何
+    /// 路径约束；<c>clipboard.readImage</c> 读的是剪贴板、也不涉及文件路径。
     /// </para>
     /// <para>
     /// 相对路径的解析基准仍是可执行文件目录（与 <c>tray.setIcon</c> 同一约定），
-    /// 所以"程序目录里的图标"这种常见用法不受影响。
+    /// 所以"程序目录里的图标"这种用法需要显式把那个目录写进 scope。
     /// </para>
     /// </remarks>
     private static byte[] ReadImageFileForClipboard(IOrielWindowControl window, string path)
     {
         string full = OrielPathResolver.Resolve(path);
 
-        // 只有应用显式声明过这条命令的 scope 才强制。IsPathAllowed 在"没有声明"时
-        // 也会返回 false（空 scope = 不允许任何路径），所以不能直接拿它的结果当判据——
-        // 必须先问"这条命令有没有 scope 条目"。
-        if (window.App.Guard.HasPathScopeFor("clipboard.writeImage"))
+        // 无条件过门禁：空 scope 表示"什么都不允许"（与 fs.* / opener.* 同一口径），
+        // 所以没声明 scope 的应用在这里就被挡住了——这正是 0.6.0 的破坏性点。
+        if (!window.App.Guard.TryAuthorizePath(
+                "clipboard.writeImage", full, window.App.Info.Identifier, out string? reason))
         {
-            if (!window.App.Guard.TryAuthorizePath(
-                    "clipboard.writeImage", full, window.App.Info.Identifier, out string? reason))
+            throw new OrielIpcException(
+                $"clipboard.writeImage 读不了「{path}」：路径不在 clipboard.writeImage 的 scope 内。" +
+                "0.6.0 起这条命令要求声明路径 scope（例如 " +
+                "Allow(\"clipboard.writeImage\", s => s.AllowPath(\"$APPDATA/**\"))）；" +
+                "不想受路径约束就直接传 { bytes }。" +
+                reason)
             {
-                throw new OrielIpcException(
-                    $"clipboard.writeImage 读不了「{path}」：路径不在 clipboard.writeImage 的 scope 内。{reason}")
-                {
-                    Code = OrielIpcErrorCodes.PathNotAllowed,
-                };
-            }
-        }
-        else
-        {
-            OrielDiagnostics.Report(
-                "[OrielWeb] clipboard.writeImage 用 { path } 读了文件，但应用没有为这条命令声明路径 scope：" +
-                "页面因此可以读机器上任意图片文件。建议加 " +
-                "Allow(\"clipboard.writeImage\", s => s.AllowPath(\"$APPDATA/**\"))。");
+                Code = OrielIpcErrorCodes.PathNotAllowed,
+            };
         }
 
         try
