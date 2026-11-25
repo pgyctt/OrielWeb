@@ -2173,7 +2173,10 @@ macOS 走 release 工作流（与 AOT 同理，打包只能在 macOS 上跑）�
 
 - WebView2 运行时（Win10+ 常已预装）。**库不自动安装**——联网安装属应用策略，
   未注册 `OnWebView2RuntimeMissing` 时库只弹一个含下载地址的说明框。
-- 开发/发布需要 .NET 10 SDK 与 MSVC 工具链（Native AOT）。
+- 开发/发布需要 .NET 10 SDK **10.0.404 或更新**（Native AOT），以及 MSVC 工具链。
+  仓库根的 `global.json` 钉住这个下限：AOT 用的 `Microsoft.DotNet.ILCompiler` 由 SDK 自动注入，
+  SDK 10.0.401 注入的 10.0.12 命中 GHSA-p3jp-9v83-76w9（CVE-2026-111497，Brotli 解码器越界写，High），
+  10.0.404 注入已修复的 10.0.15。旧 SDK 构建会报 `NU1903`。
 - WebView2 运行时过旧时会走到"环境能创建但某个接口调用失败"的路径，错误提示会是通用的那条。
 
 ### Linux

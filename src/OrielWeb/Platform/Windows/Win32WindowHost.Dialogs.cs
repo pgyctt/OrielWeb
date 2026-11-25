@@ -22,6 +22,12 @@ namespace OrielWeb.Platform.Windows;
 /// <remarks>本文件是 <see cref="Win32WindowHost"/> 的 partial 分片，按关注点从原单文件搬来；成员原样搬运，未改一行逻辑。</remarks>
 internal partial class Win32WindowHost
 {
+    /// <summary>文件对话框路径缓冲区容量（字符数）。多选时所有选中项都要装下，不能只按 MAX_PATH 分配。</summary>
+    private const int FileDialogBufferChars = 32768;
+
+    /// <summary>清零用的只读零缓冲区：内容永不变化，可共享，避免每次调用都新分配 64 KB。</summary>
+    private static readonly byte[] ZeroDialogBuffer = new byte[FileDialogBufferChars * sizeof(char)];
+
     private void MessageBoxResult(string text, string? title, OrielMessageBoxIcon icon)
     {
         uint flags = Win32Constants.MB_OK | icon switch
@@ -44,6 +50,7 @@ internal partial class Win32WindowHost
             options.Title,
             options.Filters,
             defaultExtension: null,
+            defaultFileName: null,
             options.InitialDirectory,
             options.AllowMultiple);
 
@@ -54,6 +61,7 @@ internal partial class Win32WindowHost
             options.Title,
             options.Filters,
             options.DefaultExtension,
+            options.DefaultFileName,
             options.InitialDirectory,
             allowMultiple: false);
 
@@ -117,29 +125,42 @@ internal partial class Win32WindowHost
         string? title,
         IReadOnlyList<OrielFileFilter>? filters,
         string? defaultExtension,
+        string? defaultFileName,
         string? initialDirectory,
         bool allowMultiple)
     {
         string filterString = OrielFileFilter.RenderForWin32(filters ?? []);
         nint filterPtr = Marshal.StringToHGlobalUni(filterString);
-        nint bufferPtr = Marshal.AllocHGlobal(32768 * sizeof(char));
+        nint bufferPtr = Marshal.AllocHGlobal(FileDialogBufferChars * sizeof(char));
         nint titlePtr = title is null ? 0 : Marshal.StringToHGlobalUni(title);
         nint initialDirPtr = initialDirectory is null ? 0 : Marshal.StringToHGlobalUni(initialDirectory);
         nint defExtPtr = defaultExtension is null ? 0 : Marshal.StringToHGlobalUni(defaultExtension);
 
         try
         {
-            // 预填当前目录，避免对话框落在系统目录
-            Marshal.WriteInt16(bufferPtr, 0);
+            // 必须**整块清零**，不能只写第一个字符：读回时按固定长度取字符串，
+            // 双 \0 之后若是残留的堆内存就会变成垃圾段，单文件路径会被当成"目录 + 文件名"
+            // （表现为 `C:\dir\111.txt\ⰀⰀ`，中文目录尤其容易撞上）。
+            Marshal.Copy(ZeroDialogBuffer, 0, bufferPtr, ZeroDialogBuffer.Length);
 
-            uint flags = isSave
+            // 保存对话框的预填名（打开对话框没有这个语义，调用方传 null）
+            if (isSave && !string.IsNullOrEmpty(defaultFileName))
+            {
+                char[] name = defaultFileName.ToCharArray();
+                int count = Math.Min(name.Length, FileDialogBufferChars - 1);
+                Marshal.Copy(name, 0, bufferPtr, count);
+            }
+
+            // OFN_EXPLORER 对两种对话框都显式带上：不带时系统可能按旧格式返回，
+            // 保存对话框会只给文件名而不是完整路径。多选还**必须**带上它（见下）。
+            uint flags = Win32Constants.OFN_EXPLORER | (isSave
                 ? Win32Constants.OFN_OVERWRITEPROMPT | Win32Constants.OFN_PATHMUSTEXIST | Win32Constants.OFN_HIDEREADONLY | Win32Constants.OFN_NOCHANGEDIR
-                : Win32Constants.OFN_FILEMUSTEXIST | Win32Constants.OFN_PATHMUSTEXIST | Win32Constants.OFN_HIDEREADONLY | Win32Constants.OFN_NOCHANGEDIR;
+                : Win32Constants.OFN_FILEMUSTEXIST | Win32Constants.OFN_PATHMUSTEXIST | Win32Constants.OFN_HIDEREADONLY | Win32Constants.OFN_NOCHANGEDIR);
 
             if (allowMultiple && !isSave)
             {
                 // OFN_EXPLORER 必须一起带：否则原生对话框按旧格式返回，且单个文件也会带出目录段
-                flags |= Win32Constants.OFN_ALLOWMULTISELECT | Win32Constants.OFN_EXPLORER;
+                flags |= Win32Constants.OFN_ALLOWMULTISELECT;
             }
 
             var ofn = new OPENFILENAMEW
@@ -148,7 +169,7 @@ internal partial class Win32WindowHost
                 hwndOwner = _hwnd,
                 lpstrFilter = filterPtr,
                 lpstrFile = bufferPtr,
-                nMaxFile = 32768,
+                nMaxFile = FileDialogBufferChars,
                 lpstrTitle = titlePtr,
                 lpstrInitialDir = initialDirPtr,
                 lpstrDefExt = defExtPtr,
@@ -163,7 +184,8 @@ internal partial class Win32WindowHost
 
             // 多选时缓冲区里是"目录\0名\0名\0\0"这种多段结构，所以**必须按长度读**：
             // Marshal.PtrToStringUni(ptr) 遇到第一个 \0 就截断，那样拿到的是目录段（或被截短的文件名）。
-            return OrielFileDialogSupport.ParseWin32MultiSelect(Marshal.PtrToStringUni(bufferPtr, 32768));
+            // 缓冲区已清零，解析端再按双 \0 截断一次，两层防护。
+            return OrielFileDialogSupport.ParseWin32MultiSelect(Marshal.PtrToStringUni(bufferPtr, FileDialogBufferChars));
         }
         finally
         {

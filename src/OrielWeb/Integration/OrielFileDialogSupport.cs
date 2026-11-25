@@ -31,7 +31,12 @@ internal static class OrielFileDialogSupport
             return [];
         }
 
-        string[] parts = buffer.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        // 必须先截到**第一个双 \0**：调用方按固定容量把缓冲区读回来时，双 \0 之后那段
+        // （未初始化的堆内存）也会进入字符串。不截断的话它会变成一个"垃圾文件名段"，
+        // 于是单文件路径被当成"目录 + 文件名"拼成 `C:\dir\file.txt\ⰀⰀ`。
+        string trimmed = TrimAtDoubleNull(buffer);
+
+        string[] parts = trimmed.Split('\0', StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length == 0)
         {
             return [];
@@ -53,6 +58,24 @@ internal static class OrielFileDialogSupport
         }
 
         return paths;
+    }
+
+    /// <summary>
+    /// 截到第一个双 <c>\0</c>（不含这两个字符）。
+    /// </summary>
+    /// <remarks>
+    /// Win32 对话框写回的是"以双 <c>\0</c> 结尾的字符串"，但按固定容量读回时后面还跟着堆内存。
+    /// 这里只做截断，不做别的判断：字符串里没有双 <c>\0</c> 时原样返回。
+    /// </remarks>
+    internal static string TrimAtDoubleNull(string buffer)
+    {
+        if (string.IsNullOrEmpty(buffer))
+        {
+            return buffer;
+        }
+
+        int end = buffer.IndexOf("\0\0", StringComparison.Ordinal);
+        return end < 0 ? buffer : buffer[..end];
     }
 
     /// <summary>

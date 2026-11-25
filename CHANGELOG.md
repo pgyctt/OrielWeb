@@ -7,6 +7,47 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
+## 0.6.1 - 2026-11-25
+
+**本版是修复批次**：修好 Windows 保存对话框返回路径的解析，并把 Native AOT 依赖链升出高危漏洞。
+公开 API 只有**新增**（`OrielSaveFileDialogOptions.DefaultFileName` 在 Windows 上开始生效），无删除、无签名变更。
+
+### 修复
+
+- **Windows 保存对话框会把中文文件名当成目录，并在路径尾部带出乱码。**
+  症状是选完路径后拿到 `C:\Users\x\Desktop\中文\111.txt\ⰀⰀ` 这种"完整路径 + 一段垃圾"，
+  同一进程里第二次调用则变成 `...\111.txt\xt`——垃圾段的形状每次不同。
+
+  根因不在编码：`ShowFileDialog` 用一块 32768 字符的堆缓冲区接收 `GetSaveFileNameW` 的结果，
+  但**只写了首字节清零**，随后按固定长度把整块读回
+  （`Marshal.PtrToStringUni(bufferPtr, 32768)`）。于是双 `\0` 结尾之后的**未初始化堆内存**
+  也进了字符串；`ParseWin32MultiSelect` 再按 `\0` 切段时，那段垃圾就成了一个"文件名段"，
+  完整路径因此被当成目录去拼。中文路径不是触发条件，只是路径长、堆布局不同时更容易撞出非零垃圾。
+
+  修法三处：缓冲区**整块清零**后再交给原生对话框（根因）；解析前先截到第一个双 `\0`
+  （第二层防护）；打开与保存都显式带上 `OFN_EXPLORER`，保存结果稳定为完整路径。
+
+- **Windows 上 `DefaultFileName` 被静默忽略。** Linux 与 macOS 都会预填文件名，
+  Windows 分支从来没把这个字段传下去——所以 `dialog.save({ defaultPath: "…/报告.txt" })`
+  在 Windows 上打开的是一个空文件名框。现在三平台一致。
+
+### 安全
+
+- **Native AOT 依赖升到 `Microsoft.DotNet.ILCompiler` 10.0.15**，消除 `NU1903`
+  （GHSA-p3jp-9v83-76w9 / CVE-2026-111497，.NET Brotli 解码器越界写，High；修复线 10.0.14）。
+
+  这个包**不在 csproj 里**：它由 SDK 的 `Microsoft.NETCoreSdk.BundledVersions.props`
+  按 `ILCompilerPackVersion` 自动注入。SDK 10.0.401 注入 10.0.12（受影响），
+  10.0.404 注入 10.0.15。所以修法是升 SDK，而不是加 `<PackageReference>` 覆盖——
+  后者会与 runtime pack 版本错配。
+
+  仓库根新增 `global.json` 把 SDK 下限钉在 **10.0.404**（`rollForward: latestFeature`）。
+  没有它，下一个 clone 的人用旧 SDK 会重新拿到受影响版本，而告警只是 warning
+  （`TreatWarningsAsErrors` 为 false），构建照样绿。
+
+  **对使用者的影响**：升级到本库 0.6.1 后，本地开发需要 .NET 10 SDK 10.0.404 或更新；
+  CI 若固定了更低的 SDK 版本，会在 AOT 发布时重新引入该漏洞告警。
+
 ## 0.6.0 - 2026-11-12
 
 **本版有一处破坏性变更**：`clipboard.writeImage({ path })` 现在要求声明路径 scope。

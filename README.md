@@ -39,7 +39,11 @@ dotnet add package OrielWeb
 
 ## 快速开始
 
-要求 **.NET 10 SDK**（本库只提供 `net10.0` 目标）。
+要求 **.NET 10 SDK 10.0.404 或更新**（本库只提供 `net10.0` 目标）。仓库根的 `global.json` 钉住这个下限：
+Native AOT 的 `Microsoft.DotNet.ILCompiler` 不是 csproj 里的显式包，而是 SDK 按
+`Microsoft.NETCoreSdk.BundledVersions.props` 的 `ILCompilerPackVersion` 自动注入的——
+SDK 10.0.401 注入 10.0.12，命中 GHSA-p3jp-9v83-76w9（CVE-2026-111497，Brotli 解码器越界写，High）；
+10.0.404 注入已修复的 10.0.15。用旧 SDK 会在构建时得到 `NU1903` 高危告警。
 
 ```xml
 <Project Sdk="Microsoft.NET.Sdk">
@@ -450,7 +454,7 @@ Granular Access Token，写进**临时** `.npmrc`（`//registry.npmjs.org/:_auth
 
 | 平台 | 要求 |
 |---|---|
-| Windows | WebView2 运行时（Win10+ 常已预装；未装时库会引导，或由 `OnWebView2RuntimeMissing` 自定义提示）。开发/发布需要 .NET 10 SDK 与 MSVC 工具链（AOT） |
+| Windows | WebView2 运行时（Win10+ 常已预装；未装时库会引导，或由 `OnWebView2RuntimeMissing` 自定义提示）。开发/发布需要 .NET 10 SDK 10.0.404+（见「快速开始」的 `global.json` 说明）与 MSVC 工具链（AOT） |
 | Linux | `libwebkit2gtk-4.1` **或** `4.0`（Ubuntu 22.04 / Debian 11 只有 4.0——宿主会自动回退，两者是同一套 C API）、`libgtk-3`；中文界面另需 CJK 字体（否则渲染成方框）。AOT 发布需要 `clang` 与 `zlib1g-dev` |
 | macOS | 系统 ≥ 11；产物必须打成 `.app` 才能运行（WKWebView 需要 bundle identifier）。`tools/make-macos-app.sh` 会做这件事，`vpk pack` 再消费它 |
 

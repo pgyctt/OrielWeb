@@ -196,6 +196,34 @@ public sealed class FileDialogTests
         Assert.Equal(["/home/x/a.txt", "/home/x/b.txt"], paths);
     }
 
+    [Fact]
+    public void Win32MultiSelect_GarbageAfterDoubleNullIsIgnored()
+    {
+        // 真实症状（2026-11-25 手动验证）：缓冲区按固定容量读回时，双 \0 之后是未初始化的堆内存。
+        // 不先截断的话它会被当成一个文件名段，完整路径于是被当目录，拼出
+        // `C:\Users\pgyctt\Desktop\中文\111.txt\ⰀⰀ` 这种"路径 + 乱码"。
+        string[] paths = OrielFileDialogSupport.ParseWin32MultiSelect(
+            "C:\\Users\\pgyctt\\Desktop\\中文\\111.txt\0\0\0ⰀⰀ");
+
+        Assert.Equal([@"C:\Users\pgyctt\Desktop\中文\111.txt"], paths);
+    }
+
+    [Fact]
+    public void Win32MultiSelect_MultipleFilesIgnoreGarbageAfterTerminator()
+    {
+        string[] paths = OrielFileDialogSupport.ParseWin32MultiSelect("C:\\dir\0a.txt\0b.txt\0\0garbage");
+
+        Assert.Equal([@"C:\dir\a.txt", @"C:\dir\b.txt"], paths);
+    }
+
+    [Fact]
+    public void Win32MultiSelect_ChineseDirectoryAndNamesSurvive()
+    {
+        string[] paths = OrielFileDialogSupport.ParseWin32MultiSelect(@"C:\用户\桌面\中文" + "\0报告.txt\0总结.md\0\0");
+
+        Assert.Equal([@"C:\用户\桌面\中文\报告.txt", @"C:\用户\桌面\中文\总结.md"], paths);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]
