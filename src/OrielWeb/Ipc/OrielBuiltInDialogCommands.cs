@@ -30,21 +30,31 @@ internal static class OrielBuiltInDialogCommands
     /// <summary>命令名前缀。</summary>
     internal const string Prefix = "dialog.";
 
-    /// <summary>取某个 <c>dialog.*</c> 命令的处理函数；不是本族命令时返回 false。</summary>
-    internal static bool TryGet(string name, out Func<IOrielWindowControl, string, JsonElement, object?> handler)
+    /// <summary>
+    /// 取某个 <c>dialog.*</c> 命令的处理函数；不是本族命令时返回 false。
+    /// </summary>
+    /// <remarks>
+    /// <b>整个族都是异步的</b>，没有同步重载：三个命令最终都调用原生模态对话框，
+    /// 同步执行会占住 UI 线程，把整条 IPC 通道堵到用户关掉对话框为止
+    /// （实测：保存对话框开 29 秒 → 期间零条命令执行，关闭后 140+ 条积压命令在 5ms 内涌入）。
+    /// 异步通道让分发器在等待期间把 UI 线程交还给消息循环。
+    /// </remarks>
+    internal static bool TryGet(
+        string name,
+        out Func<IOrielWindowControl, string, JsonElement, ValueTask<object?>> handler)
     {
         switch (name)
         {
             case "dialog.open":
-                handler = static (window, command, args) => Open(window, args);
+                handler = static (window, command, args) => OpenAsync(window, args);
                 return true;
 
             case "dialog.save":
-                handler = static (window, command, args) => Save(window, args);
+                handler = static (window, command, args) => SaveAsync(window, args);
                 return true;
 
             case "dialog.message":
-                handler = static (window, command, args) => Message(window, args);
+                handler = static (window, command, args) => MessageAsync(window, args);
                 return true;
 
             default:
@@ -68,7 +78,7 @@ internal static class OrielBuiltInDialogCommands
     /// 而且它**只支持单选**——Tauri 那边也是。多选 + directory 的组合会报错而不是静默只取第一个。
     /// </para>
     /// </remarks>
-    private static object Open(IOrielWindowControl window, JsonElement args)
+    private static async ValueTask<object?> OpenAsync(IOrielWindowControl window, JsonElement args)
     {
         JsonElement options = GetOptions(args);
 
@@ -91,7 +101,7 @@ internal static class OrielBuiltInDialogCommands
                 };
             }
 
-            string? folder = window.ShowFolderDialog(title, SplitDirectory(defaultPath));
+            string? folder = await window.ShowFolderDialogAsync(title, SplitDirectory(defaultPath)).ConfigureAwait(false);
             return folder is null ? [] : new[] { folder };
         }
 
@@ -103,7 +113,7 @@ internal static class OrielBuiltInDialogCommands
             AllowMultiple = multiple,
         };
 
-        return window.ShowOpenFileDialog(dialogOptions);
+        return await window.ShowOpenFileDialogAsync(dialogOptions).ConfigureAwait(false);
     }
 
     /// <summary>保存文件对话框。</summary>
@@ -113,7 +123,7 @@ internal static class OrielBuiltInDialogCommands
     /// 而本库的原生层把它拆成 <c>InitialDirectory</c> 与 <c>DefaultFileName</c> 两个字段。
     /// 这里的拆法是：以分隔符结尾、或者是已存在的目录 → 当目录；否则把最后一段当文件名。
     /// </remarks>
-    private static object? Save(IOrielWindowControl window, JsonElement args)
+    private static async ValueTask<object?> SaveAsync(IOrielWindowControl window, JsonElement args)
     {
         JsonElement options = GetOptions(args);
 
@@ -130,7 +140,7 @@ internal static class OrielBuiltInDialogCommands
             DefaultFileName = fileName,
         };
 
-        return window.ShowSaveFileDialog(dialogOptions);
+        return await window.ShowSaveFileDialogAsync(dialogOptions).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -147,7 +157,7 @@ internal static class OrielBuiltInDialogCommands
     /// 参数名是 <c>message</c> 而不是 <c>text</c>：Tauri 的命令字段就是 <c>message</c>。
     /// </para>
     /// </remarks>
-    private static object? Message(IOrielWindowControl window, JsonElement args)
+    private static async ValueTask<object?> MessageAsync(IOrielWindowControl window, JsonElement args)
     {
         string message = OrielJson.GetRequiredArg<string>(args, "message", null);
         string? title = ReadString(args, "title");
@@ -155,7 +165,9 @@ internal static class OrielBuiltInDialogCommands
 
         (MessageButtons buttons, string okLabel, string cancelLabel) = ParseButtons(args);
 
-        MessageResult? result = window.ShowMessageDialog(message, title, kind, buttons, okLabel, cancelLabel);
+        MessageResult? result = await window
+            .ShowMessageDialogAsync(message, title, kind, buttons, okLabel, cancelLabel)
+            .ConfigureAwait(false);
 
         return result switch
         {

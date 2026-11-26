@@ -68,6 +68,40 @@ internal partial class Win32WindowHost
         return paths.Length > 0 ? paths[0] : null;
     }
 
+    // ---- 异步版本：把原生调用整个挪到专门的 STA 线程上 ----
+    //
+    // 同步版本仍保留（公开 API 的既有契约，C# 侧调用方按需选择），但内建 dialog.* 命令
+    // 必须走下面这组：原生对话框是模态阻塞调用，在 UI 线程上跑会把整条 IPC 通道一起堵住
+    // （见 Win32DialogThread 的说明与 CHANGELOG 0.6.2 的实测数据）。
+
+    public Task<string[]> ShowOpenFileDialogAsync(OrielOpenFileDialogOptions options)
+        => Win32DialogThread.Shared.InvokeAsync(() => ShowFileDialog(
+            isSave: false,
+            options.Title,
+            options.Filters,
+            defaultExtension: null,
+            defaultFileName: null,
+            options.InitialDirectory,
+            options.AllowMultiple));
+
+    public Task<string?> ShowSaveFileDialogAsync(OrielSaveFileDialogOptions options)
+        => Win32DialogThread.Shared.InvokeAsync(() =>
+        {
+            string[] paths = ShowFileDialog(
+                isSave: true,
+                options.Title,
+                options.Filters,
+                options.DefaultExtension,
+                options.DefaultFileName,
+                options.InitialDirectory,
+                allowMultiple: false);
+
+            return paths.Length > 0 ? paths[0] : null;
+        });
+
+    public Task<string?> ShowFolderDialogAsync(string? title, string? initialDirectory)
+        => Win32DialogThread.Shared.InvokeAsync(() => ShowFolderDialog(title, initialDirectory));
+
     public string? ShowFolderDialog(string? title, string? initialDirectory)
     {
         // initialDirectory 在 Windows 上被忽略：SHBrowseForFolder 要设初始位置得挂 BFFM_INITIALIZED 回调
@@ -217,6 +251,16 @@ internal partial class Win32WindowHost
     /// </para>
     /// </remarks>
     MessageResult? IWindowBackend.ShowMessageDialog(
+        string message, string? title, string kind, MessageButtons buttons, string okLabel, string cancelLabel)
+        => ShowMessageDialogCore(message, title, kind, buttons, okLabel, cancelLabel);
+
+    /// <summary>询问型消息框的异步版本（<c>dialog.message</c> 用）：整个 <c>MessageBoxW</c> 挪到对话框线程。</summary>
+    public Task<MessageResult?> ShowMessageDialogAsync(
+        string message, string? title, string kind, MessageButtons buttons, string okLabel, string cancelLabel)
+        => Win32DialogThread.Shared.InvokeAsync(
+            () => ShowMessageDialogCore(message, title, kind, buttons, okLabel, cancelLabel));
+
+    private MessageResult? ShowMessageDialogCore(
         string message, string? title, string kind, MessageButtons buttons, string okLabel, string cancelLabel)
     {
         // 显示文案只能用系统的（MessageBoxW 没有自定义入口）。

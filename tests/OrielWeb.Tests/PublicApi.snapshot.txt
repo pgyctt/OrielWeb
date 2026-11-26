@@ -648,11 +648,15 @@
   OrielWeb.WebviewWindow :: ShowContextMenu(System.Collections.Generic.IReadOnlyList`1[OrielWeb.OrielMenuItem], System.Nullable`1[OrielWeb.OrielPosition], System.Nullable`1[System.TimeSpan]) -> System.Void
   OrielWeb.WebviewWindow :: ShowDialog(System.String, System.String = optional, System.String = optional, OrielWeb.MessageButtons = optional, System.String = optional, System.String = optional) -> System.Nullable`1[OrielWeb.MessageResult]
   OrielWeb.WebviewWindow :: ShowFolderDialog(System.String = optional, System.String = optional) -> System.String
+  OrielWeb.WebviewWindow :: ShowFolderDialogAsync(System.String = optional, System.String = optional) -> System.Threading.Tasks.Task`1[System.String]
   OrielWeb.WebviewWindow :: ShowMessage(System.String, System.String = optional, OrielWeb.OrielMessageBoxIcon = optional) -> System.Void
+  OrielWeb.WebviewWindow :: ShowMessageDialogAsync(System.String, System.String = optional, System.String = optional, OrielWeb.MessageButtons = optional, System.String = optional, System.String = optional) -> System.Threading.Tasks.Task`1[System.Nullable`1[OrielWeb.MessageResult]]
   OrielWeb.WebviewWindow :: ShowOpenFileDialog(OrielWeb.OrielOpenFileDialogOptions) -> System.String[]
   OrielWeb.WebviewWindow :: ShowOpenFileDialog(System.String = optional, System.String = optional, System.String = optional) -> System.String
+  OrielWeb.WebviewWindow :: ShowOpenFileDialogAsync(OrielWeb.OrielOpenFileDialogOptions) -> System.Threading.Tasks.Task`1[System.String[]]
   OrielWeb.WebviewWindow :: ShowSaveFileDialog(OrielWeb.OrielSaveFileDialogOptions) -> System.String
   OrielWeb.WebviewWindow :: ShowSaveFileDialog(System.String = optional, System.String = optional, System.String = optional) -> System.String
+  OrielWeb.WebviewWindow :: ShowSaveFileDialogAsync(OrielWeb.OrielSaveFileDialogOptions) -> System.Threading.Tasks.Task`1[System.String]
   OrielWeb.WebviewWindow :: StartResizeDragging(OrielWeb.OrielResizeDirection) -> System.Void
   OrielWeb.WebviewWindow :: ThemeOverride : System.Nullable`1[OrielWeb.OrielTheme] (get=True, set=True)
   OrielWeb.WebviewWindow :: Title : System.String (get=True, set=False)

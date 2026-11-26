@@ -274,6 +274,19 @@ WebviewWindow? again = app.GetWindow("settings");   // 按 label 取回（不存
 | `string? ShowOpenFileDialog(string? title = null, string? filter = null, string? initialDirectory = null)` | 单选；取消返回 `null` |
 | `string? ShowSaveFileDialog(OrielSaveFileDialogOptions options)`<br>`string? ShowSaveFileDialog(string? title = null, string? filter = null, string? defaultExtension = null)` | 取消返回 `null` |
 | `string? ShowFolderDialog(string? title = null, string? initialDirectory = null)` | 取消返回 `null`。Windows 的文件夹选择器**不支持初始目录**（已知取舍） |
+| `Task<string[]> ShowOpenFileDialogAsync(OrielOpenFileDialogOptions options)` | 异步版，**等待期间 UI 线程仍处理其他 IPC**。取消返回空数组。只有 Windows 真正让出线程（见下） |
+| `Task<string?> ShowSaveFileDialogAsync(OrielSaveFileDialogOptions options)` | 异步版；取消返回 `null` |
+| `Task<string?> ShowFolderDialogAsync(string? title = null, string? initialDirectory = null)` | 异步版；取消返回 `null` |
+| `Task<MessageResult?> ShowMessageDialogAsync(...)` | 询问框的异步版 |
+
+> **同步 vs 异步**：上表**同步**那几个都是模态阻塞调用——在 UI 线程上调它们，
+> 该线程连同**整条 IPC 通道**会一直停到用户关掉对话框（页面在此期间发的 invoke 全部排队，
+> 关闭后一次性涌入）。内建 `dialog.*` 命令因此走异步通道。
+> C# 侧需要"边等边干活"时也用 `*Async`。
+>
+> **三平台能力不同**：Windows 把原生调用挪到专用 STA 线程，是真正的非阻塞；
+> macOS 的 `runModal` 与 Linux 的 `gtk_dialog_run` 要求主线程，那两个平台的 `*Async`
+> 是"同步调用 + 已完成的 Task"——形状对齐，但等待期间主线程仍被占用。
 
 事件（`+=` 订阅；第二列就是回调参数）：
 
@@ -1448,6 +1461,8 @@ if (await confirm('确定删除？', { okLabel: '删除' })) { /* ... */ }
 | **`message` 返回被点按钮的文案** | 所以 `ask`/`confirm` 能拿它与期望标签比对；被外部关掉时是 `null` |
 | **命令层返回语义、页面层映射文案** | Windows 的 `MessageBoxW` 只能显示系统文案，见下 |
 | **自定义按钮文案** | Linux/macOS 生效；**Windows 上不生效**（显示系统文案），已记入"已知限制" |
+| **对话框开启期间不阻塞其他命令** | 内建 `dialog.*` 走异步通道，对话框开着时页面照常能 invoke 别的命令、宿主推送也照常送达。0.6.1 及更早会停摆到用户关掉对话框（见 CHANGELOG 0.6.2） |
+| **只有 Windows 真正让出 UI 线程** | macOS 的 `runModal` 与 Linux 的 `gtk_dialog_run` 要求主线程，那两个平台上对话框期间主线程仍被占用（接口是异步形状，但不会并行） |
 
 **为什么 `message` 那套要分两层**：Tauri 的 `message` 返回"实际显示的文案"。
 但 Windows 的 `MessageBoxW` 无法自定义按钮文字（要 `TaskDialogIndirect`，需要 comctl32 v6

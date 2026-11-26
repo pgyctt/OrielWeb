@@ -966,12 +966,37 @@ internal interface IWindowBackend
     string? ShowSaveFileDialog(OrielSaveFileDialogOptions options);
 
     /// <summary>
+    /// 打开文件对话框的**异步**版本。取消时返回空数组；用户取消与"选了但没选到"同形。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>为什么必须有异步版本</b>：原生文件对话框是模态阻塞调用（Windows 的
+    /// <c>GetOpenFileNameW</c> 自带消息循环，直到用户关掉才返回）。在 UI 线程上同步调用它，
+    /// 该线程在整个对话框期间都停在那一帧里——期间页面发来的 invoke 全部排队，
+    /// 关闭后一次性涌入。实测：保存对话框开 29 秒 → 29 秒内零条命令执行，
+    /// 关闭后 140+ 条积压命令在 5ms 内全部执行。
+    /// </para>
+    /// <para>
+    /// 三平台的能力不同，实现必须如实反映：Windows 可以把这个调用挪到专用 STA 线程
+    /// （对话框只在那个线程上模态，UI 线程继续泵消息）；macOS/Linux 的原生面板要求主线程，
+    /// 所以它们的异步实现在等待期间仍占着主线程，只是把"同步阻塞"包装成了未完成的 Task。
+    /// </para>
+    /// </remarks>
+    Task<string[]> ShowOpenFileDialogAsync(OrielOpenFileDialogOptions options);
+
+    /// <summary>保存文件对话框的异步版本；取消返回 null（见 <see cref="ShowOpenFileDialogAsync"/> 的说明）。</summary>
+    Task<string?> ShowSaveFileDialogAsync(OrielSaveFileDialogOptions options);
+
+    /// <summary>
     /// 选择文件夹。取消返回 null。
     /// 三平台都有原生入口，但**没有一个是跨平台一致的**：Windows 是老式 shell 文件夹选择器
     /// （<c>SHBrowseForFolder</c>），GTK 是同一个 GtkFileChooserDialog 切到
     /// <c>SELECT_FOLDER</c>，Cocoa 是 NSOpenPanel 打开"可选目录"。
     /// </summary>
     string? ShowFolderDialog(string? title, string? initialDirectory);
+
+    /// <summary>目录选择对话框的异步版本（取消返回 null，语义同 <see cref="ShowFolderDialog"/>）。</summary>
+    Task<string?> ShowFolderDialogAsync(string? title, string? initialDirectory);
 
     void ShowMessageBox(string text, string? title, OrielMessageBoxIcon icon);
 
@@ -1013,6 +1038,16 @@ internal interface IWindowBackend
     /// </para>
     /// </remarks>
     MessageResult? ShowMessageDialog(
+        string message, string? title, string kind, MessageButtons buttons, string okLabel, string cancelLabel);
+
+    /// <summary>
+    /// 询问型消息框的异步版本（<c>dialog.message</c> 用），返回语义结果。
+    /// </summary>
+    /// <remarks>
+    /// 与同步版本共享同一条原生调用；异步的意义见 <see cref="ShowOpenFileDialogAsync"/>——
+    /// <c>MessageBoxW</c> 同样是模态阻塞调用，同步跑会把 UI 线程连同整条 IPC 通道一起占住。
+    /// </remarks>
+    Task<MessageResult?> ShowMessageDialogAsync(
         string message, string? title, string kind, MessageButtons buttons, string okLabel, string cancelLabel);
 }
 

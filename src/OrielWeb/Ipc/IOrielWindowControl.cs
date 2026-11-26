@@ -104,9 +104,37 @@ internal interface IOrielWindowControl
     /// <summary>目录选择对话框（<c>dialog.open({ directory: true })</c> 用）。</summary>
     string? ShowFolderDialog(string? title, string? initialDirectory);
 
+    /// <summary>打开文件对话框的**异步**版本（<c>dialog.open</c> 用）。取消返回空数组。</summary>
+    /// <remarks>
+    /// <para>
+    /// 与同步重载返回同一份数据，区别只在"等的时候 UI 线程能不能继续干活"。
+    /// 内建命令必须走这一条：同步版本会把 IPC 通道堵在原生模态对话框的栈帧里。
+    /// </para>
+    /// <para>
+    /// <b>默认实现退回同步调用</b>：只有 <see cref="WebviewWindow"/> 需要真正实现它（那是唯一
+    /// 会走到原生后端的实现）。测试用的假窗口沿用同步路径即可，不必为了编译而补一个
+    /// 转发方法；但**新增真正的后端实现时不要依赖这条默认实现**——那等于把阻塞原样保留。
+    /// </para>
+    /// </remarks>
+    Task<string[]> ShowOpenFileDialogAsync(OrielOpenFileDialogOptions options)
+        => Task.FromResult(ShowOpenFileDialog(options));
+
+    /// <summary>保存文件对话框的**异步**版本（<c>dialog.save</c> 用）。取消返回 null。</summary>
+    Task<string?> ShowSaveFileDialogAsync(OrielSaveFileDialogOptions options)
+        => Task.FromResult(ShowSaveFileDialog(options));
+
+    /// <summary>目录选择对话框的**异步**版本（<c>dialog.open({ directory: true })</c> 用）。</summary>
+    Task<string?> ShowFolderDialogAsync(string? title, string? initialDirectory)
+        => Task.FromResult(ShowFolderDialog(title, initialDirectory));
+
     /// <summary>询问型消息框（<c>dialog.message</c> 用），返回用户点了哪个语义按钮。</summary>
     MessageResult? ShowMessageDialog(
         string message, string? title, string kind, MessageButtons buttons, string okLabel, string cancelLabel);
+
+    /// <summary>询问型消息框的**异步**版本（<c>dialog.message</c> 用）。</summary>
+    Task<MessageResult?> ShowMessageDialogAsync(
+        string message, string? title, string kind, MessageButtons buttons, string okLabel, string cancelLabel)
+        => Task.FromResult(ShowMessageDialog(message, title, kind, buttons, okLabel, cancelLabel));
 
     void ShowContextMenu(IReadOnlyList<OrielMenuItem> items);
 

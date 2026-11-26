@@ -304,6 +304,8 @@ public sealed class DialogCommandTests
         Assert.True(OrielBuiltInDialogCommands.TryGet(command, out var handler), $"未注册：{command}");
 
         using var doc = JsonDocument.Parse(TestArgs.Serialize(args));
-        return (T)handler(window, command, doc.RootElement)!;
+        // 族是异步的（内建 dialog.* 必须让出 UI 线程），但测试里的假窗口是同步返回的，
+        // 所以这里同步取结果即可——它不会真的等待。
+        return (T)handler(window, command, doc.RootElement).AsTask().GetAwaiter().GetResult()!;
     }
 }

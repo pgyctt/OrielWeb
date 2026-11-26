@@ -478,6 +478,24 @@ public sealed class BuiltInWindowApiCommandTests
             return null;
         }
 
+        /// <summary>
+        /// 非 null 时，异步保存对话框走它——用于验证"对话框等待期间其他命令不被阻塞"
+        /// （见 <c>DialogNonBlockingTests</c>）。
+        /// </summary>
+        public Func<Task<string?>>? SaveFileDialogAsyncHook { get; set; }
+
+        public Task<string?> ShowSaveFileDialogAsync(OrielSaveFileDialogOptions options)
+        {
+            if (SaveFileDialogAsyncHook is not null)
+            {
+                return SaveFileDialogAsyncHook();
+            }
+
+            // 不单独记一条 async 调用：假窗口上两者是同一件事，重复记录会让
+            // Assert.Single(window.Calls) 那批用例看到两条。
+            return Task.FromResult(ShowSaveFileDialog(options));
+        }
+
         public string? ShowFolderDialog(string? title, string? initialDirectory)
         {
             Calls.Add($"showFolderDialog:{title}|{initialDirectory}");
@@ -492,6 +510,24 @@ public sealed class BuiltInWindowApiCommandTests
         {
             Calls.Add($"showMessageDialog:{message}|{title}|{kind}|{buttons}|{okLabel}|{cancelLabel}");
             return NextMessageResult;
+        }
+
+        /// <summary>
+        /// 非 null 时，异步消息框走它——用于验证"对话框等待期间其他命令不被阻塞"
+        /// （见 <c>DialogNonBlockingTests</c>）。
+        /// </summary>
+        public Func<Task<MessageResult?>>? MessageDialogAsyncHook { get; set; }
+
+        public Task<MessageResult?> ShowMessageDialogAsync(
+            string message, string? title, string kind, MessageButtons buttons, string okLabel, string cancelLabel)
+        {
+            if (MessageDialogAsyncHook is not null)
+            {
+                return MessageDialogAsyncHook();
+            }
+
+            return Task.FromResult(
+                ShowMessageDialog(message, title, kind, buttons, okLabel, cancelLabel));
         }
     }
 }

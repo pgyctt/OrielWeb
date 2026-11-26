@@ -1046,4 +1046,41 @@ public sealed class WebviewWindow : IOrielWindowControl
     /// <summary>选择文件夹。取消返回 null。</summary>
     public string? ShowFolderDialog(string? title = null, string? initialDirectory = null)
         => Backend.ShowFolderDialog(title, initialDirectory);
+
+    /// <summary>
+    /// 打开文件对话框的**异步**版本：等待期间 UI 线程仍然处理其他 IPC 消息。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 页面侧的 <c>dialog.open</c> 走的就是这条（内建命令必须是异步的，否则对话框一开，
+    /// 整条 IPC 通道就停摆到用户关掉它为止）。C# 侧需要"边等边干活"时也用这条。
+    /// </para>
+    /// <para>
+    /// 三平台的实现能力不同：Windows 把原生调用挪到专用 STA 线程，真正的非阻塞；
+    /// macOS/Linux 的原生面板要求主线程，所以等待期间主线程仍被占用
+    /// （返回的是未完成 Task，但 UI 线程并不空闲）。
+    /// </para>
+    /// </remarks>
+    public Task<string[]> ShowOpenFileDialogAsync(OrielOpenFileDialogOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return Backend.ShowOpenFileDialogAsync(options);
+    }
+
+    /// <summary>保存文件对话框的异步版本（取消返回 null）。</summary>
+    public Task<string?> ShowSaveFileDialogAsync(OrielSaveFileDialogOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return Backend.ShowSaveFileDialogAsync(options);
+    }
+
+    /// <summary>选择文件夹的异步版本（取消返回 null）。</summary>
+    public Task<string?> ShowFolderDialogAsync(string? title = null, string? initialDirectory = null)
+        => Backend.ShowFolderDialogAsync(title, initialDirectory);
+
+    /// <summary>询问型消息框的异步版本（返回用户点了哪个语义按钮；<c>dialog.message</c> 用）。</summary>
+    public Task<MessageResult?> ShowMessageDialogAsync(
+        string message, string? title = null, string kind = "info",
+        MessageButtons buttons = MessageButtons.Ok, string okLabel = "确定", string cancelLabel = "取消")
+        => Backend.ShowMessageDialogAsync(message, title, kind, buttons, okLabel, cancelLabel);
 }

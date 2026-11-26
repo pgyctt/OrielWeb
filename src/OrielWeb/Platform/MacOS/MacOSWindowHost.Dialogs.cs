@@ -139,4 +139,30 @@ internal sealed partial class MacOSWindowHost
         string[] paths = RunPanel(panel);
         return paths.Length > 0 ? paths[0] : null;
     }
+
+    // ---- 异步版本 ----
+    //
+    // **这里没有真正的"让出主线程"**：NSSavePanel / NSOpenPanel 的 runModal 必须在主线程上跑，
+    // AppKit 的 UI 本来就只能在主线程操作。真正的非阻塞要换成
+    // `beginSheetModalForWindow:completionHandler:`（把面板挂成 sheet 并用 block 收结果），
+    // 那是另一套 ObjC block 互操作，未在本批范围内。所以 macOS 上这几个方法就是
+    // "同步调用 + 已完成的 Task"——与 0.6.1 的行为一致，只是接口形状与 Windows 对齐。
+
+    /// <summary>打开文件对话框的异步版本（macOS 上仍占主线程，原因见上方注释）。</summary>
+    public Task<string[]> ShowOpenFileDialogAsync(OrielOpenFileDialogOptions options)
+        => Task.FromResult(ShowOpenFileDialog(options));
+
+    /// <summary>保存文件对话框的异步版本（macOS 上仍占主线程）。</summary>
+    public Task<string?> ShowSaveFileDialogAsync(OrielSaveFileDialogOptions options)
+        => Task.FromResult(ShowSaveFileDialog(options));
+
+    /// <summary>目录选择对话框的异步版本（macOS 上仍占主线程）。</summary>
+    public Task<string?> ShowFolderDialogAsync(string? title, string? initialDirectory)
+        => Task.FromResult(ShowFolderDialog(title, initialDirectory));
+
+    /// <summary>询问型消息框的异步版本（macOS 上仍占主线程）。</summary>
+    public Task<MessageResult?> ShowMessageDialogAsync(
+        string message, string? title, string kind, MessageButtons buttons, string okLabel, string cancelLabel)
+        => Task.FromResult(((IWindowBackend)this).ShowMessageDialog(
+            message, title, kind, buttons, okLabel, cancelLabel));
 }

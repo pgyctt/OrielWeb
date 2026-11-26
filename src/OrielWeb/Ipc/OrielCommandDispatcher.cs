@@ -188,6 +188,37 @@ internal sealed class OrielCommandDispatcher
         // （见 OrielCommandRegistry.AddRouter），所以这里不存在"应用命令被静默遮蔽"。
         foreach (IBuiltInCommandFamily family in OrielBuiltInCommandFamilies.All)
         {
+            // **异步族先试**：dialog.* 的原生对话框是模态阻塞调用，同步跑会把 UI 线程
+            // 堵在 GetSaveFileNameW 里，期间所有页面 invoke 排队、宿主推送也发不出去。
+            // 走异步通道后，await 期间 UI 线程回到消息循环，其他调用照常处理。
+            if (family.TryGetAsync(name, window, out var asyncHandler))
+            {
+                if (family.RequiresWindow && window is null)
+                {
+                    ReplyError(
+                        sink,
+                        id,
+                        ErrorReply.Text(
+                            $"命令 '{name}' 需要一个窗口，但这次调用没有来源窗口。",
+                            OrielIpcErrorCodes.NoSourceWindow));
+                    return;
+                }
+
+                try
+                {
+                    // ConfigureAwait(false) 是重点：不能让续体抢占 UI 线程——
+                    // 回执与后续分发都经由 sink 自己切线程（UiThreadReplySink）。
+                    object? result = await asyncHandler(window!, name, args).ConfigureAwait(false);
+                    ReplyOk(sink, id, result);
+                }
+                catch (Exception ex)
+                {
+                    ReplyError(sink, id, DescribeBuiltInFailure(name, ex));
+                }
+
+                return;
+            }
+
             if (!family.TryGet(name, window, out Func<IOrielWindowControl, string, JsonElement, object?> handler))
             {
                 continue;

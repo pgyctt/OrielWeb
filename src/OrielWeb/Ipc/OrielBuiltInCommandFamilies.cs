@@ -36,6 +36,29 @@ internal interface IBuiltInCommandFamily
         string commandName,
         IOrielWindowControl? window,
         out Func<IOrielWindowControl, string, JsonElement, object?> handler);
+
+    /// <summary>
+    /// 异步变体：命中且该命令**必须让出 UI 线程**时返回 true。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 默认返回 false，因为绝大多数内建命令是纯内存操作，同步执行既快又简单。
+    /// 只有会阻塞 UI 线程的命令（<c>dialog.*</c> 的原生模态对话框）需要实现它——
+    /// 同步版本会把<b>整条 IPC 通道</b>堵在 <c>GetSaveFileNameW</c> 的栈帧里：
+    /// 对话框开多久，期间所有页面 invoke 就排队多久，关闭后再一次性涌入。
+    /// </para>
+    /// <para>
+    /// 分发器**先试异步、再试同步**。两者都不命中才算未知命令。
+    /// </para>
+    /// </remarks>
+    bool TryGetAsync(
+        string commandName,
+        IOrielWindowControl? window,
+        out Func<IOrielWindowControl, string, JsonElement, ValueTask<object?>> handler)
+    {
+        handler = null!;
+        return false;
+    }
 }
 
 /// <summary>
@@ -43,9 +66,13 @@ internal interface IBuiltInCommandFamily
 /// </summary>
 /// <param name="name">见 <see cref="IBuiltInCommandFamily.Name"/>。</param>
 /// <param name="requiresWindow">见 <see cref="IBuiltInCommandFamily.RequiresWindow"/>。</param>
-/// <param name="tryGet">各族的 <c>TryGet</c> 适配器。</param>
+/// <param name="tryGet">各族的同步 <c>TryGet</c> 适配器；与 <paramref name="tryGetAsync"/> 至少给一个。</param>
+/// <param name="tryGetAsync">各族的异步 <c>TryGetAsync</c> 适配器（会让出 UI 线程的族才给）。</param>
 internal sealed class BuiltInCommandFamily(
-    string name, bool requiresWindow, BuiltInCommandFamily.TryGetDelegate tryGet) : IBuiltInCommandFamily
+    string name,
+    bool requiresWindow,
+    BuiltInCommandFamily.TryGetDelegate? tryGet = null,
+    BuiltInCommandFamily.TryGetAsyncDelegate? tryGetAsync = null) : IBuiltInCommandFamily
 {
     /// <summary>与 <see cref="IBuiltInCommandFamily.TryGet"/> 同形，单独命名以便字段持有。</summary>
     internal delegate bool TryGetDelegate(
@@ -53,7 +80,14 @@ internal sealed class BuiltInCommandFamily(
         IOrielWindowControl? window,
         out Func<IOrielWindowControl, string, JsonElement, object?> handler);
 
-    private readonly TryGetDelegate _tryGet = tryGet;
+    /// <summary>与 <see cref="IBuiltInCommandFamily.TryGetAsync"/> 同形。</summary>
+    internal delegate bool TryGetAsyncDelegate(
+        string commandName,
+        IOrielWindowControl? window,
+        out Func<IOrielWindowControl, string, JsonElement, ValueTask<object?>> handler);
+
+    private readonly TryGetDelegate? _tryGet = tryGet;
+    private readonly TryGetAsyncDelegate? _tryGetAsync = tryGetAsync;
 
     public string Name { get; } = name;
 
@@ -63,7 +97,19 @@ internal sealed class BuiltInCommandFamily(
         string commandName,
         IOrielWindowControl? window,
         out Func<IOrielWindowControl, string, JsonElement, object?> handler)
-        => _tryGet(commandName, window, out handler);
+    {
+        handler = null!;
+        return _tryGet is not null && _tryGet(commandName, window, out handler);
+    }
+
+    public bool TryGetAsync(
+        string commandName,
+        IOrielWindowControl? window,
+        out Func<IOrielWindowControl, string, JsonElement, ValueTask<object?>> handler)
+    {
+        handler = null!;
+        return _tryGetAsync is not null && _tryGetAsync(commandName, window, out handler);
+    }
 }
 
 /// <summary>
@@ -131,8 +177,13 @@ internal static class OrielBuiltInCommandFamilies
             }),
 
         // dialog.*：与既有的 win.pickFile / window.pickFile 并存（那两条是冻结的公开契约）。
+        //
+        // **本族只走异步通道**：原生文件对话框是模态阻塞调用，同步执行会把整条 IPC 通道
+        // 堵在 GetSaveFileNameW 的栈帧里（对话框开 29 秒 = 29 秒内零命令执行，关闭后积压
+        // 命令一次性涌入）。异步通道让分发器在等待期间把 UI 线程交还给消息循环。
         new BuiltInCommandFamily("dialog", requiresWindow: true,
-            (string n, IOrielWindowControl? _, out Func<IOrielWindowControl, string, JsonElement, object?> h) =>
+            tryGetAsync: (string n, IOrielWindowControl? _,
+                out Func<IOrielWindowControl, string, JsonElement, ValueTask<object?>> h) =>
             {
                 bool hit = OrielBuiltInDialogCommands.TryGet(n, out var inner);
                 h = hit ? inner : null!;

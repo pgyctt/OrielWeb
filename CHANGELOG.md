@@ -7,6 +7,58 @@
 - 版本号唯一来源是根 `Directory.Build.props` 的 `<Version>`；tag 形如 `vX.Y.Z` 与之一一对应，`release.yml` 会校验一致性。
 - **改版本的提交与打 tag 是同一次提交**（0.1.8 之后已是这个形态）。历史上 0.1.3–0.1.7 有发布/排障提交但没有对应 tag（0.1.5 被整体跳过），这些版本在仓库里已不可回溯—— NuGet 上仍可查，但源码状态只能靠提交区间近似还原。下表 0.1.3–0.1.7 的条目即按提交区间还原的近似记录。
 
+## 0.6.2 - 2026-11-26
+
+**本版是修复批次**：`dialog.*` 不再阻塞 IPC 通道，并给对话框补上异步 API。
+公开 API 只有**新增**（`WebviewWindow` 上四个 `*Async` 方法），无删除、无签名变更。
+
+### 修复
+
+- **`dialog.open` / `dialog.save` / `dialog.message` 打开期间，整条 IPC 通道停摆。**
+
+  症状：对话框开着的时候，页面发来的任何 invoke 都得不到处理；关掉之后，期间积压的调用
+  在毫秒级内一次性涌入。实测（Windows，保存对话框开 29 秒）——29 秒内**零条**命令被执行，
+  关闭后 140+ 条积压命令在 5ms 内全部执行。同进程的后台线程全程不受影响，所以现场很容易
+  误判成"界面卡死"而不是"对话框挡住了"。
+
+  根因是**同步执行 + 模态阻塞**：`HandleInvokeAsync` 里内建命令分支没有 `await`，直接在
+  UI 线程上调用 `GetSaveFileNameW`。该调用自带模态消息循环，返回之前 UI 线程一直停在
+  那一帧里——消息泵虽然还在转（实测 2.5 秒内 `WM_TIMER` 触发 22 次），但
+  `OnWebMessageReceived` 不会再返回，新的 invoke 只能排队。
+
+  修法分两层：
+
+  1. **分发层**：内建命令族新增异步通道（`IBuiltInCommandFamily.TryGetAsync`），
+     分发器先试异步、再试同步。`dialog.*` 整族**只走异步**，等待期间 UI 线程回到消息循环。
+  2. **Windows 后端**：原生调用整个挪到专用 STA 线程（`Win32DialogThread`，进程级单例，
+     带自己的 `OleInitialize`）。对话框只在那个线程上模态，主窗口被系统禁用（用户点不到页面，
+     这是模态的本意），但 UI 线程的消息泵不受影响。
+
+  修复后同样的探针：对话框开着 25 秒，页面每 200ms 一次的调用**全程正常拿到回执**；
+  关闭后 `dialog.save` 的回执在 5ms 内返回。
+
+  连带修好的两个后果：页面侧的回执超时（默认 30s，消费方常调得更小）不会再因为
+  "对话框开着"而把在飞的调用全判死；关闭瞬间也不再有命令洪水。
+
+  **平台差异**：只有 **Windows** 是真正的非阻塞。macOS 的 `runModal` 与 Linux 的
+  `gtk_dialog_run` 要求主线程，所以那两个平台的异步方法就是"同步调用 + 已完成的 Task"——
+  接口形状与 Windows 对齐，但等待期间主线程仍被占用。彻底解决要改用
+  `beginSheetModalForWindow:completionHandler:`（macOS）与信号式 GTK API（Linux），
+  不在本批范围内。
+
+### 新增
+
+- **`WebviewWindow.ShowOpenFileDialogAsync` / `ShowSaveFileDialogAsync` /
+  `ShowFolderDialogAsync` / `ShowMessageDialogAsync`。**
+
+  同步版本原样保留（既有契约，C# 侧仍可用）。新增异步版本是为了让宿主侧也能"边等边干活"：
+  在 UI 线程上同步调用文件对话框，无论从哪条路径进来，都会把那个线程连同 IPC 一起占住。
+
+### 文档
+
+- 内建 `dialog.*` 命令的说明补上"对话框开启期间不再阻塞其他命令"，
+  并写明三平台的能力差异（只有 Windows 真正让出 UI 线程）。
+
 ## 0.6.1 - 2026-11-25
 
 **本版是修复批次**：修好 Windows 保存对话框返回路径的解析，并把 Native AOT 依赖链升出高危漏洞。

@@ -170,6 +170,39 @@ internal sealed partial class LinuxWindowHost
         }
     }
 
+    /// <summary>
+    /// 打开文件对话框的异步版本。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>这里没有真正的"让出主线程"</b>：GTK 的原生选择器必须在主线程上创建与运行，
+    /// <c>gtk_dialog_run</c> 进入的是 GTK 自己的嵌套主循环——把它挪到别的线程会直接崩。
+    /// 所以本实现就是同步调用后包一个已完成的 Task。
+    /// </para>
+    /// <para>
+    /// 与 Windows 的差别是**平台能力**而不是偷懒：Windows 的 comdlg32 可以在任意 STA 线程上
+    /// 跑（owner 跨线程受支持），GTK 不行。真正让出主线程需要改用
+    /// <c>gtk_dialog_run_async</c> 那套信号式 API，那是另一批工作量，
+    /// 当前版本的 Linux 上对话框仍会占住主线程（与 0.6.1 行为一致）。
+    /// </para>
+    /// </remarks>
+    public Task<string[]> ShowOpenFileDialogAsync(OrielOpenFileDialogOptions options)
+        => Task.FromResult(ShowOpenFileDialog(options));
+
+    /// <summary>保存文件对话框的异步版本（说明见 <see cref="ShowOpenFileDialogAsync"/>：Linux 上仍占主线程）。</summary>
+    public Task<string?> ShowSaveFileDialogAsync(OrielSaveFileDialogOptions options)
+        => Task.FromResult(ShowSaveFileDialog(options));
+
+    /// <summary>目录选择对话框的异步版本（说明见 <see cref="ShowOpenFileDialogAsync"/>：Linux 上仍占主线程）。</summary>
+    public Task<string?> ShowFolderDialogAsync(string? title, string? initialDirectory)
+        => Task.FromResult(ShowFolderDialog(title, initialDirectory));
+
+    /// <summary>询问型消息框的异步版本（说明见 <see cref="ShowOpenFileDialogAsync"/>：Linux 上仍占主线程）。</summary>
+    public Task<MessageResult?> ShowMessageDialogAsync(
+        string message, string? title, string kind, MessageButtons buttons, string okLabel, string cancelLabel)
+        => Task.FromResult(((IWindowBackend)this).ShowMessageDialog(
+            message, title, kind, buttons, okLabel, cancelLabel));
+
     private static void ApplyFilters(nint dialog, IReadOnlyList<OrielFileFilter>? filters)
     {
         if (filters is not { Count: > 0 })
