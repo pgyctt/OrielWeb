@@ -297,6 +297,9 @@ internal partial class Win32WindowHost : IWindowBackend
 
         Interlocked.Exchange(ref _compositionController, null)?.Dispose();
         Interlocked.Exchange(ref _webView, null)?.Dispose();
+        // 触摸转发缓存的那份 Environment3 视图要先丢：它比下面的 Environment 引用活得更久
+        // 就会指向一个已经没人持有的 COM 对象。
+        ReleasePointerEnvironment();
         // **不能**释放环境：它是全进程共享的（由 WindowsPlatformBackend 持有并释放），
         // 本窗口销毁后，同进程里其它窗口还要用它。
         Interlocked.Exchange(ref _environment, null);

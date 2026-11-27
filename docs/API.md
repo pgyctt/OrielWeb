@@ -988,6 +988,28 @@ builder.SingleInstance("com.example.myapp", win => { /* 首实例被唤醒 */ })
 | Shell | `app.OpenExternal(url)`、`app.RevealInFileManager(path)`、`app.OpenWithDefaultApp(path)` | **默认拒绝式的 scheme 白名单**（`http`/`https`/`mailto`），可 `UseShell` 扩展；被拒或不支持时返回 `false` |
 | 开机自启 | `app.EnableAutoStart(arguments = null)` / `app.DisableAutoStart()` / `app.IsAutoStartEnabled` | Windows 写 HKCU 的 Run 键、macOS 写 LaunchAgent plist（不调 `launchctl load`，避免立刻又拉起一个）、Linux 写 autostart `.desktop`。标识默认取可执行文件名，`UseAutoStartId` 覆盖（多份构建共用一个标识会互相串） |
 
+#### Windows 的输入转发（组合宿主特有）
+
+Windows 上本库用 `WS_EX_NOREDIRECTIONBITMAP` + DirectComposition 承载 WebView2，
+页面是合成树里的一个**视觉**而不是子窗口——它**收不到任何系统输入**，全部由宿主转发：
+
+| 输入 | 转发方式 | 说明 |
+|---|---|---|
+| 鼠标 | `SendMouseInput` | 移动 / 按键 / 滚轮 / 离开（`WM_MOUSELEAVE` 要补发 LEAVE，否则页面 `:hover` 会滞留） |
+| 触摸 | `SendPointerInput` + `PT_TOUCH` | 0.6.3 起支持。转发 `WM_POINTER*`，坐标从屏幕换到客户区（= WebView 物理坐标） |
+| 笔 | **不转发** | 需要 `PenFlags` / `PenMask` 那一组字段且无真机验证，当前退化为鼠标行为 |
+
+> **触摸为什么不能靠鼠标通道**：Windows 会把触摸"提升"成一套鼠标消息
+> （`WM_LBUTTONDOWN` + `WM_MOUSEMOVE` 序列），类型信息在提升时已经丢了。
+> 把它当鼠标转发，Chromium 会理解为"按住鼠标拖动"，于是选中文本 / 拖元素，
+> **页面不滚动**。所以触摸必须走 `WM_POINTER` → `SendPointerInput(PT_TOUCH)` 这条独立通道，
+> 同时把提升出来的鼠标消息滤掉（`GetMessageExtraInfo()` 高 24 位为 `0xFF515700`）。
+>
+> 过滤有一道**安全闸门**：只有指针通道至少成功转发过一次才生效。若转发不通
+> （运行时太老、环境未就绪），会保留原来的鼠标路径——退化成修复前的行为，
+> 而不是让触摸彻底没反应。这种情况下日志里会出现一条
+> `[OrielWeb] 收到触摸输入但无法转发给 WebView：…` 的诊断。
+
 托盘（`OrielTrayOptions` / `OrielTray`）——**对标 Tauri 2 的托盘 API**，前端与后端同名同义：
 
 | 成员 | 说明 |

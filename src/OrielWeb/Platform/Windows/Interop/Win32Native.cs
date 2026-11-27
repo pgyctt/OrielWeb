@@ -222,6 +222,28 @@ internal static class Win32Constants
     public const uint WM_MOUSEWHEEL = 0x020A;
     public const uint WM_MOUSEHWHEEL = 0x020E;
     public const uint WM_MOUSELEAVE = 0x02A3;
+
+    // ---- 指针（触摸 / 笔）消息 ----
+    //
+    // Windows 8 起，触摸默认产生 WM_POINTER* 而不是 WM_TOUCH（后者要显式 RegisterTouchWindow）。
+    // 组合宿主必须走这条：WebView2 的 SendPointerInput 需要真实的 pointer 类型（PT_TOUCH），
+    // 而系统"提升"出来的鼠标消息里没有这个信息——把它当鼠标转发，Chromium 会理解成
+    // "鼠标按住拖动"（选中文本 / 拖元素），这就是触摸屏不能滚动的根因。
+    public const uint WM_POINTERUPDATE = 0x0245;
+    public const uint WM_POINTERDOWN = 0x0246;
+    public const uint WM_POINTERUP = 0x0247;
+    public const uint WM_POINTERENTER = 0x0249;
+    public const uint WM_POINTERLEAVE = 0x024A;
+    public const uint WM_POINTERACTIVATE = 0x024B;
+    public const uint WM_POINTERCAPTURECHANGED = 0x024C;
+
+    /// <summary>pointerType 的取值：触摸。</summary>
+    /// <remarks>Windows SDK 的 <c>POINTER_INPUT_TYPE</c>：PT_POINTER=1、PT_TOUCH=2、PT_PEN=3、PT_MOUSE=4。</remarks>
+    public const uint PT_TOUCH = 2;
+
+    /// <summary>笔的 pointerType（当前不转发，见 <see cref="PT_TOUCH"/> 的说明）。</summary>
+    public const uint PT_PEN = 3;
+
     public const uint WM_SETCURSOR = 0x0020;
     public const uint WM_KEYDOWN = 0x0100;
     public const uint WM_KEYUP = 0x0101;
@@ -531,6 +553,77 @@ internal struct RECT
     public int Top;
     public int Right;
     public int Bottom;
+}
+
+/// <summary>
+/// Windows SDK 的 <c>POINTER_INFO</c>：指针事件的公共部分。
+/// </summary>
+/// <remarks>
+/// 布局不能改。x64 上 <c>sourceDevice</c> / <c>hwndTarget</c> 按 8 字节对齐，
+/// 前四个 <c>UINT32</c> 之后需要 8 字节对齐的填充；总长 96 字节。
+/// 写成别的顺序会让 <c>GetPointerInfo</c> 填进错位的坐标，症状是触摸点整体偏移。
+/// </remarks>
+[StructLayout(LayoutKind.Sequential)]
+internal struct POINTER_INFO
+{
+    /// <summary>指针类型（<c>POINTER_INPUT_TYPE</c>）：PT_TOUCH / PT_PEN / PT_MOUSE。</summary>
+    public uint pointerType;
+
+    /// <summary>本次交互的指针 id（多点触控下每根手指一个）。</summary>
+    public uint pointerId;
+
+    public uint frameId;
+
+    /// <summary><c>POINTER_FLAGS</c> 位掩码（INRANGE / INCONTACT / DOWN / UPDATE / UP / …）。</summary>
+    public uint pointerFlags;
+
+    public nint sourceDevice;
+
+    public nint hwndTarget;
+
+    /// <summary>像素坐标（**屏幕**坐标，需换到客户区）。</summary>
+    public POINT ptPixelLocation;
+
+    public POINT ptHimetricLocation;
+
+    public POINT ptPixelLocationRaw;
+
+    public POINT ptHimetricLocationRaw;
+
+    public uint dwTime;
+
+    public uint historyCount;
+
+    public int InputData;
+
+    public uint dwKeyStates;
+
+    public ulong PerformanceCount;
+
+    /// <summary><c>POINTER_BUTTON_CHANGE_TYPE</c>：本次事件是否伴随按键状态变化。</summary>
+    public int ButtonChangeType;
+}
+
+/// <summary>Windows SDK 的 <c>POINTER_TOUCH_INFO</c>：在 <see cref="POINTER_INFO"/> 之上补触摸专属字段。</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct POINTER_TOUCH_INFO
+{
+    public POINTER_INFO pointerInfo;
+
+    /// <summary><c>TOUCH_FLAGS</c>：目前只有 <c>TOUCH_FLAG_NONE</c>。</summary>
+    public uint touchFlags;
+
+    /// <summary><c>TOUCH_MASK</c>：下面哪些字段有效（CONTACTAREA / ORIENTATION / PRESSURE）。</summary>
+    public uint touchMask;
+
+    /// <summary>接触区（**屏幕**坐标）。</summary>
+    public RECT rcContact;
+
+    public RECT rcContactRaw;
+
+    public uint orientation;
+
+    public uint pressure;
 }
 
 /// <summary><c>TrackMouseEvent</c> 的参数：<c>dwFlags = TME_LEAVE</c> 时，指针离开 <c>hwndTrack</c> 会收到一次 WM_MOUSELEAVE。</summary>
@@ -879,6 +972,34 @@ internal static unsafe partial class Win32
     [LibraryImport("user32", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool TrackMouseEvent(ref TRACKMOUSEEVENT track);
+
+    // ---- 指针（触摸 / 笔）----
+
+    /// <summary>取某个指针的类型（PT_TOUCH / PT_PEN / PT_MOUSE）。</summary>
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool GetPointerType(uint pointerId, out uint pointerType);
+
+    /// <summary>取某个指针的基础信息（坐标是**屏幕**坐标）。</summary>
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool GetPointerInfo(uint pointerId, out POINTER_INFO pointerInfo);
+
+    /// <summary>取触摸指针的完整信息（比 <see cref="GetPointerInfo"/> 多 contact 区 / 压力 / 朝向）。</summary>
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool GetPointerTouchInfo(uint pointerId, out POINTER_TOUCH_INFO touchInfo);
+
+    /// <summary>
+    /// 当前正在处理的消息的附加信息。
+    /// </summary>
+    /// <remarks>
+    /// 用来识别"系统从触摸提升出来的鼠标消息"：高 24 位等于 <c>0xFF515700</c> 时，
+    /// 这条 WM_LBUTTONDOWN / WM_MOUSEMOVE 其实是触摸产生的。这类消息不能再按鼠标转发
+    /// （触摸已经由 WM_POINTER 通道以 PT_TOUCH 送进去了，重复转发就是"选中文本 + 不滚动"）。
+    /// </remarks>
+    [LibraryImport("user32")]
+    internal static partial nint GetMessageExtraInfo();
 
     [LibraryImport("user32")]
     internal static partial nint SetCursor(nint cursor);

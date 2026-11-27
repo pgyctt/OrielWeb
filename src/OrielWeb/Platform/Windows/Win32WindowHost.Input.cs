@@ -433,6 +433,14 @@ internal partial class Win32WindowHost
             return;
         }
 
+        // 系统从触摸"提升"出来的鼠标消息（高 24 位是 0xFF515700）不能再按鼠标转发：
+        // 触摸已经由 WM_POINTER 通道以 PT_TOUCH 送进去了，重复送一遍会让 Chromium 看到
+        // "鼠标按住拖动"，于是选中文本而不是滚动页面。
+        if (IsPromotedTouchMouseMessage())
+        {
+            return;
+        }
+
         if (message == Win32Constants.WM_MOUSEMOVE)
         {
             EnsureMouseLeaveTracking();
@@ -492,6 +500,38 @@ internal partial class Win32WindowHost
         // 那个同名同义的扩展（返回 void，内部 ThrowOnError），HRESULT 就此丢失。
         // 该扩展已删除，这里保留显式转换作为形状提醒。
         controller.SendMouseInput((int)kind, (int)keys, data, point);
+    }
+
+    /// <summary>
+    /// 当前这条鼠标消息是不是系统从触摸（或笔）"提升"出来的，**且**触摸已经走指针通道送过了。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Windows 会把触摸合成成一套鼠标消息（<c>WM_LBUTTONDOWN</c> + <c>WM_MOUSEMOVE</c> …），
+    /// 让不认触摸的老程序也能用。这类消息的类型信息已经丢了——它长得和真鼠标一模一样，
+    /// 唯一能分辨的就是 <c>GetMessageExtraInfo()</c> 的高 24 位是不是 <c>0xFF515700</c>。
+    /// </para>
+    /// <para>
+    /// 为什么要滤掉：触摸已经由 <c>WM_POINTER</c> 通道以 <c>PT_TOUCH</c> 送进 WebView 了。
+    /// 再把提升出来的鼠标也送一遍，Chromium 会认为"用户按住鼠标在拖"，于是去选中文本 / 拖元素，
+    /// <b>页面不滚动</b>。这正是 Win10 触摸屏不能滚动的直接原因。
+    /// </para>
+    /// <para>
+    /// <b>但过滤必须以"指针通道真的通了"为前提</b>（<c>_touchPointerForwarded</c>）：
+    /// 若 pointer 转发从未成功，滤掉鼠标就等于把触摸彻底弄死——修复前至少还能点。
+    /// 那种情况下宁可保留旧的鼠标路径，让它退化成修复前的行为，而不是"什么都不响应"。
+    /// </para>
+    /// </remarks>
+    private bool IsPromotedTouchMouseMessage()
+    {
+        if (!_touchPointerForwarded)
+        {
+            return false;
+        }
+
+        // 0xFF515700 = MOUSEEVENTF_FROMTOUCH 的高字 | 注入标记；低 8 位是扩展信息，必须忽略。
+        long extra = Win32.GetMessageExtraInfo();
+        return (extra & 0xFFFFFF00) == 0xFF515700;
     }
 
     /// <summary>补发一次 <c>COREWEBVIEW2_MOUSE_EVENT_KIND_LEAVE</c>。</summary>

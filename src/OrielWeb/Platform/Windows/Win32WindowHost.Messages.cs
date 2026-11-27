@@ -169,6 +169,28 @@ internal partial class Win32WindowHost
                 ForwardMouseLeave();
                 return 0;
 
+            // ---- 触摸 / 笔（指针）----
+            //
+            // 组合宿主收不到系统输入，触摸必须由宿主用 SendPointerInput 以 PT_TOUCH 转发。
+            // 只靠下面那条鼠标通道是不行的：系统把触摸提升成鼠标消息后，类型信息已经丢了，
+            // Chromium 会当成"鼠标按住拖动"（选中文本 / 拖元素）而不是滚动。
+            case Win32Constants.WM_POINTERUPDATE:
+            case Win32Constants.WM_POINTERDOWN:
+            case Win32Constants.WM_POINTERUP:
+            case Win32Constants.WM_POINTERENTER:
+            case Win32Constants.WM_POINTERLEAVE:
+                if (ForwardPointerMessage(hwnd, message, wParam))
+                {
+                    // 返回 0 = 已处理：系统据此**不再**把这次触摸提升成鼠标消息
+                    return 0;
+                }
+                break;
+
+            case Win32Constants.WM_POINTERCAPTURECHANGED:
+                // 指针捕获丢失（比如被别的窗口抢走）。没有对应的 COREWEBVIEW2_POINTER_EVENT_KIND，
+                // 转发不了；但要让默认处理照常跑，由它完成清理。这里主动吞掉没有意义。
+                break;
+
             // 键盘不需要转发：组合托管的 WebView 自己处理键盘输入，宿主只需在获得焦点时
             // 把焦点交给它（见下）。这与 AOTrino 的 Composition 宿主一致——它也只转发鼠标/指针。
             case Win32Constants.WM_SETFOCUS:
